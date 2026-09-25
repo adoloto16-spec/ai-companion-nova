@@ -1,4 +1,5 @@
 export * from "./diagnostics";
+export * from "./audit";
 export * from "./events";
 export * from "./state";
 export * from "./capabilities";
