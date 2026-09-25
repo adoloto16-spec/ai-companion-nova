@@ -523,16 +523,20 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
     "additionalProperties": false,
     "properties": {
       "id": {
-        "type": "string"
+        "type": "string",
+        "minLength": 1
       },
       "kind": {
-        "type": "string"
+        "type": "string",
+        "minLength": 1
       },
       "provider": {
-        "type": "string"
+        "type": "string",
+        "minLength": 1
       },
       "version": {
-        "type": "string"
+        "type": "string",
+        "minLength": 1
       }
     }
   },
@@ -767,6 +771,125 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
     "type": "object",
     "additionalProperties": {
       "type": "boolean"
+    }
+  },
+  "provider-configuration": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.ai-companion-nova.dev/provider-configuration/v1",
+    "title": "AI Companion Nova Provider Configuration v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "apiVersion",
+      "schemaVersion",
+      "providerId",
+      "enabled",
+      "baseUrl",
+      "model",
+      "credentialReference"
+    ],
+    "properties": {
+      "apiVersion": {
+        "enum": [
+          "1"
+        ]
+      },
+      "schemaVersion": {
+        "enum": [
+          "1"
+        ]
+      },
+      "providerId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "enabled": {
+        "type": "boolean"
+      },
+      "baseUrl": {
+        "type": "string",
+        "minLength": 1
+      },
+      "model": {
+        "type": "string",
+        "minLength": 1
+      },
+      "credentialReference": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "timeoutMs": {
+        "type": "number",
+        "minimum": 0.000001
+      }
+    }
+  },
+  "provider-connection-test-result": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.ai-companion-nova.dev/provider-connection-test-result/v1",
+    "title": "AI Companion Nova Provider Connection Test Result v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "apiVersion",
+      "schemaVersion",
+      "status",
+      "providerId"
+    ],
+    "properties": {
+      "apiVersion": {
+        "enum": [
+          "1"
+        ]
+      },
+      "schemaVersion": {
+        "enum": [
+          "1"
+        ]
+      },
+      "status": {
+        "enum": [
+          "connected",
+          "authentication_failed",
+          "configuration_error",
+          "network_error",
+          "timeout",
+          "provider_error"
+        ]
+      },
+      "providerId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "message": {
+        "type": "string",
+        "minLength": 1
+      }
     }
   }
 } as unknown as Record<string, JsonSchema>;

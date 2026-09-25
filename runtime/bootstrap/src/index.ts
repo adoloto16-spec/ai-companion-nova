@@ -1,4 +1,4 @@
-import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore} from "../../../contracts/src/index";
+import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration} from "../../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import type {HealthStatus} from "../../../contracts/src/index";
 import {
@@ -16,6 +16,8 @@ import {
   type OpenAICompatibleProviderConfig
 } from "../../../providers/chat/openai-compatible/src/index";
 import {objectSchema} from "../../../core/src/tools";
+import {InMemoryCredentialStore} from "../../../host/credentials/src/index";
+import {activeProviderId,buildConfiguredProvider,testProviderConfiguration} from "./provider-configuration";
 
 export interface OpenAICompatibleRuntimeConfig{
   config:OpenAICompatibleProviderConfig;
@@ -24,6 +26,9 @@ export interface OpenAICompatibleRuntimeConfig{
 }
 
 export interface FoundationRuntimeOptions{
+  providerConfiguration?:ProviderConfiguration;
+  credentialStore?:CredentialStore;
+  httpClient?:HttpClient;
   openAICompatible?:OpenAICompatibleRuntimeConfig;
 }
 
@@ -34,6 +39,9 @@ export interface FoundationRuntime{
   invoke(request:import("../../../contracts/src/index").ActionRequest):Promise<import("../../../contracts/src/index").ActionResult>;
   chat(request:ChatRequest):Promise<ChatResponse>;
   aiRuntimeHealth():Promise<HealthStatus>;
+  getProviderConfiguration():ProviderConfiguration|undefined;
+  applyProviderConfiguration(configuration:ProviderConfiguration|undefined):Promise<void>;
+  testConfiguredProvider():Promise<import("../../../contracts/src/index").ProviderConnectionTestResult>;
 }
 
 export async function createFoundationRuntime(options:FoundationRuntimeOptions={}):Promise<FoundationRuntime>{
@@ -42,6 +50,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const events=new InMemoryEventBus(diagnosticsStore,logger);
   const _state=new InMemoryStateStore(diagnosticsStore,logger);
   const providers=new ProviderRegistry();
+  const credentialStore=options.credentialStore??options.openAICompatible?.credentialStore??new InMemoryCredentialStore();
+  let providerConfiguration=options.providerConfiguration;
   const contractValidator=new StandardContractValidator();
   const audit=new InMemoryAuditService();
   const permissions=new InMemoryPermissionService();
@@ -59,15 +69,16 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   });
 
   providers.register(new FakeChatProvider(),["chat"]);
+  const applyProvider=async(configuration:ProviderConfiguration|undefined)=>{
+    providerConfiguration=configuration;
+    providers.unregister("openai-compatible");
+    const configured=configuration?buildConfiguredProvider(configuration,credentialStore,options.httpClient):undefined;
+    if(configured)providers.register(configured,["chat"]);
+  };
   if(options.openAICompatible){
-    providers.register(
-      new OpenAICompatibleChatProvider(
-        options.openAICompatible.config,
-        options.openAICompatible.credentialStore,
-        options.openAICompatible.httpClient
-      ),
-      ["chat"]
-    );
+    providers.register(new OpenAICompatibleChatProvider(options.openAICompatible.config,options.openAICompatible.credentialStore,options.openAICompatible.httpClient),["chat"]);
+  }else{
+    await applyProvider(providerConfiguration);
   }
   providers.register(new FakeTTSProvider(),["tts"]);
   providers.register(new FakeSTTProvider(),["stt"]);
@@ -173,10 +184,18 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     async stop(){try{await moduleManager.stopAll();}finally{runtimeStatus="stopped";}},
     diagnostics:snapshot,
     invoke:request=>broker.execute({request,credential:characterCredential}),
-    chat:request=>aiRuntime.generate(request),
-    aiRuntimeHealth:()=>aiRuntime.health()
+    chat:request=>aiRuntime.generate(request.providerId?request:{...request,providerId:activeProviderId(providerConfiguration)}),
+    aiRuntimeHealth:()=>aiRuntime.health(),
+    getProviderConfiguration:()=>providerConfiguration,
+    applyProviderConfiguration:async(configuration)=>{await applyProvider(configuration);},
+    testConfiguredProvider:async()=>{
+      if(!providerConfiguration)return {apiVersion:"1",schemaVersion:"1",status:"configuration_error",providerId:"openai-compatible",message:"No provider configuration is saved."};
+      return testProviderConfiguration(providerConfiguration,credentialStore,options.httpClient);
+    }
   };
 }
+export {activeProviderId,buildConfiguredProvider,testProviderConfiguration,validateProviderConfiguration} from "./provider-configuration";
+
 export async function startFoundationRuntime(options:FoundationRuntimeOptions={}){
   const runtime=await createFoundationRuntime(options);
   await runtime.start();

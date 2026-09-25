@@ -28,7 +28,7 @@ Custom compatible servers are supported by supplying their deliberate base URL. 
 The adapter receives an existing CredentialStore implementation and resolves the configured CredentialReference immediately before the outbound request.
 Authorization is created only at the HTTP boundary: Authorization: Bearer <resolved secret>.
 The secret is never copied into canonical request data, diagnostics, errors, events or provider metadata.
-No Windows Credential Manager implementation is added in this phase. The current Foundation exposes InMemoryCredentialStore for deterministic development wiring; it is ephemeral.
+Production desktop wiring now resolves the existing CredentialStore through the privileged Tauri Host. On Windows the Host uses the Windows Credential Manager Generic Credential API. The provider receives only an opaque CredentialReference and never owns or persists the raw secret.
 
 Development selection is explicit in the Composition Root:
 

@@ -17,6 +17,11 @@ export interface Clock{now():string}
 export interface ConfigStore{get<T>(key:string):T|undefined;set<T>(key:string,value:T):Promise<void>}
 export interface CredentialReference{id:string;kind:string;provider?:string;version?:string}
 export interface CredentialStore{getSecret(reference:CredentialReference):Promise<string|undefined>;setSecret(reference:CredentialReference,value:string):Promise<void>;deleteSecret(reference:CredentialReference):Promise<void>}
+export const PROVIDER_CONFIGURATION_API_VERSION:ApiVersion="1";
+export const PROVIDER_CONFIGURATION_SCHEMA_VERSION="1";
+export type ProviderConnectionTestStatus="connected"|"authentication_failed"|"configuration_error"|"network_error"|"timeout"|"provider_error";
+export interface ProviderConfiguration{apiVersion:ApiVersion;schemaVersion:string;providerId:string;enabled:boolean;baseUrl:string;model:string;credentialReference:CredentialReference|null;timeoutMs?:number}
+export interface ProviderConnectionTestResult{apiVersion:ApiVersion;schemaVersion:string;status:ProviderConnectionTestStatus;providerId:string;message?:string}
 export interface CapabilityContext{has(capability:string):boolean;require(capability:string):void}
 export interface ModuleContext{moduleId:string;events:EventBus;logger:Logger;config:ConfigStore;clock:Clock;capabilities:CapabilityContext}
 export interface CompanionModule{manifest:ModuleManifest;initialize(context:ModuleContext):Promise<void>;start():Promise<void>;stop():Promise<void>;health():Promise<HealthStatus>}
@@ -122,7 +127,9 @@ export const CONTRACT_VERSIONS={
   chatGenerationOptions:{apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION},
   chatRequest:{apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION},
   chatResponse:{apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION},
-  chatError:{apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION}
+  chatError:{apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION},
+  providerConfiguration:{apiVersion:PROVIDER_CONFIGURATION_API_VERSION,schemaVersion:PROVIDER_CONFIGURATION_SCHEMA_VERSION},
+  providerConnectionTestResult:{apiVersion:PROVIDER_CONFIGURATION_API_VERSION,schemaVersion:PROVIDER_CONFIGURATION_SCHEMA_VERSION}
 } as const;
 export {STANDARD_SCHEMAS} from "./generated-schemas";
 
