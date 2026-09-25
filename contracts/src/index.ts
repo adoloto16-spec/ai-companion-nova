@@ -1,6 +1,8 @@
 export type ApiVersion = "1";
 export const FOUNDATION_API_VERSION:ApiVersion="1";
 export const FOUNDATION_SCHEMA_VERSION="1";
+export const CHAT_API_VERSION:ApiVersion="1";
+export const CHAT_SCHEMA_VERSION="1";
 
 export type ModuleType="service"|"adapter"|"worker"|"ui";
 export type ModuleRuntime="typescript"|"rust";
@@ -28,7 +30,10 @@ export interface EventPayloadMap{
   MessageReceived:{channel:string;text:string};EmotionChanged:{primary:string;secondary?:string|null;intensity:number;reason?:string};
   GoalCreated:{goalId:string};GoalCompleted:{goalId:string};GoalFailed:{goalId:string;reason:string};
   AppChanged:{applicationId:string};WindowChanged:{title:string};TTSStarted:{requestId:string};TTSFinished:{requestId:string};
-  CharacterMotionStarted:{motionId:string};CharacterMotionFinished:{motionId:string}
+  CharacterMotionStarted:{motionId:string};CharacterMotionFinished:{motionId:string};
+  ChatRequestStarted:{requestId:string;conversationId:string;providerId:string;model:string};
+  ChatResponseReceived:{requestId:string;conversationId:string;providerId:string;model:string;finishReason:ChatFinishReason};
+  ChatRequestFailed:{requestId:string;conversationId?:string;providerId?:string;code:ChatError["code"]};
 }
 export interface ErrorDiagnostic{timestamp:string;source:string;code:string;message:string;metadata?:Record<string,unknown>}
 export interface DiagnosticsStore{recordError(source:string,code:string,message:string,metadata?:Record<string,unknown>):void;recentErrors(limit?:number):readonly ErrorDiagnostic[]}
@@ -36,16 +41,22 @@ export function createEvent<K extends keyof EventPayloadMap>(type:K,payload:Even
 
 export interface ProviderCapabilities{streaming?:boolean;vision?:boolean;toolCalling?:boolean;structuredOutput?:boolean;reasoning?:boolean;audioInput?:boolean;audioOutput?:boolean;embeddings?:boolean;[key:string]:boolean|undefined}
 export interface ModelInfo{id:string;displayName?:string;capabilities?:ProviderCapabilities}
-export interface Message{role:"system"|"user"|"assistant"|"tool";content:string}
 export interface JsonSchema{$schema?:string;type?:string|string[];properties?:Record<string,JsonSchema>;required?:readonly string[];additionalProperties?:boolean|JsonSchema;items?:JsonSchema;enum?:readonly unknown[];minimum?:number;maximum?:number;minLength?:number;maxLength?:number;minItems?:number;maxItems?:number}
 export interface ToolDefinition{id:string;version:string;schemaVersion:string;name:string;description:string;risk:ActionRisk;requiredCapabilities:readonly string[];resourceType:"domain"|"filesystem"|"application"|"resource";action:string;targetResolverId:string;confirmation:"never"|"policy";parameters:JsonSchema}
-export interface ToolCall{id:string;name:string;arguments:Record<string,unknown>}
-export interface Usage{promptTokens?:number;completionTokens?:number;totalTokens?:number}
-export interface ProviderError{code:string;message:string;retryable?:boolean}
+export interface ChatMessage{id?:string;role:"system"|"user"|"assistant"|"tool";content:string;toolCallId?:string;metadata?:Record<string,unknown>}
+export interface ChatContext{conversationId:string;messages:readonly ChatMessage[];metadata?:Record<string,unknown>}
 export type ResponseFormat={type:"text"}|{type:"json";schema:Record<string,unknown>}
-export interface ChatRequest{model:string;messages:readonly Message[];system?:string;tools?:readonly ToolDefinition[];temperature?:number;maxTokens?:number;responseFormat?:ResponseFormat;metadata?:Record<string,unknown>}
-export type ChatEvent={type:"started"}|{type:"text_delta";text:string}|{type:"tool_call";call:ToolCall}|{type:"completed";usage?:Usage}|{type:"error";error:ProviderError}
-export interface ChatProvider{id:string;capabilities():ProviderCapabilities;listModels():Promise<ModelInfo[]>;chat(request:ChatRequest):AsyncIterable<ChatEvent>;health():Promise<HealthStatus>}
+export interface ChatGenerationOptions{temperature?:number;maxTokens?:number;topP?:number;responseFormat?:ResponseFormat}
+export interface ChatUsage{promptTokens?:number;completionTokens?:number;totalTokens?:number}
+export type ChatFinishReason="stop"|"length"|"content_filter"|"error"|"unknown"
+export type ChatErrorCode="INVALID_REQUEST"|"PROVIDER_NOT_FOUND"|"PROVIDER_UNAVAILABLE"|"PROVIDER_ERROR"|"INVALID_RESPONSE"|"UNSUPPORTED"
+export interface ChatError{apiVersion:ApiVersion;schemaVersion:string;code:ChatErrorCode;message:string;requestId?:string;providerId?:string;retryable?:boolean;details?:Record<string,unknown>}
+export interface ChatRequest{apiVersion:ApiVersion;schemaVersion:string;requestId:string;providerId?:string;model:string;context:ChatContext;generation?:ChatGenerationOptions;metadata?:Record<string,unknown>}
+export interface ChatResponse{apiVersion:ApiVersion;schemaVersion:string;requestId:string;conversationId:string;providerId:string;model:string;message:ChatMessage;finishReason:ChatFinishReason;usage?:ChatUsage;metadata?:Record<string,unknown>}
+export interface ChatProviderMetadata{id:string;kind:"chat";displayName:string;version:string;description?:string}
+export interface ChatProvider{id:string;metadata():ChatProviderMetadata;capabilities():ProviderCapabilities;listModels():Promise<ModelInfo[]>;chat(request:ChatRequest):Promise<ChatResponse>;health():Promise<HealthStatus>}
+export type Message=ChatMessage;
+export type Usage=ChatUsage;
 export interface STTRequest{audio:Uint8Array;language?:string}
 export interface Transcript{text:string;language?:string;confidence?:number}
 export interface STTProvider{id:string;capabilities():ProviderCapabilities;transcribe(request:STTRequest):Promise<Transcript>;health():Promise<HealthStatus>}
@@ -99,7 +110,20 @@ export interface CharacterService{loadCharacter(characterId:string):Promise<void
 export interface MemoryService{search(query:{query:string;limit?:number}):Promise<Array<{id:string;text:string;score:number}>>;remember(memory:{text:string;category?:string;importance?:number}):Promise<string>;update(memory:{id:string;text?:string;category?:string;importance?:number}):Promise<void>;forget(memoryId:string):Promise<void>;consolidate(date:string):Promise<{processed:number;changed:number}>}
 export interface BrowserService{open(url:string):Promise<void>;search(query:string):Promise<void>;readPage():Promise<{title:string;text:string}>;click(selector:string):Promise<{status:"success"|"denied"|"error";output?:unknown}>}
 export interface SchemaValidator{validate(value:unknown,schema:JsonSchema):{valid:boolean;errors:readonly string[]}}
-export const CONTRACT_VERSIONS={moduleManifest:{apiVersion:FOUNDATION_API_VERSION,schemaVersion:FOUNDATION_SCHEMA_VERSION},eventEnvelope:{apiVersion:FOUNDATION_API_VERSION,schemaVersion:FOUNDATION_SCHEMA_VERSION},actionRequest:{apiVersion:FOUNDATION_API_VERSION,schemaVersion:FOUNDATION_SCHEMA_VERSION},actionResult:{apiVersion:FOUNDATION_API_VERSION,schemaVersion:FOUNDATION_SCHEMA_VERSION},permission:{apiVersion:FOUNDATION_API_VERSION,schemaVersion:FOUNDATION_SCHEMA_VERSION},diagnostics:{apiVersion:FOUNDATION_API_VERSION,schemaVersion:FOUNDATION_SCHEMA_VERSION}} as const;
+export const CONTRACT_VERSIONS={
+  moduleManifest:{apiVersion:FOUNDATION_API_VERSION,schemaVersion:FOUNDATION_SCHEMA_VERSION},
+  eventEnvelope:{apiVersion:FOUNDATION_API_VERSION,schemaVersion:FOUNDATION_SCHEMA_VERSION},
+  actionRequest:{apiVersion:FOUNDATION_API_VERSION,schemaVersion:FOUNDATION_SCHEMA_VERSION},
+  actionResult:{apiVersion:FOUNDATION_API_VERSION,schemaVersion:FOUNDATION_SCHEMA_VERSION},
+  permission:{apiVersion:FOUNDATION_API_VERSION,schemaVersion:FOUNDATION_SCHEMA_VERSION},
+  diagnostics:{apiVersion:FOUNDATION_API_VERSION,schemaVersion:FOUNDATION_SCHEMA_VERSION},
+  chatMessage:{apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION},
+  chatContext:{apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION},
+  chatGenerationOptions:{apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION},
+  chatRequest:{apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION},
+  chatResponse:{apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION},
+  chatError:{apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION}
+} as const;
 export {STANDARD_SCHEMAS} from "./generated-schemas";
 
 export {MinimalJsonSchemaValidator,StandardContractValidator} from "./schema-validator";

@@ -15,3 +15,17 @@ A breaking wire change increments schemaVersion. A breaking public API change in
 Foundation currently uses API 1 and Schema 1. Compatibility is version-gated at boundaries rather than hidden inside Core.
 
 Runtime validation is provided by SchemaValidator. The Foundation validator intentionally supports the subset required by the current contracts and tool parameter schemas; a full JSON Schema engine such as Ajv can be introduced later without changing the Broker contract.
+
+
+## Chat contracts
+
+Chat API/schema version 1 is defined by these canonical JSON Schema files:
+
+- chat-message.schema.json
+- chat-context.schema.json
+- chat-generation-options.schema.json
+- chat-request.schema.json
+- chat-response.schema.json
+- chat-error.schema.json
+
+The canonical interfaces are vendor-neutral and serializable. They contain no HTTP-specific request types and no OpenAI, Anthropic or local-model SDK types. Tool-related messages are represented as an extensible message category; actual tool/function calling is deferred.

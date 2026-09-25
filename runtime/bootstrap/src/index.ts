@@ -1,8 +1,8 @@
-import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target} from "../../../contracts/src/index";
+import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse} from "../../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import type {HealthStatus} from "../../../contracts/src/index";
 import {
-  InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,
+  AiRuntime,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,
   InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,
   DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
   InMemoryActorIdentityResolver,createMemoryConfig
@@ -17,6 +17,8 @@ export interface FoundationRuntime{
   stop():Promise<void>;
   diagnostics():Promise<RuntimeDiagnostics>;
   invoke(request:import("../../../contracts/src/index").ActionRequest):Promise<import("../../../contracts/src/index").ActionResult>;
+  chat(request:ChatRequest):Promise<ChatResponse>;
+  aiRuntimeHealth():Promise<HealthStatus>;
 }
 
 export async function createFoundationRuntime():Promise<FoundationRuntime>{
@@ -25,6 +27,7 @@ export async function createFoundationRuntime():Promise<FoundationRuntime>{
   const events=new InMemoryEventBus(diagnosticsStore,logger);
   const _state=new InMemoryStateStore(diagnosticsStore,logger);
   const providers=new ProviderRegistry();
+  const contractValidator=new StandardContractValidator();
   const audit=new InMemoryAuditService();
   const permissions=new InMemoryPermissionService();
   const actorResolver=new InMemoryActorIdentityResolver();
@@ -45,6 +48,8 @@ export async function createFoundationRuntime():Promise<FoundationRuntime>{
   providers.register(new FakeSTTProvider(),["stt"]);
   providers.register(new FakeEmbeddingProvider(),["embeddings"]);
   providers.register(new FakeVisionProvider(),["vision"]);
+
+  const aiRuntime=new AiRuntime(providers,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
 
   const moduleCapabilities:Record<string,readonly string[]>={
     "character.fake":["character.expression","character.speech"],
@@ -142,7 +147,9 @@ export async function createFoundationRuntime():Promise<FoundationRuntime>{
     async start(){await moduleManager.initializeAll();await moduleManager.startAll();runtimeStatus="running";},
     async stop(){try{await moduleManager.stopAll();}finally{runtimeStatus="stopped";}},
     diagnostics:snapshot,
-    invoke:request=>broker.execute({request,credential:characterCredential})
+    invoke:request=>broker.execute({request,credential:characterCredential}),
+    chat:request=>aiRuntime.generate(request),
+    aiRuntimeHealth:()=>aiRuntime.health()
   };
 }
 export async function startFoundationRuntime(){const runtime=await createFoundationRuntime();await runtime.start();return runtime;}

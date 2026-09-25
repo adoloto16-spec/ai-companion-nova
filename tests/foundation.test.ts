@@ -115,7 +115,8 @@ async function enableDisableTest(){
 async function providerTest(){
   const registry=new ProviderRegistry(),chat=new FakeChatProvider(),tts=new FakeTTSProvider();
   registry.register(chat,["chat"]);registry.register(tts,["tts"]);
-  equal(registry.findByCapabilities("chat",["toolCalling"]).length,1,"capability discovery");
+  equal(registry.findByCapabilities("tts",["audioOutput"]).length,1,"capability discovery");
+  equal(chat.capabilities().toolCalling,false,"fake chat does not claim tool calling");
   equal((await registry.health())["fake.chat"]?.status,"healthy","provider health");
   const audit=new InMemoryAuditService();
   await audit.record({timestamp:"now",actorId:"a",actorType:"module",action:"test",resourceType:"resource",argumentKeys:[],status:"denied",durationMs:1,allowed:false});

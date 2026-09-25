@@ -70,4 +70,10 @@ export class StandardContractValidator extends MinimalJsonSchemaValidator {
   validateEvent(value:unknown){return this.validate(value,STANDARD_SCHEMAS["event-envelope"]!);}
   validatePermission(value:unknown){return this.validate(value,STANDARD_SCHEMAS["permission"]!);}
   validateActionResult(value:unknown){return this.validate(value,STANDARD_SCHEMAS["action-result"]!);}
+  validateChatMessage(value:unknown){return this.validate(value,STANDARD_SCHEMAS["chat-message"]!);}
+  validateChatContext(value:unknown){return this.validate(value,STANDARD_SCHEMAS["chat-context"]!);}
+  validateChatGenerationOptions(value:unknown){return this.validate(value,STANDARD_SCHEMAS["chat-generation-options"]!);}
+  validateChatRequest(value:unknown){return this.validate(value,STANDARD_SCHEMAS["chat-request"]!);}
+  validateChatResponse(value:unknown){return this.validate(value,STANDARD_SCHEMAS["chat-response"]!);}
+  validateChatError(value:unknown){return this.validate(value,STANDARD_SCHEMAS["chat-error"]!);}
 }

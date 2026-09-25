@@ -26,7 +26,9 @@ for(const file of walk(process.cwd())){
 const required=[
   "contracts/schemas/module-manifest.schema.json","contracts/schemas/health-status.schema.json","contracts/schemas/event-envelope.schema.json",
   "contracts/schemas/action-request.schema.json","contracts/schemas/action-result.schema.json","contracts/schemas/permission.schema.json",
-  "contracts/schemas/diagnostics.schema.json","contracts/schemas/credential-reference.schema.json","contracts/src/schema-validator.ts",
+  "contracts/schemas/diagnostics.schema.json","contracts/schemas/credential-reference.schema.json",
+  "contracts/schemas/chat-message.schema.json","contracts/schemas/chat-context.schema.json","contracts/schemas/chat-generation-options.schema.json",
+  "contracts/schemas/chat-request.schema.json","contracts/schemas/chat-response.schema.json","contracts/schemas/chat-error.schema.json","contracts/src/schema-validator.ts",
   "contracts/src/generated-schemas.ts","runtime/bootstrap/src/index.ts","apps/desktop-ui/src/main.tsx",
   "apps/desktop-host/src-tauri/build.rs","apps/desktop-host/src-tauri/capabilities/default.json"
 ];
