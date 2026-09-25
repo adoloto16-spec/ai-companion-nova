@@ -3,7 +3,8 @@ import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import {
   InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,
   InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,
-  DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,createMemoryConfig
+  DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
+  InMemoryActorIdentityResolver,createMemoryConfig
 } from "../../../core/src/index";
 import {MinimalJsonSchemaValidator} from "../../../contracts/src/schema-validator";
 import {FakeBrowserModule,FakeCharacterModule,FakeMemoryModule} from "../../../modules/mock/src/index";
@@ -25,9 +26,18 @@ export async function createFoundationRuntime():Promise<FoundationRuntime>{
   const providers=new ProviderRegistry();
   const audit=new InMemoryAuditService();
   const permissions=new InMemoryPermissionService();
+  const actorResolver=new InMemoryActorIdentityResolver();
   const tools=new InMemoryToolRegistry();
   const targetResolvers=new Map<string,ActionTargetResolver>();
   const browser=new FakeBrowserModule();
+  const characterCredential={token:"foundation-character-opaque"};
+  actorResolver.register(characterCredential,{
+    actorId:"character",
+    actorType:"module",
+    moduleId:"character.fake",
+    trusted:true,
+    capabilities:["browser.navigate","browser.control","character.expression","memory.search"]
+  });
 
   providers.register(new FakeChatProvider(),["chat"]);
   providers.register(new FakeTTSProvider(),["tts"]);
@@ -95,7 +105,7 @@ export async function createFoundationRuntime():Promise<FoundationRuntime>{
   const confirmation=new DefaultConfirmationService(async()=>false);
   const broker=new DefaultActionBroker({
     toolRegistry:tools,permissions,foreground,riskPolicy:new DefaultRiskPolicy(),confirmation,audit,
-    schemaValidator:new MinimalJsonSchemaValidator(),diagnostics:diagnosticsStore,targetResolvers
+    schemaValidator:new MinimalJsonSchemaValidator(),diagnostics:diagnosticsStore,targetResolvers,actorResolver
   });
 
   let runtimeStatus:RuntimeDiagnostics["runtimeStatus"]="starting";
