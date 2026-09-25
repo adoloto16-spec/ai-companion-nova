@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - foundation/hardening-v0.2
+    # Only an explicitly created manual-test tag publishes a GitHub Release.
+    # PRs and ordinary branch builds remain Actions-artifact-only.
+    tags:
+      - "nova-test-v*"
   pull_request:
   workflow_dispatch:
 
@@ -172,8 +176,52 @@ jobs:
           Write-Host "Installer: $($installer.FullName)"
           Write-Host "Artifact: $artifactPath"
 
+      # Actions artifact intentionally contains only the final Windows installer.
+      # Intermediate outputs, test results, logs, coverage, diagnostics and desktop-ui-dist
+      # are never published as Release assets.
       - uses: actions/upload-artifact@v4
         with:
           name: ai-companion-nova-windows-x64
           path: artifacts/AI Companion Nova_x64-setup.exe
           if-no-files-found: error
+
+  publish-windows-release:
+    # Release publication is opt-in via an explicitly pushed nova-test-v* tag.
+    # The Release contains only the final Windows installer, not CI artifacts in general.
+    if: startsWith(github.ref, 'refs/tags/nova-test-v')
+    needs:
+      - windows-installer
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download only Windows installer artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ai-companion-nova-windows-x64
+          path: release-assets
+
+      - name: Prepare release asset
+        shell: bash
+        run: |
+          source="release-assets/AI Companion Nova_x64-setup.exe"
+          target="release-assets/AI-Companion-Nova-windows-x64-installer.exe"
+
+          test -f "$source"
+          cp "$source" "$target"
+          rm "$source"
+
+          test "$(find release-assets -maxdepth 1 -type f | wc -l)" -eq 1
+          test -f "$target"
+
+      - name: Publish Windows installer release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "release-assets/AI-Companion-Nova-windows-x64-installer.exe" \
+            --verify-tag \
+            --prerelease \
+            --title "AI Companion Nova $GITHUB_REF_NAME" \
+            --notes "Manual Windows user-test build. Release assets are intentionally limited to the final Windows NSIS installer."
