@@ -1,6 +1,6 @@
 import {
   DefaultActionBroker,DefaultConfirmationService,DefaultRiskPolicy,InMemoryAuditService,InMemoryPermissionService,
-  InMemoryToolRegistry,BrowserTargetResolver,FilesystemTargetResolver,ApplicationTargetResolver
+  InMemoryToolRegistry,BrowserTargetResolver,FilesystemTargetResolver,ApplicationTargetResolver,InMemoryActorIdentityResolver
 } from "../../core/src";
 import {MinimalJsonSchemaValidator} from "../../contracts/src/schema-validator";
 import {FOUNDATION_SCHEMA_VERSION,type ActionInvocation,type ActionRequest,type ActorCredential,type ActionTarget,ToolDefinition} from "../../contracts/src";
@@ -11,7 +11,6 @@ const foreground={async verify(){return {allowed:true,reason:"foreground ok"}}};
 
 function makeBroker(definition:ToolDefinition,resolver:{id:string;resolve(request:ActionRequest,tool:ToolDefinition):Promise<ActionTarget>},driver:{id:string;execute(request:ActionRequest,target:ActionTarget):Promise<unknown>},allowScope:Parameters<InMemoryPermissionService["add"]>[0]["scope"],confirmationResult=true){
   const tools=new InMemoryToolRegistry(),permissions=new InMemoryPermissionService(),audit=new InMemoryAuditService();
-  const {InMemoryActorIdentityResolver}=require("../../core/src") as typeof import("../../core/src");
   const actorResolver=new InMemoryActorIdentityResolver();
   actorResolver.register(credential,{actorId:"character",actorType:"module",moduleId:"character.fake",trusted:true,capabilities:["browser.navigate","filesystem.write","computer.control"]});
   tools.register(definition,driver);permissions.add({id:"allow",schemaVersion:FOUNDATION_SCHEMA_VERSION,subject:"character",resourceType:definition.resourceType,action:definition.action,effect:"allow",scope:allowScope});
