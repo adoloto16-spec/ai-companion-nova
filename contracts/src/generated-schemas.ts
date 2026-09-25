@@ -1,127 +1,6 @@
-import type {JsonSchema} from "./index";
+import type { JsonSchema } from "./index";
 
-export const STANDARD_SCHEMAS:Record<string,JsonSchema>={
-  "module-manifest": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "type": "object",
-    "required": [
-      "id",
-      "name",
-      "version",
-      "apiVersion",
-      "schemaVersion",
-      "type",
-      "runtime",
-      "optional",
-      "capabilities"
-    ],
-    "additionalProperties": false,
-    "properties": {
-      "id": {
-        "type": "string"
-      },
-      "name": {
-        "type": "string"
-      },
-      "version": {
-        "type": "string"
-      },
-      "apiVersion": {
-        "type": "string"
-      },
-      "schemaVersion": {
-        "type": "string"
-      },
-      "type": {
-        "enum": [
-          "service",
-          "adapter",
-          "worker",
-          "ui"
-        ]
-      },
-      "runtime": {
-        "enum": [
-          "typescript",
-          "rust"
-        ]
-      },
-      "optional": {
-        "type": "boolean"
-      },
-      "capabilities": {
-        "type": "array",
-        "items": {
-          "type": "string"
-        }
-      }
-    }
-  },
-  "health-status": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "type": "object",
-    "required": [
-      "status"
-    ],
-    "additionalProperties": false,
-    "properties": {
-      "status": {
-        "enum": [
-          "healthy",
-          "degraded",
-          "unavailable",
-          "error"
-        ]
-      },
-      "message": {
-        "type": "string"
-      },
-      "capabilities": {
-        "type": "array",
-        "items": {
-          "type": "string"
-        }
-      },
-      "lastSuccessfulOperation": {
-        "type": "string"
-      },
-      "diagnostics": {
-        "type": "object",
-        "additionalProperties": true
-      }
-    }
-  },
-  "event-envelope": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "type": "object",
-    "required": [
-      "id",
-      "type",
-      "timestamp",
-      "source",
-      "schemaVersion",
-      "payload"
-    ],
-    "additionalProperties": false,
-    "properties": {
-      "id": {
-        "type": "string"
-      },
-      "type": {
-        "type": "string"
-      },
-      "timestamp": {
-        "type": "string"
-      },
-      "source": {
-        "type": "string"
-      },
-      "schemaVersion": {
-        "type": "string"
-      },
-      "payload": {}
-    }
-  },
+export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
   "action-request": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
@@ -185,56 +64,476 @@ export const STANDARD_SCHEMAS:Record<string,JsonSchema>={
       }
     }
   },
-  "permission": {
+  "actor-credential": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": [
+      "token"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "token": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "chat-context": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.ai-companion-nova.dev/chat-context/v1",
+    "title": "AI Companion Nova Chat Context v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "conversationId",
+      "messages"
+    ],
+    "properties": {
+      "conversationId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "messages": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "role",
+            "content"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "role": {
+              "enum": [
+                "system",
+                "user",
+                "assistant",
+                "tool"
+              ]
+            },
+            "content": {
+              "type": "string"
+            },
+            "toolCallId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        }
+      },
+      "metadata": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    }
+  },
+  "chat-error": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.ai-companion-nova.dev/chat-error/v1",
+    "title": "AI Companion Nova Chat Error v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "apiVersion",
+      "schemaVersion",
+      "code",
+      "message"
+    ],
+    "properties": {
+      "apiVersion": {
+        "enum": [
+          "1"
+        ]
+      },
+      "schemaVersion": {
+        "enum": [
+          "1"
+        ]
+      },
+      "code": {
+        "enum": [
+          "INVALID_REQUEST",
+          "PROVIDER_NOT_FOUND",
+          "PROVIDER_UNAVAILABLE",
+          "PROVIDER_ERROR",
+          "INVALID_RESPONSE",
+          "UNSUPPORTED"
+        ]
+      },
+      "message": {
+        "type": "string",
+        "minLength": 1
+      },
+      "requestId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "providerId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "retryable": {
+        "type": "boolean"
+      },
+      "details": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    }
+  },
+  "chat-generation-options": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.ai-companion-nova.dev/chat-generation-options/v1",
+    "title": "AI Companion Nova Chat Generation Options v1",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "temperature": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 2
+      },
+      "maxTokens": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "topP": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "responseFormat": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "enum": [
+              "text",
+              "json"
+            ]
+          },
+          "schema": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      }
+    }
+  },
+  "chat-message": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.ai-companion-nova.dev/chat-message/v1",
+    "title": "AI Companion Nova Chat Message v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "role",
+      "content"
+    ],
+    "properties": {
+      "id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "role": {
+        "enum": [
+          "system",
+          "user",
+          "assistant",
+          "tool"
+        ]
+      },
+      "content": {
+        "type": "string"
+      },
+      "toolCallId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "metadata": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    }
+  },
+  "chat-request": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.ai-companion-nova.dev/chat-request/v1",
+    "title": "AI Companion Nova Chat Request v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "apiVersion",
+      "schemaVersion",
+      "requestId",
+      "model",
+      "context"
+    ],
+    "properties": {
+      "apiVersion": {
+        "enum": [
+          "1"
+        ]
+      },
+      "schemaVersion": {
+        "enum": [
+          "1"
+        ]
+      },
+      "requestId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "providerId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "model": {
+        "type": "string",
+        "minLength": 1
+      },
+      "context": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "conversationId",
+          "messages"
+        ],
+        "properties": {
+          "conversationId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "messages": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "role",
+                "content"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "role": {
+                  "enum": [
+                    "system",
+                    "user",
+                    "assistant",
+                    "tool"
+                  ]
+                },
+                "content": {
+                  "type": "string"
+                },
+                "toolCallId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "metadata": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "generation": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "temperature": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 2
+          },
+          "maxTokens": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "topP": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "responseFormat": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "enum": [
+                  "text",
+                  "json"
+                ]
+              },
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      },
+      "metadata": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    }
+  },
+  "chat-response": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.ai-companion-nova.dev/chat-response/v1",
+    "title": "AI Companion Nova Chat Response v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "apiVersion",
+      "schemaVersion",
+      "requestId",
+      "conversationId",
+      "providerId",
+      "model",
+      "message",
+      "finishReason"
+    ],
+    "properties": {
+      "apiVersion": {
+        "enum": [
+          "1"
+        ]
+      },
+      "schemaVersion": {
+        "enum": [
+          "1"
+        ]
+      },
+      "requestId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "conversationId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "providerId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "model": {
+        "type": "string",
+        "minLength": 1
+      },
+      "message": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "role",
+          "content"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "role": {
+            "enum": [
+              "system",
+              "user",
+              "assistant",
+              "tool"
+            ]
+          },
+          "content": {
+            "type": "string"
+          },
+          "toolCallId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "finishReason": {
+        "enum": [
+          "stop",
+          "length",
+          "content_filter",
+          "error",
+          "unknown"
+        ]
+      },
+      "usage": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "promptTokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "completionTokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "totalTokens": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "metadata": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    }
+  },
+  "credential-reference": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
     "required": [
       "id",
-      "schemaVersion",
-      "subject",
-      "resourceType",
-      "action",
-      "effect"
+      "kind"
     ],
     "additionalProperties": false,
     "properties": {
       "id": {
         "type": "string"
       },
-      "schemaVersion": {
+      "kind": {
         "type": "string"
       },
-      "subject": {
+      "provider": {
         "type": "string"
       },
-      "resourceType": {
-        "enum": [
-          "domain",
-          "filesystem",
-          "application",
-          "resource"
-        ]
-      },
-      "action": {
+      "version": {
         "type": "string"
-      },
-      "effect": {
-        "enum": [
-          "allow",
-          "deny"
-        ]
-      },
-      "scope": {
-        "type": "object",
-        "additionalProperties": true
       }
-    }
-  },
-  "provider-capability": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "type": "object",
-    "additionalProperties": {
-      "type": "boolean"
     }
   },
   "diagnostics": {
@@ -293,31 +592,181 @@ export const STANDARD_SCHEMAS:Record<string,JsonSchema>={
       }
     }
   },
-  "credential-reference": {
+  "event-envelope": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
     "required": [
       "id",
-      "kind"
+      "type",
+      "timestamp",
+      "source",
+      "schemaVersion",
+      "payload"
     ],
     "additionalProperties": false,
     "properties": {
       "id": {
         "type": "string"
       },
-      "kind": {
+      "type": {
         "type": "string"
       },
-      "provider": {
+      "timestamp": {
         "type": "string"
       },
-      "version": {
+      "source": {
         "type": "string"
+      },
+      "schemaVersion": {
+        "type": "string"
+      },
+      "payload": {}
+    }
+  },
+  "health-status": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": [
+      "status"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "status": {
+        "enum": [
+          "healthy",
+          "degraded",
+          "unavailable",
+          "error"
+        ]
+      },
+      "message": {
+        "type": "string"
+      },
+      "capabilities": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "lastSuccessfulOperation": {
+        "type": "string"
+      },
+      "diagnostics": {
+        "type": "object",
+        "additionalProperties": true
       }
     }
   },
   "json-rpc-message": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "description": "Validated at runtime by the JSON-RPC boundary. Request, response and notification share the jsonrpc marker."
+  },
+  "module-manifest": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": [
+      "id",
+      "name",
+      "version",
+      "apiVersion",
+      "schemaVersion",
+      "type",
+      "runtime",
+      "optional",
+      "capabilities"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "version": {
+        "type": "string"
+      },
+      "apiVersion": {
+        "type": "string"
+      },
+      "schemaVersion": {
+        "type": "string"
+      },
+      "type": {
+        "enum": [
+          "service",
+          "adapter",
+          "worker",
+          "ui"
+        ]
+      },
+      "runtime": {
+        "enum": [
+          "typescript",
+          "rust"
+        ]
+      },
+      "optional": {
+        "type": "boolean"
+      },
+      "capabilities": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "permission": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": [
+      "id",
+      "schemaVersion",
+      "subject",
+      "resourceType",
+      "action",
+      "effect"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "schemaVersion": {
+        "type": "string"
+      },
+      "subject": {
+        "type": "string"
+      },
+      "resourceType": {
+        "enum": [
+          "domain",
+          "filesystem",
+          "application",
+          "resource"
+        ]
+      },
+      "action": {
+        "type": "string"
+      },
+      "effect": {
+        "enum": [
+          "allow",
+          "deny"
+        ]
+      },
+      "scope": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    }
+  },
+  "provider-capability": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": {
+      "type": "boolean"
+    }
   }
-} as unknown as Record<string,JsonSchema>;
+} as unknown as Record<string, JsonSchema>;

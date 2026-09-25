@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/chat-generation-options/v1",
+  "title": "AI Companion Nova Chat Generation Options v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "temperature": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 2
+    },
+    "maxTokens": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "topP": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "responseFormat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "text",
+            "json"
+          ]
+        },
+        "schema": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}

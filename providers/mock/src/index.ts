@@ -5,10 +5,22 @@ import type {
 
 export class FakeChatProvider implements ChatProvider{
   id="fake.chat";
-  capabilities():ProviderCapabilities{return {streaming:true,toolCalling:true,structuredOutput:true};}
-  async listModels():Promise<ModelInfo[]>{return [{id:"fake-chat"}];}
-  async *chat(_request:ChatRequest):AsyncIterable<ChatEvent>{
-    yield {type:"started"};yield {type:"text_delta",text:"fake response"};yield {type:"completed"};
+  metadata(){return {id:this.id,kind:"chat" as const,displayName:"Fake Chat Provider",version:"1.0.0",description:"Deterministic offline provider used by Foundation tests."};}
+  capabilities():ProviderCapabilities{return {streaming:false,toolCalling:false};}
+  async listModels():Promise<ModelInfo[]>{return [{id:"fake-chat",displayName:"Fake Chat"}];}
+  async chat(request:ChatRequest):Promise<import("../../../contracts/src/index").ChatResponse>{
+    return {
+      apiVersion:request.apiVersion,
+      schemaVersion:request.schemaVersion,
+      requestId:request.requestId,
+      conversationId:request.context.conversationId,
+      providerId:this.id,
+      model:request.model,
+      message:{id:request.requestId+":assistant",role:"assistant",content:"fake response"},
+      finishReason:"stop",
+      usage:{promptTokens:1,completionTokens:2,totalTokens:3},
+      metadata:{deterministic:true}
+    };
   }
   async health():Promise<HealthStatus>{return {status:"healthy",capabilities:["chat"]};}
 }
