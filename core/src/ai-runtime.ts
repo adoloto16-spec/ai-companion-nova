@@ -14,6 +14,14 @@ export interface AiRuntimeOptions{validator?:SchemaValidator;diagnostics?:Diagno
 export interface ChatContextInput{conversationId:string;messages:readonly ChatContext["messages"][number][];metadata?:Record<string,unknown>}
 export const createChatContext=(input:ChatContextInput):ChatContext=>({conversationId:input.conversationId,messages:[...input.messages],...(input.metadata===undefined?{}:{metadata:{...input.metadata}})});
 
+function readProviderChatError(error:unknown,validator:SchemaValidator):ChatError|undefined{
+  if(!error||typeof error!=="object"||!("chatError" in error))return undefined;
+  const candidate=(error as {chatError?:unknown}).chatError;
+  if(candidate===undefined)return undefined;
+  const result=validator.validate(candidate,STANDARD_SCHEMAS["chat-error"]!);
+  return result.valid?candidate as ChatError:undefined;
+}
+
 export class AiRuntime{
   private readonly validator:SchemaValidator;
   private readonly clock:()=>string;
@@ -34,15 +42,30 @@ export class AiRuntime{
       await this.options.events?.publish(createEvent("ChatResponseReceived",{requestId:request.requestId,conversationId:request.context.conversationId,providerId,model:request.model,finishReason:normalized.finishReason},"ai-runtime",this.clock,request.requestId+":received"));
       return normalized;
     }catch(error){
-      const detail=error instanceof Error?error.message:String(error);
-      this.options.diagnostics?.recordError("ai-runtime","CHAT_PROVIDER_FAILED","Chat provider generation failed.",{requestId:request.requestId,providerId,error:detail});
-      return this.fail({apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION,code:"PROVIDER_ERROR",message:"Chat provider generation failed.",requestId:request.requestId,providerId},request.context.conversationId);
+      const providerError=readProviderChatError(error,this.validator);
+      if(providerError){
+        return this.fail({
+          ...providerError,
+          apiVersion:CHAT_API_VERSION,
+          schemaVersion:CHAT_SCHEMA_VERSION,
+          requestId:request.requestId,
+          providerId
+        },request.context.conversationId);
+      }
+      return this.fail({
+        apiVersion:CHAT_API_VERSION,
+        schemaVersion:CHAT_SCHEMA_VERSION,
+        code:"PROVIDER_ERROR",
+        message:"Chat provider generation failed.",
+        requestId:request.requestId,
+        providerId
+      },request.context.conversationId);
     }
   }
   private resolveProvider(providerId?:string):ChatProvider|undefined{const registrations=this.providers.list("chat");if(providerId){const match=registrations.find(item=>item.provider.id===providerId);return match?.provider as ChatProvider|undefined;}return registrations[0]?.provider as ChatProvider|undefined;}
   private async fail(error:ChatError,conversationId?:string):Promise<never>{
     await this.options.events?.publish(createEvent("ChatRequestFailed",{requestId:error.requestId??"unknown",...(conversationId?{conversationId}:{}),...(error.providerId?{providerId:error.providerId}:{}),code:error.code},"ai-runtime",this.clock,(error.requestId??"unknown")+":failed:"+error.code)).catch(()=>undefined);
-    this.options.diagnostics?.recordError("ai-runtime",error.code,error.message,{requestId:error.requestId,providerId:error.providerId});
+    this.options.diagnostics?.recordError("ai-runtime",error.code,error.message,{requestId:error.requestId,providerId:error.providerId,...(error.details?{details:error.details}:{})});
     throw new AiRuntimeError(error);
   }
 }
