@@ -111,6 +111,43 @@ jobs:
       - name: Build React UI
         run: pnpm --dir apps/desktop-ui build
 
+      - name: Generate Windows ICO from source PNG
+        shell: pwsh
+        run: |
+          $pngPath = "apps/desktop-host/src-tauri/icons/icon.png"
+          $icoPath = "apps/desktop-host/src-tauri/icons/icon.ico"
+          $png = [System.IO.File]::ReadAllBytes($pngPath)
+
+          $stream = New-Object System.IO.MemoryStream
+          $writer = New-Object System.IO.BinaryWriter($stream)
+
+          # ICO header: reserved=0, type=1 (icon), count=1.
+          $writer.Write([UInt16]0)
+          $writer.Write([UInt16]1)
+          $writer.Write([UInt16]1)
+
+          # Single 64x64 PNG-backed icon entry.
+          $writer.Write([Byte]64)
+          $writer.Write([Byte]64)
+          $writer.Write([Byte]0)
+          $writer.Write([Byte]0)
+          $writer.Write([UInt16]1)
+          $writer.Write([UInt16]32)
+          $writer.Write([UInt32]$png.Length)
+          $writer.Write([UInt32]22)
+          $writer.Write($png)
+
+          $writer.Flush()
+          [System.IO.File]::WriteAllBytes($icoPath, $stream.ToArray())
+          $writer.Dispose()
+          $stream.Dispose()
+
+          if (-not (Test-Path $icoPath)) {
+            throw "Failed to generate $icoPath"
+          }
+
+          Write-Host "Generated $icoPath from $pngPath"
+
       - name: Build Windows NSIS installer
         shell: pwsh
         run: pnpm exec tauri build --config apps/desktop-host/src-tauri/tauri.conf.json --target x86_64-pc-windows-msvc --bundles nsis --ci
