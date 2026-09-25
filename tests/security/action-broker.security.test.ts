@@ -3,19 +3,22 @@ import {
   InMemoryToolRegistry,BrowserTargetResolver,FilesystemTargetResolver,ApplicationTargetResolver
 } from "../../core/src";
 import {MinimalJsonSchemaValidator} from "../../contracts/src/schema-validator";
-import {FOUNDATION_SCHEMA_VERSION,type ActionInvocation,type ActionRequest,type ActorIdentity,type ActionTarget,ToolDefinition} from "../../contracts/src";
+import {FOUNDATION_SCHEMA_VERSION,type ActionInvocation,type ActionRequest,type ActorCredential,type ActionTarget,ToolDefinition} from "../../contracts/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(actual!==expected)throw new Error(label+" expected "+String(expected)+" got "+String(actual));}
-const actor:ActorIdentity={actorId:"character",actorType:"module",moduleId:"character.fake",trusted:true,capabilities:["browser.navigate","filesystem.write","computer.control"]};
+const credential:ActorCredential={token:"test-character"};
 const foreground={async verify(){return {allowed:true,reason:"foreground ok"}}};
 
 function makeBroker(definition:ToolDefinition,resolver:{id:string;resolve(request:ActionRequest,tool:ToolDefinition):Promise<ActionTarget>},driver:{id:string;execute(request:ActionRequest,target:ActionTarget):Promise<unknown>},allowScope:Parameters<InMemoryPermissionService["add"]>[0]["scope"],confirmationResult=true){
   const tools=new InMemoryToolRegistry(),permissions=new InMemoryPermissionService(),audit=new InMemoryAuditService();
+  const {InMemoryActorIdentityResolver}=require("../../core/src") as typeof import("../../core/src");
+  const actorResolver=new InMemoryActorIdentityResolver();
+  actorResolver.register(credential,{actorId:"character",actorType:"module",moduleId:"character.fake",trusted:true,capabilities:["browser.navigate","filesystem.write","computer.control"]});
   tools.register(definition,driver);permissions.add({id:"allow",schemaVersion:FOUNDATION_SCHEMA_VERSION,subject:"character",resourceType:definition.resourceType,action:definition.action,effect:"allow",scope:allowScope});
-  const broker=new DefaultActionBroker({toolRegistry:tools,permissions,foreground,riskPolicy:new DefaultRiskPolicy(),confirmation:new DefaultConfirmationService(async()=>confirmationResult),audit,schemaValidator:new MinimalJsonSchemaValidator(),targetResolvers:new Map([[resolver.id,resolver]])});
-  return {broker,audit};
+  const broker=new DefaultActionBroker({toolRegistry:tools,permissions,foreground,riskPolicy:new DefaultRiskPolicy(),confirmation:new DefaultConfirmationService(async()=>confirmationResult),audit,schemaValidator:new MinimalJsonSchemaValidator(),targetResolvers:new Map([[resolver.id,resolver]]),actorResolver});
+  return {broker,audit,actorResolver};
 }
-const request=(tool:string,argumentsValue:Record<string,unknown>):ActionInvocation=>({request:{id:"a1",schemaVersion:FOUNDATION_SCHEMA_VERSION,tool,arguments:argumentsValue},actor});
+const request=(tool:string,argumentsValue:Record<string,unknown>):ActionInvocation=>({request:{id:"a1",schemaVersion:FOUNDATION_SCHEMA_VERSION,tool,arguments:argumentsValue},credential});
 const browserDefinition:ToolDefinition={
   id:"browser.navigate",version:"1.0.0",schemaVersion:"1",name:"browser.navigate",description:"navigate",risk:"low",
   requiredCapabilities:["browser.navigate"],resourceType:"domain",action:"browser.navigate",targetResolverId:"browser.url",
@@ -43,7 +46,13 @@ async function capabilityScenario(){
   const definition:ToolDefinition={...browserDefinition,id:"filesystem.write",name:"filesystem.write",requiredCapabilities:["filesystem.write"],resourceType:"filesystem",action:"filesystem.write",targetResolverId:"filesystem.path",parameters:{type:"object",properties:{path:{type:"string"}},required:["path"],additionalProperties:false}};
   const resolver=new FilesystemTargetResolver("filesystem.path",async path=>path);
   const {broker}=makeBroker(definition,resolver,{id:"driver",async execute(){return {ok:true}}},["D:/AI_Girl/"]);
-  equal((await broker.execute({...request("filesystem.write",{path:"D:/AI_Girl/file.txt"}),actor:{...actor,capabilities:[]}})).status,"denied","missing capability");
+  const deniedCredential={token:"no-filesystem-capability"};
+  const deniedInvocation={...request("filesystem.write",{path:"D:/AI_Girl/file.txt"}),credential:deniedCredential};
+  const brokerWithDeniedActor=makeBroker(definition,resolver,{id:"driver",async execute(){return {ok:true}}},["D:/AI_Girl/"]).broker;
+  const resolverForDenied=resolver;
+  const actorResolver=makeBroker(definition,resolverForDenied,{id:"driver",async execute(){return {ok:true}}},["D:/AI_Girl/"]).actorResolver;
+  actorResolver.register(deniedCredential,{actorId:"character-no-fs",actorType:"module",moduleId:"character.fake",trusted:true,capabilities:["browser.navigate"]});
+  equal((await brokerWithDeniedActor.execute(deniedInvocation)).status,"denied","missing capability");
 }
 async function filesystemScenario(){
   const definition:ToolDefinition={...browserDefinition,id:"filesystem.write",name:"filesystem.write",requiredCapabilities:["filesystem.write"],resourceType:"filesystem",action:"filesystem.write",targetResolverId:"filesystem.path",parameters:{type:"object",properties:{path:{type:"string"}},required:["path"],additionalProperties:false}};
@@ -57,6 +66,10 @@ async function applicationScenario(){
   const {broker}=makeBroker(definition,new ApplicationTargetResolver("application.window"),{id:"driver",async execute(){return {ok:true}}},["chrome.exe"],true);
   equal((await broker.execute(request("application.control",{applicationId:"discord.exe"}))).status,"denied","wrong application");
   equal((await broker.execute(request("application.control",{applicationId:"chrome.exe"}))).status,"success","allowed application");
+}
+async function unknownCredentialScenario(){
+  const {broker}=makeBroker(browserDefinition,new BrowserTargetResolver("browser.url"),{id:"driver",async execute(){return {ok:true}}},["youtube.com"]);
+  equal((await broker.execute({...request("browser.navigate",{url:"https://youtube.com"}),credential:{token:"unknown"}})).status,"denied","unknown credential");
 }
 async function parameterAndDriverScenario(){
   const resolver=new BrowserTargetResolver("browser.url"),tools=new InMemoryToolRegistry(),permissions=new InMemoryPermissionService(),audit=new InMemoryAuditService();
@@ -77,7 +90,7 @@ async function postconditionScenario(){
 
 void (async()=>{
   for(const [name,test] of [
-    ["normal domain",normalDomainScenario],["forged scope",forgedScopeScenario],["risk downgrade",riskDowngradeScenario],
+    ["normal domain",normalDomainScenario],["forged scope",forgedScopeScenario],["unknown credential",unknownCredentialScenario],["risk downgrade",riskDowngradeScenario],
     ["capability enforcement",capabilityScenario],["filesystem scope",filesystemScenario],["application scope",applicationScenario],
     ["parameter/driver security",parameterAndDriverScenario],["postcondition",postconditionScenario]
   ] as const){await test();console.log("PASS "+name);}
