@@ -3,7 +3,7 @@ use serde::{Deserialize,Serialize};
 const CRED_TYPE_GENERIC:u32=1;
 const CRED_PERSIST_LOCAL:u32=2;
 const ERROR_NOT_FOUND:u32=1168;
-const MAX_SECRET_BYTES:usize=512;
+const MAX_SECRET_BYTES:usize=5*512;
 
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(deny_unknown_fields)]
@@ -115,7 +115,19 @@ impl WindowsCredentialStore{
 
     #[cfg(windows)]
     pub fn exists(&self,reference:&CredentialReference)->Result<bool,String>{
-        Ok(self.get_secret(reference)?.is_some())
+        use std::ptr::null_mut;
+        let target=target_name(reference)?;
+        let target_w=wide(&target);
+        unsafe{
+            let mut credential:*mut CREDENTIALW=null_mut();
+            if CredReadW(target_w.as_ptr(),CRED_TYPE_GENERIC,0,&mut credential)==0{
+                let error=GetLastError();
+                if error==ERROR_NOT_FOUND{return Ok(false);}
+                return Err(format!("Windows Credential Manager existence check failed with code {error}."));
+            }
+            CredFree(credential as *mut _);
+            Ok(true)
+        }
     }
 
     #[cfg(not(windows))]
