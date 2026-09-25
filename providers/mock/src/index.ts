@@ -6,7 +6,7 @@ import type {
 export class FakeChatProvider implements ChatProvider{
   id="fake.chat";
   metadata(){return {id:this.id,kind:"chat" as const,displayName:"Fake Chat Provider",version:"1.0.0",description:"Deterministic offline provider used by Foundation tests."};}
-  capabilities():ProviderCapabilities{return {streaming:false,toolCalling:true};}
+  capabilities():ProviderCapabilities{return {streaming:false,toolCalling:false};}
   async listModels():Promise<ModelInfo[]>{return [{id:"fake-chat",displayName:"Fake Chat"}];}
   async chat(request:ChatRequest):Promise<import("../../../contracts/src/index").ChatResponse>{
     return {
