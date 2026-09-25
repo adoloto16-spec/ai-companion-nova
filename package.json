@@ -1,21 +1,19 @@
 {
-  "name": "ai-companion-nova",
-  "private": true,
-  "version": "0.1.0",
-  "scripts": {
-    "build": "tsc -p tsconfig.foundation.json",
-    "typecheck": "tsc -p tsconfig.foundation.json --noEmit",
-    "test": "npm run build && node build/tests/foundation.test.js && node scripts/check-architecture.mjs"
+  "name":"ai-companion-nova",
+  "private":true,
+  "version":"0.2.0",
+  "scripts":{
+    "generate:schemas":"node scripts/generate-schema-catalog.mjs",
+    "typecheck":"tsc -p tsconfig.foundation.json --noEmit",
+    "build":"pnpm generate:schemas && tsc -p tsconfig.foundation.json",
+    "test:architecture":"node scripts/check-architecture.mjs",
+    "test:security":"pnpm build && node build/tests/security/action-broker.security.test.js",
+    "test":"pnpm build && node build/tests/foundation.test.js && node build/tests/security/action-broker.security.test.js && node scripts/check-architecture.mjs"
   },
-  "workspaces": [
-    "apps/*",
-    "contracts",
-    "sdk/typescript",
-    "core",
-    "modules/mock",
-    "providers/mock",
-    "host/ipc"
+  "workspaces":[
+    "apps/*","contracts","sdk/typescript","core","modules/mock","providers/mock",
+    "host/ipc","host/credentials","runtime/bootstrap"
   ],
-  "engines": { "node": ">=20" },
-  "devDependencies": { "typescript": "^5.8.3" }
+  "engines":{"node":">=20"},
+  "devDependencies":{"typescript":"^5.8.3"}
 }

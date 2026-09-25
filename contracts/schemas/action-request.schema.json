@@ -1,12 +1,1 @@
-{
-  "$schema":"https://json-schema.org/draft/2020-12/schema",
-  "type":"object",
-  "required":["id","tool","arguments","requestedBy","risk"],
-  "properties":{
-    "id":{"type":"string"},"tool":{"type":"string"},"arguments":{"type":"object","additionalProperties":true},
-    "requestedBy":{"type":"string"},"risk":{"enum":["low","medium","high","critical"]},
-    "resource":{"type":"string"},"action":{"type":"string"},
-    "scope":{"type":"object","additionalProperties":true},
-    "metadata":{"type":"object","additionalProperties":true}
-  }
-}
+{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["id","schemaVersion","tool","arguments"],"additionalProperties":false,"properties":{"id":{"type":"string"},"schemaVersion":{"type":"string"},"tool":{"type":"string"},"arguments":{"type":"object","additionalProperties":true},"metadata":{"type":"object","additionalProperties":true}}}

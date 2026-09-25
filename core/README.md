@@ -1,5 +1,5 @@
 # Core
 
-Core contains runtime-neutral lifecycle, event, state, provider registry, and action-broker infrastructure.
+Core contains lifecycle, event, state, provider and action-policy infrastructure.
 
-It must not import concrete providers or modules.
+Core imports contracts only. Concrete providers, modules, UI frameworks, automation engines and host implementations are composition-root concerns.

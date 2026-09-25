@@ -8,6 +8,18 @@
     "beforeBuildCommand":"pnpm --dir ../../desktop-ui build",
     "frontendDist":"../../desktop-ui/dist"
   },
-  "app":{"windows":[{"title":"AI Companion Nova","width":1100,"height":760}],"security":{"csp":null}},
+  "app":{
+    "security":{
+      "capabilities":["default"],
+      "csp":{
+        "default-src":"'self' asset: customprotocol:",
+        "connect-src":"ipc: http://ipc.localhost",
+        "img-src":"'self' asset: data: blob:",
+        "style-src":"'self' 'unsafe-inline'",
+        "script-src":"'self'"
+      }
+    },
+    "windows":[{"label":"main","title":"AI Companion Nova","width":1100,"height":760}]
+  },
   "bundle":{"active":false}
 }

@@ -1,8 +1,1 @@
-{
-  "$schema":"https://json-schema.org/draft/2020-12/schema",
-  "type":"object",
-  "required":["id","type","timestamp","source","payload"],
-  "properties":{
-    "id":{"type":"string"},"type":{"type":"string"},"timestamp":{"type":"string"},"source":{"type":"string"},"payload":{}
-  }
-}
+{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["id","type","timestamp","source","schemaVersion","payload"],"additionalProperties":false,"properties":{"id":{"type":"string"},"type":{"type":"string"},"timestamp":{"type":"string"},"source":{"type":"string"},"schemaVersion":{"type":"string"},"payload":{}}}
