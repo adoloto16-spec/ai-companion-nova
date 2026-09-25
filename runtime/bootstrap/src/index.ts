@@ -7,7 +7,7 @@ import {
   DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
   InMemoryActorIdentityResolver,createMemoryConfig
 } from "../../../core/src/index";
-import {MinimalJsonSchemaValidator} from "../../../contracts/src/schema-validator";
+import {StandardContractValidator} from "../../../contracts/src/index";
 import {FakeBrowserModule,FakeCharacterModule,FakeMemoryModule} from "../../../modules/mock/src/index";
 import {FakeChatProvider,FakeTTSProvider,FakeSTTProvider,FakeEmbeddingProvider,FakeVisionProvider} from "../../../providers/mock/src/index";
 import {objectSchema} from "../../../core/src/tools";
@@ -106,7 +106,7 @@ export async function createFoundationRuntime():Promise<FoundationRuntime>{
   const confirmation=new DefaultConfirmationService(async()=>false);
   const broker=new DefaultActionBroker({
     toolRegistry:tools,permissions,foreground,riskPolicy:new DefaultRiskPolicy(),confirmation,audit,
-    schemaValidator:new MinimalJsonSchemaValidator(),diagnostics:diagnosticsStore,targetResolvers,actorResolver
+    schemaValidator:new StandardContractValidator(),diagnostics:diagnosticsStore,targetResolvers,actorResolver
   });
 
   let runtimeStatus:RuntimeDiagnostics["runtimeStatus"]="starting";
