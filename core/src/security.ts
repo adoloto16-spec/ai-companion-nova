@@ -70,6 +70,11 @@ export class ApplicationTargetResolver implements ActionTargetResolver{
     return {kind:"application",applicationId,windowId:typeof windowId==="string"?windowId:undefined};
   }
 }
+export class InMemoryActorIdentityResolver implements import("../../contracts/src/index").ActorIdentityResolver{
+  private readonly identities=new Map<string,import("../../contracts/src/index").ActorIdentity>();
+  register(credential:import("../../contracts/src/index").ActorCredential,identity:import("../../contracts/src/index").ActorIdentity){this.identities.set(credential.token,identity);}
+  async resolve(credential:import("../../contracts/src/index").ActorCredential){return this.identities.get(credential.token);}
+}
 export class ScopedCapabilityContext implements CapabilityContext{
   constructor(private readonly allowed:ReadonlySet<string>){}
   has(capability:string){return this.allowed.has(capability);}
@@ -85,7 +90,7 @@ export class DefaultRiskPolicy implements RiskPolicy{
 }
 export class DefaultConfirmationService implements ConfirmationService{
   constructor(private readonly approve:(invocation:ActionInvocation,tool:ToolDefinition,target:ActionTarget)=>Promise<boolean>){}
-  confirm(invocation:ActionInvocation,tool:ToolDefinition,target:ActionTarget){return this.approve(invocation,tool,target);}
+  confirm(invocation:ActionInvocation,actor:import("../../contracts/src/index").ActorIdentity,tool:ToolDefinition,target:ActionTarget){return this.approve(invocation,tool,target);}
 }
 export class InMemoryPermissionService{
   private readonly rules:Permission[]=[];
