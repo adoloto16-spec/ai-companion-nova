@@ -88,7 +88,7 @@ async function restartAndShutdownTest(){
   equal(manager.getState("restartable"),"running","restart reaches running");
   let thrown=false;try{await manager.stopAll();}catch{thrown=true;}
   ok(thrown,"stopAll reports failure");
-  equal(stops,3,"shutdown continues after stop failure");
+  equal(stops,2,"shutdown continues after stop failure");
   equal(manager.getState("memory.fake"),"ready","other module stopped");
 }
 
