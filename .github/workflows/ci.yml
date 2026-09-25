@@ -2,7 +2,10 @@ name: foundation-ci
 
 on:
   push:
+    branches:
+      - foundation/hardening-v0.2
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: foundation-ci-${{ github.ref }}
@@ -70,3 +73,65 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo check --workspace
       - run: cargo check --workspace --all-features
+
+  windows-installer:
+    runs-on: windows-latest
+    needs:
+      - typescript-foundation
+      - react-ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install dependencies
+        shell: pwsh
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Generate schemas
+        run: pnpm generate:schemas
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build Foundation
+        run: pnpm build
+
+      - name: Build React UI
+        run: pnpm --dir apps/desktop-ui build
+
+      - name: Build Windows NSIS installer
+        shell: pwsh
+        run: pnpm exec tauri build --config apps/desktop-host/src-tauri/tauri.conf.json --target x86_64-pc-windows-msvc --bundles nsis --ci
+
+      - name: Prepare installer artifact
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path "apps/desktop-host/src-tauri/target" -Recurse -File -Filter "*-setup.exe" | Where-Object { $_.FullName -match "\\bundle\\nsis\\" } | Select-Object -First 1
+
+          if (-not $installer) {
+            throw "NSIS installer was not generated."
+          }
+
+          New-Item -ItemType Directory -Force -Path "artifacts" | Out-Null
+          Copy-Item -LiteralPath $installer.FullName -Destination "artifacts/AI Companion Nova_x64-setup.exe" -Force
+
+          Write-Host "Installer: $($installer.FullName)"
+          Write-Host "Artifact: artifacts/AI Companion Nova_x64-setup.exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-companion-nova-windows-x64
+          path: artifacts/AI Companion Nova_x64-setup.exe
+          if-no-files-found: error
