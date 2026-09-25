@@ -1,3 +1,4 @@
+import {STANDARD_SCHEMAS} from "./generated-schemas";
 import type {JsonSchema,SchemaValidator} from "./index";
 
 export interface ValidationResult { valid:boolean; errors:readonly string[]; }
@@ -60,4 +61,13 @@ export class MinimalJsonSchemaValidator implements SchemaValidator {
       default:return true;
     }
   }
+}
+
+export class StandardContractValidator extends MinimalJsonSchemaValidator {
+  validateActionRequest(value:unknown){return this.validate(value,STANDARD_SCHEMAS["action-request"]!);}
+  validateToolArguments(value:unknown,schema:JsonSchema){return this.validate(value,schema);}
+  validateModuleManifest(value:unknown){return this.validate(value,STANDARD_SCHEMAS["module-manifest"]!);}
+  validateEvent(value:unknown){return this.validate(value,STANDARD_SCHEMAS["event-envelope"]!);}
+  validatePermission(value:unknown){return this.validate(value,STANDARD_SCHEMAS["permission"]!);}
+  validateActionResult(value:unknown){return this.validate(value,STANDARD_SCHEMAS["action-result"]!);}
 }
