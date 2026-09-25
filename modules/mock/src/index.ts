@@ -13,7 +13,7 @@ export function fakeContext(moduleId:string,events:EventBus,capabilities:readonl
   return {
     moduleId,events,
     logger:{debug(){},info(){},warn(){},error(){}},
-    config:{get:key=>values.get(key),set:async(key,value)=>{values.set(key,value);}},
+    config:{get:<T>(key:string)=>values.get(key) as T|undefined,set:async(key,value)=>{values.set(key,value);}},
     clock:{now:()=>new Date().toISOString()},
     capabilities:new MockCapabilityContext(new Set(capabilities))
   };
