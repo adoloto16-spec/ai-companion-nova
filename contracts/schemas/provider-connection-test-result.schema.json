@@ -1,0 +1,15 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://schemas.ai-companion-nova.dev/provider-connection-test-result/v1",
+  "title":"AI Companion Nova Provider Connection Test Result v1",
+  "type":"object",
+  "additionalProperties":false,
+  "required":["apiVersion","schemaVersion","status","providerId"],
+  "properties":{
+    "apiVersion":{"enum":["1"]},
+    "schemaVersion":{"enum":["1"]},
+    "status":{"enum":["connected","authentication_failed","configuration_error","network_error","timeout","provider_error"]},
+    "providerId":{"type":"string","minLength":1},
+    "message":{"type":"string","minLength":1}
+  }
+}

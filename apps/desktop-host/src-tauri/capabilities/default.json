@@ -1,14 +1,23 @@
 {
-  "$schema":"../gen/schemas/desktop-schema.json",
-  "identifier":"default",
-  "description":"Minimal desktop capability. No filesystem, shell, process or automation plugin permissions.",
-  "windows":["main"],
-  "permissions":[
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Minimal desktop capability. No filesystem, shell, process or automation plugin permissions.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
     "core:app:default",
     "core:event:default",
     "core:window:default",
     "allow-get-host-diagnostics",
     "allow-set-runtime-diagnostics",
-    "allow-get-runtime-diagnostics"
+    "allow-get-runtime-diagnostics",
+    "allow-save-credential",
+    "allow-get-credential",
+    "allow-delete-credential",
+    "allow-credential-exists",
+    "allow-get-provider-configuration",
+    "allow-save-provider-configuration",
+    "allow-delete-provider-configuration"
   ]
 }

@@ -81,3 +81,11 @@ No real AI providers, browser automation, OS automation, messaging integrations,
 See `docs/security.md`, `docs/contracts.md` and `docs/runtime.md`.
 
 CI Windows artifact name: `ai-companion-nova-windows-x64`.
+
+## Secure provider configuration
+
+Provider settings are split into non-secret application configuration and OS-backed credentials. API keys are not stored in application config, SQLite, browser storage, repository files or environment files. The production Windows desktop Host stores OpenAI-compatible API keys in Windows Credential Manager and exposes only narrow credential commands over Tauri IPC.
+
+The Settings UI never reloads a saved API key. It shows only a saved-credential state. The Composition Root selects the configured provider; otherwise FakeChatProvider remains available offline. AI output cannot change provider selection or provider configuration.
+
+See `docs/provider-configuration.md`.

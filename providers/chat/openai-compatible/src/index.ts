@@ -65,6 +65,20 @@ interface OpenAIChatMessage{
   content:string;
 }
 
+export function validateOpenAICompatibleProviderConfig(config:Omit<OpenAICompatibleProviderConfig,"credential">&{credential:CredentialReference|null}):string[]{
+  const errors:string[]=[];
+  try{
+    const url=new URL(config.baseUrl);
+    if(url.protocol!=="http:"&&url.protocol!=="https:")errors.push("Provider base URL must use HTTP or HTTPS.");
+    if(url.username||url.password)errors.push("Provider base URL must not contain credentials.");
+    if(url.search||url.hash)errors.push("Provider base URL must not contain query or fragment components.");
+  }catch{errors.push("Provider base URL is invalid.");}
+  if(!config.model||config.model.trim().length===0)errors.push("Provider model is not configured.");
+  if(config.credential!==null&&(!config.credential.id||config.credential.id.trim().length===0))errors.push("Provider credential reference is not configured.");
+  if(config.timeoutMs!==undefined&&(!Number.isFinite(config.timeoutMs)||config.timeoutMs<=0))errors.push("Provider timeout must be a finite positive number.");
+  return errors;
+}
+
 function safeConfigError(message:string,request?:ChatRequest):OpenAICompatibleProviderError{
   return new OpenAICompatibleProviderError({
     apiVersion:"1",
@@ -207,20 +221,8 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
   private validConfig():boolean{return this.configError()===undefined;}
 
   private configError():OpenAICompatibleProviderError|undefined{
-    try{
-      const url=new URL(this.config.baseUrl);
-      if(url.protocol!=="http:"&&url.protocol!=="https:")return safeConfigError("Provider base URL must use HTTP or HTTPS.");
-      if(url.username||url.password)return safeConfigError("Provider base URL must not contain credentials.");
-      if(url.search||url.hash)return safeConfigError("Provider base URL must not contain query or fragment components.");
-    }catch{
-      return safeConfigError("Provider base URL is invalid.");
-    }
-    if(!this.config.model.trim())return safeConfigError("Provider model is not configured.");
-    if(!this.config.credential.id.trim())return safeConfigError("Provider credential reference is not configured.");
-    if(this.config.timeoutMs!==undefined&&(!Number.isFinite(this.config.timeoutMs)||this.config.timeoutMs<=0)){
-      return safeConfigError("Provider timeout must be a finite positive number.");
-    }
-    return undefined;
+    const errors=validateOpenAICompatibleProviderConfig(this.config);
+    return errors.length>0?safeConfigError(errors[0]!):undefined;
   }
 
   private ensureConfig(request:ChatRequest):void{

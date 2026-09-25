@@ -7,4 +7,5 @@ packages:
   - "providers/mock"
   - "host/ipc"
   - "host/credentials"
+  - "host/config"
   - "runtime/bootstrap"

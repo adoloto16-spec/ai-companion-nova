@@ -11,6 +11,7 @@ tauri-app = ["dep:tauri"]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", optional = true }
+url = "2"
 
 [build-dependencies]
 tauri-build = "2"
