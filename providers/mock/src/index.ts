@@ -1,5 +1,5 @@
 import type {
-  AudioChunk,ChatEvent,ChatProvider,ChatRequest,EmbeddingProvider,HealthStatus,ModelInfo,
+  AudioChunk,ChatProvider,ChatRequest,EmbeddingProvider,HealthStatus,ModelInfo,
   ProviderCapabilities,STTProvider,STTRequest,TTSProvider,TTSRequest,Transcript,VisionProvider,VisionRequest,VisionResult
 } from "../../../contracts/src/index";
 
