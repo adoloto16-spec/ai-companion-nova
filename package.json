@@ -8,7 +8,8 @@
     "build": "pnpm generate:schemas && tsc -p tsconfig.foundation.json",
     "test:architecture": "node scripts/check-architecture.mjs",
     "test:security": "pnpm build && node build/tests/security/action-broker.security.test.js",
-    "test": "pnpm build && node build/tests/foundation.test.js && node build/tests/security/action-broker.security.test.js && node scripts/check-architecture.mjs"
+    "test": "pnpm build && node build/tests/foundation.test.js && node build/tests/security/action-broker.security.test.js && node scripts/check-architecture.mjs",
+    "desktop:dev": "pnpm exec tauri dev --config apps/desktop-host/src-tauri/tauri.conf.json"
   },
   "workspaces": [
     "apps/*",
@@ -26,6 +27,7 @@
   },
   "devDependencies": {
     "typescript": "^5.8.3",
-    "@types/node": "^24.0.0"
+    "@types/node": "^24.0.0",
+    "@tauri-apps/cli": "2.11.5"
   }
 }
