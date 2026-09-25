@@ -1,7 +1,7 @@
-import {InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry} from "../core/src";
+import {InMemoryAuditService,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry} from "../core/src";
 import {FakeBrowserModule,FakeCharacterModule,FakeMemoryModule,fakeContext} from "../modules/mock/src";
 import {FakeChatProvider,FakeTTSProvider} from "../providers/mock/src";
-import {FOUNDATION_SCHEMA_VERSION,STANDARD_SCHEMAS,createEvent} from "../contracts/src";
+import {CompanionModule,FOUNDATION_SCHEMA_VERSION,STANDARD_SCHEMAS,createEvent} from "../contracts/src";
 import {MinimalJsonSchemaValidator} from "../contracts/src/schema-validator";
 import {InMemoryJsonRpcTransport} from "../host/ipc/src";
 import {startFoundationRuntime} from "../runtime/bootstrap/src";
@@ -12,12 +12,12 @@ function ok(value:unknown,label:string){if(!value)throw new Error(label);}
 async function schemaValidationTest(){
   const validator=new MinimalJsonSchemaValidator();
   const manifest={id:"test",name:"Test",version:"1.0.0",apiVersion:"1",schemaVersion:"1",type:"service",runtime:"typescript",optional:true,capabilities:[]};
-  ok(validator.validate(manifest,STANDARD_SCHEMAS["module-manifest"]).valid,"valid manifest schema");
-  ok(!validator.validate({...manifest,risk:"low"},STANDARD_SCHEMAS["module-manifest"]).valid,"manifest rejects unknown field");
+  ok(validator.validate(manifest,STANDARD_SCHEMAS["module-manifest"]!).valid,"valid manifest schema");
+  ok(!validator.validate({...manifest,risk:"low"},STANDARD_SCHEMAS["module-manifest"]!).valid,"manifest rejects unknown field");
   const event=createEvent("SpeechStarted",{text:"hello"},"test",()=> "now","e1");
-  ok(validator.validate(event,STANDARD_SCHEMAS["event-envelope"]).valid,"valid event schema");
+  ok(validator.validate(event,STANDARD_SCHEMAS["event-envelope"]!).valid,"valid event schema");
   const permission={id:"p1",schemaVersion:FOUNDATION_SCHEMA_VERSION,subject:"character",resourceType:"domain",action:"browser.navigate",effect:"allow"};
-  ok(validator.validate(permission,STANDARD_SCHEMAS["permission"]).valid,"valid permission schema");
+  ok(validator.validate(permission,STANDARD_SCHEMAS["permission"]!).valid,"valid permission schema");
 }
 
 async function eventBusTest(){
@@ -41,7 +41,7 @@ async function stateStoreTest(){
 }
 
 async function moduleManagerTest(){
-  const diagnostics=new InMemoryDiagnosticsStore(),bus=new InMemoryEventBus(diagnostics),manager=new ModuleManager(id=>fakeContext(id,bus),diagnostics);
+  const diagnostics=new InMemoryDiagnosticsStore(),bus=new InMemoryEventBus(diagnostics),manager=new ModuleManager(manifest=>fakeContext(manifest.id,bus),diagnostics);
   const character=new FakeCharacterModule(),memory=new FakeMemoryModule(),browser=new FakeBrowserModule();
   manager.register(character);manager.register(memory);manager.register(browser);await manager.initializeAll();await manager.startAll();
   equal(manager.getState("character.fake"),"running","module running");
@@ -52,7 +52,7 @@ async function moduleManagerTest(){
 async function optionalFailureTest(){
   class InitBroken extends FakeMemoryModule{override async initialize(){throw new Error("init boom");}}
   class StartBroken extends FakeMemoryModule{override async start(){throw new Error("start boom");}}
-  const diagnostics=new InMemoryDiagnosticsStore(),bus=new InMemoryEventBus(diagnostics),manager=new ModuleManager(id=>fakeContext(id,bus),diagnostics);
+  const diagnostics=new InMemoryDiagnosticsStore(),bus=new InMemoryEventBus(diagnostics),manager=new ModuleManager(manifest=>fakeContext(manifest.id,bus),diagnostics);
   const good=new FakeCharacterModule(),initBroken=new InitBroken(),startBroken=new StartBroken();
   Object.defineProperty(initBroken,"manifest",{value:{...initBroken.manifest,id:"memory.init-broken"}});
   Object.defineProperty(startBroken,"manifest",{value:{...startBroken.manifest,id:"memory.start-broken"}});
@@ -65,27 +65,31 @@ async function optionalFailureTest(){
 async function restartAndShutdownTest(){
   let starts=0,initializations=0,stops=0;
   const baseManifest={id:"restartable",name:"Restartable",version:"0.1.0",apiVersion:"1" as const,schemaVersion:"1",type:"service" as const,runtime:"typescript" as const,optional:true,capabilities:[]};
-  class Restartable implements import("../contracts/src").CompanionModule{
+  class Restartable implements CompanionModule{
     manifest=baseManifest;
     async initialize(){initializations++;}
     async start(){starts++;if(starts===1)throw new Error("first start");}
     async stop(){stops++;}
     async health(){return {status:"healthy" as const};}
   }
-  class StopBroken implements import("../contracts/src").CompanionModule{
+  class StopBroken implements CompanionModule{
     manifest={...baseManifest,id:"stop-broken"};
     async initialize(){}
     async start(){}
     async stop(){stops++;throw new Error("stop failed");}
     async health(){return {status:"healthy" as const};}
   }
-  const diagnostics=new InMemoryDiagnosticsStore(),manager=new ModuleManager(id=>fakeContext(id,new InMemoryEventBus()),diagnostics);
+  const diagnostics=new InMemoryDiagnosticsStore(),manager=new ModuleManager(manifest=>fakeContext(manifest.id,new InMemoryEventBus()),diagnostics);
   manager.register(new Restartable());manager.register(new StopBroken());manager.register(new FakeMemoryModule());
   await manager.initializeAll();await manager.startAll();
   equal(manager.getState("restartable"),"error","first start fails");
-  await manager.restart("restartable");equal(initializations,2,"restart reinitializes errored module");equal(manager.getState("restartable"),"running","restart reaches running");
+  await manager.restart("restartable");
+  equal(initializations,2,"restart reinitializes errored module");
+  equal(manager.getState("restartable"),"running","restart reaches running");
   let thrown=false;try{await manager.stopAll();}catch{thrown=true;}
-  ok(thrown,"stopAll reports failure");equal(stops,3,"shutdown continues after stop failure");equal(manager.getState("memory.fake"),"ready","other module stopped");
+  ok(thrown,"stopAll reports failure");
+  equal(stops,3,"shutdown continues after stop failure");
+  equal(manager.getState("memory.fake"),"ready","other module stopped");
 }
 
 async function providerTest(){
@@ -93,6 +97,9 @@ async function providerTest(){
   registry.register(chat,["chat"]);registry.register(tts,["tts"]);
   equal(registry.findByCapabilities("chat",["toolCalling"]).length,1,"capability discovery");
   equal((await registry.health())["fake.chat"]?.status,"healthy","provider health");
+  const audit=new InMemoryAuditService();
+  await audit.record({timestamp:"now",actorId:"a",actorType:"module",action:"test",resourceType:"resource",argumentKeys:[],status:"denied",durationMs:1,allowed:false});
+  equal(audit.entries.length,1,"audit service");
 }
 
 async function runtimeBootTest(){
