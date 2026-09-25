@@ -2,7 +2,6 @@ export * from "./diagnostics";
 export * from "./audit";
 export * from "./events";
 export * from "./state";
-export * from "./capabilities";
 export * from "./module-manager";
 export * from "./security";
 export * from "./tools";
