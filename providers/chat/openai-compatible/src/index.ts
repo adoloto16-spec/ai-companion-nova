@@ -234,7 +234,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
   private timeoutMs():number{return this.config.timeoutMs??DEFAULT_TIMEOUT_MS;}
 
   private chatCompletionsUrl():string{
-    const base=this.config.baseUrl.replace(/\\/+$/,"");
+    const base=this.config.baseUrl.replace(/\/+$/,"");
     return base+"/chat/completions";
   }
 
