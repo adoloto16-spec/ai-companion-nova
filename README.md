@@ -79,3 +79,5 @@ Dangerous actions pass through the Action Broker. Identity is resolved from a tr
 No real AI providers, browser automation, OS automation, messaging integrations, vector database or autonomy features are included in this Foundation stage.
 
 See `docs/security.md`, `docs/contracts.md` and `docs/runtime.md`.
+
+CI Windows artifact name: `ai-companion-nova-windows-x64`.
