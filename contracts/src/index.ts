@@ -101,3 +101,5 @@ export interface BrowserService{open(url:string):Promise<void>;search(query:stri
 export interface SchemaValidator{validate(value:unknown,schema:JsonSchema):{valid:boolean;errors:readonly string[]}}
 export const CONTRACT_VERSIONS={moduleManifest:{apiVersion:FOUNDATION_API_VERSION,schemaVersion:FOUNDATION_SCHEMA_VERSION},eventEnvelope:{apiVersion:FOUNDATION_API_VERSION,schemaVersion:FOUNDATION_SCHEMA_VERSION},actionRequest:{apiVersion:FOUNDATION_API_VERSION,schemaVersion:FOUNDATION_SCHEMA_VERSION},actionResult:{apiVersion:FOUNDATION_API_VERSION,schemaVersion:FOUNDATION_SCHEMA_VERSION},permission:{apiVersion:FOUNDATION_API_VERSION,schemaVersion:FOUNDATION_SCHEMA_VERSION},diagnostics:{apiVersion:FOUNDATION_API_VERSION,schemaVersion:FOUNDATION_SCHEMA_VERSION}} as const;
 export {STANDARD_SCHEMAS} from "./generated-schemas";
+
+export {MinimalJsonSchemaValidator,StandardContractValidator} from "./schema-validator";
