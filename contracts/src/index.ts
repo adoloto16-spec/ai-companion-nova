@@ -59,9 +59,11 @@ export interface VisionRequest{image:Uint8Array;prompt?:string}
 export interface VisionResult{text:string;metadata?:Record<string,unknown>}
 export interface VisionProvider{id:string;capabilities():ProviderCapabilities;analyze(request:VisionRequest):Promise<VisionResult>;health():Promise<HealthStatus>}
 
+export interface ActorCredential{token:string}
 export interface ActorIdentity{actorId:string;actorType:string;moduleId?:string;trusted:boolean;capabilities:readonly string[]}
+export interface ActorIdentityResolver{resolve(credential:ActorCredential):Promise<ActorIdentity|undefined>}
 export interface ActionRequest{id:string;schemaVersion:string;tool:string;arguments:Record<string,unknown>;metadata?:Record<string,unknown>}
-export interface ActionInvocation{request:ActionRequest;actor:ActorIdentity}
+export interface ActionInvocation{request:ActionRequest;credential:ActorCredential}
 export type ActionTarget=
   | {kind:"domain";url:string;domain:string}
   | {kind:"filesystem";path:string;canonicalPath?:string;canonicalized:boolean}
@@ -71,7 +73,7 @@ export interface ActionTargetResolver{readonly id:string;resolve(request:ActionR
 export interface PermissionDecision{allowed:boolean;reason:string;scopeMatched?:boolean}
 export interface PermissionService{check(actor:ActorIdentity,tool:ToolDefinition,target:ActionTarget):Promise<PermissionDecision>}
 export interface ForegroundCheck{verify(actor:ActorIdentity,tool:ToolDefinition,target:ActionTarget):Promise<PermissionDecision>}
-export interface ConfirmationService{confirm(invocation:ActionInvocation,tool:ToolDefinition,target:ActionTarget):Promise<boolean>}
+export interface ConfirmationService{confirm(invocation:ActionInvocation,actor:ActorIdentity,tool:ToolDefinition,target:ActionTarget):Promise<boolean>}
 export interface RiskPolicy{canonicalRisk(tool:ToolDefinition):ActionRisk;requiresConfirmation(tool:ToolDefinition,target:ActionTarget):boolean}
 export interface ActionDriver{id:string;execute(request:ActionRequest,target:ActionTarget):Promise<unknown>}
 export interface PostconditionChecker{verify(request:ActionRequest,target:ActionTarget,output:unknown):Promise<boolean>}
