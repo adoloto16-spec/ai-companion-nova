@@ -92,6 +92,26 @@ async function restartAndShutdownTest(){
   equal(manager.getState("memory.fake"),"ready","other module stopped");
 }
 
+async function enableDisableTest(){
+  const diagnostics=new InMemoryDiagnosticsStore();
+  const manager=new ModuleManager(
+    manifest=>fakeContext(manifest.id,new InMemoryEventBus()),
+    diagnostics
+  );
+  const module=new FakeMemoryModule();
+  manager.register(module);
+  await manager.initializeAll();
+  await manager.startAll();
+  equal(manager.getState("memory.fake"),"running","module starts");
+  await manager.disable("memory.fake");
+  equal(manager.getState("memory.fake"),"disabled","module disables");
+  await manager.enable("memory.fake");
+  equal(manager.getState("memory.fake"),"running","disabled module re-enables");
+  let restartFailed=false;
+  try{await manager.restart("memory.fake");}catch{restartFailed=true;}
+  ok(!restartFailed,"running module can restart");
+}
+
 async function providerTest(){
   const registry=new ProviderRegistry(),chat=new FakeChatProvider(),tts=new FakeTTSProvider();
   registry.register(chat,["chat"]);registry.register(tts,["tts"]);
@@ -124,7 +144,7 @@ async function jsonRpcTest(){
 void (async()=>{
   for(const [name,test] of [
     ["Schema validation",schemaValidationTest],["EventBus",eventBusTest],["StateStore",stateStoreTest],["ModuleManager",moduleManagerTest],
-    ["Optional failures",optionalFailureTest],["Restart and shutdown",restartAndShutdownTest],["ProviderRegistry",providerTest],
+    ["Optional failures",optionalFailureTest],["Restart and shutdown",restartAndShutdownTest],["Enable and disable",enableDisableTest],["ProviderRegistry",providerTest],
     ["Runtime bootstrap",runtimeBootTest],["JSON-RPC",jsonRpcTest]
   ] as const){await test();console.log("PASS "+name);}
   console.log("All foundation runtime tests passed.");
