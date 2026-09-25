@@ -44,14 +44,11 @@ async function riskDowngradeScenario(){
 async function capabilityScenario(){
   const definition:ToolDefinition={...browserDefinition,id:"filesystem.write",name:"filesystem.write",requiredCapabilities:["filesystem.write"],resourceType:"filesystem",action:"filesystem.write",targetResolverId:"filesystem.path",parameters:{type:"object",properties:{path:{type:"string"}},required:["path"],additionalProperties:false}};
   const resolver=new FilesystemTargetResolver("filesystem.path",async path=>path);
-  const {broker}=makeBroker(definition,resolver,{id:"driver",async execute(){return {ok:true}}},["D:/AI_Girl/"]);
+  const harness=makeBroker(definition,resolver,{id:"driver",async execute(){return {ok:true}}},["D:/AI_Girl/"]);
   const deniedCredential={token:"no-filesystem-capability"};
+  harness.actorResolver.register(deniedCredential,{actorId:"character-no-fs",actorType:"module",moduleId:"character.fake",trusted:true,capabilities:["browser.navigate"]});
   const deniedInvocation={...request("filesystem.write",{path:"D:/AI_Girl/file.txt"}),credential:deniedCredential};
-  const brokerWithDeniedActor=makeBroker(definition,resolver,{id:"driver",async execute(){return {ok:true}}},["D:/AI_Girl/"]).broker;
-  const resolverForDenied=resolver;
-  const actorResolver=makeBroker(definition,resolverForDenied,{id:"driver",async execute(){return {ok:true}}},["D:/AI_Girl/"]).actorResolver;
-  actorResolver.register(deniedCredential,{actorId:"character-no-fs",actorType:"module",moduleId:"character.fake",trusted:true,capabilities:["browser.navigate"]});
-  equal((await brokerWithDeniedActor.execute(deniedInvocation)).status,"denied","missing capability");
+  equal((await harness.broker.execute(deniedInvocation)).status,"denied","missing capability");
 }
 async function filesystemScenario(){
   const definition:ToolDefinition={...browserDefinition,id:"filesystem.write",name:"filesystem.write",requiredCapabilities:["filesystem.write"],resourceType:"filesystem",action:"filesystem.write",targetResolverId:"filesystem.path",parameters:{type:"object",properties:{path:{type:"string"}},required:["path"],additionalProperties:false}};
