@@ -1,5 +1,6 @@
 import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target} from "../../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
+import type {HealthStatus} from "../../../contracts/src/index";
 import {
   InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,
   InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,
@@ -113,7 +114,7 @@ export async function createFoundationRuntime():Promise<FoundationRuntime>{
     const moduleHealth=await moduleManager.health().catch(()=>({}));
     const modules=moduleManager.list().map(item=>({
       ...item,
-      health:(moduleHealth as Record<string,{status:"healthy"|"degraded"|"unavailable"|"error"}|undefined>)[item.id]
+      health:(moduleHealth as Record<string,HealthStatus|undefined>)[item.id]
     }));
     const providerDiagnostics=await providers.diagnostics();
     const degraded=modules.some(item=>item.state==="error"||item.state==="degraded")||
