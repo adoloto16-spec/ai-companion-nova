@@ -4,8 +4,8 @@
   "version": "0.2.0",
   "identifier": "com.nova.ai-companion",
   "build": {
-    "beforeDevCommand": "pnpm --dir ../../desktop-ui dev",
-    "beforeBuildCommand": "pnpm --dir ../../desktop-ui build",
+    "beforeDevCommand": "pnpm --dir apps/desktop-ui dev",
+    "beforeBuildCommand": "pnpm --dir apps/desktop-ui build",
     "frontendDist": "../../desktop-ui/dist"
   },
   "app": {
