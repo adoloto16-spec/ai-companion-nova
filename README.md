@@ -6,6 +6,20 @@ Architectural rule: Modules depend on contracts, not on implementations.
 
 The repository separates Contracts, Core, Modules, Providers, Host and a Composition Root. Core does not know concrete AI vendors, browser engines, renderers or OS drivers.
 
+## Windows installation
+
+The Foundation CI produces a Windows x64 NSIS installer as a GitHub Actions artifact.
+
+1. Open a successful GitHub Actions run for the Foundation workflow.
+2. Download the artifact named `ai-companion-nova-windows-x64`.
+3. Run `AI Companion Nova_x64-setup.exe` on Windows 11.
+4. Install AI Companion Nova.
+5. Launch the application.
+
+The installer contains the built React application, Foundation runtime and Rust/Tauri desktop host. End users do not need Node.js, pnpm, Rust, Cargo or Visual Studio Build Tools to run the installed application.
+
+Windows packaging uses the system WebView2 runtime; a fixed WebView2 runtime is not bundled into the installer.
+
 ## Development
 
 ### Install
