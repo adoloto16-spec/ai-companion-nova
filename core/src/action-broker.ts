@@ -16,6 +16,7 @@ export interface ActionBrokerDependencies{
   schemaValidator:SchemaValidator;
   diagnostics?:DiagnosticsStore;
   targetResolvers:Map<string,ActionTargetResolver>;
+  actorResolver:import("../../contracts/src/index").ActorIdentityResolver;
 }
 function targetSummary(target:import("../../contracts/src/index").ActionTarget):string{
   switch(target.kind){
@@ -29,13 +30,14 @@ export class DefaultActionBroker implements ActionBroker{
   constructor(private readonly deps:ActionBrokerDependencies){}
   async execute(invocation:ActionInvocation):Promise<ActionResult>{
     const start=Date.now(),req=invocation.request;
+    const actor=await this.deps.actorResolver.resolve(invocation.credential);
     const definition=req&&this.deps.toolRegistry.get(req.tool)?.definition;
     const audit=async(result:ActionResult,reason?:string,summary?:string):Promise<ActionResult>=>{
       await this.deps.audit.record({
         timestamp:new Date().toISOString(),
-        actorId:invocation.actor.actorId,
-        actorType:invocation.actor.actorType,
-        module:invocation.actor.moduleId,
+        actorId:actor?.actorId??"unknown",
+        actorType:actor?.actorType??"unknown",
+        module:actor?.moduleId,
         action:req?.tool??"unknown",
         resourceType:definition?.resourceType??"resource",
         targetSummary:summary,
@@ -65,7 +67,7 @@ export class DefaultActionBroker implements ActionBroker{
       id:req.id,schemaVersion:FOUNDATION_SCHEMA_VERSION,status:"denied",
       error:{code:"TOOL_NOT_FOUND",message:"Tool not found: "+req.tool},durationMs:Date.now()-start
     },"unknown tool");
-    if(invocation.actor.trusted!==true)return audit({
+    if(!actor||actor.trusted!==true)return audit({
       id:req.id,schemaVersion:FOUNDATION_SCHEMA_VERSION,status:"denied",
       error:{code:"PERMISSION_DENIED",message:"Actor identity is not trusted."},durationMs:Date.now()-start
     },"untrusted actor");
@@ -108,13 +110,13 @@ export class DefaultActionBroker implements ActionBroker{
       durationMs:Date.now()-start
     },"target type mismatch",targetSummary(target));
 
-    const permission=await this.deps.permissions.check(invocation.actor,tool.definition,target);
+    const permission=await this.deps.permissions.check(actor,tool.definition,target);
     if(!permission.allowed)return audit({
       id:req.id,schemaVersion:FOUNDATION_SCHEMA_VERSION,status:"denied",
       error:{code:"PERMISSION_DENIED",message:permission.reason},durationMs:Date.now()-start
     },permission.reason,targetSummary(target));
 
-    const foreground=await this.deps.foreground.verify(invocation.actor,tool.definition,target);
+    const foreground=await this.deps.foreground.verify(actor,tool.definition,target);
     if(!foreground.allowed)return audit({
       id:req.id,schemaVersion:FOUNDATION_SCHEMA_VERSION,status:"denied",
       error:{code:"FOREGROUND_DENIED",message:foreground.reason},durationMs:Date.now()-start
@@ -122,7 +124,7 @@ export class DefaultActionBroker implements ActionBroker{
 
     const canonicalRisk=this.deps.riskPolicy.canonicalRisk(tool.definition);
     if((canonicalRisk==="high"||canonicalRisk==="critical")&&this.deps.riskPolicy.requiresConfirmation(tool.definition,target)){
-      if(!await this.deps.confirmation.confirm(invocation,tool.definition,target))return audit({
+      if(!await this.deps.confirmation.confirm(invocation,actor,tool.definition,target))return audit({
         id:req.id,schemaVersion:FOUNDATION_SCHEMA_VERSION,status:"denied",
         error:{code:"CONFIRMATION_REQUIRED",message:"Confirmation was not granted."},durationMs:Date.now()-start
       },"confirmation denied",targetSummary(target));
