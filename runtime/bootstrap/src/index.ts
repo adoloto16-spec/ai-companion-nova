@@ -15,7 +15,7 @@ export interface FoundationRuntime{
   start():Promise<void>;
   stop():Promise<void>;
   diagnostics():Promise<RuntimeDiagnostics>;
-  invoke(invocation:ActionInvocation):Promise<import("../../../contracts/src/index").ActionResult>;
+  invoke(request:import("../../../contracts/src/index").ActionRequest):Promise<import("../../../contracts/src/index").ActionResult>;
 }
 
 export async function createFoundationRuntime():Promise<FoundationRuntime>{
@@ -141,7 +141,7 @@ export async function createFoundationRuntime():Promise<FoundationRuntime>{
     async start(){await moduleManager.initializeAll();await moduleManager.startAll();runtimeStatus="running";},
     async stop(){try{await moduleManager.stopAll();}finally{runtimeStatus="stopped";}},
     diagnostics:snapshot,
-    invoke:invocation=>broker.execute(invocation)
+    invoke:request=>broker.execute({request,credential:characterCredential})
   };
 }
 export async function startFoundationRuntime(){const runtime=await createFoundationRuntime();await runtime.start();return runtime;}
