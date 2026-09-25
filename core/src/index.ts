@@ -2,6 +2,7 @@ export * from "./diagnostics";
 export * from "./audit";
 export * from "./events";
 export * from "./state";
+export * from "./chat-session";
 export * from "./module-manager";
 export * from "./security";
 export * from "./tools";
