@@ -73,8 +73,11 @@ export class ModuleManager{
     }
 
     if(entry.state==="error")this.transition(entry,"installed");
-    if(entry.state==="installed")await this.initialize(entry);
-    if(entry.state==="ready")await this.start(entry);
+    if(entry.state==="installed"){
+      await this.initialize(entry);
+      const nextState=entry.state;
+      if(nextState==="ready")await this.start(entry);
+    }
   }
 
   async enable(id:string):Promise<void>{
@@ -83,7 +86,8 @@ export class ModuleManager{
 
     this.transition(entry,"installed");
     await this.initialize(entry);
-    if(entry.state==="ready")await this.start(entry);
+    const nextState=entry.state;
+    if(nextState==="ready")await this.start(entry);
   }
 
   async disable(id:string):Promise<void>{
