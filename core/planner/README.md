@@ -1,0 +1,1 @@
+# Planner\n\nReserved Core boundary. No autonomous planner in Foundation.\n

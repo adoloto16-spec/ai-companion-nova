@@ -1,0 +1,11 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "type":"object",
+  "required":["id","name","version","apiVersion","type","runtime","optional","capabilities"],
+  "properties":{
+    "id":{"type":"string"},"name":{"type":"string"},"version":{"type":"string"},"apiVersion":{"type":"string"},
+    "type":{"enum":["service","adapter","worker","ui"]},"runtime":{"enum":["typescript","rust"]},
+    "optional":{"type":"boolean"},"capabilities":{"type":"array","items":{"type":"string"}}
+  },
+  "additionalProperties":false
+}

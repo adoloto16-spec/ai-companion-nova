@@ -1,0 +1,13 @@
+{
+  "$schema":"https://schema.tauri.app/config/2",
+  "productName":"AI Companion Nova",
+  "version":"0.1.0",
+  "identifier":"com.nova.ai-companion",
+  "build":{
+    "beforeDevCommand":"pnpm --dir ../../desktop-ui dev",
+    "beforeBuildCommand":"pnpm --dir ../../desktop-ui build",
+    "frontendDist":"../../desktop-ui/dist"
+  },
+  "app":{"windows":[{"title":"AI Companion Nova","width":1100,"height":760}],"security":{"csp":null}},
+  "bundle":{"active":false}
+}

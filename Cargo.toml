@@ -1,0 +1,6 @@
+[workspace]
+members = [
+  "sdk/rust",
+  "apps/desktop-host/src-tauri"
+]
+resolver = "2"

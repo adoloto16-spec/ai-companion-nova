@@ -1,0 +1,6 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "type":"object",
+  "required":["id","subject","resource","action","effect"],
+  "properties":{"id":{"type":"string"},"subject":{"type":"string"},"resource":{"type":"string"},"action":{"type":"string"},"effect":{"enum":["allow","deny"]},"scope":{"type":"object","additionalProperties":true}}
+}

@@ -1,0 +1,6 @@
+{
+  "name":"@nova/desktop-host",
+  "version":"0.1.0",
+  "private":true,
+  "scripts":{"dev":"cargo run --manifest-path src-tauri/Cargo.toml --features tauri-app","build":"cargo build --manifest-path src-tauri/Cargo.toml --features tauri-app"}
+}

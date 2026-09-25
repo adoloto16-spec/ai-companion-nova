@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": { "rootDir": ".", "outDir": "build", "noEmitOnError": true },
+  "include": [
+    "contracts/src/**/*.ts",
+    "sdk/typescript/src/**/*.ts",
+    "core/src/**/*.ts",
+    "modules/mock/src/**/*.ts",
+    "providers/mock/src/**/*.ts",
+    "host/ipc/src/**/*.ts",
+    "tests/**/*.ts"
+  ],
+  "exclude": ["apps/desktop-ui", "apps/desktop-host"]
+}

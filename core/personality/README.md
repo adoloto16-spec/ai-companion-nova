@@ -1,0 +1,1 @@
+# Personality\n\nReserved Core boundary. No business implementation in Foundation.\n

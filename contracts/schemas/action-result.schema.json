@@ -1,0 +1,6 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "type":"object",
+  "required":["id","status","durationMs"],
+  "properties":{"id":{"type":"string"},"status":{"enum":["success","denied","error"]},"output":{},"error":{"type":"object"},"durationMs":{"type":"number"}}
+}

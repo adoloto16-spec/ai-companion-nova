@@ -1,0 +1,21 @@
+{
+  "name": "ai-companion-nova",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "tsc -p tsconfig.foundation.json",
+    "typecheck": "tsc -p tsconfig.foundation.json --noEmit",
+    "test": "npm run build && node build/tests/foundation.test.js && node scripts/check-architecture.mjs"
+  },
+  "workspaces": [
+    "apps/*",
+    "contracts",
+    "sdk/typescript",
+    "core",
+    "modules/mock",
+    "providers/mock",
+    "host/ipc"
+  ],
+  "engines": { "node": ">=20" },
+  "devDependencies": { "typescript": "^5.8.3" }
+}

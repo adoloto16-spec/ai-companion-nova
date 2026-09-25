@@ -1,0 +1,8 @@
+packages:
+  - "apps/*"
+  - "contracts"
+  - "sdk/typescript"
+  - "core"
+  - "modules/mock"
+  - "providers/mock"
+  - "host/ipc"
