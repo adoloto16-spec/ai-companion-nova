@@ -1,5 +1,6 @@
 use serde::{Deserialize,Serialize};
 use std::{fs,io::Write,path::PathBuf};
+use tauri::Manager;
 
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(deny_unknown_fields)]
