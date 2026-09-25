@@ -74,8 +74,7 @@ export class ModuleManager{
 
     if(entry.state==="error")this.transition(entry,"installed");
     if(entry.state==="installed"){
-      await this.initialize(entry);
-      const nextState=entry.state;
+      const nextState=await this.initialize(entry);
       if(nextState==="ready")await this.start(entry);
     }
   }
@@ -85,8 +84,7 @@ export class ModuleManager{
     if(entry.state!=="disabled")throw new Error("Only disabled modules can be enabled: "+id);
 
     this.transition(entry,"installed");
-    await this.initialize(entry);
-    const nextState=entry.state;
+    const nextState=await this.initialize(entry);
     if(nextState==="ready")await this.start(entry);
   }
 
@@ -151,8 +149,8 @@ export class ModuleManager{
     }
   }
 
-  private async initialize(entry:Entry):Promise<void>{
-    if(entry.state!=="installed")return;
+  private async initialize(entry:Entry):Promise<ModuleState>{
+    if(entry.state!=="installed")return entry.state;
     this.transition(entry,"loading");
     try{
       await entry.module.initialize(this.contextFactory(entry.module.manifest));
@@ -164,6 +162,7 @@ export class ModuleManager{
       this.report("MODULE_INITIALIZE_FAILED",entry,error);
       if(!entry.module.manifest.optional)throw error;
     }
+    return this.currentState(entry);
   }
 
   private async start(entry:Entry):Promise<void>{
@@ -182,6 +181,10 @@ export class ModuleManager{
 
   private isStoppableState(state:ModuleState):state is "running"|"degraded"|"ready"{
     return state==="running"||state==="degraded"||state==="ready";
+  }
+
+  private currentState(entry:Entry):ModuleState{
+    return entry.state;
   }
 
   private transition(entry:Entry,next:ModuleState):void{
