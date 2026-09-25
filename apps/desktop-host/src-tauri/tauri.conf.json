@@ -41,10 +41,10 @@
     "windows": {
       "webviewInstallMode": {
         "type": "skip"
+      },
+      "nsis": {
+        "startMenuFolder": "AI Companion Nova"
       }
-    },
-    "nsis": {
-      "startMenuFolder": "AI Companion Nova"
     }
   }
 }
