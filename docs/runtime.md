@@ -2,7 +2,7 @@
 
 runtime/bootstrap is the composition root.
 
-It constructs EventBus, StateStore, diagnostics, ProviderRegistry, ToolRegistry, permission/foreground/risk/confirmation services, Action Broker, ModuleManager and offline fake providers/modules.
+It constructs EventBus, StateStore, diagnostics, ProviderRegistry, ToolRegistry, permission/foreground/risk/confirmation services, Action Broker, ModuleManager and the Foundation providers/modules.
 
 Core does not import the composition root.
 
@@ -10,13 +10,24 @@ The current desktop Foundation starts the TypeScript runtime in the frontend pro
 
 This is intentional for Foundation. Later production builds can move or split composition while preserving the Contracts/Core/Module interfaces.
 
+## Providers
+
+The Composition Root always registers the deterministic FakeChatProvider plus the Foundation fake TTS/STT/embedding/vision providers.
+
+The OpenAI-compatible ChatProvider is optional. It is registered only when createFoundationRuntime/startFoundationRuntime receive explicit openAICompatible configuration containing:
+
+- provider-local base URL/model/credential reference configuration
+- an existing CredentialStore
+- an optional provider-local HttpClient for deterministic tests
+
+No API credential is required for normal startup, and the desktop UI does not construct providers directly.
 
 ## AI Runtime
 
-runtime/bootstrap remains the only composition root. It now constructs the provider-neutral AiRuntime and binds it to ProviderRegistry plus the offline fake ChatProvider.
+runtime/bootstrap constructs the provider-neutral AiRuntime and binds it to ProviderRegistry.
 
 Core consumes canonical Chat contracts only. Provider-specific SDKs, transports, authentication and secrets remain outside Core.
 
-Chat failures are normalized into stable AiRuntimeError / ChatError values and recorded in diagnostics. A provider failure does not terminate Foundation or make the AI Runtime unhealthy while a chat provider remains registered.
+Provider failures that expose a validated canonical ChatError are preserved as stable AiRuntimeError values. Unexpected provider exceptions remain normalized to PROVIDER_ERROR.
 
-The chat layer is intentionally non-streaming in this phase. Real providers, streaming, tool calling and context enrichment are deferred.
+The chat layer is intentionally non-streaming. Tool calling and other deferred capabilities remain outside this phase.

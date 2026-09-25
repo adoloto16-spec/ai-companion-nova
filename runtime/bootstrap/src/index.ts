@@ -1,4 +1,4 @@
-import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse} from "../../../contracts/src/index";
+import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore} from "../../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import type {HealthStatus} from "../../../contracts/src/index";
 import {
@@ -10,7 +10,22 @@ import {
 import {StandardContractValidator} from "../../../contracts/src/index";
 import {FakeBrowserModule,FakeCharacterModule,FakeMemoryModule} from "../../../modules/mock/src/index";
 import {FakeChatProvider,FakeTTSProvider,FakeSTTProvider,FakeEmbeddingProvider,FakeVisionProvider} from "../../../providers/mock/src/index";
+import {
+  OpenAICompatibleChatProvider,
+  type HttpClient,
+  type OpenAICompatibleProviderConfig
+} from "../../../providers/chat/openai-compatible/src/index";
 import {objectSchema} from "../../../core/src/tools";
+
+export interface OpenAICompatibleRuntimeConfig{
+  config:OpenAICompatibleProviderConfig;
+  credentialStore:CredentialStore;
+  httpClient?:HttpClient;
+}
+
+export interface FoundationRuntimeOptions{
+  openAICompatible?:OpenAICompatibleRuntimeConfig;
+}
 
 export interface FoundationRuntime{
   start():Promise<void>;
@@ -21,7 +36,7 @@ export interface FoundationRuntime{
   aiRuntimeHealth():Promise<HealthStatus>;
 }
 
-export async function createFoundationRuntime():Promise<FoundationRuntime>{
+export async function createFoundationRuntime(options:FoundationRuntimeOptions={}):Promise<FoundationRuntime>{
   const diagnosticsStore=new InMemoryDiagnosticsStore();
   const logger={debug(){},info(){},warn(){},error(){}};
   const events=new InMemoryEventBus(diagnosticsStore,logger);
@@ -44,6 +59,16 @@ export async function createFoundationRuntime():Promise<FoundationRuntime>{
   });
 
   providers.register(new FakeChatProvider(),["chat"]);
+  if(options.openAICompatible){
+    providers.register(
+      new OpenAICompatibleChatProvider(
+        options.openAICompatible.config,
+        options.openAICompatible.credentialStore,
+        options.openAICompatible.httpClient
+      ),
+      ["chat"]
+    );
+  }
   providers.register(new FakeTTSProvider(),["tts"]);
   providers.register(new FakeSTTProvider(),["stt"]);
   providers.register(new FakeEmbeddingProvider(),["embeddings"]);
@@ -152,5 +177,9 @@ export async function createFoundationRuntime():Promise<FoundationRuntime>{
     aiRuntimeHealth:()=>aiRuntime.health()
   };
 }
-export async function startFoundationRuntime(){const runtime=await createFoundationRuntime();await runtime.start();return runtime;}
+export async function startFoundationRuntime(options:FoundationRuntimeOptions={}){
+  const runtime=await createFoundationRuntime(options);
+  await runtime.start();
+  return runtime;
+}
 export type {RuntimeDiagnostics,ActorIdentity};
