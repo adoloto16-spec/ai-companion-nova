@@ -1,7 +1,14 @@
 {
   "$schema":"../gen/schemas/desktop-schema.json",
   "identifier":"default",
-  "description":"Minimal Foundation capabilities",
+  "description":"Minimal desktop capability. No filesystem, shell, process or automation plugin permissions.",
   "windows":["main"],
-  "permissions":["core:default"]
+  "permissions":[
+    "core:app:default",
+    "core:event:default",
+    "core:window:default",
+    "allow-get-host-diagnostics",
+    "allow-set-runtime-diagnostics",
+    "allow-get-runtime-diagnostics"
+  ]
 }

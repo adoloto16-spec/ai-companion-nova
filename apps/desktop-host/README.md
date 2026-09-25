@@ -1,3 +1,5 @@
 # Desktop Host
 
-Rust/Tauri 2 boundary for privileged OS operations. Dangerous capabilities are not exposed through ModuleContext.
+Tauri/Rust is the privileged boundary. The Foundation currently exposes only a diagnostics command through IPC.
+
+No shell, filesystem, process-management or automation permissions are granted.

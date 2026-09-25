@@ -2,23 +2,178 @@ name: foundation-ci
 
 on:
   push:
+    branches:
+      - foundation/hardening-v0.2
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: foundation-ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  typescript:
+  typescript-foundation:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with: { version: 10 }
+        with:
+          version: 10
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: pnpm }
+        with:
+          node-version: 22
       - run: pnpm install --no-frozen-lockfile
+      - run: pnpm generate:schemas
+      - run: pnpm typecheck
+      - run: pnpm build
       - run: pnpm test
 
-  rust:
+  react-ui:
     runs-on: ubuntu-latest
+    needs: typescript-foundation
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm --dir apps/desktop-ui build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-ui-dist
+          path: apps/desktop-ui/dist
+          if-no-files-found: error
+
+  rust-tauri-validation:
+    runs-on: ubuntu-latest
+    needs: react-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-ui-dist
+          path: apps/desktop-ui/dist
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo check --workspace
+      - run: cargo check --workspace --all-features
+
+  windows-installer:
+    runs-on: windows-latest
+    needs:
+      - typescript-foundation
+      - react-ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install dependencies
+        shell: pwsh
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Generate schemas
+        run: pnpm generate:schemas
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build Foundation
+        run: pnpm build
+
+      - name: Build React UI
+        run: pnpm --dir apps/desktop-ui build
+
+      - name: Generate Windows ICO from source PNG
+        shell: pwsh
+        run: |
+          $pngPath = "apps/desktop-host/src-tauri/icons/icon.png"
+          $icoPath = "apps/desktop-host/src-tauri/icons/icon.ico"
+          $png = [System.IO.File]::ReadAllBytes($pngPath)
+
+          $stream = New-Object System.IO.MemoryStream
+          $writer = New-Object System.IO.BinaryWriter($stream)
+
+          # ICO header: reserved=0, type=1 (icon), count=1.
+          $writer.Write([UInt16]0)
+          $writer.Write([UInt16]1)
+          $writer.Write([UInt16]1)
+
+          # Single 64x64 PNG-backed icon entry.
+          $writer.Write([Byte]64)
+          $writer.Write([Byte]64)
+          $writer.Write([Byte]0)
+          $writer.Write([Byte]0)
+          $writer.Write([UInt16]1)
+          $writer.Write([UInt16]32)
+          $writer.Write([UInt32]$png.Length)
+          $writer.Write([UInt32]22)
+          $writer.Write($png)
+
+          $writer.Flush()
+          [System.IO.File]::WriteAllBytes($icoPath, $stream.ToArray())
+          $writer.Dispose()
+          $stream.Dispose()
+
+          if (-not (Test-Path $icoPath)) {
+            throw "Failed to generate $icoPath"
+          }
+
+          Write-Host "Generated $icoPath from $pngPath"
+
+      - name: Build Windows NSIS installer
+        shell: pwsh
+        run: pnpm exec tauri build --config apps/desktop-host/src-tauri/tauri.conf.json --target x86_64-pc-windows-msvc --bundles nsis --ci
+
+      - name: Prepare installer artifact
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path "target" -Recurse -File -Filter "*-setup.exe" | Where-Object { $_.FullName -match "\\bundle\\nsis\\" } | Select-Object -First 1
+
+          if (-not $installer) {
+            throw "NSIS installer was not generated."
+          }
+
+          New-Item -ItemType Directory -Force -Path "artifacts" | Out-Null
+          $artifactPath = "artifacts/AI Companion Nova_x64-setup.exe"
+          Copy-Item -LiteralPath $installer.FullName -Destination $artifactPath -Force
+
+          if (-not (Test-Path $artifactPath)) {
+            throw "Installer artifact was not staged."
+          }
+
+          Write-Host "Installer: $($installer.FullName)"
+          Write-Host "Artifact: $artifactPath"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-companion-nova-windows-x64
+          path: artifacts/AI Companion Nova_x64-setup.exe
+          if-no-files-found: error

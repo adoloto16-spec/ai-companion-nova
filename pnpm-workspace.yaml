@@ -6,3 +6,5 @@ packages:
   - "modules/mock"
   - "providers/mock"
   - "host/ipc"
+  - "host/credentials"
+  - "runtime/bootstrap"

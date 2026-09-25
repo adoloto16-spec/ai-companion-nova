@@ -1,6 +1,1 @@
-{
-  "$schema":"https://json-schema.org/draft/2020-12/schema",
-  "type":"object",
-  "required":["id","subject","resource","action","effect"],
-  "properties":{"id":{"type":"string"},"subject":{"type":"string"},"resource":{"type":"string"},"action":{"type":"string"},"effect":{"enum":["allow","deny"]},"scope":{"type":"object","additionalProperties":true}}
-}
+{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["id","schemaVersion","subject","resourceType","action","effect"],"additionalProperties":false,"properties":{"id":{"type":"string"},"schemaVersion":{"type":"string"},"subject":{"type":"string"},"resourceType":{"enum":["domain","filesystem","application","resource"]},"action":{"type":"string"},"effect":{"enum":["allow","deny"]},"scope":{"type":"object","additionalProperties":true}}}

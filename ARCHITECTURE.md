@@ -1,51 +1,36 @@
 # Architecture
 
-## Dependency direction
+Layers:
+Contracts / JSON Schema
+  ^
+Core / Modules / Providers
+  ^
+Composition Root
+  ^
+Host / UI
 
-```
-Contracts
-   ↑
-Core   Modules   Providers
-   \      |        /
-    \     |       /
-     Composition Root
-            |
-      Tauri / Host / UI
-```
+Core owns lifecycle, events, state, provider registry and action policy. It depends on Contracts only.
 
-Core never imports OpenAI, Anthropic, ElevenLabs, Ollama, LM Studio, Playwright, Three.js/VRM, LanceDB, or messaging SDKs.
-
-## Lifecycle
-
-```
-installed -> loading -> ready -> running
-                            \-> degraded
-                            \-> error
-installed <-> disabled
-```
-
-Optional module failure is isolated from Core.
-
-## Security
-
-```
-Action Request
- -> schema validation
+Security pipeline:
+ActionInvocation
+ -> request schema validation
+ -> canonical ToolDefinition
+ -> required capabilities
+ -> tool argument validation
+ -> actual target resolution
  -> permission
  -> foreground
- -> scope
- -> risk / confirmation
+ -> canonical risk / confirmation
  -> driver
  -> postcondition
  -> audit
-```
 
-`ModuleContext` never exposes unrestricted shell, filesystem, process, mouse, or keyboard operations.
+The request cannot supply its own actor identity, risk, resource or scope policy.
 
-## IPC
+runtime/bootstrap is the concrete composition root used by the Foundation desktop runtime.
 
-UI to Rust uses Tauri IPC. Module/process boundaries have a JSON-RPC 2.0 transport abstraction. Foundation uses an in-memory transport for tests.
+Tauri is the privileged Host boundary. The UI receives real runtime diagnostics from the Foundation composition root and host-only diagnostics over Tauri IPC.
 
-## Composition Root
+Event subscribers and state observers are isolated. Optional module initialize/start/health failures do not terminate Core. Shutdown continues across modules even when a module stop fails.
 
-Concrete bindings happen outside Core. The first Foundation uses fake providers and modules only.
+Contracts carry explicit API/schema versions. JSON Schema files are canonical and the TypeScript schema catalog is generated from them.

@@ -2,6 +2,8 @@ node_modules/
 build/
 dist/
 target/
+*.exe
+*.msi
 .env
 .env.*
 !.env.example
