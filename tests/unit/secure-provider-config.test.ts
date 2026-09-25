@@ -7,7 +7,7 @@ import {
   type ProviderConfiguration
 } from "../../contracts/src";
 import {InMemoryProviderConfigurationStore,serializeProviderConfiguration} from "../../host/config/src";
-import {InMemoryCredentialStore} from "../../host/credentials/src";
+import {InMemoryCredentialStore,IpcCredentialStore} from "../../host/credentials/src";
 import {activeProviderId,buildConfiguredProvider,testProviderConfiguration,validateProviderConfiguration} from "../../runtime/bootstrap/src";
 import {OPENAI_COMPATIBLE_PROVIDER_ID,type HttpClient,type HttpClientRequest,type HttpClientResponse,OpenAICompatibleChatProvider} from "../../providers/chat/openai-compatible/src";
 
@@ -61,6 +61,15 @@ async function credentialCrudTest(){
   await store.deleteSecret(credential);
   equal(await store.getSecret(credential),undefined,"credential deletion");
   equal(await store.exists(credential),false,"credential absence");
+
+  const commands:string[]=[];
+  const ipc=new IpcCredentialStore(async(command)=>{
+    commands.push(command);
+    return command==="credential_exists";
+  });
+  equal(await ipc.exists(credential),true,"IPC existence result");
+  ok(!commands.includes("get_credential"),"IPC existence check never requests plaintext credential");
+  equal(commands[0],"credential_exists","IPC existence uses narrow command");
 }
 
 function validationTest(){
@@ -129,6 +138,15 @@ async function secretSafetyTest(){
   }
 }
 
+async function nativeCredentialStoreContractTest(){
+  const source=await import("node:fs/promises").then(fs=>fs.readFile("apps/desktop-host/src-tauri/src/windows_credentials.rs","utf8"));
+  const existsStart=source.indexOf("pub fn exists(&self,reference:&CredentialReference)->Result<bool,String>{");
+  const nextFn=source.indexOf("\n    }",existsStart);
+  const existsBody=source.slice(existsStart,nextFn);
+  ok(!existsBody.includes("get_secret("),"native existence check must not call get_secret");
+  ok(source.includes("const MAX_SECRET_BYTES:usize=5*512;"),"Windows generic credential limit is 2560 bytes");
+}
+
 async function offlineAndCompositionRootTest(){
   const runtimeConfig={...base};
   const credentials=new InMemoryCredentialStore();
@@ -149,6 +167,7 @@ void (async()=>{
     ["provider selection",selectionTest],
     ["connection test semantics",connectionTestTest],
     ["secret safety",secretSafetyTest],
+    ["native credential store contract",nativeCredentialStoreContractTest],
     ["offline and Composition Root",offlineAndCompositionRootTest]
   ] as const){
     await test();
