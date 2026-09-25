@@ -1,4 +1,4 @@
-import type {CredentialReference,CredentialStore} from "../../contracts/src/index";
+import type {CredentialReference,CredentialStore} from "../../../contracts/src/index";
 
 export class InMemoryCredentialStore implements CredentialStore{
   private readonly values=new Map<string,string>();
