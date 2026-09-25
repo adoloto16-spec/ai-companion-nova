@@ -155,17 +155,22 @@ jobs:
       - name: Prepare installer artifact
         shell: pwsh
         run: |
-          $installer = Get-ChildItem -Path "apps/desktop-host/src-tauri/target" -Recurse -File -Filter "*-setup.exe" | Where-Object { $_.FullName -match "\\bundle\\nsis\\" } | Select-Object -First 1
+          $installer = Get-ChildItem -Path "target" -Recurse -File -Filter "*-setup.exe" | Where-Object { $_.FullName -match "\\bundle\\nsis\\" } | Select-Object -First 1
 
           if (-not $installer) {
             throw "NSIS installer was not generated."
           }
 
           New-Item -ItemType Directory -Force -Path "artifacts" | Out-Null
-          Copy-Item -LiteralPath $installer.FullName -Destination "artifacts/AI Companion Nova_x64-setup.exe" -Force
+          $artifactPath = "artifacts/AI Companion Nova_x64-setup.exe"
+          Copy-Item -LiteralPath $installer.FullName -Destination $artifactPath -Force
+
+          if (-not (Test-Path $artifactPath)) {
+            throw "Installer artifact was not staged."
+          }
 
           Write-Host "Installer: $($installer.FullName)"
-          Write-Host "Artifact: artifacts/AI Companion Nova_x64-setup.exe"
+          Write-Host "Artifact: $artifactPath"
 
       - uses: actions/upload-artifact@v4
         with:
