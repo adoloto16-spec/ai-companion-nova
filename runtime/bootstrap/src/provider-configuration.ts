@@ -3,7 +3,7 @@ import {
   AiRuntimeError,
   InMemoryDiagnosticsStore,
   ProviderRegistry
-} from "../../core/src";
+} from "../../../core/src";
 import {
   CHAT_API_VERSION,
   CHAT_SCHEMA_VERSION,
@@ -16,14 +16,14 @@ import {
   type CredentialStore,
   type ProviderConfiguration,
   type ProviderConnectionTestResult
-} from "../../contracts/src";
+} from "../../../contracts/src";
 import {
   OPENAI_COMPATIBLE_PROVIDER_ID,
   OpenAICompatibleChatProvider,
   OpenAICompatibleProviderError,
   type HttpClient,
   validateOpenAICompatibleProviderConfig
-} from "../../providers/chat/openai-compatible/src";
+} from "../../../providers/chat/openai-compatible/src";
 
 const validator=new StandardContractValidator();
 
