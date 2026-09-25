@@ -50,7 +50,7 @@ export class DefaultActionBroker implements ActionBroker{
       return result;
     };
 
-    const requestSchema=this.deps.schemaValidator.validate(req,STANDARD_SCHEMAS["action-request"]);
+    const requestSchema=this.deps.schemaValidator.validate(req,STANDARD_SCHEMAS["action-request"]!);
     if(!requestSchema.valid)return audit({
       id:req?.id??"unknown",schemaVersion:FOUNDATION_SCHEMA_VERSION,status:"denied",
       error:{code:"SCHEMA_VALIDATION_FAILED",message:"Action request failed schema validation.",details:{errors:[...requestSchema.errors]}},
@@ -73,7 +73,7 @@ export class DefaultActionBroker implements ActionBroker{
     },"untrusted actor");
 
     for(const capability of tool.definition.requiredCapabilities){
-      if(!invocation.actor.capabilities.includes(capability))return audit({
+      if(!actor!.capabilities.includes(capability))return audit({
         id:req.id,schemaVersion:FOUNDATION_SCHEMA_VERSION,status:"denied",
         error:{code:"CAPABILITY_DENIED",message:"Missing capability: "+capability},durationMs:Date.now()-start
       },"missing capability");
