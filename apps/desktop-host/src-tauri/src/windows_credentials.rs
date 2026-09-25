@@ -1,7 +1,7 @@
 use serde::{Deserialize,Serialize};
 
 const CRED_TYPE_GENERIC:u32=1;
-const CRED_PERSIST_LOCAL:u32=2;
+const CRED_PERSIST_LOCAL_MACHINE:u32=2;
 const ERROR_NOT_FOUND:u32=1168;
 const MAX_SECRET_BYTES:usize=5*512;
 
@@ -62,7 +62,7 @@ impl WindowsCredentialStore{
     pub fn set_secret(&self,reference:&CredentialReference,secret:&str)->Result<(),String>{
         if secret.is_empty(){return Err("Credential secret must not be empty.".to_string());}
         let blob=secret.as_bytes();
-        if blob.len()>MAX_SECRET_BYTES{return Err("Credential secret exceeds the Windows Generic Credential limit of 512 bytes.".to_string());}
+        if blob.len()>MAX_SECRET_BYTES{return Err("Credential secret exceeds the Windows Generic Credential limit of 2560 bytes.".to_string());}
         let target=target_name(reference)?;
         let target_w=wide(&target);
         let user_w=wide("AI Companion Nova");
@@ -75,7 +75,7 @@ impl WindowsCredentialStore{
             LastWritten:FILETIME{dwLowDateTime:0,dwHighDateTime:0},
             CredentialBlobSize:blob_copy.len() as u32,
             CredentialBlob:blob_copy.as_mut_ptr(),
-            Persist:CRED_PERSIST_LOCAL,
+            Persist:CRED_PERSIST_LOCAL_MACHINE,
             AttributeCount:0,
             Attributes:std::ptr::null_mut(),
             TargetAlias:std::ptr::null_mut(),
