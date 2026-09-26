@@ -1,10 +1,11 @@
-import type {ChatErrorCode,ChatMessage,ChatRequest,ChatResponse,Unsubscribe} from "../../contracts/src/index";
+import type {ChatErrorCode,ChatMessage,ChatRequest,ChatResponse,CharacterId,Unsubscribe} from "../../contracts/src/index";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION} from "../../contracts/src/index";
 
 export interface ChatRuntimeBoundary{chat(request:ChatRequest):Promise<ChatResponse>}
 
 export interface ConversationSnapshot{
   conversationId:string;
+  characterId:CharacterId;
   messages:readonly ChatMessage[];
   sending:boolean;
   error?:string;
@@ -50,9 +51,12 @@ function userMessageForError(error:unknown):{code:ChatErrorCode;message:string}{
 export class ConversationSession{
   readonly conversationId:string;
   private readonly messages:ChatMessage[]=[];
-  constructor(conversationId:string){
+  readonly characterId:CharacterId;
+  constructor(conversationId:string,characterId:CharacterId){
     if(!conversationId.trim())throw new Error("Conversation id must not be empty.");
+    if(!characterId.trim())throw new Error("Character id must not be empty.");
     this.conversationId=conversationId;
+    this.characterId=characterId;
   }
   addMessage(message:ChatMessage):void{this.messages.push(cloneMessage(message))}
   getMessages():readonly ChatMessage[]{return this.messages.map(cloneMessage)}
@@ -79,6 +83,7 @@ export class ChatSessionController{
   getSnapshot():ConversationSnapshot{
     return {
       conversationId:this.session.conversationId,
+      characterId:this.session.characterId,
       messages:this.session.getMessages(),
       sending:this.sending,
       ...(this.error?{error:this.error}:{}),

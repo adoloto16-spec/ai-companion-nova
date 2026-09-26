@@ -1,5 +1,7 @@
 #[cfg(feature="tauri-app")]
 mod config;
+#[cfg(feature="tauri-app")]
+mod characters;
 mod windows_credentials;
 
 use serde::Serialize;
@@ -24,7 +26,8 @@ fn get_host_diagnostics()->HostDiagnostics{
             "ipc",
             "runtime-diagnostics",
             "credential-store",
-            "provider-configuration"
+            "provider-configuration",
+            "character-storage"
         ],
     }
 }
@@ -93,6 +96,18 @@ fn delete_provider_configuration(app:tauri::AppHandle)->Result<(),String>{
     config::clear(&app)
 }
 
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn get_characters(app:tauri::AppHandle)->Result<Option<characters::CharacterStoreState>,String>{
+    characters::load(&app)
+}
+
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn save_characters(app:tauri::AppHandle,state:characters::CharacterStoreState)->Result<(),String>{
+    characters::save(&app,&state)
+}
+
 #[derive(Default)]
 struct RuntimeDiagnosticsState(Mutex<Option<Value>>);
 
@@ -110,7 +125,9 @@ fn main(){
             credential_exists,
             get_provider_configuration,
             save_provider_configuration,
-            delete_provider_configuration
+            delete_provider_configuration,
+            get_characters,
+            save_characters
         ])
         .run(tauri::generate_context!())
         .expect("Tauri runtime failed");

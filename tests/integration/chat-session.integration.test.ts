@@ -7,7 +7,7 @@ async function main(){
   const runtime=await startFoundationRuntime();
   try{
     equal(runtime.getActiveChatModel(),"fake-chat","fake provider selects fake model");
-    const session=new ConversationSession("integration-chat");
+    const session=new ConversationSession("integration-chat","character.integration");
     const requests:ChatRequest[]=[];
     const controller=new ChatSessionController(session,{
       chat(request:ChatRequest){requests.push(request);return runtime.chat(request)}
@@ -16,6 +16,7 @@ async function main(){
     const first=await controller.submit("hello Nova","fake-chat");
     equal(first.status,"sent","real runtime chat succeeds with fake provider");
     equal(session.getMessages().length,2,"integration assistant response added");
+    equal(session.characterId,"character.integration","integration conversation scope");
     equal(session.getMessages()[1]?.content,"fake response","integration assistant content");
     equal(requests.length,1,"request passed through runtime boundary");
 

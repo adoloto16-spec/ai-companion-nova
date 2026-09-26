@@ -12,8 +12,9 @@ function responseFor(request:ChatRequest,content="assistant response"):ChatRespo
 }
 
 async function main(){
-  const session=new ConversationSession("unit-conversation");
+  const session=new ConversationSession("unit-conversation","character.unit");
   equal(session.getMessages().length,0,"initial conversation empty");
+  equal(session.characterId,"character.unit","conversation character scope");
   session.addMessage({role:"user",content:"one"});
   session.addMessage({role:"assistant",content:"two"});
   equal(session.getMessages().map(message=>message.content).join("|"),"one|two","conversation order");
@@ -33,7 +34,7 @@ async function main(){
   equal(session.getMessages()[0]?.role,"user","user message first");
   equal(session.getMessages()[1]?.role,"assistant","assistant message second");
 
-  const historySession=new ConversationSession("history-conversation");
+  const historySession=new ConversationSession("history-conversation","character.history");
   const historyRequests:ChatRequest[]=[];
   const historyController=new ChatSessionController(historySession,{
     async chat(request:ChatRequest){historyRequests.push(request);return responseFor(request,"history response")}
@@ -43,7 +44,7 @@ async function main(){
   equal(historyRequests[1]?.context.messages.length,3,"full history passed to runtime");
   equal(historyRequests[1]?.context.messages[2]?.content,"second","latest user message passed");
 
-  const errorSession=new ConversationSession("error-conversation");
+  const errorSession=new ConversationSession("error-conversation","character.error");
   const errorController=new ChatSessionController(errorSession,{
     async chat(_request:ChatRequest):Promise<ChatResponse>{throw {chatError:{code:"PROVIDER_ERROR",message:"internal detail"}}}
   },{requestIdFactory:()=> "error-1"});
@@ -54,7 +55,7 @@ async function main(){
   equal(errorController.getSnapshot().error,"The chat provider could not complete the request.","safe user-facing error");
   ok(!String(errorController.getSnapshot().error).includes("internal detail"),"raw error is not exposed");
 
-  const busySession=new ConversationSession("busy-conversation");
+  const busySession=new ConversationSession("busy-conversation","character.busy");
   let release:(response:ChatResponse)=>void=()=>{};
   const pendingRuntime={
     chat(request:ChatRequest):Promise<ChatResponse>{

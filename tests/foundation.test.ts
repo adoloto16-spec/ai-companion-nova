@@ -18,6 +18,10 @@ async function schemaValidationTest(){
   ok(validator.validate(event,STANDARD_SCHEMAS["event-envelope"]!).valid,"valid event schema");
   const permission={id:"p1",schemaVersion:FOUNDATION_SCHEMA_VERSION,subject:"character",resourceType:"domain",action:"browser.navigate",effect:"allow"};
   ok(validator.validate(permission,STANDARD_SCHEMAS["permission"]!).valid,"valid permission schema");
+  const character={id:"character.nova.default.v1",name:"Nova",description:"",createdAt:"2026-09-26T02:00:00.000Z",updatedAt:"2026-09-26T02:00:00.000Z",enabled:true};
+  ok(validator.validate(character,STANDARD_SCHEMAS["character"]!).valid,"valid Character schema");
+  ok(!validator.validate({...character,unknownField:true},STANDARD_SCHEMAS["character"]!).valid,"Character schema rejects unknown fields");
+  ok(!validator.validate({...character,name:""},STANDARD_SCHEMAS["character"]!).valid,"Character schema rejects empty names");
 }
 
 async function eventBusTest(){

@@ -29,7 +29,7 @@ const required=[
   "contracts/schemas/diagnostics.schema.json","contracts/schemas/credential-reference.schema.json","contracts/schemas/provider-configuration.schema.json","contracts/schemas/provider-connection-test-result.schema.json",
   "contracts/schemas/chat-message.schema.json","contracts/schemas/chat-context.schema.json","contracts/schemas/chat-generation-options.schema.json",
   "contracts/schemas/chat-request.schema.json","contracts/schemas/chat-response.schema.json","contracts/schemas/chat-error.schema.json","contracts/src/schema-validator.ts",
-  "contracts/src/generated-schemas.ts","runtime/bootstrap/src/index.ts","host/config/src/index.ts","host/credentials/src/index.ts","apps/desktop-ui/src/main.tsx",
+  "contracts/src/generated-schemas.ts","runtime/bootstrap/src/index.ts","host/config/src/index.ts","host/credentials/src/index.ts","apps/desktop-ui/src/main.tsx","host/characters/src/index.ts",
   "apps/desktop-host/src-tauri/build.rs","apps/desktop-host/src-tauri/capabilities/default.json"
 ];
 for(const file of required)if(!fs.existsSync(file))violations.push("missing: "+file);
