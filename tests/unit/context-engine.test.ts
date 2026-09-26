@@ -156,13 +156,13 @@ async function main(){
   await noUserEngine.build(request({messages:[{id:"a1",role:"assistant",content:"no user query"}]}));
   equal(noUserSearchCalls,0,"no user message skips memory search");
 
-  const pressure=await new DeterministicContextEngine([new MemoryCandidateSource({
+  const memoryPressure=await new DeterministicContextEngine([new MemoryCandidateSource({
     async search(){return [memoryItems[0]!,memoryItems[1]!];}
   },({estimate(){return 1}} as TokenEstimator))]).build(request({
     messages:[{id:"latest",role:"user",content:"tea"}],
     budget:{availableContextTokens:1,reservedOutputTokens:0,systemOverheadTokens:0,safetyMarginTokens:0}
   }));
-  equal(pressure.includedCandidates[0]?.referenceId,"memory-high","importance dominates deterministic memory retention under pressure");
+  equal(memoryPressure.includedCandidates[0]?.referenceId,"memory-high","importance dominates deterministic memory retention under pressure");
 
   const highVsLow=[
     entry({id:"low-placement",content:"x",placementWeight:5,retentionPriority:50}),
