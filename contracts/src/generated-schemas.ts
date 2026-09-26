@@ -581,6 +581,33 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       }
     }
   },
+  "credential-reference": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": [
+      "id",
+      "kind"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "kind": {
+        "type": "string",
+        "minLength": 1
+      },
+      "provider": {
+        "type": "string",
+        "minLength": 1
+      },
+      "version": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
   "core-book-entry": {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.ai-companion-nova.dev/core-book-entry/v1",
