@@ -69,6 +69,13 @@ async function main(){
   equal(archived.status,"archived","archive preserves memory data");
   equal((await broker.search({characterId:"character.b",query:"tea"})).length,0,"ordinary search excludes archived memory");
 
+  let invalidTransition=false;
+  try{await broker.update("character.a",locked.id,{content:"cannot edit superseded" },user);}catch{invalidTransition=true}
+  ok(invalidTransition,"superseded memory cannot be updated");
+  let secondArchiveDenied=false;
+  try{await broker.archive("character.b",b.id,user);}catch{secondArchiveDenied=true}
+  ok(secondArchiveDenied,"archived memory cannot be archived twice");
+
   const filtered=await broker.search({characterId:"character.a",query:"",types:["preference"],tags:["tea"],limit:1});
   equal(filtered.length,1,"search applies type and tag filters");
   equal(filtered[0]?.id,"memory.a.2","search applies deterministic limit");
