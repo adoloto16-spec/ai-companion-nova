@@ -103,7 +103,7 @@ export class ConversationCandidateSource implements ContextCandidateSource {
       const recency=message.role==="system"?100:recent?Math.min(100,50+Math.round((index/(Math.max(1,request.messages.length-1)))*50)):10;
       const referenceId=message.id?.trim()||request.conversationId+":message:"+index;
       return {
-        id:"conversation:"+referenceId,
+        id:"conversation:"+request.conversationId+":"+index,
         source:"conversation",
         referenceId,
         characterId:request.characterId,
