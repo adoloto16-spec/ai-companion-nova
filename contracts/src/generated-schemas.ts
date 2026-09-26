@@ -184,7 +184,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             "source": {
               "enum": [
                 "conversation",
-                "core_book"
+                "core_book",
+                "memory"
               ]
             },
             "referenceId": {
@@ -230,6 +231,7 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
                 "system",
                 "character_core",
                 "retrieved_core_book",
+                "retrieved_memory",
                 "conversation",
                 "recent_conversation"
               ]
@@ -300,7 +302,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             "source": {
               "enum": [
                 "conversation",
-                "core_book"
+                "core_book",
+                "memory"
               ]
             },
             "referenceId": {
@@ -346,6 +349,7 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
                 "system",
                 "character_core",
                 "retrieved_core_book",
+                "retrieved_memory",
                 "conversation",
                 "recent_conversation"
               ]
