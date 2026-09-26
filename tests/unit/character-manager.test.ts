@@ -33,7 +33,7 @@ async function main(){
   await manager.setActiveCharacter(gm.id);
   equal((await manager.getActiveCharacter()).id,gm.id,"active character switched");
 
-  const reloaded=new CharacterManager(store,{clock,idFactory:()=>`character.unused.${++ids}`});
+  const reloaded=new CharacterManager(store,{clock,idFactory:()=>`character.unused.${++ids}`,events});
   await reloaded.initialize();
   equal((await reloaded.listCharacters()).length,2,"characters survive manager re-instantiation");
   equal((await reloaded.getCharacter(gm.id))?.name,"GM","updated metadata survives reload");
