@@ -22,6 +22,12 @@ export const PROVIDER_CONFIGURATION_SCHEMA_VERSION="1";
 export type ProviderConnectionTestStatus="connected"|"authentication_failed"|"configuration_error"|"network_error"|"timeout"|"provider_error";
 export interface ProviderConfiguration{apiVersion:ApiVersion;schemaVersion:string;providerId:string;enabled:boolean;baseUrl:string;model:string;credentialReference:CredentialReference|null;timeoutMs?:number}
 export interface ProviderConnectionTestResult{apiVersion:ApiVersion;schemaVersion:string;status:ProviderConnectionTestStatus;providerId:string;message?:string}
+export type CharacterId=string;
+export const CHARACTER_API_VERSION:ApiVersion="1";
+export const CHARACTER_SCHEMA_VERSION="1";
+export interface Character{id:CharacterId;name:string;description:string;createdAt:string;updatedAt:string;enabled:boolean}
+export interface CharacterStoreState{apiVersion:ApiVersion;schemaVersion:string;characters:readonly Character[];activeCharacterId:CharacterId}
+export interface CharacterStore{load():Promise<CharacterStoreState|undefined>;save(state:CharacterStoreState):Promise<void>}
 export interface CapabilityContext{has(capability:string):boolean;require(capability:string):void}
 export interface ModuleContext{moduleId:string;events:EventBus;logger:Logger;config:ConfigStore;clock:Clock;capabilities:CapabilityContext}
 export interface CompanionModule{manifest:ModuleManifest;initialize(context:ModuleContext):Promise<void>;start():Promise<void>;stop():Promise<void>;health():Promise<HealthStatus>}
@@ -37,6 +43,10 @@ export interface EventPayloadMap{
   AppChanged:{applicationId:string};WindowChanged:{title:string};TTSStarted:{requestId:string};TTSFinished:{requestId:string};
   CharacterMotionStarted:{motionId:string};CharacterMotionFinished:{motionId:string};
   ChatRequestStarted:{requestId:string;conversationId:string;providerId:string;model:string};
+  CharacterCreated:{characterId:string};
+  CharacterUpdated:{characterId:string};
+  CharacterDeleted:{characterId:string};
+  ActiveCharacterChanged:{characterId:string;previousCharacterId?:string};
   ChatResponseReceived:{requestId:string;conversationId:string;providerId:string;model:string;finishReason:ChatFinishReason};
   ChatRequestFailed:{requestId:string;conversationId?:string;providerId?:string;code:ChatError["code"]};
 }
@@ -129,7 +139,8 @@ export const CONTRACT_VERSIONS={
   chatResponse:{apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION},
   chatError:{apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION},
   providerConfiguration:{apiVersion:PROVIDER_CONFIGURATION_API_VERSION,schemaVersion:PROVIDER_CONFIGURATION_SCHEMA_VERSION},
-  providerConnectionTestResult:{apiVersion:PROVIDER_CONFIGURATION_API_VERSION,schemaVersion:PROVIDER_CONFIGURATION_SCHEMA_VERSION}
+  providerConnectionTestResult:{apiVersion:PROVIDER_CONFIGURATION_API_VERSION,schemaVersion:PROVIDER_CONFIGURATION_SCHEMA_VERSION},
+  character:{apiVersion:CHARACTER_API_VERSION,schemaVersion:CHARACTER_SCHEMA_VERSION}
 } as const;
 export {STANDARD_SCHEMAS} from "./generated-schemas";
 
