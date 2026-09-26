@@ -112,6 +112,18 @@ export interface MemorySearchQuery{
   status?:MemoryStatus;
   limit?:number;
 }
+export interface MemoryUpdateInput{
+  content?:string;
+  tags?:readonly string[];
+  importance?:number;
+  confidence?:number;
+  validFrom?:string|null;
+  validUntil?:string|null;
+  source?:MemorySource;
+  sourceReference?:string|null;
+  mutationPolicy?:MemoryMutationPolicy;
+  metadata?:Record<string,unknown>;
+}
 export interface MemoryMutationAuthority{
   actorId:string;
   actorType:"user"|"system"|"model";
@@ -134,7 +146,7 @@ export interface MemoryBroker{
   get(characterId:CharacterId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>;
   search(query:MemorySearchQuery):Promise<readonly MemoryItem[]>;
   create(characterId:CharacterId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
-  update(characterId:CharacterId,memoryId:MemoryItemId,input:Record<string,unknown>,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  update(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryUpdateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
   supersede(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
   archive(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>;
 }
