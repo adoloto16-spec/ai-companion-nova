@@ -1,8 +1,8 @@
-import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine} from "../../../contracts/src/index";
+import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput} from "../../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import type {HealthStatus} from "../../../contracts/src/index";
 import {
-  AiRuntime,CharacterManager,CoreBookManager,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,
+  AiRuntime,CharacterManager,CoreBookManager,MemoryBrokerImpl,InMemoryCharacterStore,InMemoryMemoryStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,
   InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,
   DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
   InMemoryActorIdentityResolver,createMemoryConfig
@@ -32,6 +32,7 @@ export interface FoundationRuntimeOptions{
   credentialStore?:CredentialStore;
   characterStore?:CharacterStore;
   coreBookStore?:CoreBookStore;
+  memoryStore?:MemoryStore;
   httpClient?:HttpClient;
   openAICompatible?:OpenAICompatibleRuntimeConfig;
   contextEngine?:ContextEngine;
@@ -62,6 +63,12 @@ export interface FoundationRuntime{
   deleteCoreBookEntry(characterId:CharacterId,entryId:CoreBookEntryId):Promise<void>;
   setCoreBookEntryEnabled(characterId:CharacterId,entryId:CoreBookEntryId,enabled:boolean):Promise<CoreBookEntry>;
   buildContext(request:ContextBuildRequest):Promise<AssembledContext>;
+  getMemory(characterId:CharacterId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>;
+  searchMemory(query:MemorySearchQuery):Promise<readonly MemoryItem[]>;
+  createMemory(characterId:CharacterId,input:MemoryCreateInput):Promise<MemoryItem>;
+  updateMemory(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryUpdateInput):Promise<MemoryItem>;
+  supersedeMemory(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryCreateInput):Promise<MemoryItem>;
+  archiveMemory(characterId:CharacterId,memoryId:MemoryItemId):Promise<MemoryItem>;
 }
 
 export async function createFoundationRuntime(options:FoundationRuntimeOptions={}):Promise<FoundationRuntime>{
@@ -74,11 +81,26 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const characterManager=new CharacterManager(characterStore,{events,clock:{now:()=>new Date().toISOString()}});
   const coreBookStore=options.coreBookStore??new InMemoryCoreBookStore();
   const coreBookManager=new CoreBookManager(coreBookStore,{events,clock:{now:()=>new Date().toISOString()},characterExists:async characterId=>Boolean(await characterManager.getCharacter(characterId))});
+  const memoryStore=options.memoryStore??new InMemoryMemoryStore();
   const contextEngine=options.contextEngine??createDeterministicContextEngine({listCoreBookEntries:characterId=>coreBookManager.listCoreBookEntries(characterId)});
   const credentialStore=options.credentialStore??options.openAICompatible?.credentialStore??new InMemoryCredentialStore();
   let providerConfiguration=options.providerConfiguration;
   const contractValidator=new StandardContractValidator();
   const audit=new InMemoryAuditService();
+  const memoryBroker:MemoryBroker=new MemoryBrokerImpl({
+    store:memoryStore,
+    validator:contractValidator,
+    audit,
+    events,
+    clock:{now:()=>new Date().toISOString()},
+    characterExists:async characterId=>Boolean(await characterManager.getCharacter(characterId))
+  });
+  const userMemoryAuthority:MemoryMutationAuthority={
+    actorId:"local-user",
+    actorType:"user",
+    trusted:true,
+    capabilities:[]
+  };
   const permissions=new InMemoryPermissionService();
   const actorResolver=new InMemoryActorIdentityResolver();
   const tools=new InMemoryToolRegistry();
@@ -228,6 +250,12 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     deleteCoreBookEntry:(characterId,entryId)=>coreBookManager.deleteCoreBookEntry(characterId,entryId),
     setCoreBookEntryEnabled:(characterId,entryId,enabled)=>coreBookManager.setCoreBookEntryEnabled(characterId,entryId,enabled),
     buildContext:request=>contextEngine.build(request),
+    getMemory:(characterId,memoryId)=>memoryBroker.get(characterId,memoryId),
+    searchMemory:query=>memoryBroker.search(query),
+    createMemory:(characterId,input)=>memoryBroker.create(characterId,input,userMemoryAuthority),
+    updateMemory:(characterId,memoryId,input)=>memoryBroker.update(characterId,memoryId,input,userMemoryAuthority),
+    supersedeMemory:(characterId,memoryId,input)=>memoryBroker.supersede(characterId,memoryId,input,userMemoryAuthority),
+    archiveMemory:(characterId,memoryId)=>memoryBroker.archive(characterId,memoryId,userMemoryAuthority),
     testConfiguredProvider:async()=>{
       if(!providerConfiguration)return {apiVersion:"1",schemaVersion:"1",status:"configuration_error",providerId:"openai-compatible",message:"No provider configuration is saved."};
       return testProviderConfiguration(providerConfiguration,credentialStore,options.httpClient);
