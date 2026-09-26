@@ -40,7 +40,7 @@ async function main(){
       contextBudget:{availableContextTokens:100,reservedOutputTokens:20,systemOverheadTokens:5,safetyMarginTokens:5}
     });
 
-    const first=await controller.submit("What tea do you like?","fake-chat");
+    const first=await controller.submit("tea","fake-chat");
     equal(first.status,"sent","chat with matching memory succeeds");
     if(!captured)throw new Error("ChatRequest was not captured");
     const firstCaptured=captured;
