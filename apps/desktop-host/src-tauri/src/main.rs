@@ -6,6 +6,8 @@ mod characters;
 mod core_book;
 #[cfg(feature="tauri-app")]
 mod memory;
+#[cfg(feature="tauri-app")]
+mod retrieval;
 mod windows_credentials;
 
 use serde::Serialize;
@@ -150,6 +152,25 @@ fn supersede_memory(
     memory::supersede(&app,&character_id,&previous_memory_id,replacement,&state)
 }
 
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn search_retrieval_index(app:tauri::AppHandle,query:retrieval::RetrievalQuery,state:tauri::State<'_,retrieval::RetrievalIndexLock>)->Result<retrieval::RetrievalResult,String>{retrieval::search(&app,&query,&state)}
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn rebuild_retrieval_index(app:tauri::AppHandle,character_id:String,retrieval_state:tauri::State<'_,retrieval::RetrievalIndexLock>,memory_state:tauri::State<'_,memory::MemoryWriteLock>)->Result<(),String>{retrieval::rebuild_character(&app,&character_id,&retrieval_state,&memory_state)}
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn rebuild_all_retrieval_index(app:tauri::AppHandle,retrieval_state:tauri::State<'_,retrieval::RetrievalIndexLock>,memory_state:tauri::State<'_,memory::MemoryWriteLock>)->Result<(),String>{retrieval::rebuild_all(&app,&retrieval_state,&memory_state)}
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn upsert_retrieval_document(app:tauri::AppHandle,document:retrieval::RetrievalIndexDocument,state:tauri::State<'_,retrieval::RetrievalIndexLock>)->Result<(),String>{retrieval::upsert(&app,&document,&state)}
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn remove_retrieval_document(app:tauri::AppHandle,character_id:String,source:retrieval::RetrievalSource,source_id:String,state:tauri::State<'_,retrieval::RetrievalIndexLock>)->Result<(),String>{retrieval::remove(&app,&character_id,&source,&source_id,&state)}
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn remove_retrieval_character(app:tauri::AppHandle,character_id:String,state:tauri::State<'_,retrieval::RetrievalIndexLock>)->Result<(),String>{retrieval::remove_character(&app,&character_id,&state)}
+
 #[derive(Default)]
 struct RuntimeDiagnosticsState(Mutex<Option<Value>>);
 
@@ -158,6 +179,7 @@ fn main(){
     tauri::Builder::default()
         .manage(RuntimeDiagnosticsState::default())
         .manage(memory::MemoryWriteLock::default())
+        .manage(retrieval::RetrievalIndexLock::default())
         .invoke_handler(tauri::generate_handler![
             get_host_diagnostics,
             set_runtime_diagnostics,
@@ -175,7 +197,13 @@ fn main(){
             save_core_book_entries,
             get_memory_state,
             save_memory_state,
-            supersede_memory
+            supersede_memory,
+            search_retrieval_index,
+            rebuild_retrieval_index,
+            rebuild_all_retrieval_index,
+            upsert_retrieval_document,
+            remove_retrieval_document,
+            remove_retrieval_character
         ])
         .run(tauri::generate_context!())
         .expect("Tauri runtime failed");

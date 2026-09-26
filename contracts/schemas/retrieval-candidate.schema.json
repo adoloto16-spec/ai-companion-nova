@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/retrieval-candidate/v1",
+  "title": "AI Companion Nova Retrieval Candidate v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source",
+    "sourceId",
+    "characterId",
+    "score",
+    "matchedText",
+    "matches"
+  ],
+  "properties": {
+    "source": {
+      "enum": [
+        "core_book",
+        "memory"
+      ]
+    },
+    "sourceId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "characterId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "score": {
+      "type": "number"
+    },
+    "matchedText": {
+      "type": "string"
+    },
+    "matches": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "field",
+          "text"
+        ],
+        "properties": {
+          "field": {
+            "enum": [
+              "title",
+              "content",
+              "tags"
+            ]
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "updatedAt"
+      ],
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

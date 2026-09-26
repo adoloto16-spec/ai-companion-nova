@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/retrieval-source/v1",
+  "title": "AI Companion Nova Retrieval Source v1",
+  "type": "string",
+  "enum": [
+    "core_book",
+    "memory"
+  ]
+}

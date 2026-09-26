@@ -142,6 +142,18 @@ export interface MemoryStore{
   save(state:MemoryStoreState):Promise<void>;
   supersede(characterId:CharacterId,previousMemoryId:MemoryItemId,replacement:MemoryItem):Promise<MemoryItem>;
 }
+export const RETRIEVAL_API_VERSION:ApiVersion="1";
+export const RETRIEVAL_SCHEMA_VERSION="1";
+export type RetrievalSource="core_book"|"memory";
+export interface RetrievalMatch{field:"title"|"content"|"tags";text:string}
+export interface RetrievalFilters{status?:string;type?:string;tags?:readonly string[]}
+export interface RetrievalQuery{apiVersion:ApiVersion;schemaVersion:string;characterId:CharacterId;query:string;sources?:readonly RetrievalSource[];limit?:number;filters?:RetrievalFilters}
+export interface RetrievalCandidate{source:RetrievalSource;sourceId:string;characterId:CharacterId;score:number;matchedText:string;matches:readonly RetrievalMatch[];metadata?:{title?:string;status?:string;type?:string;updatedAt:string}}
+export interface RetrievalResult{apiVersion:ApiVersion;schemaVersion:string;characterId:CharacterId;query:string;candidates:readonly RetrievalCandidate[];degraded:boolean;error?:string}
+export interface Retriever{search(query:RetrievalQuery):Promise<RetrievalResult>;rebuild(characterId:CharacterId):Promise<void>;rebuildAll():Promise<void>}
+export interface RetrievalIndexDocument{apiVersion:ApiVersion;schemaVersion:string;characterId:CharacterId;source:RetrievalSource;sourceId:string;title:string;content:string;tags:readonly string[];status?:string;type?:string;updatedAt:string}
+export interface RetrievalIndexWriter{upsert(document:RetrievalIndexDocument):Promise<void>;remove(characterId:CharacterId,source:RetrievalSource,sourceId:string):Promise<void>;removeCharacter(characterId:CharacterId):Promise<void>}
+
 export interface MemoryBroker{
   get(characterId:CharacterId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>;
   search(query:MemorySearchQuery):Promise<readonly MemoryItem[]>;
@@ -336,6 +348,12 @@ export const CONTRACT_VERSIONS={
   contextBuildRequest:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
   contextCandidate:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
   assembledContext:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION}
+  retrievalSource:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
+  retrievalMatch:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
+  retrievalQuery:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
+  retrievalCandidate:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
+  retrievalResult:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
+  retrievalIndexDocument:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
 } as const;
 export {STANDARD_SCHEMAS} from "./generated-schemas";
 
