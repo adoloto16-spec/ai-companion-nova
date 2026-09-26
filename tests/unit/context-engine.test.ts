@@ -112,7 +112,7 @@ async function main(){
     messages:[],
     budget:{availableContextTokens:2,reservedOutputTokens:0,systemOverheadTokens:0,safetyMarginTokens:0}
   }));
-  equal(placement.includedCandidates.map(item=>item.referenceId),["high-placement","low-placement"],"placementWeight affects placement only");
+  equal(placement.messages.map(message=>message.content),["y","x"],"placementWeight affects assembled placement only");
 
   const manyMessages=Array.from({length:10},(_,index)=>({id:"m"+index,role:(index%2===0?"user":"assistant") as "user"|"assistant",content:"turn"+index}));
   const recentEngine=new DeterministicContextEngine([
