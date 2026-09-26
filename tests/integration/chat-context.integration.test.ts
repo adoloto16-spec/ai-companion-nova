@@ -42,7 +42,7 @@ async function main(){
 
     const first=await controller.submit("What tea do you like?","fake-chat");
     equal(first.status,"sent","chat with matching memory succeeds");
-    ok(captured,"ChatRequest captured");
+    if(!captured)throw new Error("ChatRequest was not captured");
     const firstCaptured=captured;
     equal(firstCaptured.context.messages.find(message=>message.content==="Nova likes jasmine tea.")?.metadata?.contextSource,"memory","ChatRequest receives memory context");
     equal(firstCaptured.context.messages.find(message=>message.content==="Nova likes jasmine tea.")?.metadata?.contextReferenceId,"memory.chat.1","ChatRequest preserves memory reference");
@@ -50,7 +50,7 @@ async function main(){
 
     const second=await controller.submit("A completely unrelated topic.","fake-chat");
     equal(second.status,"sent","chat without matching memory still succeeds");
-    ok(captured,"second ChatRequest captured");
+    if(!captured)throw new Error("Second ChatRequest was not captured");
     const secondCaptured=captured;
     equal(secondCaptured.context.messages.filter(message=>message.metadata?.contextSource==="memory").length,0,"no-match chat does not inject unrelated memory");
   }finally{
