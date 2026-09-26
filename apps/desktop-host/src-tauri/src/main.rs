@@ -4,6 +4,8 @@ mod config;
 mod characters;
 #[cfg(feature="tauri-app")]
 mod core_book;
+#[cfg(feature="tauri-app")]
+mod memory;
 mod windows_credentials;
 
 use serde::Serialize;
@@ -30,7 +32,8 @@ fn get_host_diagnostics()->HostDiagnostics{
             "credential-store",
             "provider-configuration",
             "character-storage",
-            "core-book-storage"
+            "core-book-storage",
+            "dynamic-memory-storage"
         ],
     }
 }
@@ -123,6 +126,30 @@ fn save_core_book_entries(app:tauri::AppHandle,state:core_book::CoreBookStoreSta
     core_book::save(&app,&state)
 }
 
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn get_memory_state(app:tauri::AppHandle,character_id:String,state:tauri::State<'_,memory::MemoryWriteLock>)->Result<Option<memory::MemoryStoreState>,String>{
+    memory::load(&app,&character_id,&state)
+}
+
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn save_memory_state(app:tauri::AppHandle,state_value:memory::MemoryStoreState,state:tauri::State<'_,memory::MemoryWriteLock>)->Result<(),String>{
+    memory::save(&app,&state_value,&state)
+}
+
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn supersede_memory(
+    app:tauri::AppHandle,
+    character_id:String,
+    previous_memory_id:String,
+    replacement:memory::MemoryItem,
+    state:tauri::State<'_,memory::MemoryWriteLock>,
+)->Result<memory::MemoryItem,String>{
+    memory::supersede(&app,&character_id,&previous_memory_id,replacement,&state)
+}
+
 #[derive(Default)]
 struct RuntimeDiagnosticsState(Mutex<Option<Value>>);
 
@@ -130,6 +157,7 @@ struct RuntimeDiagnosticsState(Mutex<Option<Value>>);
 fn main(){
     tauri::Builder::default()
         .manage(RuntimeDiagnosticsState::default())
+        .manage(memory::MemoryWriteLock::default())
         .invoke_handler(tauri::generate_handler![
             get_host_diagnostics,
             set_runtime_diagnostics,
@@ -144,7 +172,10 @@ fn main(){
             get_characters,
             save_characters,
             get_core_book_entries,
-            save_core_book_entries
+            save_core_book_entries,
+            get_memory_state,
+            save_memory_state,
+            supersede_memory
         ])
         .run(tauri::generate_context!())
         .expect("Tauri runtime failed");
