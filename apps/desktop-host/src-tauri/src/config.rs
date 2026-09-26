@@ -129,6 +129,14 @@ mod tests{
     }
 
     #[test]
+    fn preserves_null_credential_reference(){
+        let bytes=br#"{"apiVersion":"1","schemaVersion":"1","providerId":"openai-compatible","enabled":false,"baseUrl":"https://api.openai.com/v1","model":"test-model","credentialReference":null}"#;
+        let (configuration,migrated)=decode_provider_configuration(bytes).expect("null credential reference should load");
+        assert!(!migrated);
+        assert!(configuration.credential_reference.is_none());
+    }
+
+    #[test]
     fn rejects_invalid_version_type(){
         let bytes=config_json("true").into_bytes();
         let error=decode_provider_configuration(&bytes).expect_err("boolean version must be rejected");
