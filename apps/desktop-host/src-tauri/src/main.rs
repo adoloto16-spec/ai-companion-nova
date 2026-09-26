@@ -2,6 +2,8 @@
 mod config;
 #[cfg(feature="tauri-app")]
 mod characters;
+#[cfg(feature="tauri-app")]
+mod core_book;
 mod windows_credentials;
 
 use serde::Serialize;
@@ -27,7 +29,8 @@ fn get_host_diagnostics()->HostDiagnostics{
             "runtime-diagnostics",
             "credential-store",
             "provider-configuration",
-            "character-storage"
+            "character-storage",
+            "core-book-storage"
         ],
     }
 }
@@ -108,6 +111,18 @@ fn save_characters(app:tauri::AppHandle,state:characters::CharacterStoreState)->
     characters::save(&app,&state)
 }
 
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn get_core_book_entries(app:tauri::AppHandle,character_id:String)->Result<Option<core_book::CoreBookStoreState>,String>{
+    core_book::load(&app,&character_id)
+}
+
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn save_core_book_entries(app:tauri::AppHandle,state:core_book::CoreBookStoreState)->Result<(),String>{
+    core_book::save(&app,&state)
+}
+
 #[derive(Default)]
 struct RuntimeDiagnosticsState(Mutex<Option<Value>>);
 
@@ -127,7 +142,9 @@ fn main(){
             save_provider_configuration,
             delete_provider_configuration,
             get_characters,
-            save_characters
+            save_characters,
+            get_core_book_entries,
+            save_core_book_entries
         ])
         .run(tauri::generate_context!())
         .expect("Tauri runtime failed");
