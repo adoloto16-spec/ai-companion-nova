@@ -10,9 +10,24 @@ export class MinimalJsonSchemaValidator implements SchemaValidator {
     return {valid:errors.length===0,errors};
   }
   private check(value:unknown,schema:JsonSchema,path:string,errors:string[]):void {
+    if(schema.const!==undefined && JSON.stringify(schema.const)!==JSON.stringify(value)){
+      errors.push(path+" must equal the schema const");
+      return;
+    }
     if(schema.enum && !schema.enum.some(item=>JSON.stringify(item)===JSON.stringify(value))){
       errors.push(path+" must match one of enum values");
       return;
+    }
+    if(schema.oneOf){
+      let validCount=0;
+      for(const candidate of schema.oneOf){
+        const candidateResult=this.validate(value,candidate);
+        if(candidateResult.valid)validCount++;
+      }
+      if(validCount!==1){
+        errors.push(path+" must match exactly one schema variant");
+        return;
+      }
     }
     if(schema.type){
       const types=Array.isArray(schema.type)?schema.type:[schema.type];
@@ -76,4 +91,5 @@ export class StandardContractValidator extends MinimalJsonSchemaValidator {
   validateChatRequest(value:unknown){return this.validate(value,STANDARD_SCHEMAS["chat-request"]!);}
   validateChatResponse(value:unknown){return this.validate(value,STANDARD_SCHEMAS["chat-response"]!);}
   validateChatError(value:unknown){return this.validate(value,STANDARD_SCHEMAS["chat-error"]!);}
+  validateCoreBookEntry(value:unknown){return this.validate(value,STANDARD_SCHEMAS["core-book-entry"]!);}
 }

@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/core-book-entry/v1",
+  "title": "AI Companion Nova Core Book Entry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "characterId",
+    "title",
+    "content",
+    "tags",
+    "activation",
+    "retentionPriority",
+    "placementWeight",
+    "mutationPolicy",
+    "enabled",
+    "source",
+    "metadata",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "characterId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "content": {
+      "type": "string"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "activation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "always"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "keywords",
+            "matchMode",
+            "caseSensitive"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "keyword"
+              ]
+            },
+            "keywords": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "matchMode": {
+              "enum": [
+                "any",
+                "all"
+              ]
+            },
+            "caseSensitive": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "pattern",
+            "flags"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "regex"
+              ]
+            },
+            "pattern": {
+              "type": "string"
+            },
+            "flags": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "semantic"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "model_search"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "retentionPriority": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "placementWeight": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "mutationPolicy": {
+      "enum": [
+        "locked",
+        "suggest",
+        "auto"
+      ]
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "source": {
+      "enum": [
+        "user",
+        "import",
+        "system",
+        "other"
+      ]
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "createdAt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "updatedAt": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}
