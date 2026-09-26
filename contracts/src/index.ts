@@ -28,6 +28,43 @@ export const CHARACTER_SCHEMA_VERSION="1";
 export interface Character{id:CharacterId;name:string;description:string;createdAt:string;updatedAt:string;enabled:boolean}
 export interface CharacterStoreState{apiVersion:ApiVersion;schemaVersion:string;characters:readonly Character[];activeCharacterId:CharacterId}
 export interface CharacterStore{load():Promise<CharacterStoreState|undefined>;save(state:CharacterStoreState):Promise<void>}
+export type CoreBookEntryId=string;
+export const CORE_BOOK_API_VERSION:ApiVersion="1";
+export const CORE_BOOK_SCHEMA_VERSION="1";
+export type CoreBookMutationPolicy="locked"|"suggest"|"auto";
+export type CoreBookEntrySource="user"|"import"|"system"|"other";
+export type CoreBookActivation=
+  | {kind:"always"}
+  | {kind:"keyword";keywords:readonly string[];matchMode:"any"|"all";caseSensitive:boolean}
+  | {kind:"regex";pattern:string;flags:string}
+  | {kind:"semantic"}
+  | {kind:"model_search"};
+export interface CoreBookEntry{
+  id:CoreBookEntryId;
+  characterId:CharacterId;
+  title:string;
+  content:string;
+  tags:readonly string[];
+  activation:CoreBookActivation;
+  retentionPriority:number;
+  placementWeight:number;
+  mutationPolicy:CoreBookMutationPolicy;
+  enabled:boolean;
+  source:CoreBookEntrySource;
+  metadata:Record<string,unknown>;
+  createdAt:string;
+  updatedAt:string;
+}
+export interface CoreBookStoreState{
+  apiVersion:ApiVersion;
+  schemaVersion:string;
+  characterId:CharacterId;
+  entries:readonly CoreBookEntry[];
+}
+export interface CoreBookStore{
+  load(characterId:CharacterId):Promise<CoreBookStoreState|undefined>;
+  save(state:CoreBookStoreState):Promise<void>;
+}
 export interface CapabilityContext{has(capability:string):boolean;require(capability:string):void}
 export interface ModuleContext{moduleId:string;events:EventBus;logger:Logger;config:ConfigStore;clock:Clock;capabilities:CapabilityContext}
 export interface CompanionModule{manifest:ModuleManifest;initialize(context:ModuleContext):Promise<void>;start():Promise<void>;stop():Promise<void>;health():Promise<HealthStatus>}
@@ -47,6 +84,10 @@ export interface EventPayloadMap{
   CharacterUpdated:{characterId:string};
   CharacterDeleted:{characterId:string};
   ActiveCharacterChanged:{characterId:string;previousCharacterId?:string};
+  CoreBookEntryCreated:{characterId:string;entryId:string};
+  CoreBookEntryUpdated:{characterId:string;entryId:string};
+  CoreBookEntryDeleted:{characterId:string;entryId:string};
+  CoreBookEntryEnabledChanged:{characterId:string;entryId:string;enabled:boolean};
   ChatResponseReceived:{requestId:string;conversationId:string;providerId:string;model:string;finishReason:ChatFinishReason};
   ChatRequestFailed:{requestId:string;conversationId?:string;providerId?:string;code:ChatError["code"]};
 }
@@ -56,7 +97,7 @@ export function createEvent<K extends keyof EventPayloadMap>(type:K,payload:Even
 
 export interface ProviderCapabilities{streaming?:boolean;vision?:boolean;toolCalling?:boolean;structuredOutput?:boolean;reasoning?:boolean;audioInput?:boolean;audioOutput?:boolean;embeddings?:boolean;[key:string]:boolean|undefined}
 export interface ModelInfo{id:string;displayName?:string;capabilities?:ProviderCapabilities}
-export interface JsonSchema{$schema?:string;type?:string|string[];properties?:Record<string,JsonSchema>;required?:readonly string[];additionalProperties?:boolean|JsonSchema;items?:JsonSchema;enum?:readonly unknown[];minimum?:number;maximum?:number;minLength?:number;maxLength?:number;minItems?:number;maxItems?:number}
+export interface JsonSchema{$schema?:string;type?:string|string[];properties?:Record<string,JsonSchema>;required?:readonly string[];additionalProperties?:boolean|JsonSchema;items?:JsonSchema;enum?:readonly unknown[];oneOf?:readonly JsonSchema[];const?:unknown;minimum?:number;maximum?:number;minLength?:number;maxLength?:number;minItems?:number;maxItems?:number}
 export interface ToolDefinition{id:string;version:string;schemaVersion:string;name:string;description:string;risk:ActionRisk;requiredCapabilities:readonly string[];resourceType:"domain"|"filesystem"|"application"|"resource";action:string;targetResolverId:string;confirmation:"never"|"policy";parameters:JsonSchema}
 export interface ChatMessage{id?:string;role:"system"|"user"|"assistant"|"tool";content:string;toolCallId?:string;metadata?:Record<string,unknown>}
 export interface ChatContext{conversationId:string;messages:readonly ChatMessage[];metadata?:Record<string,unknown>}
@@ -140,7 +181,8 @@ export const CONTRACT_VERSIONS={
   chatError:{apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION},
   providerConfiguration:{apiVersion:PROVIDER_CONFIGURATION_API_VERSION,schemaVersion:PROVIDER_CONFIGURATION_SCHEMA_VERSION},
   providerConnectionTestResult:{apiVersion:PROVIDER_CONFIGURATION_API_VERSION,schemaVersion:PROVIDER_CONFIGURATION_SCHEMA_VERSION},
-  character:{apiVersion:CHARACTER_API_VERSION,schemaVersion:CHARACTER_SCHEMA_VERSION}
+  character:{apiVersion:CHARACTER_API_VERSION,schemaVersion:CHARACTER_SCHEMA_VERSION},
+  coreBookEntry:{apiVersion:CORE_BOOK_API_VERSION,schemaVersion:CORE_BOOK_SCHEMA_VERSION}
 } as const;
 export {STANDARD_SCHEMAS} from "./generated-schemas";
 

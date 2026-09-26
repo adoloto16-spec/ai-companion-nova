@@ -1,8 +1,8 @@
-import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,Character,CharacterId,CharacterStore} from "../../../contracts/src/index";
+import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore} from "../../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import type {HealthStatus} from "../../../contracts/src/index";
 import {
-  AiRuntime,CharacterManager,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,
+  AiRuntime,CharacterManager,CoreBookManager,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,
   InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,
   DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
   InMemoryActorIdentityResolver,createMemoryConfig
@@ -17,6 +17,8 @@ import {
 } from "../../../providers/chat/openai-compatible/src/index";
 import {objectSchema} from "../../../core/src/tools";
 import {InMemoryCredentialStore} from "../../../host/credentials/src/index";
+import {InMemoryCoreBookStore} from "../../../host/core-book/src/index";
+import type {CoreBookCreateInput,CoreBookUpdateInput} from "../../../core/src/core-book-manager";
 import {activeProviderId,buildConfiguredProvider,testProviderConfiguration} from "./provider-configuration";
 
 export interface OpenAICompatibleRuntimeConfig{
@@ -29,6 +31,7 @@ export interface FoundationRuntimeOptions{
   providerConfiguration?:ProviderConfiguration;
   credentialStore?:CredentialStore;
   characterStore?:CharacterStore;
+  coreBookStore?:CoreBookStore;
   httpClient?:HttpClient;
   openAICompatible?:OpenAICompatibleRuntimeConfig;
 }
@@ -51,6 +54,12 @@ export interface FoundationRuntime{
   deleteCharacter(id:CharacterId):Promise<void>;
   getActiveCharacter():Promise<Character>;
   setActiveCharacter(id:CharacterId):Promise<Character>;
+  listCoreBookEntries(characterId:CharacterId):Promise<readonly CoreBookEntry[]>;
+  getCoreBookEntry(characterId:CharacterId,entryId:CoreBookEntryId):Promise<CoreBookEntry|undefined>;
+  createCoreBookEntry(characterId:CharacterId,input:CoreBookCreateInput):Promise<CoreBookEntry>;
+  updateCoreBookEntry(characterId:CharacterId,entryId:CoreBookEntryId,input:CoreBookUpdateInput):Promise<CoreBookEntry>;
+  deleteCoreBookEntry(characterId:CharacterId,entryId:CoreBookEntryId):Promise<void>;
+  setCoreBookEntryEnabled(characterId:CharacterId,entryId:CoreBookEntryId,enabled:boolean):Promise<CoreBookEntry>;
 }
 
 export async function createFoundationRuntime(options:FoundationRuntimeOptions={}):Promise<FoundationRuntime>{
@@ -61,6 +70,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const providers=new ProviderRegistry();
   const characterStore=options.characterStore??new InMemoryCharacterStore();
   const characterManager=new CharacterManager(characterStore,{events,clock:{now:()=>new Date().toISOString()}});
+  const coreBookStore=options.coreBookStore??new InMemoryCoreBookStore();
+  const coreBookManager=new CoreBookManager(coreBookStore,{events,clock:{now:()=>new Date().toISOString()},characterExists:async characterId=>Boolean(await characterManager.getCharacter(characterId))});
   const credentialStore=options.credentialStore??options.openAICompatible?.credentialStore??new InMemoryCredentialStore();
   let providerConfiguration=options.providerConfiguration;
   const contractValidator=new StandardContractValidator();
@@ -207,6 +218,12 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     deleteCharacter:id=>characterManager.deleteCharacter(id),
     getActiveCharacter:()=>characterManager.getActiveCharacter(),
     setActiveCharacter:id=>characterManager.setActiveCharacter(id),
+    listCoreBookEntries:characterId=>coreBookManager.listCoreBookEntries(characterId),
+    getCoreBookEntry:(characterId,entryId)=>coreBookManager.getCoreBookEntry(characterId,entryId),
+    createCoreBookEntry:(characterId,input)=>coreBookManager.createCoreBookEntry(characterId,input),
+    updateCoreBookEntry:(characterId,entryId,input)=>coreBookManager.updateCoreBookEntry(characterId,entryId,input),
+    deleteCoreBookEntry:(characterId,entryId)=>coreBookManager.deleteCoreBookEntry(characterId,entryId),
+    setCoreBookEntryEnabled:(characterId,entryId,enabled)=>coreBookManager.setCoreBookEntryEnabled(characterId,entryId,enabled),
     testConfiguredProvider:async()=>{
       if(!providerConfiguration)return {apiVersion:"1",schemaVersion:"1",status:"configuration_error",providerId:"openai-compatible",message:"No provider configuration is saved."};
       return testProviderConfiguration(providerConfiguration,credentialStore,options.httpClient);

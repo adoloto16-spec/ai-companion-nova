@@ -22,6 +22,13 @@ async function schemaValidationTest(){
   ok(validator.validate(character,STANDARD_SCHEMAS["character"]!).valid,"valid Character schema");
   ok(!validator.validate({...character,unknownField:true},STANDARD_SCHEMAS["character"]!).valid,"Character schema rejects unknown fields");
   ok(!validator.validate({...character,name:""},STANDARD_SCHEMAS["character"]!).valid,"Character schema rejects empty names");
+  const coreBook={id:"core-book.test.1",characterId:"character.nova.default.v1",title:"Nova identity",content:"Nova is the canonical companion.",tags:["identity"],activation:{kind:"always"},retentionPriority:75,placementWeight:25,mutationPolicy:"locked",enabled:true,source:"user",metadata:{},createdAt:"2026-09-26T02:00:00.000Z",updatedAt:"2026-09-26T02:00:00.000Z"};
+  ok(validator.validate(coreBook,STANDARD_SCHEMAS["core-book-entry"]!).valid,"valid Core Book entry schema");
+  ok(!validator.validate({...coreBook,characterId:undefined},STANDARD_SCHEMAS["core-book-entry"]!).valid,"Core Book requires characterId");
+  ok(!validator.validate({...coreBook,activation:{kind:"unsupported"}},STANDARD_SCHEMAS["core-book-entry"]!).valid,"Core Book rejects invalid activation");
+  ok(!validator.validate({...coreBook,mutationPolicy:"future"},STANDARD_SCHEMAS["core-book-entry"]!).valid,"Core Book rejects invalid mutationPolicy");
+  ok(!validator.validate({...coreBook,retentionPriority:101},STANDARD_SCHEMAS["core-book-entry"]!).valid,"Core Book rejects out-of-range retentionPriority");
+  ok(!validator.validate({...coreBook,unknownField:true},STANDARD_SCHEMAS["core-book-entry"]!).valid,"Core Book rejects unknown fields");
 }
 
 async function eventBusTest(){
