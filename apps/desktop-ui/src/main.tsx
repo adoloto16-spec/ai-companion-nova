@@ -40,7 +40,7 @@ async function publishAndReadRuntimeDiagnostics(snapshot:RuntimeDiagnostics):Pro
 }
 function safeStartupError(error:unknown):string{
   const message=error instanceof Error?error.message:String(error);
-  const normalized=message.replace(/\\s+/g," ").trim();
+  const normalized=message.replace(/\s+/g," ").trim();
   return (normalized||"Unknown startup error").slice(0,512);
 }
 
@@ -662,11 +662,15 @@ function App(){
         <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Settings</button>
       </nav>
     </header>
-    {startupStatus==="error"
-      ?<section className="loading-panel" role="alert">
-        <strong>Character runtime initialization failed.</strong>
-        <div>{startupError}</div>
-      </section>
+    {view==="settings"
+      ?          ?<SettingsView runtime={runtime} host={host} configuration={configuration} setConfiguration={setConfiguration}
+            credentialSaved={credentialSaved} apiKey={apiKey} setApiKey={setApiKey} settingsMessage={settingsMessage}
+            saving={saving} testing={testing} onSave={save} onTest={test} onRemoveCredential={removeCredential}/>
+      :startupStatus==="error"
+        ?<section className="loading-panel" role="alert">
+          <strong>Character runtime initialization failed.</strong>
+          <div>{startupError}</div>
+        </section>
       :view==="chat"&&activeCharacter&&chatController
       ?<ChatView controller={chatController} runtime={foundationRef.current!} character={activeCharacter}/>
       :view==="characters"&&activeCharacter
@@ -674,10 +678,6 @@ function App(){
           onSelect={selectCharacter} onCreate={createCharacter} onRename={renameCharacter} onDelete={deleteCharacter}/>
         :view==="core-book"&&activeCharacter
           ?<CoreBookView runtime={foundationRef.current!} character={activeCharacter}/>
-        :view==="settings"
-          ?<SettingsView runtime={runtime} host={host} configuration={configuration} setConfiguration={setConfiguration}
-            credentialSaved={credentialSaved} apiKey={apiKey} setApiKey={setApiKey} settingsMessage={settingsMessage}
-            saving={saving} testing={testing} onSave={save} onTest={test} onRemoveCredential={removeCredential}/>
           :<section className="loading-panel">Initializing characters…</section>}
   </main>;
 }
