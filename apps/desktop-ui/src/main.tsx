@@ -1,13 +1,16 @@
 import React from "react";
 import {createRoot} from "react-dom/client";
 import {invoke} from "@tauri-apps/api/core";
-import {ChatSessionController,ConversationSession,type FoundationRuntime} from "../../../core/src/index";
+import {
+  ChatSessionController,ConversationSession,type Character,type FoundationRuntime,InMemoryCharacterStore,type RuntimeDiagnostics
+} from "../../../core/src/index";
 import {startFoundationRuntime,testProviderConfiguration,validateProviderConfiguration} from "../../../runtime/bootstrap/src/index";
 import {IpcCredentialStore} from "../../../host/credentials/src/index";
 import {IpcProviderConfigurationStore} from "../../../host/config/src/index";
+import {IpcCharacterStore} from "../../../host/characters/src/index";
 import {
   PROVIDER_CONFIGURATION_API_VERSION,PROVIDER_CONFIGURATION_SCHEMA_VERSION,
-  type ProviderConfiguration, type ProviderConnectionTestResult, type RuntimeDiagnostics
+  type ProviderConfiguration, type ProviderConnectionTestResult
 } from "../../../contracts/src/index";
 import "./styles.css";
 
@@ -42,7 +45,7 @@ function resultLabel(result:ProviderConnectionTestResult):string{
   }
 }
 
-function ChatView({controller,runtime}:{controller:ChatSessionController;runtime:FoundationRuntime|undefined}){
+function ChatView({controller,runtime,character}:{controller:ChatSessionController;runtime:FoundationRuntime;character:Character}){
   const [snapshot,setSnapshot]=React.useState(()=>controller.getSnapshot());
   const [input,setInput]=React.useState("");
   const bottomRef=React.useRef<HTMLDivElement|null>(null);
@@ -51,7 +54,7 @@ function ChatView({controller,runtime}:{controller:ChatSessionController;runtime
   React.useEffect(()=>{bottomRef.current?.scrollIntoView({block:"end"})},[snapshot.messages.length,snapshot.sending]);
 
   const send=React.useCallback(async()=>{
-    const result=await controller.submit(input,runtime?.getActiveChatModel()??"fake-chat");
+    const result=await controller.submit(input,runtime.getActiveChatModel());
     if(result.status!=="rejected")setInput("");
   },[controller,input,runtime]);
 
@@ -64,18 +67,18 @@ function ChatView({controller,runtime}:{controller:ChatSessionController;runtime
 
   return <section className="chat-panel">
     <div className="chat-toolbar">
-      <div><h2>Chat</h2><p className="chat-subtitle">Current conversation is kept only for this session.</p></div>
+      <div><h2>Chat · {character.name}</h2><p className="chat-subtitle">Conversation is session-only and scoped to {character.name}.</p></div>
       <button onClick={()=>controller.clear()} disabled={snapshot.sending||snapshot.messages.length===0}>Clear</button>
     </div>
     <div className="message-list" aria-live="polite">
       {snapshot.messages.length===0&&<div className="empty-chat">Write a message to start the conversation.</div>}
       {snapshot.messages.map((message,index)=>
         <article className={"chat-message "+message.role} key={message.id??"message-"+index}>
-          <div className="message-author">{message.role==="user"?"You":"Nova"}</div>
+          <div className="message-author">{message.role==="user"?"You":character.name}</div>
           <div className="message-content">{message.content}</div>
         </article>
       )}
-      {snapshot.sending&&<article className="chat-message assistant pending"><div className="message-author">Nova</div><div className="message-content">Thinking…</div></article>}
+      {snapshot.sending&&<article className="chat-message assistant pending"><div className="message-author">{character.name}</div><div className="message-content">Thinking…</div></article>}
       <div ref={bottomRef}/>
     </div>
     <form className="chat-composer" onSubmit={event=>{event.preventDefault();if(!snapshot.sending)void send()}}>
@@ -84,6 +87,68 @@ function ChatView({controller,runtime}:{controller:ChatSessionController;runtime
     </form>
     <p className="chat-hint">Enter to send · Shift+Enter for a new line</p>
     {snapshot.error&&<div className="chat-error" role="alert">{snapshot.error}</div>}
+  </section>;
+}
+
+function CharactersView({characters,activeCharacter,onSelect,onCreate,onRename,onDelete}:{
+  characters:readonly Character[];
+  activeCharacter:Character;
+  onSelect:(id:string)=>Promise<void>;
+  onCreate:(name:string)=>Promise<void>;
+  onRename:(id:string,name:string)=>Promise<void>;
+  onDelete:(id:string)=>Promise<void>;
+}){
+  const [newName,setNewName]=React.useState("");
+  const [renameName,setRenameName]=React.useState(activeCharacter.name);
+  const [busy,setBusy]=React.useState(false);
+  const [message,setMessage]=React.useState("");
+  React.useEffect(()=>setRenameName(activeCharacter.name),[activeCharacter.id,activeCharacter.name]);
+
+  const run=async(action:()=>Promise<void>,success:string)=>{
+    setBusy(true);setMessage("");
+    try{await action();setMessage(success)}
+    catch(error){setMessage(error instanceof Error?error.message:"Character operation failed.")}
+    finally{setBusy(false)}
+  };
+
+  return <section className="characters-panel">
+    <div className="characters-toolbar">
+      <div><h2>Characters</h2><p className="chat-subtitle">Character identity and lifecycle only.</p></div>
+      <strong>Active: {activeCharacter.name}</strong>
+    </div>
+
+    <div className="character-list" role="listbox" aria-label="Characters">
+      {characters.map(character=>
+        <button key={character.id}
+          className={character.id===activeCharacter.id?"character-row active":"character-row"}
+          onClick={()=>void run(()=>onSelect(character.id),"Active character changed.")}
+          disabled={busy||character.id===activeCharacter.id||!character.enabled}>
+          <span>{character.id===activeCharacter.id?"★ ":""}{character.name}</span>
+          <small>{character.enabled?"Enabled":"Disabled"}</small>
+        </button>
+      )}
+    </div>
+
+    <div className="character-actions">
+      <h3>New Character</h3>
+      <form onSubmit={event=>{event.preventDefault();if(newName.trim())void run(async()=>{await onCreate(newName);setNewName("");},"Character created.")}}>
+        <input value={newName} onChange={event=>setNewName(event.target.value)} placeholder="Character name" aria-label="New character name" disabled={busy}/>
+        <button type="submit" disabled={busy||!newName.trim()}>+ New Character</button>
+      </form>
+    </div>
+
+    <div className="character-actions">
+      <h3>Selected</h3>
+      <label>Name
+        <input value={renameName} onChange={event=>setRenameName(event.target.value)} aria-label="Selected character name" disabled={busy}/>
+      </label>
+      <div className="actions">
+        <button onClick={()=>void run(()=>onRename(activeCharacter.id,renameName),"Character renamed.")} disabled={busy||renameName.trim()===activeCharacter.name}>Rename</button>
+        <button onClick={()=>{if(window.confirm("Delete this character?"))void run(()=>onDelete(activeCharacter.id),"Character deleted.")}} disabled={busy}>Delete</button>
+      </div>
+      <div className="character-id">characterId: <code>{activeCharacter.id}</code></div>
+      {message&&<div className="notice" role="status">{message}</div>}
+    </div>
   </section>;
 }
 
@@ -124,19 +189,16 @@ function SettingsView({
       {settingsMessage&&<div className="notice" role="status">{settingsMessage}</div>}
       <p className="hint">The saved API key is never loaded back into the settings UI.</p>
     </section>
-
     <section>
       <h2>Runtime</h2>
       <div className="status-grid"><span>Runtime</span><strong>{runtime.runtimeStatus}</strong><span>Core</span><strong>{runtime.coreStatus}</strong><span>Host IPC</span><strong>{host.status} · {host.runtime}</strong></div>
     </section>
-
     <section>
       <h2>Providers</h2>
       {runtime.providers.length===0?<div>No providers in current runtime.</div>:runtime.providers.map(p=>
         <div className="row" key={p.id}><span>{p.id}</span><span>{p.health?.status??"unknown"}</span></div>
       )}
     </section>
-
     <section>
       <h2>Recent errors</h2>
       {runtime.recentErrors.length===0?<div>None</div>:runtime.recentErrors.map((error,index)=>
@@ -146,8 +208,12 @@ function SettingsView({
   </div>;
 }
 
+function isTauriRuntime():boolean{
+  return typeof window!=="undefined" && Boolean((window as unknown as Record<string,unknown>).__TAURI_INTERNALS__);
+}
+
 function App(){
-  const [view,setView]=React.useState<"chat"|"settings">("chat");
+  const [view,setView]=React.useState<"chat"|"characters"|"settings">("chat");
   const [runtime,setRuntime]=React.useState<RuntimeDiagnostics>(preview);
   const [host,setHost]=React.useState<HostDiagnostics>({status:"starting",runtime:"unknown",capabilities:[]});
   const [configuration,setConfiguration]=React.useState<ProviderConfiguration>(defaultConfiguration());
@@ -156,31 +222,38 @@ function App(){
   const [settingsMessage,setSettingsMessage]=React.useState("");
   const [saving,setSaving]=React.useState(false);
   const [testing,setTesting]=React.useState(false);
-  const foundationRef=React.useRef<FoundationRuntime|undefined>(undefined);
-  const conversationRef=React.useRef<ConversationSession|null>(null);
-  const controllerRef=React.useRef<ChatSessionController|null>(null);
-
-  if(!conversationRef.current)conversationRef.current=new ConversationSession(crypto.randomUUID());
-  if(!controllerRef.current){
-    controllerRef.current=new ChatSessionController(conversationRef.current,{
-      chat:request=>{
-        const foundation=foundationRef.current;
-        if(!foundation)return Promise.reject(new Error("Chat runtime is not available."));
-        return foundation.chat(request);
-      }
-    });
-  }
-
-  const chatController=controllerRef.current;
+  const [characters,setCharacters]=React.useState<readonly Character[]>([]);
+  const [activeCharacter,setActiveCharacter]=React.useState<Character|undefined>();
+  const [chatController,setChatController]=React.useState<ChatSessionController|null>(null);
+  const foundationRef=React.useRef<FoundationRuntime|undefined>();
   const credentialStore=React.useMemo(()=>new IpcCredentialStore(invoke),[]);
   const configurationStore=React.useMemo(()=>new IpcProviderConfigurationStore(invoke),[]);
+  const characterStore=React.useMemo(()=>isTauriRuntime()?new IpcCharacterStore(invoke):new InMemoryCharacterStore(),[]);
+
+  const controllerForCharacter=React.useCallback((characterId:string)=>new ChatSessionController(
+    new ConversationSession(crypto.randomUUID(),characterId),
+    {chat:request=>{
+      const foundation=foundationRef.current;
+      if(!foundation)return Promise.reject(new Error("Chat runtime is not available."));
+      return foundation.chat(request);
+    }}
+  ),[]);
+
+  const syncCharacters=React.useCallback(async(runtimeInstance:FoundationRuntime)=>{
+    const list=await runtimeInstance.listCharacters();
+    const active=await runtimeInstance.getActiveCharacter();
+    setCharacters(list);
+    setActiveCharacter(active);
+    setChatController(current=>current?.getSnapshot().characterId===active.id?current:controllerForCharacter(active.id));
+  },[controllerForCharacter]);
 
   const refreshRuntime=React.useCallback(async(config:ProviderConfiguration|undefined)=>{
     await foundationRef.current?.stop();
-    const next=await startFoundationRuntime({providerConfiguration:config,credentialStore});
+    const next=await startFoundationRuntime({providerConfiguration:config,credentialStore,characterStore});
     foundationRef.current=next;
     setRuntime(await publishAndReadRuntimeDiagnostics(await next.diagnostics()));
-  },[credentialStore]);
+    await syncCharacters(next);
+  },[characterStore,credentialStore,syncCharacters]);
 
   React.useEffect(()=>{
     let active=true;
@@ -196,7 +269,6 @@ function App(){
         if(!active)return;
         const hostSnapshot=await loadHost();
         if(active)setHost(hostSnapshot);
-
         const sync=async()=>{
           const foundation=foundationRef.current;
           if(!foundation||!active)return;
@@ -221,6 +293,42 @@ function App(){
       foundationRef.current=undefined;
     };
   },[configurationStore,credentialStore,refreshRuntime]);
+
+  const selectCharacter=React.useCallback(async(id:string)=>{
+    const foundation=foundationRef.current;
+    if(!foundation)return;
+    const selected=await foundation.setActiveCharacter(id);
+    setActiveCharacter(selected);
+    setChatController(controllerForCharacter(selected.id));
+    setCharacters(await foundation.listCharacters());
+    setView("chat");
+  },[controllerForCharacter]);
+
+  const createCharacter=React.useCallback(async(name:string)=>{
+    const foundation=foundationRef.current;
+    if(!foundation)return;
+    await foundation.createCharacter({name});
+    setCharacters(await foundation.listCharacters());
+  },[]);
+
+  const renameCharacter=React.useCallback(async(id:string,name:string)=>{
+    const foundation=foundationRef.current;
+    if(!foundation)return;
+    const updated=await foundation.updateCharacter(id,{name});
+    setCharacters(await foundation.listCharacters());
+    setActiveCharacter(current=>current?.id===updated.id?updated:current);
+  },[]);
+
+  const deleteCharacter=React.useCallback(async(id:string)=>{
+    const foundation=foundationRef.current;
+    if(!foundation)return;
+    const before=activeCharacter;
+    await foundation.deleteCharacter(id);
+    const nextActive=await foundation.getActiveCharacter();
+    setCharacters(await foundation.listCharacters());
+    setActiveCharacter(nextActive);
+    if(before?.id!==nextActive.id)setChatController(controllerForCharacter(nextActive.id));
+  },[activeCharacter,controllerForCharacter]);
 
   const save=async()=>{
     setSettingsMessage("");
@@ -274,16 +382,20 @@ function App(){
       <div><h1>Nova</h1><p>AI Companion</p></div>
       <nav className="app-nav" aria-label="Primary">
         <button className={view==="chat"?"nav-button active":"nav-button"} onClick={()=>setView("chat")}>Chat</button>
+        <button className={view==="characters"?"nav-button active":"nav-button"} onClick={()=>setView("characters")}>Characters</button>
         <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Settings</button>
       </nav>
     </header>
-    {view==="chat"
-      ?<ChatView controller={chatController} runtime={foundationRef.current}/>
-      :<SettingsView
-        runtime={runtime} host={host} configuration={configuration} setConfiguration={setConfiguration} credentialSaved={credentialSaved}
-        apiKey={apiKey} setApiKey={setApiKey} settingsMessage={settingsMessage} saving={saving} testing={testing}
-        onSave={save} onTest={test} onRemoveCredential={removeCredential}
-      />}
+    {view==="chat"&&activeCharacter&&chatController
+      ?<ChatView controller={chatController} runtime={foundationRef.current!} character={activeCharacter}/>
+      :view==="characters"&&activeCharacter
+        ?<CharactersView characters={characters} activeCharacter={activeCharacter}
+          onSelect={selectCharacter} onCreate={createCharacter} onRename={renameCharacter} onDelete={deleteCharacter}/>
+        :view==="settings"
+          ?<SettingsView runtime={runtime} host={host} configuration={configuration} setConfiguration={setConfiguration}
+            credentialSaved={credentialSaved} apiKey={apiKey} setApiKey={setApiKey} settingsMessage={settingsMessage}
+            saving={saving} testing={testing} onSave={save} onTest={test} onRemoveCredential={removeCredential}/>
+          :<section className="loading-panel">Initializing characters…</section>}
   </main>;
 }
 
