@@ -10,8 +10,7 @@ import type {
   CoreBookActivation,
   CoreBookEntry,
   CoreBookEntryId,
-  CharacterId,
-  TokenEstimator as _UnusedTokenEstimator
+  CharacterId
 } from "../../contracts/src/index";
 import {
   CONTEXT_API_VERSION,
@@ -244,7 +243,6 @@ export class DeterministicContextEngine implements ContextEngineContract {
   ){
     if(sources.length===0)throw new Error("Context Engine requires at least one candidate source.");
     this.sources=sources;
-    options.tokenEstimator?.estimate("");
     if(options.recentMessageCount!==undefined && options.recentMessageCount<1)throw new Error("recentMessageCount must be positive.");
   }
 
@@ -302,9 +300,7 @@ export class DeterministicContextEngine implements ContextEngineContract {
     });
 
     const messages=placed.map(candidate=>({
-      ...(candidate.referenceId.startsWith(request.conversationId+":message:")
-        ? {id:candidate.referenceId}
-        : {id:candidate.id}),
+      id:candidate.referenceId,
       role:candidate.role,
       content:candidate.content,
       ...(candidate.toolCallId?{toolCallId:candidate.toolCallId}:{}),
