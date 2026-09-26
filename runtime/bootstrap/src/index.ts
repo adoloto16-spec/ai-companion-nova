@@ -2,7 +2,7 @@ import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,Ru
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import type {HealthStatus} from "../../../contracts/src/index";
 import {
-  AiRuntime,CharacterManager,CoreBookManager,MemoryBrokerImpl,InMemoryCharacterStore,InMemoryMemoryStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,
+  AiRuntime,CharacterManager,CoreBookManager,MemoryBrokerImpl,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,
   InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,
   DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
   InMemoryActorIdentityResolver,createMemoryConfig
@@ -18,6 +18,7 @@ import {
 import {objectSchema} from "../../../core/src/tools";
 import {InMemoryCredentialStore} from "../../../host/credentials/src/index";
 import {InMemoryCoreBookStore} from "../../../host/core-book/src/index";
+import {InMemoryMemoryStore} from "../../../host/memory/src/index";
 import type {CoreBookCreateInput,CoreBookUpdateInput} from "../../../core/src/core-book-manager";
 import {activeProviderId,buildConfiguredProvider,testProviderConfiguration} from "./provider-configuration";
 
