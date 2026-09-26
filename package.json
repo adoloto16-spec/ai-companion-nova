@@ -21,7 +21,8 @@
     "host/ipc",
     "host/credentials",
     "runtime/bootstrap",
-    "host/config"
+    "host/config",
+    "host/characters"
   ],
   "engines": {
     "node": ">=20"

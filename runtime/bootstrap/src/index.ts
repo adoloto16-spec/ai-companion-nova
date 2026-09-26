@@ -1,8 +1,8 @@
-import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration} from "../../../contracts/src/index";
+import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,Character,CharacterId,CharacterStore} from "../../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import type {HealthStatus} from "../../../contracts/src/index";
 import {
-  AiRuntime,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,
+  AiRuntime,CharacterManager,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,
   InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,
   DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
   InMemoryActorIdentityResolver,createMemoryConfig
@@ -28,6 +28,7 @@ export interface OpenAICompatibleRuntimeConfig{
 export interface FoundationRuntimeOptions{
   providerConfiguration?:ProviderConfiguration;
   credentialStore?:CredentialStore;
+  characterStore?:CharacterStore;
   httpClient?:HttpClient;
   openAICompatible?:OpenAICompatibleRuntimeConfig;
 }
@@ -43,6 +44,13 @@ export interface FoundationRuntime{
   getActiveChatModel():string;
   applyProviderConfiguration(configuration:ProviderConfiguration|undefined):Promise<void>;
   testConfiguredProvider():Promise<import("../../../contracts/src/index").ProviderConnectionTestResult>;
+  listCharacters():Promise<readonly Character[]>;
+  getCharacter(id:CharacterId):Promise<Character|undefined>;
+  createCharacter(input:import("../../../core/src/index").CharacterCreateInput):Promise<Character>;
+  updateCharacter(id:CharacterId,input:import("../../../core/src/index").CharacterUpdateInput):Promise<Character>;
+  deleteCharacter(id:CharacterId):Promise<void>;
+  getActiveCharacter():Promise<Character>;
+  setActiveCharacter(id:CharacterId):Promise<Character>;
 }
 
 export async function createFoundationRuntime(options:FoundationRuntimeOptions={}):Promise<FoundationRuntime>{
@@ -51,6 +59,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const events=new InMemoryEventBus(diagnosticsStore,logger);
   const _state=new InMemoryStateStore(diagnosticsStore,logger);
   const providers=new ProviderRegistry();
+  const characterStore=options.characterStore??new InMemoryCharacterStore();
+  const characterManager=new CharacterManager(characterStore,{events,clock:{now:()=>new Date().toISOString()}});
   const credentialStore=options.credentialStore??options.openAICompatible?.credentialStore??new InMemoryCredentialStore();
   let providerConfiguration=options.providerConfiguration;
   const contractValidator=new StandardContractValidator();
@@ -181,7 +191,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   };
 
   return {
-    async start(){await moduleManager.initializeAll();await moduleManager.startAll();runtimeStatus="running";},
+    async start(){await characterManager.initialize();await moduleManager.initializeAll();await moduleManager.startAll();runtimeStatus="running";},
     async stop(){try{await moduleManager.stopAll();}finally{runtimeStatus="stopped";}},
     diagnostics:snapshot,
     invoke:request=>broker.execute({request,credential:characterCredential}),
@@ -190,6 +200,13 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     getProviderConfiguration:()=>providerConfiguration,
     getActiveChatModel:()=>activeProviderId(providerConfiguration)==="openai-compatible"&&providerConfiguration?providerConfiguration.model:"fake-chat",
     applyProviderConfiguration:async(configuration)=>{await applyProvider(configuration);},
+    listCharacters:()=>characterManager.listCharacters(),
+    getCharacter:id=>characterManager.getCharacter(id),
+    createCharacter:input=>characterManager.createCharacter(input),
+    updateCharacter:(id,input)=>characterManager.updateCharacter(id,input),
+    deleteCharacter:id=>characterManager.deleteCharacter(id),
+    getActiveCharacter:()=>characterManager.getActiveCharacter(),
+    setActiveCharacter:id=>characterManager.setActiveCharacter(id),
     testConfiguredProvider:async()=>{
       if(!providerConfiguration)return {apiVersion:"1",schemaVersion:"1",status:"configuration_error",providerId:"openai-compatible",message:"No provider configuration is saved."};
       return testProviderConfiguration(providerConfiguration,credentialStore,options.httpClient);

@@ -16,7 +16,8 @@
     "host/credentials/src/**/*.ts",
     "runtime/bootstrap/src/**/*.ts",
     "tests/**/*.ts",
-    "host/config/src/**/*.ts"
+    "host/config/src/**/*.ts",
+    "host/characters/src/**/*.ts"
   ],
   "exclude": [
     "apps/desktop-ui",
