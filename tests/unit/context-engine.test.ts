@@ -5,7 +5,8 @@ import {
   ConversationCandidateSource,
   calculateContextBudget
 } from "../../core/src";
-import type {ContextBuildRequest,CoreBookEntry,TokenEstimator} from "../../contracts/src";
+import type {ContextBuildRequest,CoreBookEntry} from "../../contracts/src";
+import type {TokenEstimator} from "../../core/src";
 
 function equal(actual:unknown,expected:unknown,label:string){
   if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error(label+" expected "+String(expected)+" got "+String(actual));
@@ -120,11 +121,11 @@ async function main(){
   ]);
   const pressured=await recentEngine.build(request({
     messages:manyMessages,
-    budget:{availableContextTokens:9,reservedOutputTokens:0,systemOverheadTokens:0,safetyMarginTokens:0}
+    budget:{availableContextTokens:5,reservedOutputTokens:0,systemOverheadTokens:0,safetyMarginTokens:0}
   }));
   ok(pressured.includedCandidates.some(candidate=>candidate.referenceId==="m9"),"latest conversation turn preserved");
   ok(!pressured.includedCandidates.some(candidate=>candidate.referenceId==="m0"),"older conversation may be removed");
-  equal(pressured.estimatedTokens<=9,true,"assembly stays within budget");
+  equal(pressured.estimatedTokens<=5,true,"assembly stays within budget");
   ok(pressured.omittedCandidates.some(candidate=>candidate.referenceId==="core-heavy"),"context pressure explains omitted Core Book");
 
   const noBudget=await recentEngine.build(request({
