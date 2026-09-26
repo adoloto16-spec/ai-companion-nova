@@ -1,5 +1,5 @@
 import type {
-  AuditService,CharacterId,Clock,EventBus,MemoryBroker,MemoryCreateInput,MemoryItem,MemoryItemId,MemoryMutationAuthority,
+  AuditService,CharacterId,Clock,EventBus,EventPayloadMap,MemoryBroker,MemoryCreateInput,MemoryItem,MemoryItemId,MemoryMutationAuthority,
   MemoryMutationPolicy,MemorySearchQuery,MemoryStore,MemoryStoreState,MemoryStatus,MemoryType,MemoryUpdateInput,SchemaValidator
 } from "../../contracts/src/index";
 import {MEMORY_API_VERSION,MEMORY_SCHEMA_VERSION,STANDARD_SCHEMAS,createEvent} from "../../contracts/src/index";
@@ -37,7 +37,8 @@ function cloneMetadata(metadata:Record<string,unknown>):Record<string,unknown>{r
 function cloneItem(item:MemoryItem):MemoryItem{
   return {...item,tags:[...item.tags],metadata:cloneMetadata(item.metadata)};
 }
-function cloneState(state:MemoryStoreState):MemoryStoreState{
+type MutableMemoryStoreState={apiVersion:"1";schemaVersion:string;characterId:CharacterId;items:MemoryItem[]};
+function cloneState(state:MemoryStoreState):MutableMemoryStoreState{
   return {apiVersion:state.apiVersion,schemaVersion:state.schemaVersion,characterId:state.characterId,items:state.items.map(cloneItem)};
 }
 function requireCharacterId(value:string):string{
@@ -307,7 +308,7 @@ export class MemoryBrokerImpl implements MemoryBroker{
     return scope;
   }
 
-  private async loadState(characterId:string):Promise<MemoryStoreState>{
+  private async loadState(characterId:string):Promise<MutableMemoryStoreState>{
     const stored=await this.deps.store.load(characterId);
     if(!stored){
       const empty={apiVersion:MEMORY_API_VERSION,schemaVersion:MEMORY_SCHEMA_VERSION,characterId,items:[]};
@@ -317,7 +318,7 @@ export class MemoryBrokerImpl implements MemoryBroker{
     validateState(stored,characterId,this.deps.validator);
     return cloneState(stored);
   }
-  private async persist(characterId:string,state:MemoryStoreState):Promise<void>{
+  private async persist(characterId:string,state:MutableMemoryStoreState):Promise<void>{
     validateState(state,characterId,this.deps.validator);
     await this.deps.store.save(cloneState(state));
   }
@@ -337,13 +338,20 @@ export class MemoryBrokerImpl implements MemoryBroker{
       reason
     });
   }
-  private async publish<K extends "MemoryCreated"|"MemoryUpdated"|"MemorySuperseded"|"MemoryArchived">(type:K,payload:EventPayloadFor<K>):Promise<void>{
+  private async publish(type:"MemoryCreated",payload:EventPayloadMap["MemoryCreated"]):Promise<void>;
+  private async publish(type:"MemoryUpdated",payload:EventPayloadMap["MemoryUpdated"]):Promise<void>;
+  private async publish(type:"MemorySuperseded",payload:EventPayloadMap["MemorySuperseded"]):Promise<void>;
+  private async publish(type:"MemoryArchived",payload:EventPayloadMap["MemoryArchived"]):Promise<void>;
+  private async publish(
+    type:"MemoryCreated"|"MemoryUpdated"|"MemorySuperseded"|"MemoryArchived",
+    payload:EventPayloadMap["MemoryCreated"]|EventPayloadMap["MemoryUpdated"]|EventPayloadMap["MemorySuperseded"]|EventPayloadMap["MemoryArchived"]
+  ):Promise<void>{
     if(!this.deps.events)return;
-    await this.deps.events.publish(createEvent(type,payload,this.source,()=>this.clock.now()));
+    switch(type){
+      case "MemoryCreated":await this.deps.events.publish(createEvent(type,payload as EventPayloadMap["MemoryCreated"],this.source,()=>this.clock.now()));break;
+      case "MemoryUpdated":await this.deps.events.publish(createEvent(type,payload as EventPayloadMap["MemoryUpdated"],this.source,()=>this.clock.now()));break;
+      case "MemorySuperseded":await this.deps.events.publish(createEvent(type,payload as EventPayloadMap["MemorySuperseded"],this.source,()=>this.clock.now()));break;
+      case "MemoryArchived":await this.deps.events.publish(createEvent(type,payload as EventPayloadMap["MemoryArchived"],this.source,()=>this.clock.now()));break;
+    }
   }
 }
-
-type EventPayloadFor<K extends "MemoryCreated"|"MemoryUpdated"|"MemorySuperseded"|"MemoryArchived">=
-  K extends "MemorySuperseded"
-    ? {characterId:string;memoryId:string;previousMemoryId:string;status:MemoryStatus;updatedAt:string}
-    : {characterId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
