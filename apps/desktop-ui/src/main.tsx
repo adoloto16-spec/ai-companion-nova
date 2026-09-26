@@ -452,6 +452,7 @@ function App(){
   const [activeCharacter,setActiveCharacter]=React.useState<Character|undefined>();
   const [chatController,setChatController]=React.useState<ChatSessionController|null>(null);
   const foundationRef=React.useRef<FoundationRuntime|undefined>();
+  const providerConfigurationErrorRef=React.useRef<string|undefined>();
   const credentialStore=React.useMemo(()=>new IpcCredentialStore(invoke),[]);
   const configurationStore=React.useMemo(()=>new IpcProviderConfigurationStore(invoke),[]);
   const characterStore=React.useMemo(()=>isTauriRuntime()?new IpcCharacterStore(invoke):new InMemoryCharacterStore(),[]);
@@ -485,23 +486,28 @@ function App(){
     setChatController(current=>current?.getSnapshot().characterId===active.id?current:controllerForCharacter(active.id));
   },[controllerForCharacter]);
 
-  const refreshRuntime=React.useCallback(async(config:ProviderConfiguration|undefined,configurationLoadError?:string)=>{
-    await foundationRef.current?.stop();
-    const next=await startFoundationRuntime({providerConfiguration:config,credentialStore,characterStore,coreBookStore,memoryStore,retriever,retrievalIndexWriter:retriever});
-    foundationRef.current=next;
-    const diagnostics=await next.diagnostics();
-    const withConfigurationError=configurationLoadError?{
+  const addConfigurationLoadError=React.useCallback((diagnostics:RuntimeDiagnostics):RuntimeDiagnostics=>{
+    const message=providerConfigurationErrorRef.current;
+    if(!message)return diagnostics;
+    return {
       ...diagnostics,
       recentErrors:[...diagnostics.recentErrors,{
         timestamp:new Date().toISOString(),
         source:"provider-configuration",
         code:"LOAD_FAILED",
-        message:configurationLoadError
+        message
       }]
-    }:diagnostics;
-    setRuntime(await publishAndReadRuntimeDiagnostics(withConfigurationError));
+    };
+  },[]);
+
+  const refreshRuntime=React.useCallback(async(config:ProviderConfiguration|undefined,configurationLoadError?:string)=>{
+    providerConfigurationErrorRef.current=configurationLoadError;
+    await foundationRef.current?.stop();
+    const next=await startFoundationRuntime({providerConfiguration:config,credentialStore,characterStore,coreBookStore,memoryStore,retriever,retrievalIndexWriter:retriever});
+    foundationRef.current=next;
+    setRuntime(await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(await next.diagnostics())));
     await syncCharacters(next);
-  },[characterStore,coreBookStore,memoryStore,credentialStore,retriever,syncCharacters]);
+  },[addConfigurationLoadError,characterStore,coreBookStore,memoryStore,credentialStore,retriever,syncCharacters]);
 
   React.useEffect(()=>{
     let active=true;
@@ -528,7 +534,7 @@ function App(){
           if(!foundation||!active)return;
           try{
             const snapshot=await foundation.diagnostics();
-            const live=await publishAndReadRuntimeDiagnostics(snapshot);
+            const live=await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(snapshot));
             if(active)setRuntime(live);
           }catch{
             if(active)setRuntime(current=>({...current,runtimeStatus:"error",coreStatus:"error"}));
