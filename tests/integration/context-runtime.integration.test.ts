@@ -1,5 +1,6 @@
 import type {ContextBuildRequest} from "../../contracts/src";
-import {InMemoryCharacterStore,InMemoryCoreBookStore} from "../../core/src";
+import {InMemoryCharacterStore} from "../../host/characters/src";
+import {InMemoryCoreBookStore} from "../../host/core-book/src";
 import {createFoundationRuntime as startRuntime} from "../../runtime/bootstrap/src";
 
 function equal(actual:unknown,expected:unknown,label:string){
