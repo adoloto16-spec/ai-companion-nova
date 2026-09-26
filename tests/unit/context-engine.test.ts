@@ -6,7 +6,7 @@ import {
   MemoryCandidateSource,
   calculateContextBudget
 } from "../../core/src";
-import type {ContextBuildRequest,CoreBookEntry,MemoryItem} from "../../contracts/src";
+import type {ContextBuildRequest,CoreBookEntry,MemoryItem,MemorySearchQuery} from "../../contracts/src";
 import type {TokenEstimator} from "../../core/src";
 
 function equal(actual:unknown,expected:unknown,label:string){
@@ -121,7 +121,7 @@ async function main(){
     }
   ];
   const memoryReader={
-    async search(query:{characterId:string;query:string;status?:string;limit?:number}){
+    async search(query:MemorySearchQuery){
       memorySearchCalls+=1;
       capturedMemoryQuery=query.query;
       equal(query.characterId,"character.a","memory query is character scoped");
@@ -150,10 +150,11 @@ async function main(){
   equal(memoryCandidate?.role,"user","memory remains data-role");
   equal(memoryCandidate?.placementWeight,0,"memory does not use placementWeight");
 
-  const noUserReader={async search(){memorySearchCalls+=1;return memoryItems;}};
+  let noUserSearchCalls=0;
+  const noUserReader={async search(){noUserSearchCalls+=1;return memoryItems;}};
   const noUserEngine=new DeterministicContextEngine([new MemoryCandidateSource(noUserReader)]);
   await noUserEngine.build(request({messages:[{id:"a1",role:"assistant",content:"no user query"}]}));
-  equal(memorySearchCalls,1,"no user message skips memory search");
+  equal(noUserSearchCalls,0,"no user message skips memory search");
 
   const pressure=await new DeterministicContextEngine([new MemoryCandidateSource({
     async search(){return [memoryItems[0]!,memoryItems[1]!];}
