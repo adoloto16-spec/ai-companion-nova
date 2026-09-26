@@ -3,9 +3,10 @@ import {
   DeterministicApproxTokenEstimator,
   DeterministicContextEngine,
   ConversationCandidateSource,
+  MemoryCandidateSource,
   calculateContextBudget
 } from "../../core/src";
-import type {ContextBuildRequest,CoreBookEntry} from "../../contracts/src";
+import type {ContextBuildRequest,CoreBookEntry,MemoryItem} from "../../contracts/src";
 import type {TokenEstimator} from "../../core/src";
 
 function equal(actual:unknown,expected:unknown,label:string){
@@ -94,6 +95,73 @@ async function main(){
   ok(built.includedCandidates.every(candidate=>candidate.source==="core_book"?candidate.role==="user":true),"Core Book remains data-role, not system instruction");
   equal(built.messages.find(message=>message.content==="Nova identity")?.metadata?.contextSource,"core_book","provenance source preserved");
   equal(built.messages.find(message=>message.content==="Nova identity")?.metadata?.contextReferenceId,"always","provenance reference preserved");
+
+  let capturedMemoryQuery="";
+  let memorySearchCalls=0;
+  const memoryItems:MemoryItem[]=[
+    {
+      id:"memory-low",characterId:"character.a",type:"fact",content:"low value memory",tags:["tea"],importance:0,confidence:0,
+      createdAt:"2026-09-26T12:00:00.000Z",updatedAt:"2026-09-26T12:00:00.000Z",
+      validFrom:null,validUntil:null,source:"user",sourceReference:null,mutationPolicy:"locked",status:"active",metadata:{}
+    },
+    {
+      id:"memory-high",characterId:"character.a",type:"preference",content:"high value memory",tags:["tea"],importance:100,confidence:100,
+      createdAt:"2026-09-26T12:00:00.000Z",updatedAt:"2026-09-26T12:00:00.000Z",
+      validFrom:null,validUntil:null,source:"user",sourceReference:null,mutationPolicy:"locked",status:"active",metadata:{}
+    },
+    {
+      id:"memory-archived",characterId:"character.a",type:"fact",content:"archived memory",tags:["tea"],importance:100,confidence:100,
+      createdAt:"2026-09-26T12:00:00.000Z",updatedAt:"2026-09-26T12:00:00.000Z",
+      validFrom:null,validUntil:null,source:"user",sourceReference:null,mutationPolicy:"locked",status:"archived",metadata:{}
+    },
+    {
+      id:"memory-other-character",characterId:"character.b",type:"fact",content:"other character memory",tags:["tea"],importance:100,confidence:100,
+      createdAt:"2026-09-26T12:00:00.000Z",updatedAt:"2026-09-26T12:00:00.000Z",
+      validFrom:null,validUntil:null,source:"user",sourceReference:null,mutationPolicy:"locked",status:"active",metadata:{}
+    }
+  ];
+  const memoryReader={
+    async search(query:{characterId:string;query:string;status?:string;limit?:number}){
+      memorySearchCalls+=1;
+      capturedMemoryQuery=query.query;
+      equal(query.characterId,"character.a","memory query is character scoped");
+      equal(query.status,"active","automatic memory context searches active status only");
+      equal(query.limit,8,"memory source uses one bounded deterministic search");
+      return memoryItems;
+    }
+  };
+  const memorySource=new MemoryCandidateSource(memoryReader);
+  const memoryBuilt=await new DeterministicContextEngine([memorySource]).build(request({
+    messages:[
+      {id:"old-user",role:"user",content:"old topic"},
+      {id:"assistant-1",role:"assistant",content:"assistant should not be the query"},
+      {id:"latest-user",role:"user",content:"latest tea question"}
+    ],
+    budget:{availableContextTokens:100,reservedOutputTokens:0,systemOverheadTokens:0,safetyMarginTokens:0}
+  }));
+  equal(memorySearchCalls,1,"exactly one memory search for a build");
+  equal(capturedMemoryQuery,"latest tea question","latest user message is the memory query");
+  ok(memoryBuilt.includedCandidates.some(candidate=>candidate.referenceId==="memory-high"),"active memory candidate included");
+  ok(!memoryBuilt.includedCandidates.some(candidate=>candidate.referenceId==="memory-archived"),"archived memory never enters automatic context");
+  ok(!memoryBuilt.includedCandidates.some(candidate=>candidate.referenceId==="memory-other-character"),"cross-character memory never enters automatic context");
+  const memoryCandidate=memoryBuilt.includedCandidates.find(candidate=>candidate.referenceId==="memory-high");
+  equal(memoryCandidate?.source,"memory","memory provenance source");
+  equal(memoryCandidate?.zone,"retrieved_memory","memory placement zone");
+  equal(memoryCandidate?.role,"user","memory remains data-role");
+  equal(memoryCandidate?.placementWeight,0,"memory does not use placementWeight");
+
+  const noUserReader={async search(){memorySearchCalls+=1;return memoryItems;}};
+  const noUserEngine=new DeterministicContextEngine([new MemoryCandidateSource(noUserReader)]);
+  await noUserEngine.build(request({messages:[{id:"a1",role:"assistant",content:"no user query"}]}));
+  equal(memorySearchCalls,1,"no user message skips memory search");
+
+  const pressure=await new DeterministicContextEngine([new MemoryCandidateSource({
+    async search(){return [memoryItems[0]!,memoryItems[1]!];}
+  },({estimate(){return 1}} as TokenEstimator))]).build(request({
+    messages:[{id:"latest",role:"user",content:"tea"}],
+    budget:{availableContextTokens:1,reservedOutputTokens:0,systemOverheadTokens:0,safetyMarginTokens:0}
+  }));
+  equal(pressure.includedCandidates[0]?.referenceId,"memory-high","importance dominates deterministic memory retention under pressure");
 
   const highVsLow=[
     entry({id:"low-placement",content:"x",placementWeight:5,retentionPriority:50}),
