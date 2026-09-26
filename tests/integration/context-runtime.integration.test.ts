@@ -27,7 +27,7 @@ async function main(){
       retentionPriority:100,placementWeight:100,source:"user"
     });
     const novaMemory=await runtime.createMemory(nova.id,{
-      id:"memory.context.nova.1",type:"preference",content:"Nova likes jasmine tea.",tags:["tea"],
+      id:"memory.context.nova.1",type:"preference",content:"Nova likes tea.",tags:["tea"],
       importance:95,confidence:90,source:"user",mutationPolicy:"locked"
     });
     const gmMemory=await runtime.createMemory(gm.id,{
@@ -52,7 +52,7 @@ async function main(){
     const build:ContextBuildRequest={
       apiVersion:"1",schemaVersion:"1",characterId:nova.id,conversationId:"conversation-nova",
       messages:[
-        {id:"u1",role:"user",content:"I would like some tea."},
+        {id:"u1",role:"user",content:"tea"},
         {id:"a1",role:"assistant",content:"Nova can help with that."}
       ],
       budget:{availableContextTokens:100,reservedOutputTokens:20,systemOverheadTokens:5,safetyMarginTokens:5}
