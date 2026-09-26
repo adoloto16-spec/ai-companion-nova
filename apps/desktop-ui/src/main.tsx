@@ -515,6 +515,8 @@ function App(){
     foundationRef.current=next;
     setRuntime(await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(await next.diagnostics())));
     await syncCharacters(next);
+    setStartupStatus("ready");
+    setStartupError("");
   },[addConfigurationLoadError,characterStore,coreBookStore,memoryStore,credentialStore,retriever,syncCharacters]);
 
   React.useEffect(()=>{
@@ -663,7 +665,7 @@ function App(){
       </nav>
     </header>
     {view==="settings"
-      ?          ?<SettingsView runtime={runtime} host={host} configuration={configuration} setConfiguration={setConfiguration}
+      ?<SettingsView runtime={runtime} host={host} configuration={configuration} setConfiguration={setConfiguration}
             credentialSaved={credentialSaved} apiKey={apiKey} setApiKey={setApiKey} settingsMessage={settingsMessage}
             saving={saving} testing={testing} onSave={save} onTest={test} onRemoveCredential={removeCredential}/>
       :startupStatus==="error"
