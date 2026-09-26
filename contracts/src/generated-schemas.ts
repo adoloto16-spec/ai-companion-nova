@@ -1732,5 +1732,228 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         "minLength": 1
       }
     }
+  },
+  "memory-item": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/memory-item/v1",
+  "title": "AI Companion Nova Dynamic Memory Item v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "characterId",
+    "type",
+    "content",
+    "tags",
+    "importance",
+    "confidence",
+    "createdAt",
+    "updatedAt",
+    "validFrom",
+    "validUntil",
+    "source",
+    "sourceReference",
+    "mutationPolicy",
+    "status",
+    "metadata"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "characterId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "type": {
+      "enum": [
+        "fact",
+        "preference",
+        "relationship",
+        "event",
+        "experience",
+        "goal",
+        "instruction",
+        "observation"
+      ]
+    },
+    "content": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32768
+    },
+    "tags": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      }
+    },
+    "importance": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "confidence": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "createdAt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "updatedAt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "validFrom": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "validUntil": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "source": {
+      "enum": [
+        "user",
+        "conversation",
+        "file",
+        "tool",
+        "model",
+        "system"
+      ]
+    },
+    "sourceReference": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 500
+    },
+    "mutationPolicy": {
+      "enum": [
+        "locked",
+        "suggest",
+        "auto"
+      ]
+    },
+    "status": {
+      "enum": [
+        "active",
+        "superseded",
+        "archived"
+      ]
+    },
+    "metadata": {
+      "type": "object",
+      "maxProperties": 64,
+      "additionalProperties": true
+    }
   }
+},
+  "memory-search-query": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/memory-search-query/v1",
+  "title": "AI Companion Nova Dynamic Memory Search Query v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "characterId",
+    "query"
+  ],
+  "properties": {
+    "characterId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "query": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "types": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "enum": [
+          "fact",
+          "preference",
+          "relationship",
+          "event",
+          "experience",
+          "goal",
+          "instruction",
+          "observation"
+        ]
+      }
+    },
+    "tags": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      }
+    },
+    "status": {
+      "enum": [
+        "active",
+        "superseded",
+        "archived"
+      ]
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    }
+  }
+},
+  "memory-store-state": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/memory-store-state/v1",
+  "title": "AI Companion Nova Dynamic Memory Store State v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "schemaVersion",
+    "characterId",
+    "items"
+  ],
+  "properties": {
+    "apiVersion": {
+      "enum": [
+        "1"
+      ]
+    },
+    "schemaVersion": {
+      "enum": [
+        "1"
+      ]
+    },
+    "characterId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "https://schemas.ai-companion-nova.dev/memory-item/v1"
+      }
+    }
+  }
+}
 } as unknown as Record<string, JsonSchema>;
