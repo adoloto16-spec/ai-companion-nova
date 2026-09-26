@@ -1,4 +1,5 @@
-import {InMemoryAuditService,InMemoryMemoryStore} from "../../core/src";
+import {InMemoryAuditService} from "../../core/src";
+import {InMemoryMemoryStore} from "../../host/memory/src";
 import {createFoundationRuntime} from "../../runtime/bootstrap/src";
 import {InMemoryCharacterStore} from "../../host/characters/src";
 
