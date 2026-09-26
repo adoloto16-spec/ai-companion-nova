@@ -9,7 +9,10 @@ import type {
   CoreBookActivation,
   CoreBookEntry,
   CoreBookEntryId,
-  CharacterId
+  CharacterId,
+  MemoryBroker,
+  MemoryItem,
+  MemorySearchQuery
 } from "../../contracts/src/index";
 import {
   CONTEXT_API_VERSION,
@@ -36,6 +39,74 @@ export interface CoreBookCandidateReader {
   listCoreBookEntries(characterId:CharacterId):Promise<readonly CoreBookEntry[]>;
 }
 
+export interface MemoryCandidateReader {
+  search(query:MemorySearchQuery):Promise<readonly MemoryItem[]>;
+}
+
+const DEFAULT_MEMORY_CANDIDATE_LIMIT=8;
+
+export class MemoryCandidateSource implements ContextCandidateSource {
+  readonly source:ContextSource="memory";
+  constructor(
+    private readonly reader:MemoryCandidateReader,
+    private readonly estimator:TokenEstimator=new DeterministicApproxTokenEstimator(),
+    private readonly maxResults:number=DEFAULT_MEMORY_CANDIDATE_LIMIT
+  ){
+    if(!Number.isInteger(maxResults)||maxResults<1)throw new Error("maxResults must be a positive integer.");
+  }
+
+  async collect(request:ContextBuildRequest):Promise<readonly ContextCandidate[]> {
+    const latestUserMessage=[...request.messages].reverse().find(message=>message.role==="user");
+    const query=latestUserMessage?.content.trim();
+    if(!query)return [];
+
+    let results:readonly MemoryItem[];
+    try{
+      results=await this.reader.search({
+        characterId:request.characterId,
+        query,
+        status:"active",
+        limit:this.maxResults
+      });
+    }catch{
+      // Dynamic Memory is an optional context source. Retrieval failure degrades to no memory candidates.
+      return [];
+    }
+
+    return results
+      .filter(item=>item.characterId===request.characterId && item.status==="active")
+      .map((item,index)=>{
+        const relevance=Math.max(10,100-index*10);
+        const retentionPriority=item.importance;
+        const selectionScore=
+          40+
+          Math.round(relevance*0.25)+
+          Math.round(item.importance*0.5)+
+          Math.round(item.confidence*0.25);
+        return {
+          id:"memory:"+item.id,
+          source:"memory",
+          referenceId:item.id,
+          characterId:item.characterId,
+          content:item.content,
+          role:"user",
+          eligible:true,
+          reason:
+            "deterministic memory search result #"+String(index+1)+
+            "; importance is the primary retention input, confidence is a secondary tie-break input; placementWeight is unused",
+          estimatedTokens:this.estimator.estimate(item.content),
+          zone:"retrieved_memory",
+          relevance,
+          activationStrength:0,
+          retentionPriority,
+          placementWeight:0,
+          recency:0,
+          selectionScore
+        } satisfies ContextCandidate;
+      });
+  }
+}
+
 const RECENT_CONVERSATION_MESSAGES=8;
 
 function cloneMetadata(metadata?:Record<string,unknown>):Record<string,unknown>|undefined {
@@ -60,7 +131,9 @@ function candidateScore(relevance:number,activationStrength:number,retentionPrio
 }
 
 function sourceRank(source:ContextSource):number {
-  return source==="core_book"?0:1;
+  if(source==="core_book")return 0;
+  if(source==="memory")return 1;
+  return 2;
 }
 
 function stableCompare(a:{candidate:ContextCandidate;index:number},b:{candidate:ContextCandidate;index:number}):number {
@@ -231,6 +304,8 @@ export class CoreBookCandidateSource implements ContextCandidateSource {
 export interface ContextEngineOptions {
   tokenEstimator?:TokenEstimator;
   recentMessageCount?:number;
+  memoryBroker?:Pick<MemoryBroker,"search">;
+  memoryCandidateLimit?:number;
 }
 
 export class DeterministicContextEngine implements ContextEngineContract {
@@ -243,6 +318,7 @@ export class DeterministicContextEngine implements ContextEngineContract {
     if(sources.length===0)throw new Error("Context Engine requires at least one candidate source.");
     this.sources=sources;
     if(options.recentMessageCount!==undefined && options.recentMessageCount<1)throw new Error("recentMessageCount must be positive.");
+    if(options.memoryCandidateLimit!==undefined && options.memoryCandidateLimit<1)throw new Error("memoryCandidateLimit must be positive.");
   }
 
   async build(request:ContextBuildRequest):Promise<AssembledContext> {
@@ -288,7 +364,7 @@ export class DeterministicContextEngine implements ContextEngineContract {
 
     const placed=[...includedCandidates].sort((a,b)=>{
       const zoneOrder:Record<ContextZone,number>={
-        system:0,character_core:10,retrieved_core_book:20,conversation:30,recent_conversation:40
+        system:0,character_core:10,retrieved_core_book:20,retrieved_memory:25,conversation:30,recent_conversation:40
       };
       const zoneDifference=zoneOrder[a.zone]-zoneOrder[b.zone];
       if(zoneDifference)return zoneDifference;
@@ -337,10 +413,18 @@ export function createDeterministicContextEngine(
   options:ContextEngineOptions={}
 ):DeterministicContextEngine {
   const estimator=options.tokenEstimator??new DeterministicApproxTokenEstimator();
-  return new DeterministicContextEngine([
+  const sources:ContextCandidateSource[]=[
     new ConversationCandidateSource(estimator,options.recentMessageCount??RECENT_CONVERSATION_MESSAGES),
     new CoreBookCandidateSource(coreBookReader,estimator)
-  ],options);
+  ];
+  if(options.memoryBroker){
+    sources.push(new MemoryCandidateSource(
+      options.memoryBroker,
+      estimator,
+      options.memoryCandidateLimit??DEFAULT_MEMORY_CANDIDATE_LIMIT
+    ));
+  }
+  return new DeterministicContextEngine(sources,options);
 }
 
 export function calculateContextBudget(
