@@ -9,6 +9,7 @@ async function main(){
   const characterStore=new InMemoryCharacterStore();
   const coreBookStore=new InMemoryCoreBookStore();
   const runtime=await startRuntime({characterStore,coreBookStore});
+  await runtime.start();
   try{
     const nova=await runtime.getActiveCharacter();
     const gm=await runtime.createCharacter({name:"GM"});
