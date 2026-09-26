@@ -1,4 +1,4 @@
-import type {CoreBookEntry,CoreBookEntryId,EventBus,MemoryBroker,MemoryItem,RetrievalIndexDocument,RetrievalIndexWriter,RetrievalSource} from "../../contracts/src/index";
+import type {CoreBookEntry,CoreBookEntryId,EventBus,EventPayloadMap,MemoryBroker,MemoryItem,RetrievalIndexDocument,RetrievalIndexWriter,RetrievalSource} from "../../contracts/src/index";
 
 export interface CoreBookRetrievalReader{getCoreBookEntry(characterId:string,entryId:CoreBookEntryId):Promise<CoreBookEntry|undefined>}
 export interface RetrievalEventIndexerOptions{events:EventBus;coreBook:CoreBookRetrievalReader;memory:Pick<MemoryBroker,"get">;writer:RetrievalIndexWriter}
@@ -15,15 +15,15 @@ export class RetrievalEventIndexer{
     this.started=true;
     const {events}=this.options;
     this.unsubs.push(
-      events.subscribe("CoreBookEntryCreated",event=>this.refreshCoreBook(event.payload.characterId,event.payload.entryId)),
-      events.subscribe("CoreBookEntryUpdated",event=>this.refreshCoreBook(event.payload.characterId,event.payload.entryId)),
-      events.subscribe("CoreBookEntryDeleted",event=>this.remove(event.payload.characterId,"core_book",event.payload.entryId)),
-      events.subscribe("CoreBookEntryEnabledChanged",event=>event.payload.enabled?this.refreshCoreBook(event.payload.characterId,event.payload.entryId):this.remove(event.payload.characterId,"core_book",event.payload.entryId)),
-      events.subscribe("MemoryCreated",event=>this.refreshMemory(event.payload.characterId,event.payload.memoryId)),
-      events.subscribe("MemoryUpdated",event=>this.refreshMemory(event.payload.characterId,event.payload.memoryId)),
-      events.subscribe("MemorySuperseded",async event=>{await this.remove(event.payload.characterId,"memory",event.payload.previousMemoryId);await this.refreshMemory(event.payload.characterId,event.payload.memoryId)}),
-      events.subscribe("MemoryArchived",event=>this.remove(event.payload.characterId,"memory",event.payload.memoryId)),
-      events.subscribe("CharacterDeleted",event=>this.options.writer.removeCharacter(event.payload.characterId))
+      events.subscribe<EventPayloadMap["CoreBookEntryCreated"]>("CoreBookEntryCreated",event=>this.refreshCoreBook(event.payload.characterId,event.payload.entryId)),
+      events.subscribe<EventPayloadMap["CoreBookEntryUpdated"]>("CoreBookEntryUpdated",event=>this.refreshCoreBook(event.payload.characterId,event.payload.entryId)),
+      events.subscribe<EventPayloadMap["CoreBookEntryDeleted"]>("CoreBookEntryDeleted",event=>this.remove(event.payload.characterId,"core_book",event.payload.entryId)),
+      events.subscribe<EventPayloadMap["CoreBookEntryEnabledChanged"]>("CoreBookEntryEnabledChanged",event=>event.payload.enabled?this.refreshCoreBook(event.payload.characterId,event.payload.entryId):this.remove(event.payload.characterId,"core_book",event.payload.entryId)),
+      events.subscribe<EventPayloadMap["MemoryCreated"]>("MemoryCreated",event=>this.refreshMemory(event.payload.characterId,event.payload.memoryId)),
+      events.subscribe<EventPayloadMap["MemoryUpdated"]>("MemoryUpdated",event=>this.refreshMemory(event.payload.characterId,event.payload.memoryId)),
+      events.subscribe<EventPayloadMap["MemorySuperseded"]>("MemorySuperseded",async event=>{await this.remove(event.payload.characterId,"memory",event.payload.previousMemoryId);await this.refreshMemory(event.payload.characterId,event.payload.memoryId)}),
+      events.subscribe<EventPayloadMap["MemoryArchived"]>("MemoryArchived",event=>this.remove(event.payload.characterId,"memory",event.payload.memoryId)),
+      events.subscribe<EventPayloadMap["CharacterDeleted"]>("CharacterDeleted",event=>this.options.writer.removeCharacter(event.payload.characterId))
     );
   }
   stop():void{for(const unsubscribe of this.unsubs.splice(0))unsubscribe();this.started=false}

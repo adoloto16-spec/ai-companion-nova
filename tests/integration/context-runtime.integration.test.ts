@@ -1,4 +1,4 @@
-import type {ContextBuildRequest} from "../../contracts/src";
+import type {ContextBuildRequest,RetrievalCandidate,RetrievalQuery,RetrievalResult,Retriever} from "../../contracts/src";
 import {InMemoryCharacterStore} from "../../host/characters/src";
 import {InMemoryCoreBookStore} from "../../host/core-book/src";
 import {InMemoryMemoryStore} from "../../host/memory/src";
@@ -13,7 +13,21 @@ async function main(){
   const characterStore=new InMemoryCharacterStore();
   const coreBookStore=new InMemoryCoreBookStore();
   const memoryStore=new InMemoryMemoryStore();
-  const runtime=await startRuntime({characterStore,coreBookStore,memoryStore});
+  const retrievalQueries:RetrievalQuery[]=[];
+  const retriever:Retriever={
+    search:async(query):Promise<RetrievalResult>=>{
+      retrievalQueries.push(query);
+      const source=query.sources?.[0]??"memory";
+      const sourceId=source==="core_book"?"core.book.placeholder":"memory.placeholder";
+      const candidates:RetrievalCandidate[]=(query.query.toLowerCase().includes("tea")||query.query.toLowerCase().includes("munich"))
+        ? [{source,sourceId,characterId:query.characterId,score:1,matchedText:"tea",matches:[{field:"content",text:"tea"}],metadata:{updatedAt:"2026-09-26T12:00:00.000Z"}}]
+        : [];
+      return {apiVersion:"1",schemaVersion:"1",characterId:query.characterId,query:query.query,candidates,degraded:false};
+    },
+    rebuild:async()=>{},
+    rebuildAll:async()=>{}
+  };
+  const runtime=await startRuntime({characterStore,coreBookStore,memoryStore,retriever});
   await runtime.start();
   try{
     const nova=await runtime.getActiveCharacter();
@@ -58,12 +72,16 @@ async function main(){
       budget:{availableContextTokens:100,reservedOutputTokens:20,systemOverheadTokens:5,safetyMarginTokens:5}
     };
     const context=await runtime.buildContext(build);
+    ok(retrievalQueries.some(query=>query.sources?.[0]==="memory"&&query.characterId===nova.id),"Context Engine queries Memory through Retriever boundary");
+    ok(retrievalQueries.some(query=>query.sources?.[0]==="core_book"&&query.characterId===nova.id),"Context Engine queries Core Book through Retriever boundary");
+    ok(retrievalQueries.every(query=>query.characterId===nova.id),"Retriever queries remain character scoped");
     ok(context.includedCandidates.some(candidate=>candidate.referenceId===novaEntry.id),"Nova Core Book selected through runtime boundary");
     ok(context.includedCandidates.some(candidate=>candidate.referenceId===novaMemory.id),"Nova Dynamic Memory selected through existing MemoryBroker boundary");
     ok(!context.includedCandidates.some(candidate=>candidate.referenceId===gmMemory.id),"GM Dynamic Memory is isolated from Nova context");
     ok(!context.includedCandidates.some(candidate=>candidate.referenceId===archivedMemory.id),"archived memory is excluded from automatic context");
     ok(context.includedCandidates.some(candidate=>candidate.referenceId===replacementMemory.id),"active replacement memory is included");
     ok(!context.includedCandidates.some(candidate=>candidate.referenceId===supersededMemory.id),"superseded memory is excluded from automatic context");
+    equal(retrievalQueries.find(query=>query.sources?.[0]==="memory")?.query,"tea","Context Engine forwards latest user query to Retriever");
     equal(context.messages.find(message=>message.content==="Nova likes tea.")?.metadata?.contextSource,"memory","assembled Memory provenance source");
     equal(context.messages.find(message=>message.content==="Nova likes tea.")?.metadata?.contextReferenceId,novaMemory.id,"assembled Memory provenance reference");
     equal(context.messages.find(message=>message.content==="Nova likes tea.")?.role,"user","memory remains data-role");
