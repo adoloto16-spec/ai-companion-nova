@@ -18,7 +18,8 @@
     "tests/**/*.ts",
     "host/config/src/**/*.ts",
     "host/characters/src/**/*.ts",
-    "host/core-book/src/**/*.ts"
+    "host/core-book/src/**/*.ts",
+    "host/memory/src/**/*.ts"
   ],
   "exclude": [
     "apps/desktop-ui",
