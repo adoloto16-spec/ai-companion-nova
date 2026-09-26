@@ -1,6 +1,6 @@
 import type {
   AuditService,CharacterId,Clock,EventBus,MemoryBroker,MemoryCreateInput,MemoryItem,MemoryItemId,MemoryMutationAuthority,
-  MemoryMutationPolicy,MemorySearchQuery,MemoryStore,MemoryStoreState,MemoryStatus,MemoryType,SchemaValidator
+  MemoryMutationPolicy,MemorySearchQuery,MemoryStore,MemoryStoreState,MemoryStatus,MemoryType,MemoryUpdateInput,SchemaValidator
 } from "../../contracts/src/index";
 import {MEMORY_API_VERSION,MEMORY_SCHEMA_VERSION,STANDARD_SCHEMAS,createEvent} from "../../contracts/src/index";
 
@@ -12,21 +12,6 @@ const MAX_METADATA_KEYS=64;
 const MAX_METADATA_BYTES=16384;
 const MAX_QUERY_LENGTH=256;
 const MAX_LIMIT=100;
-
-export interface MemoryUpdateInput{
-  content?:string;
-  tags?:readonly string[];
-  importance?:number;
-  confidence?:number;
-  validFrom?:string|null;
-  validUntil?:string|null;
-  source?:MemoryItem["source"];
-  sourceReference?:string|null;
-  mutationPolicy?:MemoryMutationPolicy;
-  metadata?:Record<string,unknown>;
-}
-
-export type MemorySupersedeInput=MemoryCreateInput;
 
 export interface MemoryBrokerDependencies{
   store:MemoryStore;
@@ -87,8 +72,8 @@ function requireScore(value:number,label:string):number{
 function requireMetadata(metadata:Record<string,unknown>):Record<string,unknown>{
   if(!isRecord(metadata))throw new Error("Memory metadata must be an object.");
   if(Object.keys(metadata).length>MAX_METADATA_KEYS)throw new Error("Memory metadata exceeds the v1 key limit.");
-  const bytes=Buffer.byteLength(JSON.stringify(metadata));
-  if(bytes>MAX_METADATA_BYTES)throw new Error("Memory metadata exceeds the v1 size limit.");
+  const serialized=JSON.stringify(metadata);
+  if(serialized.length>MAX_METADATA_BYTES)throw new Error("Memory metadata exceeds the v1 size limit.");
   return cloneMetadata(metadata);
 }
 function requireTimestamp(value:string,label:string):string{
@@ -109,7 +94,6 @@ function validateProvenance(source:MemoryItem["source"],sourceReference:string|n
 }
 function validateItemShape(item:MemoryItem,characterId:string,validator:SchemaValidator):void{
   if(item.characterId!==characterId)throw new Error("Memory item character scope mismatch.");
-  validator.validate(item,STANDARD_SCHEMAS["memory-item"]!).errors.length&&validator.validate(item,STANDARD_SCHEMAS["memory-item"]!);
   const result=validator.validate(item,STANDARD_SCHEMAS["memory-item"]!);
   if(!result.valid)throw new Error("Memory item failed schema validation: "+result.errors.join("; "));
   requireMemoryId(item.id);
@@ -261,7 +245,7 @@ export class MemoryBrokerImpl implements MemoryBroker{
     return cloneItem(next);
   }
 
-  async supersede(characterId:CharacterId,memoryId:MemoryItemId,input:MemorySupersedeInput,authority:MemoryMutationAuthority):Promise<MemoryItem>{
+  async supersede(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>{
     const scope=await this.ensureCharacter(characterId);
     const state=await this.loadState(scope);
     const previousId=requireMemoryId(memoryId);
