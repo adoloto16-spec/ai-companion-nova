@@ -1,6 +1,7 @@
 import {ChatSessionController,ConversationSession,InMemoryCharacterStore} from "../../core/src";
 import type {ChatRequest,ChatResponse} from "../../contracts/src";
 import {createFoundationRuntime as startRuntime} from "../../runtime/bootstrap/src";
+import {loadProviderConfigurationSafely} from "../../host/config/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error(label+" expected "+String(expected)+" got "+String(actual))}
 function ok(value:unknown,label:string){if(!value)throw new Error(label)}
@@ -14,7 +15,7 @@ async function providerConfigurationFailureFallbackTest(){
   equal(loaded.configuration,undefined,"provider config failure produces no real runtime configuration");
   ok(loaded.error,"provider config failure is retained for diagnostics");
 
-  const runtime=await startFoundationRuntime({
+  const runtime=await startRuntime({
     providerConfiguration:loaded.configuration,
     characterStore:new InMemoryCharacterStore()
   });
