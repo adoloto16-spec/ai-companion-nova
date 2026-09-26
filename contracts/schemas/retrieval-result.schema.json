@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/retrieval-result/v1",
+  "title": "AI Companion Nova Retrieval Result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "schemaVersion",
+    "characterId",
+    "query",
+    "candidates",
+    "degraded"
+  ],
+  "properties": {
+    "apiVersion": {
+      "enum": [
+        "1"
+      ]
+    },
+    "schemaVersion": {
+      "enum": [
+        "1"
+      ]
+    },
+    "characterId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "query": {
+      "type": "string"
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "degraded": {
+      "type": "boolean"
+    },
+    "error": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

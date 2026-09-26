@@ -10,6 +10,8 @@ import {IpcCredentialStore} from "../../../host/credentials/src/index";
 import {IpcProviderConfigurationStore} from "../../../host/config/src/index";
 import {IpcCharacterStore} from "../../../host/characters/src/index";
 import {IpcCoreBookStore,InMemoryCoreBookStore} from "../../../host/core-book/src/index";
+import {IpcMemoryStore,InMemoryMemoryStore} from "../../../host/memory/src/index";
+import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
   PROVIDER_CONFIGURATION_API_VERSION,PROVIDER_CONFIGURATION_SCHEMA_VERSION,
   type ProviderConfiguration, type ProviderConnectionTestResult
@@ -454,6 +456,8 @@ function App(){
   const configurationStore=React.useMemo(()=>new IpcProviderConfigurationStore(invoke),[]);
   const characterStore=React.useMemo(()=>isTauriRuntime()?new IpcCharacterStore(invoke):new InMemoryCharacterStore(),[]);
   const coreBookStore=React.useMemo(()=>isTauriRuntime()?new IpcCoreBookStore(invoke):new InMemoryCoreBookStore(),[]);
+  const memoryStore=React.useMemo(()=>isTauriRuntime()?new IpcMemoryStore(invoke):new InMemoryMemoryStore(),[]);
+  const retriever=React.useMemo(()=>isTauriRuntime()?new IpcFullTextRetriever(invoke):undefined,[]);
 
   const controllerForCharacter=React.useCallback((characterId:string)=>new ChatSessionController(
     new ConversationSession(crypto.randomUUID(),characterId),
@@ -483,11 +487,11 @@ function App(){
 
   const refreshRuntime=React.useCallback(async(config:ProviderConfiguration|undefined)=>{
     await foundationRef.current?.stop();
-    const next=await startFoundationRuntime({providerConfiguration:config,credentialStore,characterStore,coreBookStore});
+    const next=await startFoundationRuntime({providerConfiguration:config,credentialStore,characterStore,coreBookStore,memoryStore,retriever,retrievalIndexWriter:retriever});
     foundationRef.current=next;
     setRuntime(await publishAndReadRuntimeDiagnostics(await next.diagnostics()));
     await syncCharacters(next);
-  },[characterStore,coreBookStore,credentialStore,syncCharacters]);
+  },[characterStore,coreBookStore,memoryStore,credentialStore,retriever,syncCharacters]);
 
   React.useEffect(()=>{
     let active=true;

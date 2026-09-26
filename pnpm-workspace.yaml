@@ -9,3 +9,4 @@ packages:
   - "host/credentials"
   - "host/config"
   - "runtime/bootstrap"
+  - "host/retrieval"

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/retrieval-match/v1",
+  "title": "AI Companion Nova Retrieval Match v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "field",
+    "text"
+  ],
+  "properties": {
+    "field": {
+      "enum": [
+        "title",
+        "content",
+        "tags"
+      ]
+    },
+    "text": {
+      "type": "string"
+    }
+  }
+}

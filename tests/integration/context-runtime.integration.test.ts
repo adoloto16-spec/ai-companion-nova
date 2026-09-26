@@ -1,4 +1,4 @@
-import type {ContextBuildRequest} from "../../contracts/src";
+import type {ContextBuildRequest,RetrievalCandidate,RetrievalQuery,RetrievalResult,Retriever} from "../../contracts/src";
 import {InMemoryCharacterStore} from "../../host/characters/src";
 import {InMemoryCoreBookStore} from "../../host/core-book/src";
 import {InMemoryMemoryStore} from "../../host/memory/src";
@@ -13,7 +13,23 @@ async function main(){
   const characterStore=new InMemoryCharacterStore();
   const coreBookStore=new InMemoryCoreBookStore();
   const memoryStore=new InMemoryMemoryStore();
-  const runtime=await startRuntime({characterStore,coreBookStore,memoryStore});
+  const retrievalQueries:RetrievalQuery[]=[];
+  let coreBookIndexId:string|undefined;
+  const memoryIndexIds=new Set<string>();
+  const retriever:Retriever={
+    search:async(query):Promise<RetrievalResult>=>{
+      retrievalQueries.push(query);
+      const source=query.sources?.[0]??"memory";
+      const ids=source==="core_book"?(coreBookIndexId?[coreBookIndexId]:[]):[...memoryIndexIds];
+      const candidates:RetrievalCandidate[]=(query.query.toLowerCase().includes("tea")||query.query.toLowerCase().includes("munich"))
+        ? ids.map(sourceId=>({source,sourceId,characterId:query.characterId,score:1,matchedText:"tea",matches:[{field:"content",text:"tea"}],metadata:{updatedAt:"2026-09-26T12:00:00.000Z"}}))
+        : [];
+      return {apiVersion:"1",schemaVersion:"1",characterId:query.characterId,query:query.query,candidates,degraded:false};
+    },
+    rebuild:async()=>{},
+    rebuildAll:async()=>{}
+  };
+  const runtime=await startRuntime({characterStore,coreBookStore,memoryStore,retriever});
   await runtime.start();
   try{
     const nova=await runtime.getActiveCharacter();
@@ -26,14 +42,17 @@ async function main(){
       title:"GM canon",content:"GM owns separate lore.",activation:{kind:"always"},
       retentionPriority:100,placementWeight:100,source:"user"
     });
+    coreBookIndexId=novaEntry.id;
     const novaMemory=await runtime.createMemory(nova.id,{
       id:"memory.context.nova.1",type:"preference",content:"Nova likes tea.",tags:["tea"],
       importance:95,confidence:90,source:"user",mutationPolicy:"locked"
     });
+    memoryIndexIds.add(novaMemory.id);
     const gmMemory=await runtime.createMemory(gm.id,{
       id:"memory.context.gm.1",type:"fact",content:"GM character tea note.",tags:["tea"],
       importance:100,confidence:100,source:"user",mutationPolicy:"locked"
     });
+
     const archivedMemory=await runtime.createMemory(nova.id,{
       id:"memory.context.archived",type:"fact",content:"Archived tea note.",tags:["tea"],
       importance:100,confidence:100,source:"user",mutationPolicy:"locked"
@@ -47,6 +66,7 @@ async function main(){
       id:"memory.context.replacement",type:"fact",content:"Current Munich tea note.",tags:["berlin","tea"],
       importance:90,confidence:95,source:"user",mutationPolicy:"locked"
     });
+    memoryIndexIds.add(replacementMemory.id);
 
 
     const build:ContextBuildRequest={
@@ -58,12 +78,16 @@ async function main(){
       budget:{availableContextTokens:100,reservedOutputTokens:20,systemOverheadTokens:5,safetyMarginTokens:5}
     };
     const context=await runtime.buildContext(build);
+    ok(retrievalQueries.some(query=>query.sources?.[0]==="memory"&&query.characterId===nova.id),"Context Engine queries Memory through Retriever boundary");
+    ok(retrievalQueries.some(query=>query.sources?.[0]==="core_book"&&query.characterId===nova.id),"Context Engine queries Core Book through Retriever boundary");
+    ok(retrievalQueries.every(query=>query.characterId===nova.id),"Retriever queries remain character scoped");
     ok(context.includedCandidates.some(candidate=>candidate.referenceId===novaEntry.id),"Nova Core Book selected through runtime boundary");
     ok(context.includedCandidates.some(candidate=>candidate.referenceId===novaMemory.id),"Nova Dynamic Memory selected through existing MemoryBroker boundary");
     ok(!context.includedCandidates.some(candidate=>candidate.referenceId===gmMemory.id),"GM Dynamic Memory is isolated from Nova context");
     ok(!context.includedCandidates.some(candidate=>candidate.referenceId===archivedMemory.id),"archived memory is excluded from automatic context");
     ok(context.includedCandidates.some(candidate=>candidate.referenceId===replacementMemory.id),"active replacement memory is included");
     ok(!context.includedCandidates.some(candidate=>candidate.referenceId===supersededMemory.id),"superseded memory is excluded from automatic context");
+    equal(retrievalQueries.find(query=>query.sources?.[0]==="memory")?.query,"tea","Context Engine forwards latest user query to Retriever");
     equal(context.messages.find(message=>message.content==="Nova likes tea.")?.metadata?.contextSource,"memory","assembled Memory provenance source");
     equal(context.messages.find(message=>message.content==="Nova likes tea.")?.metadata?.contextReferenceId,novaMemory.id,"assembled Memory provenance reference");
     equal(context.messages.find(message=>message.content==="Nova likes tea.")?.role,"user","memory remains data-role");
