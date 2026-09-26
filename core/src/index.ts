@@ -13,3 +13,5 @@ export * from "./action-broker";
 
 export * from "./core-book-manager";
 export * from "./context-engine";
+
+export * from "./memory-broker";
