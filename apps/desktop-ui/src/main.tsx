@@ -2,12 +2,14 @@ import React from "react";
 import {createRoot} from "react-dom/client";
 import {invoke} from "@tauri-apps/api/core";
 import {
-  ChatSessionController,ConversationSession,type Character,type FoundationRuntime,InMemoryCharacterStore,type RuntimeDiagnostics
+  ChatSessionController,ConversationSession,type Character,type FoundationRuntime,InMemoryCharacterStore,type RuntimeDiagnostics,
+  type CoreBookActivation,type CoreBookEntry
 } from "../../../core/src/index";
 import {startFoundationRuntime,testProviderConfiguration,validateProviderConfiguration} from "../../../runtime/bootstrap/src/index";
 import {IpcCredentialStore} from "../../../host/credentials/src/index";
 import {IpcProviderConfigurationStore} from "../../../host/config/src/index";
 import {IpcCharacterStore} from "../../../host/characters/src/index";
+import {IpcCoreBookStore,InMemoryCoreBookStore} from "../../../host/core-book/src/index";
 import {
   PROVIDER_CONFIGURATION_API_VERSION,PROVIDER_CONFIGURATION_SCHEMA_VERSION,
   type ProviderConfiguration, type ProviderConnectionTestResult
@@ -152,6 +154,228 @@ function CharactersView({characters,activeCharacter,onSelect,onCreate,onRename,o
   </section>;
 }
 
+type CoreBookDraft={
+  title:string;
+  content:string;
+  tags:string;
+  activationKind:"always"|"keyword"|"regex";
+  keywords:string;
+  matchMode:"any"|"all";
+  caseSensitive:boolean;
+  pattern:string;
+  flags:string;
+  retentionPriority:number;
+  placementWeight:number;
+  mutationPolicy:"locked"|"suggest"|"auto";
+  enabled:boolean;
+  source:"user"|"import"|"system"|"other";
+};
+
+const emptyCoreBookDraft=():CoreBookDraft=>({
+  title:"",content:"",tags:"",activationKind:"always",keywords:"",matchMode:"any",
+  caseSensitive:false,pattern:"",flags:"",retentionPriority:50,placementWeight:50,
+  mutationPolicy:"locked",enabled:true,source:"user"
+});
+
+function coreBookDraftFromEntry(entry:CoreBookEntry):CoreBookDraft{
+  const activation=entry.activation;
+  return {
+    title:entry.title,
+    content:entry.content,
+    tags:entry.tags.join(", "),
+    activationKind:activation.kind==="always"||activation.kind==="keyword"||activation.kind==="regex"?activation.kind:"always",
+    keywords:activation.kind==="keyword"?activation.keywords.join(", "):"",
+    matchMode:activation.kind==="keyword"?activation.matchMode:"any",
+    caseSensitive:activation.kind==="keyword"?activation.caseSensitive:false,
+    pattern:activation.kind==="regex"?activation.pattern:"",
+    flags:activation.kind==="regex"?activation.flags:"",
+    retentionPriority:entry.retentionPriority,
+    placementWeight:entry.placementWeight,
+    mutationPolicy:entry.mutationPolicy,
+    enabled:entry.enabled,
+    source:entry.source
+  };
+}
+
+function coreBookActivationFromDraft(draft:CoreBookDraft):CoreBookActivation{
+  switch(draft.activationKind){
+    case "always":return {kind:"always"};
+    case "keyword":{
+      const keywords=draft.keywords.split(",").map(value=>value.trim()).filter(Boolean);
+      return {kind:"keyword",keywords,matchMode:draft.matchMode,caseSensitive:draft.caseSensitive};
+    }
+    case "regex":return {kind:"regex",pattern:draft.pattern,flags:draft.flags};
+  }
+}
+
+function CoreBookView({runtime,character}:{runtime:FoundationRuntime;character:Character}){
+  const [entries,setEntries]=React.useState<readonly CoreBookEntry[]>([]);
+  const [selectedId,setSelectedId]=React.useState<string|null>(null);
+  const [draft,setDraft]=React.useState<CoreBookDraft>(()=>emptyCoreBookDraft());
+  const [busy,setBusy]=React.useState(false);
+  const [message,setMessage]=React.useState("");
+
+  const refresh=React.useCallback(async()=>{
+    const list=await runtime.listCoreBookEntries(character.id);
+    setEntries(list);
+    setSelectedId(current=>current&&list.some(entry=>entry.id===current)?current:null);
+  },[character.id,runtime]);
+
+  React.useEffect(()=>{
+    setDraft(emptyCoreBookDraft());
+    setSelectedId(null);
+    setMessage("");
+    void refresh().catch(error=>setMessage(error instanceof Error?error.message:"Core Book could not be loaded."));
+  },[character.id,refresh]);
+
+  React.useEffect(()=>{
+    if(!selectedId)return;
+    const selected=entries.find(entry=>entry.id===selectedId);
+    if(selected)setDraft(coreBookDraftFromEntry(selected));
+  },[entries,selectedId]);
+
+  const updateDraft=<K extends keyof CoreBookDraft>(key:K,value:CoreBookDraft[K])=>{
+    setDraft(current=>({...current,[key]:value}));
+  };
+
+  const createNew=()=>{
+    setSelectedId(null);
+    setDraft(emptyCoreBookDraft());
+    setMessage("");
+  };
+
+  const save=async()=>{
+    setBusy(true);setMessage("");
+    try{
+      const activation=coreBookActivationFromDraft(draft);
+      const payload={
+        title:draft.title,content:draft.content,tags:draft.tags.split(",").map(value=>value.trim()).filter(Boolean),
+        activation,retentionPriority:draft.retentionPriority,placementWeight:draft.placementWeight,
+        mutationPolicy:draft.mutationPolicy,enabled:draft.enabled,source:draft.source
+      };
+      if(selectedId)await runtime.updateCoreBookEntry(character.id,selectedId,payload);
+      else{
+        const created=await runtime.createCoreBookEntry(character.id,payload);
+        setSelectedId(created.id);
+      }
+      await refresh();
+      setMessage(selectedId?"Core Book entry updated.":"Core Book entry created.");
+    }catch(error){
+      setMessage(error instanceof Error?error.message:"Core Book operation failed.");
+    }finally{setBusy(false)}
+  };
+
+  const toggleEnabled=async(entry:CoreBookEntry)=>{
+    setBusy(true);setMessage("");
+    try{
+      await runtime.setCoreBookEntryEnabled(character.id,entry.id,!entry.enabled);
+      await refresh();
+      setMessage(!entry.enabled?"Core Book entry enabled.":"Core Book entry disabled.");
+    }catch(error){
+      setMessage(error instanceof Error?error.message:"Core Book enable/disable failed.");
+    }finally{setBusy(false)}
+  };
+
+  const deleteEntry=async()=>{
+    if(!selectedId)return;
+    if(!window.confirm("Delete this Core Book entry?"))return;
+    setBusy(true);setMessage("");
+    try{
+      await runtime.deleteCoreBookEntry(character.id,selectedId);
+      createNew();
+      await refresh();
+      setMessage("Core Book entry deleted.");
+    }catch(error){
+      setMessage(error instanceof Error?error.message:"Core Book deletion failed.");
+    }finally{setBusy(false)}
+  };
+
+  const selected=selectedId?entries.find(entry=>entry.id===selectedId):undefined;
+
+  return <section className="core-book-panel">
+    <div className="core-book-toolbar">
+      <div><h2>Core Book · {character.name}</h2><p className="chat-subtitle">Canonical lore owned by this Character. Semantic and model search are reserved for future retrieval.</p></div>
+      <button onClick={createNew} disabled={busy}>+ New Entry</button>
+    </div>
+
+    <div className="core-book-layout">
+      <div className="core-book-list" role="listbox" aria-label="Core Book entries">
+        {entries.length===0&&<div className="core-book-empty">No Core Book entries yet.</div>}
+        {entries.map(entry=>
+          <button key={entry.id}
+            className={entry.id===selectedId?"core-book-row active":"core-book-row"}
+            onClick={()=>setSelectedId(entry.id)}
+            disabled={busy}>
+            <span><strong>{entry.title}</strong><small>{entry.activation.kind} · {entry.enabled?"Enabled":"Disabled"}</small></span>
+            <small>{entry.tags.join(" · ")||"No tags"}</small>
+          </button>
+        )}
+      </div>
+
+      <div className="core-book-editor">
+        <div className="core-book-editor-header"><h3>{selected?"Edit entry":"New entry"}</h3>{selected&&<code>{selected.id}</code>}</div>
+        <label>Title<input value={draft.title} onChange={event=>updateDraft("title",event.target.value)} disabled={busy}/></label>
+        <label>Content<textarea value={draft.content} onChange={event=>updateDraft("content",event.target.value)} disabled={busy} rows={8}/></label>
+        <label>Tags<input value={draft.tags} onChange={event=>updateDraft("tags",event.target.value)} placeholder="comma, separated, tags" disabled={busy}/></label>
+
+        <div className="core-book-grid">
+          <label>Activation
+            <select value={draft.activationKind} onChange={event=>updateDraft("activationKind",event.target.value as CoreBookDraft["activationKind"])} disabled={busy}>
+              <option value="always">Always</option>
+              <option value="keyword">Keyword</option>
+              <option value="regex">Regex</option>
+            </select>
+          </label>
+          <label>Mutation Policy
+            <select value={draft.mutationPolicy} onChange={event=>updateDraft("mutationPolicy",event.target.value as CoreBookDraft["mutationPolicy"])} disabled={busy}>
+              <option value="locked">Locked</option>
+              <option value="suggest">Suggest</option>
+              <option value="auto">Auto</option>
+            </select>
+          </label>
+        </div>
+
+        {draft.activationKind==="keyword"&&<div className="core-book-activation-box">
+          <label>Keywords<input value={draft.keywords} onChange={event=>updateDraft("keywords",event.target.value)} placeholder="Nova, academy, castle" disabled={busy}/></label>
+          <div className="core-book-grid">
+            <label>Match
+              <select value={draft.matchMode} onChange={event=>updateDraft("matchMode",event.target.value as "any"|"all")} disabled={busy}>
+                <option value="any">Any</option><option value="all">All</option>
+              </select>
+            </label>
+            <label className="checkbox"><input type="checkbox" checked={draft.caseSensitive} onChange={event=>updateDraft("caseSensitive",event.target.checked)} disabled={busy}/> Case sensitive</label>
+          </div>
+        </div>}
+
+        {draft.activationKind==="regex"&&<div className="core-book-activation-box">
+          <label>Pattern<input value={draft.pattern} onChange={event=>updateDraft("pattern",event.target.value)} placeholder="\\bNova\\b" disabled={busy}/></label>
+          <label>Flags<input value={draft.flags} onChange={event=>updateDraft("flags",event.target.value)} placeholder="i" disabled={busy}/></label>
+        </div>}
+
+        <div className="core-book-grid">
+          <label>Retention Priority (0–100)<input type="number" min={0} max={100} value={draft.retentionPriority} onChange={event=>updateDraft("retentionPriority",Number(event.target.value))} disabled={busy}/></label>
+          <label>Placement Weight (0–100)<input type="number" min={0} max={100} value={draft.placementWeight} onChange={event=>updateDraft("placementWeight",Number(event.target.value))} disabled={busy}/></label>
+        </div>
+
+        <div className="core-book-grid">
+          <label>Source
+            <select value={draft.source} onChange={event=>updateDraft("source",event.target.value as CoreBookDraft["source"])} disabled={busy}>
+              <option value="user">User</option><option value="import">Import</option><option value="system">System</option><option value="other">Other</option>
+            </select>
+          </label>
+          <label className="checkbox"><input type="checkbox" checked={draft.enabled} onChange={event=>updateDraft("enabled",event.target.checked)} disabled={busy}/> Enabled</label>
+        </div>
+
+        <div className="actions">
+          <button onClick={()=>void save()} disabled={busy||draft.title.trim().length===0}>{selected?"Save Entry":"Create Entry"}</button>
+          {selected&&<><button onClick={()=>void toggleEnabled(selected)} disabled={busy}>{selected.enabled?"Disable":"Enable"}</button><button onClick={()=>void deleteEntry()} disabled={busy}>Delete</button></>}
+        </div>
+        {message&&<div className="notice" role="status">{message}</div>}
+      </div>
+    </div>
+  </section>;
+}
+
 function SettingsView({
   runtime,host,configuration,setConfiguration,credentialSaved,apiKey,setApiKey,settingsMessage,saving,testing,onSave,onTest,onRemoveCredential
 }:{
@@ -213,7 +437,7 @@ function isTauriRuntime():boolean{
 }
 
 function App(){
-  const [view,setView]=React.useState<"chat"|"characters"|"settings">("chat");
+  const [view,setView]=React.useState<"chat"|"characters"|"core-book"|"settings">("chat");
   const [runtime,setRuntime]=React.useState<RuntimeDiagnostics>(preview);
   const [host,setHost]=React.useState<HostDiagnostics>({status:"starting",runtime:"unknown",capabilities:[]});
   const [configuration,setConfiguration]=React.useState<ProviderConfiguration>(defaultConfiguration());
@@ -229,6 +453,7 @@ function App(){
   const credentialStore=React.useMemo(()=>new IpcCredentialStore(invoke),[]);
   const configurationStore=React.useMemo(()=>new IpcProviderConfigurationStore(invoke),[]);
   const characterStore=React.useMemo(()=>isTauriRuntime()?new IpcCharacterStore(invoke):new InMemoryCharacterStore(),[]);
+  const coreBookStore=React.useMemo(()=>isTauriRuntime()?new IpcCoreBookStore(invoke):new InMemoryCoreBookStore(),[]);
 
   const controllerForCharacter=React.useCallback((characterId:string)=>new ChatSessionController(
     new ConversationSession(crypto.randomUUID(),characterId),
@@ -249,11 +474,11 @@ function App(){
 
   const refreshRuntime=React.useCallback(async(config:ProviderConfiguration|undefined)=>{
     await foundationRef.current?.stop();
-    const next=await startFoundationRuntime({providerConfiguration:config,credentialStore,characterStore});
+    const next=await startFoundationRuntime({providerConfiguration:config,credentialStore,characterStore,coreBookStore});
     foundationRef.current=next;
     setRuntime(await publishAndReadRuntimeDiagnostics(await next.diagnostics()));
     await syncCharacters(next);
-  },[characterStore,credentialStore,syncCharacters]);
+  },[characterStore,coreBookStore,credentialStore,syncCharacters]);
 
   React.useEffect(()=>{
     let active=true;
@@ -383,6 +608,7 @@ function App(){
       <nav className="app-nav" aria-label="Primary">
         <button className={view==="chat"?"nav-button active":"nav-button"} onClick={()=>setView("chat")}>Chat</button>
         <button className={view==="characters"?"nav-button active":"nav-button"} onClick={()=>setView("characters")}>Characters</button>
+        <button className={view==="core-book"?"nav-button active":"nav-button"} onClick={()=>setView("core-book")}>Core Book</button>
         <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Settings</button>
       </nav>
     </header>
@@ -391,6 +617,8 @@ function App(){
       :view==="characters"&&activeCharacter
         ?<CharactersView characters={characters} activeCharacter={activeCharacter}
           onSelect={selectCharacter} onCreate={createCharacter} onRename={renameCharacter} onDelete={deleteCharacter}/>
+        :view==="core-book"&&activeCharacter
+          ?<CoreBookView runtime={foundationRef.current!} character={activeCharacter}/>
         :view==="settings"
           ?<SettingsView runtime={runtime} host={host} configuration={configuration} setConfiguration={setConfiguration}
             credentialSaved={credentialSaved} apiKey={apiKey} setApiKey={setApiKey} settingsMessage={settingsMessage}
