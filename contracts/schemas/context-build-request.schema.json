@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/context-build-request/v1",
+  "title": "AI Companion Nova Context Build Request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "schemaVersion",
+    "characterId",
+    "conversationId",
+    "messages",
+    "budget"
+  ],
+  "properties": {
+    "apiVersion": {
+      "enum": [
+        "1"
+      ]
+    },
+    "schemaVersion": {
+      "enum": [
+        "1"
+      ]
+    },
+    "characterId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "conversationId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "messages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "role",
+          "content"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "role": {
+            "enum": [
+              "system",
+              "user",
+              "assistant",
+              "tool"
+            ]
+          },
+          "content": {
+            "type": "string"
+          },
+          "toolCallId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    "budget": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "https://schemas.ai-companion-nova.dev/context-budget/v1",
+      "title": "AI Companion Nova Context Budget v1",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "availableContextTokens",
+        "reservedOutputTokens",
+        "systemOverheadTokens",
+        "safetyMarginTokens"
+      ],
+      "properties": {
+        "availableContextTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reservedOutputTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "systemOverheadTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "safetyMarginTokens": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}
