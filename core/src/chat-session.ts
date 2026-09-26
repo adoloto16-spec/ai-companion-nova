@@ -1,4 +1,4 @@
-import type {ChatErrorCode,ChatMessage,ChatRequest,ChatResponse,CharacterId,Unsubscribe} from "../../contracts/src/index";
+import type {AssembledContext,ChatErrorCode,ChatMessage,ChatRequest,ChatResponse,CharacterId,ContextBuildRequest,ContextBudget,Unsubscribe} from "../../contracts/src/index";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION} from "../../contracts/src/index";
 
 export interface ChatRuntimeBoundary{chat(request:ChatRequest):Promise<ChatResponse>}
@@ -63,11 +63,28 @@ export class ConversationSession{
   clear():void{this.messages.length=0}
 }
 
-export interface ChatSessionControllerOptions{requestIdFactory?:()=>string}
+export interface ChatContextBuilderBoundary{
+  buildContext(request:ContextBuildRequest):Promise<AssembledContext>;
+}
+
+export interface ChatSessionControllerOptions{
+  requestIdFactory?:()=>string;
+  contextBuilder?:ChatContextBuilderBoundary;
+  contextBudget?:ContextBudget;
+}
+
+const DEFAULT_CHAT_CONTEXT_BUDGET:ContextBudget={
+  availableContextTokens:4096,
+  reservedOutputTokens:1024,
+  systemOverheadTokens:0,
+  safetyMarginTokens:128
+};
 
 export class ChatSessionController{
   private readonly listeners=new Set<(snapshot:ConversationSnapshot)=>void>();
   private readonly requestIdFactory:()=>string;
+  private readonly contextBuilder?:ChatContextBuilderBoundary;
+  private readonly contextBudget:ContextBudget;
   private sending=false;
   private error?:string;
   private errorCode?:ChatErrorCode;
@@ -78,6 +95,8 @@ export class ChatSessionController{
     options:ChatSessionControllerOptions={}
   ){
     this.requestIdFactory=options.requestIdFactory??defaultRequestId;
+    this.contextBuilder=options.contextBuilder;
+    this.contextBudget=options.contextBudget??DEFAULT_CHAT_CONTEXT_BUDGET;
   }
 
   getSnapshot():ConversationSnapshot{
@@ -118,6 +137,19 @@ export class ChatSessionController{
     this.session.addMessage({id:requestId+":user",role:"user",content:text});
     this.notify();
 
+    let contextMessages=this.session.getMessages();
+    if(this.contextBuilder){
+      const assembled=await this.contextBuilder.buildContext({
+        apiVersion:"1",
+        schemaVersion:"1",
+        characterId:this.session.characterId,
+        conversationId:this.session.conversationId,
+        messages:contextMessages,
+        budget:this.contextBudget
+      });
+      contextMessages=assembled.messages;
+    }
+
     const request:ChatRequest={
       apiVersion:CHAT_API_VERSION,
       schemaVersion:CHAT_SCHEMA_VERSION,
@@ -125,7 +157,7 @@ export class ChatSessionController{
       model,
       context:{
         conversationId:this.session.conversationId,
-        messages:this.session.getMessages()
+        messages:contextMessages
       }
     };
 

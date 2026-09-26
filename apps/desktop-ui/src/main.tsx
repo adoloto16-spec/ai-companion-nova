@@ -457,11 +457,20 @@ function App(){
 
   const controllerForCharacter=React.useCallback((characterId:string)=>new ChatSessionController(
     new ConversationSession(crypto.randomUUID(),characterId),
-    {chat:request=>{
-      const foundation=foundationRef.current;
-      if(!foundation)return Promise.reject(new Error("Chat runtime is not available."));
-      return foundation.chat(request);
-    }}
+    {
+      chat:request=>{
+        const foundation=foundationRef.current;
+        if(!foundation)return Promise.reject(new Error("Chat runtime is not available."));
+        return foundation.chat(request);
+      },
+      contextBuilder:{
+        buildContext:request=>{
+          const foundation=foundationRef.current;
+          if(!foundation)return Promise.reject(new Error("Chat context runtime is not available."));
+          return foundation.buildContext(request);
+        }
+      }
+    }
   ),[]);
 
   const syncCharacters=React.useCallback(async(runtimeInstance:FoundationRuntime)=>{

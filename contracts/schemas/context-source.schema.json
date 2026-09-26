@@ -5,6 +5,7 @@
   "type": "string",
   "enum": [
     "conversation",
-    "core_book"
+    "core_book",
+    "memory"
   ]
 }

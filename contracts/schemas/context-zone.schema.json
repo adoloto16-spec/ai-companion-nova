@@ -7,6 +7,7 @@
     "system",
     "character_core",
     "retrieved_core_book",
+    "retrieved_memory",
     "conversation",
     "recent_conversation"
   ]
