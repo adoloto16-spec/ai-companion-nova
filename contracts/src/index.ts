@@ -65,6 +65,91 @@ export interface CoreBookStore{
   load(characterId:CharacterId):Promise<CoreBookStoreState|undefined>;
   save(state:CoreBookStoreState):Promise<void>;
 }
+export type MemoryItemId=string;
+export const MEMORY_API_VERSION:ApiVersion="1";
+export const MEMORY_SCHEMA_VERSION="1";
+export type MemoryType="fact"|"preference"|"relationship"|"event"|"experience"|"goal"|"instruction"|"observation";
+export type MemoryStatus="active"|"superseded"|"archived";
+export type MemorySource="user"|"conversation"|"file"|"tool"|"model"|"system";
+export type MemoryMutationPolicy="locked"|"suggest"|"auto";
+export interface MemoryItem{
+  id:MemoryItemId;
+  characterId:CharacterId;
+  type:MemoryType;
+  content:string;
+  tags:readonly string[];
+  importance:number;
+  confidence:number;
+  createdAt:string;
+  updatedAt:string;
+  validFrom:string|null;
+  validUntil:string|null;
+  source:MemorySource;
+  sourceReference:string|null;
+  mutationPolicy:MemoryMutationPolicy;
+  status:MemoryStatus;
+  metadata:Record<string,unknown>;
+}
+export interface MemoryCreateInput{
+  id?:MemoryItemId;
+  type:MemoryType;
+  content:string;
+  tags?:readonly string[];
+  importance?:number;
+  confidence?:number;
+  validFrom?:string|null;
+  validUntil?:string|null;
+  source:MemorySource;
+  sourceReference?:string|null;
+  mutationPolicy?:MemoryMutationPolicy;
+  metadata?:Record<string,unknown>;
+}
+export interface MemorySearchQuery{
+  characterId:CharacterId;
+  query:string;
+  types?:readonly MemoryType[];
+  tags?:readonly string[];
+  status?:MemoryStatus;
+  limit?:number;
+}
+export interface MemoryUpdateInput{
+  content?:string;
+  tags?:readonly string[];
+  importance?:number;
+  confidence?:number;
+  validFrom?:string|null;
+  validUntil?:string|null;
+  source?:MemorySource;
+  sourceReference?:string|null;
+  mutationPolicy?:MemoryMutationPolicy;
+  metadata?:Record<string,unknown>;
+}
+export interface MemoryMutationAuthority{
+  actorId:string;
+  actorType:"user"|"system"|"model";
+  trusted:boolean;
+  capabilities:readonly string[];
+  moduleId?:string;
+}
+export interface MemoryStoreState{
+  apiVersion:ApiVersion;
+  schemaVersion:string;
+  characterId:CharacterId;
+  items:readonly MemoryItem[];
+}
+export interface MemoryStore{
+  load(characterId:CharacterId):Promise<MemoryStoreState|undefined>;
+  save(state:MemoryStoreState):Promise<void>;
+  supersede(characterId:CharacterId,previousMemoryId:MemoryItemId,replacement:MemoryItem):Promise<MemoryItem>;
+}
+export interface MemoryBroker{
+  get(characterId:CharacterId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>;
+  search(query:MemorySearchQuery):Promise<readonly MemoryItem[]>;
+  create(characterId:CharacterId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  update(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryUpdateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  supersede(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  archive(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+}
 export const CONTEXT_API_VERSION:ApiVersion="1";
 export const CONTEXT_SCHEMA_VERSION="1";
 
@@ -143,6 +228,10 @@ export interface EventPayloadMap{
   CoreBookEntryUpdated:{characterId:string;entryId:string};
   CoreBookEntryDeleted:{characterId:string;entryId:string};
   CoreBookEntryEnabledChanged:{characterId:string;entryId:string;enabled:boolean};
+  MemoryCreated:{characterId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
+  MemoryUpdated:{characterId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
+  MemorySuperseded:{characterId:string;memoryId:string;previousMemoryId:string;status:MemoryStatus;updatedAt:string};
+  MemoryArchived:{characterId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
   ChatResponseReceived:{requestId:string;conversationId:string;providerId:string;model:string;finishReason:ChatFinishReason};
   ChatRequestFailed:{requestId:string;conversationId?:string;providerId?:string;code:ChatError["code"]};
 }
@@ -238,6 +327,9 @@ export const CONTRACT_VERSIONS={
   providerConnectionTestResult:{apiVersion:PROVIDER_CONFIGURATION_API_VERSION,schemaVersion:PROVIDER_CONFIGURATION_SCHEMA_VERSION},
   character:{apiVersion:CHARACTER_API_VERSION,schemaVersion:CHARACTER_SCHEMA_VERSION},
   coreBookEntry:{apiVersion:CORE_BOOK_API_VERSION,schemaVersion:CORE_BOOK_SCHEMA_VERSION},
+  memoryItem:{apiVersion:MEMORY_API_VERSION,schemaVersion:MEMORY_SCHEMA_VERSION},
+  memorySearchQuery:{apiVersion:MEMORY_API_VERSION,schemaVersion:MEMORY_SCHEMA_VERSION},
+  memoryStoreState:{apiVersion:MEMORY_API_VERSION,schemaVersion:MEMORY_SCHEMA_VERSION},
   contextSource:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
   contextZone:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
   contextBudget:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},

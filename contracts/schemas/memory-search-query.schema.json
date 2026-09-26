@@ -1,0 +1,16 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://schemas.ai-companion-nova.dev/memory-search-query/v1",
+  "title":"AI Companion Nova Dynamic Memory Search Query v1",
+  "type":"object",
+  "additionalProperties":false,
+  "required":["characterId","query"],
+  "properties":{
+    "characterId":{"type":"string","minLength":1},
+    "query":{"type":"string","maxLength":256},
+    "types":{"type":"array","maxItems":8,"items":{"enum":["fact","preference","relationship","event","experience","goal","instruction","observation"]}},
+    "tags":{"type":"array","maxItems":32,"items":{"type":"string","minLength":1,"maxLength":64}},
+    "status":{"enum":["active","superseded","archived"]},
+    "limit":{"type":"integer","minimum":1,"maximum":100}
+  }
+}
