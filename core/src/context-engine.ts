@@ -295,7 +295,8 @@ export class DeterministicContextEngine implements ContextEngineContract {
       if(a.source==="core_book"&&b.source==="core_book"){
         return b.placementWeight-a.placementWeight || a.referenceId.localeCompare(b.referenceId);
       }
-      return a.referenceId.localeCompare(b.referenceId);
+      // Conversation order is already deterministic in source order; keep it stable.
+      return 0;
     });
 
     const messages=placed.map(candidate=>({
