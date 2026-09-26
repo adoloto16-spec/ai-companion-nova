@@ -10,6 +10,19 @@ export interface ProviderConfigurationStore{
   clear():Promise<void>;
 }
 
+export interface ProviderConfigurationLoadResult{
+  configuration?:ProviderConfiguration;
+  error?:string;
+}
+
+export async function loadProviderConfigurationSafely(store:ProviderConfigurationStore):Promise<ProviderConfigurationLoadResult>{
+  try{
+    return {configuration:await store.load()};
+  }catch(error){
+    return {error:error instanceof Error?error.message:String(error)};
+  }
+}
+
 export function sanitizeProviderConfiguration(configuration:ProviderConfiguration):ProviderConfiguration{
   return {
     apiVersion:configuration.apiVersion,

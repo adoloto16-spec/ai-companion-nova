@@ -1,11 +1,80 @@
 import {ChatSessionController,ConversationSession,InMemoryCharacterStore} from "../../core/src";
 import type {ChatRequest,ChatResponse} from "../../contracts/src";
 import {createFoundationRuntime as startRuntime} from "../../runtime/bootstrap/src";
+import {loadProviderConfigurationSafely} from "../../host/config/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error(label+" expected "+String(expected)+" got "+String(actual))}
 function ok(value:unknown,label:string){if(!value)throw new Error(label)}
 
+async function freshStartupTest(){
+  const characterStore=new InMemoryCharacterStore();
+  const runtime=await startRuntime({characterStore});
+  await runtime.start();
+  try{
+    const characters=await runtime.listCharacters();
+    const active=await runtime.getActiveCharacter();
+    equal(characters.length,1,"fresh startup creates one deterministic Character");
+    equal(active.id,"character.nova.default.v1","fresh startup selects deterministic Nova");
+    const entry=await runtime.createCoreBookEntry(active.id,{
+      title:"Fresh startup Core Book",
+      content:"Core Book is available immediately after Character initialization.",
+      activation:{kind:"always"},
+      source:"user"
+    });
+    equal((await runtime.listCoreBookEntries(active.id)).some(item=>item.id===entry.id),true,"Core Book is accessible after fresh startup");
+    const response=await runtime.chat({
+      apiVersion:"1",
+      schemaVersion:"1",
+      requestId:"fresh-startup",
+      model:"fake-chat",
+      context:{conversationId:"fresh-startup",messages:[{role:"user",content:"hello"}]}
+    });
+    equal(response.providerId,"fake.chat","Fake provider is available on fresh startup");
+  }finally{await runtime.stop()}
+}
+
+async function providerConfigurationFailureFallbackTest(){
+  const loaded=await loadProviderConfigurationSafely({
+    load:async()=>{throw new Error("invalid provider configuration: credentialReference.version must be string")},
+    save:async()=>{},
+    clear:async()=>{}
+  });
+  equal(loaded.configuration,undefined,"provider config failure produces no real runtime configuration");
+  ok(loaded.error,"provider config failure is retained for diagnostics");
+
+  const runtime=await startRuntime({
+    providerConfiguration:loaded.configuration,
+    characterStore:new InMemoryCharacterStore()
+  });
+  await runtime.start();
+  try{
+    const nova=await runtime.getActiveCharacter();
+    equal(nova.name,"Nova","Character initializes after provider config failure");
+    equal((await runtime.listCharacters()).some(character=>character.id===nova.id),true,"active Character is present in list");
+    const entry=await runtime.createCoreBookEntry(nova.id,{
+      title:"Fallback-accessible entry",
+      content:"Core Book remains accessible.",
+      activation:{kind:"always"},
+      source:"user"
+    });
+    equal(entry.title,"Fallback-accessible entry","Core Book remains writable on fallback runtime");
+    equal((await runtime.listCoreBookEntries(nova.id)).length,1,"Core Book remains readable on fallback runtime");
+
+    const response=await runtime.chat({
+      apiVersion:"1",
+      schemaVersion:"1",
+      requestId:"provider-config-fallback",
+      model:"fake-chat",
+      context:{conversationId:"provider-config-fallback",messages:[{role:"user",content:"hello"}]}
+    });
+    equal(response.providerId,"fake.chat","Fake provider remains available when no real provider configuration is valid");
+  }finally{await runtime.stop()}
+}
+
 async function main(){
+  await freshStartupTest();
+  await providerConfigurationFailureFallbackTest();
+
   const characterStore=new InMemoryCharacterStore();
   const runtime=await startRuntime({characterStore});
   await runtime.start();
