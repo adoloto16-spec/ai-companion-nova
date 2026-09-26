@@ -5,7 +5,46 @@ import {createFoundationRuntime as startRuntime} from "../../runtime/bootstrap/s
 function equal(actual:unknown,expected:unknown,label:string){if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error(label+" expected "+String(expected)+" got "+String(actual))}
 function ok(value:unknown,label:string){if(!value)throw new Error(label)}
 
+async function providerConfigurationFailureFallbackTest(){
+  const loaded=await loadProviderConfigurationSafely({
+    load:async()=>{throw new Error("invalid provider configuration: credentialReference.version must be string")},
+    save:async()=>{},
+    clear:async()=>{}
+  });
+  equal(loaded.configuration,undefined,"provider config failure produces no real runtime configuration");
+  ok(loaded.error,"provider config failure is retained for diagnostics");
+
+  const runtime=await startFoundationRuntime({
+    providerConfiguration:loaded.configuration,
+    characterStore:new InMemoryCharacterStore()
+  });
+  try{
+    const nova=await runtime.getActiveCharacter();
+    equal(nova.name,"Nova","Character initializes after provider config failure");
+    equal((await runtime.listCharacters()).some(character=>character.id===nova.id),true,"active Character is present in list");
+    const entry=await runtime.createCoreBookEntry(nova.id,{
+      title:"Fallback-accessible entry",
+      content:"Core Book remains accessible.",
+      activation:{kind:"always"},
+      source:"user"
+    });
+    equal(entry.title,"Fallback-accessible entry","Core Book remains writable on fallback runtime");
+    equal((await runtime.listCoreBookEntries(nova.id)).length,1,"Core Book remains readable on fallback runtime");
+
+    const response=await runtime.chat({
+      apiVersion:"1",
+      schemaVersion:"1",
+      requestId:"provider-config-fallback",
+      model:"fake-chat",
+      context:{conversationId:"provider-config-fallback",messages:[{role:"user",content:"hello"}]}
+    });
+    equal(response.providerId,"fake.chat","Fake provider remains available when no real provider configuration is valid");
+  }finally{await runtime.stop()}
+}
+
 async function main(){
+  await providerConfigurationFailureFallbackTest();
+
   const characterStore=new InMemoryCharacterStore();
   const runtime=await startRuntime({characterStore});
   await runtime.start();
