@@ -65,6 +65,61 @@ export interface CoreBookStore{
   load(characterId:CharacterId):Promise<CoreBookStoreState|undefined>;
   save(state:CoreBookStoreState):Promise<void>;
 }
+export const CONTEXT_API_VERSION:ApiVersion="1";
+export const CONTEXT_SCHEMA_VERSION="1";
+
+export type ContextSource="conversation"|"core_book";
+export type ContextZone="system"|"character_core"|"retrieved_core_book"|"conversation"|"recent_conversation";
+
+export interface ContextBudget{
+  availableContextTokens:number;
+  reservedOutputTokens:number;
+  systemOverheadTokens:number;
+  safetyMarginTokens:number;
+}
+export interface ContextBuildRequest{
+  apiVersion:ApiVersion;
+  schemaVersion:string;
+  characterId:CharacterId;
+  conversationId:string;
+  messages:readonly ChatMessage[];
+  budget:ContextBudget;
+}
+export interface ContextCandidate{
+  id:string;
+  source:ContextSource;
+  referenceId:string;
+  characterId:CharacterId;
+  content:string;
+  role:ChatMessage["role"];
+  toolCallId?:string;
+  metadata?:Record<string,unknown>;
+  eligible:boolean;
+  reason:string;
+  estimatedTokens:number;
+  zone:ContextZone;
+  relevance:number;
+  activationStrength:number;
+  retentionPriority:number;
+  placementWeight:number;
+  recency:number;
+  selectionScore:number;
+}
+export interface AssembledContext{
+  apiVersion:ApiVersion;
+  schemaVersion:string;
+  characterId:CharacterId;
+  conversationId:string;
+  messages:readonly ChatMessage[];
+  includedCandidates:readonly ContextCandidate[];
+  omittedCandidates:readonly ContextCandidate[];
+  budget:ContextBudget;
+  estimatedTokens:number;
+}
+export interface ContextEngine{
+  build(request:ContextBuildRequest):Promise<AssembledContext>;
+}
+
 export interface CapabilityContext{has(capability:string):boolean;require(capability:string):void}
 export interface ModuleContext{moduleId:string;events:EventBus;logger:Logger;config:ConfigStore;clock:Clock;capabilities:CapabilityContext}
 export interface CompanionModule{manifest:ModuleManifest;initialize(context:ModuleContext):Promise<void>;start():Promise<void>;stop():Promise<void>;health():Promise<HealthStatus>}
@@ -182,7 +237,13 @@ export const CONTRACT_VERSIONS={
   providerConfiguration:{apiVersion:PROVIDER_CONFIGURATION_API_VERSION,schemaVersion:PROVIDER_CONFIGURATION_SCHEMA_VERSION},
   providerConnectionTestResult:{apiVersion:PROVIDER_CONFIGURATION_API_VERSION,schemaVersion:PROVIDER_CONFIGURATION_SCHEMA_VERSION},
   character:{apiVersion:CHARACTER_API_VERSION,schemaVersion:CHARACTER_SCHEMA_VERSION},
-  coreBookEntry:{apiVersion:CORE_BOOK_API_VERSION,schemaVersion:CORE_BOOK_SCHEMA_VERSION}
+  coreBookEntry:{apiVersion:CORE_BOOK_API_VERSION,schemaVersion:CORE_BOOK_SCHEMA_VERSION},
+  contextSource:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
+  contextZone:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
+  contextBudget:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
+  contextBuildRequest:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
+  contextCandidate:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
+  assembledContext:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION}
 } as const;
 export {STANDARD_SCHEMAS} from "./generated-schemas";
 

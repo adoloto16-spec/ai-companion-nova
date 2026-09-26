@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/context-candidate/v1",
+  "title": "AI Companion Nova Context Candidate v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "source",
+    "referenceId",
+    "characterId",
+    "content",
+    "role",
+    "eligible",
+    "reason",
+    "estimatedTokens",
+    "zone",
+    "relevance",
+    "activationStrength",
+    "retentionPriority",
+    "placementWeight",
+    "recency",
+    "selectionScore"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source": {
+      "enum": [
+        "conversation",
+        "core_book"
+      ]
+    },
+    "referenceId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "characterId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "content": {
+      "type": "string"
+    },
+    "role": {
+      "enum": [
+        "system",
+        "user",
+        "assistant",
+        "tool"
+      ]
+    },
+    "toolCallId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "eligible": {
+      "type": "boolean"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "estimatedTokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "zone": {
+      "enum": [
+        "system",
+        "character_core",
+        "retrieved_core_book",
+        "conversation",
+        "recent_conversation"
+      ]
+    },
+    "relevance": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "activationStrength": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "retentionPriority": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "placementWeight": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "recency": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "selectionScore": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

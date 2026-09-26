@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/context-zone/v1",
+  "title": "AI Companion Nova Context Zone v1",
+  "type": "string",
+  "enum": [
+    "system",
+    "character_core",
+    "retrieved_core_book",
+    "conversation",
+    "recent_conversation"
+  ]
+}

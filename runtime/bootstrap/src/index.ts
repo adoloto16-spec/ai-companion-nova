@@ -1,8 +1,8 @@
-import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore} from "../../../contracts/src/index";
+import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine} from "../../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import type {HealthStatus} from "../../../contracts/src/index";
 import {
-  AiRuntime,CharacterManager,CoreBookManager,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,
+  AiRuntime,CharacterManager,CoreBookManager,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,
   InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,
   DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
   InMemoryActorIdentityResolver,createMemoryConfig
@@ -34,6 +34,7 @@ export interface FoundationRuntimeOptions{
   coreBookStore?:CoreBookStore;
   httpClient?:HttpClient;
   openAICompatible?:OpenAICompatibleRuntimeConfig;
+  contextEngine?:ContextEngine;
 }
 
 export interface FoundationRuntime{
@@ -60,6 +61,7 @@ export interface FoundationRuntime{
   updateCoreBookEntry(characterId:CharacterId,entryId:CoreBookEntryId,input:CoreBookUpdateInput):Promise<CoreBookEntry>;
   deleteCoreBookEntry(characterId:CharacterId,entryId:CoreBookEntryId):Promise<void>;
   setCoreBookEntryEnabled(characterId:CharacterId,entryId:CoreBookEntryId,enabled:boolean):Promise<CoreBookEntry>;
+  buildContext(request:ContextBuildRequest):Promise<AssembledContext>;
 }
 
 export async function createFoundationRuntime(options:FoundationRuntimeOptions={}):Promise<FoundationRuntime>{
@@ -72,6 +74,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const characterManager=new CharacterManager(characterStore,{events,clock:{now:()=>new Date().toISOString()}});
   const coreBookStore=options.coreBookStore??new InMemoryCoreBookStore();
   const coreBookManager=new CoreBookManager(coreBookStore,{events,clock:{now:()=>new Date().toISOString()},characterExists:async characterId=>Boolean(await characterManager.getCharacter(characterId))});
+  const contextEngine=options.contextEngine??createDeterministicContextEngine({listCoreBookEntries:characterId=>coreBookManager.listCoreBookEntries(characterId)});
   const credentialStore=options.credentialStore??options.openAICompatible?.credentialStore??new InMemoryCredentialStore();
   let providerConfiguration=options.providerConfiguration;
   const contractValidator=new StandardContractValidator();
@@ -224,6 +227,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     updateCoreBookEntry:(characterId,entryId,input)=>coreBookManager.updateCoreBookEntry(characterId,entryId,input),
     deleteCoreBookEntry:(characterId,entryId)=>coreBookManager.deleteCoreBookEntry(characterId,entryId),
     setCoreBookEntryEnabled:(characterId,entryId,enabled)=>coreBookManager.setCoreBookEntryEnabled(characterId,entryId,enabled),
+    buildContext:request=>contextEngine.build(request),
     testConfiguredProvider:async()=>{
       if(!providerConfiguration)return {apiVersion:"1",schemaVersion:"1",status:"configuration_error",providerId:"openai-compatible",message:"No provider configuration is saved."};
       return testProviderConfiguration(providerConfiguration,credentialStore,options.httpClient);

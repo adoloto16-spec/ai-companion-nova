@@ -29,6 +29,16 @@ async function schemaValidationTest(){
   ok(!validator.validate({...coreBook,mutationPolicy:"future"},STANDARD_SCHEMAS["core-book-entry"]!).valid,"Core Book rejects invalid mutationPolicy");
   ok(!validator.validate({...coreBook,retentionPriority:101},STANDARD_SCHEMAS["core-book-entry"]!).valid,"Core Book rejects out-of-range retentionPriority");
   ok(!validator.validate({...coreBook,unknownField:true},STANDARD_SCHEMAS["core-book-entry"]!).valid,"Core Book rejects unknown fields");
+  const contextBudget={availableContextTokens:120,reservedOutputTokens:40,systemOverheadTokens:10,safetyMarginTokens:10};
+  ok(validator.validate(contextBudget,STANDARD_SCHEMAS["context-budget"]!).valid,"valid Context Budget schema");
+  const contextRequest={apiVersion:"1",schemaVersion:"1",characterId:"character.nova.default.v1",conversationId:"conversation.test",messages:[{role:"user",content:"hello"}],budget:contextBudget};
+  ok(validator.validate(contextRequest,STANDARD_SCHEMAS["context-build-request"]!).valid,"valid Context Build Request schema");
+  const contextCandidate={id:"conversation:message-1",source:"conversation",referenceId:"message-1",characterId:"character.nova.default.v1",content:"hello",role:"user",eligible:true,reason:"recent conversation",estimatedTokens:2,zone:"recent_conversation",relevance:100,activationStrength:0,retentionPriority:90,placementWeight:50,recency:100,selectionScore:290};
+  ok(validator.validate(contextCandidate,STANDARD_SCHEMAS["context-candidate"]!).valid,"valid Context Candidate schema");
+  const assembled={apiVersion:"1",schemaVersion:"1",characterId:contextRequest.characterId,conversationId:contextRequest.conversationId,messages:[{id:"message-1",role:"user",content:"hello"}],includedCandidates:[contextCandidate],omittedCandidates:[],budget:contextBudget,estimatedTokens:2};
+  ok(validator.validate(assembled,STANDARD_SCHEMAS["assembled-context"]!).valid,"valid Assembled Context schema");
+  ok(validator.validate("core_book",STANDARD_SCHEMAS["context-source"]!).valid,"Context source schema");
+  ok(validator.validate("retrieved_core_book",STANDARD_SCHEMAS["context-zone"]!).valid,"Context zone schema");
 }
 
 async function eventBusTest(){

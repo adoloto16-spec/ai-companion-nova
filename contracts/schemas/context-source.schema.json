@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/context-source/v1",
+  "title": "AI Companion Nova Context Source v1",
+  "type": "string",
+  "enum": [
+    "conversation",
+    "core_book"
+  ]
+}
