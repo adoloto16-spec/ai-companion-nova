@@ -40,6 +40,7 @@ export interface FoundationRuntime{
   chat(request:ChatRequest):Promise<ChatResponse>;
   aiRuntimeHealth():Promise<HealthStatus>;
   getProviderConfiguration():ProviderConfiguration|undefined;
+  getActiveChatModel():string;
   applyProviderConfiguration(configuration:ProviderConfiguration|undefined):Promise<void>;
   testConfiguredProvider():Promise<import("../../../contracts/src/index").ProviderConnectionTestResult>;
 }
@@ -187,6 +188,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     chat:request=>aiRuntime.generate(request.providerId?request:{...request,providerId:activeProviderId(providerConfiguration)}),
     aiRuntimeHealth:()=>aiRuntime.health(),
     getProviderConfiguration:()=>providerConfiguration,
+    getActiveChatModel:()=>activeProviderId(providerConfiguration)==="openai-compatible"&&providerConfiguration?providerConfiguration.model:"fake-chat",
     applyProviderConfiguration:async(configuration)=>{await applyProvider(configuration);},
     testConfiguredProvider:async()=>{
       if(!providerConfiguration)return {apiVersion:"1",schemaVersion:"1",status:"configuration_error",providerId:"openai-compatible",message:"No provider configuration is saved."};

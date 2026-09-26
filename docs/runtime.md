@@ -31,3 +31,37 @@ Core consumes canonical Chat contracts only. Provider-specific SDKs, transports,
 Provider failures that expose a validated canonical ChatError are preserved as stable AiRuntimeError values. Unexpected provider exceptions remain normalized to PROVIDER_ERROR.
 
 The chat layer is intentionally non-streaming. Tool calling and other deferred capabilities remain outside this phase.
+
+## Chat Experience V1
+
+The desktop UI uses a non-persistent ConversationSession for the currently open conversation. It stores only canonical ChatMessage values in memory and is cleared on application restart.
+
+ChatSessionController owns the minimal send-state transition:
+
+~~~text
+User
+  ↓
+Chat UI
+  ↓
+ConversationSession / ChatSessionController
+  ↓
+FoundationRuntime.chat()
+  ↓
+AiRuntime
+  ↓
+active provider
+  ↓
+ChatResponse
+  ↓
+assistant message
+  ↓
+Chat UI
+~~~
+
+The controller rejects empty and duplicate submissions, preserves the user message on provider errors, adds an assistant message only after a successful canonical ChatResponse, and exposes only stable user-facing error text. No provider credential or provider-specific object enters the session.
+
+The Foundation runtime exposes the active chat model to the UI while keeping provider selection application-controlled. The UI never supplies a provider id for ordinary chat requests.
+
+Conversation history is passed as the current ChatContext on each non-streaming request. Conversation state is not memory, is not persisted, and is not used by any other module.
+
+The Settings UI remains available alongside Chat and continues to own provider configuration, credential administration, connection testing and diagnostics.
