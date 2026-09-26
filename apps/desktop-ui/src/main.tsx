@@ -7,7 +7,7 @@ import {
 } from "../../../core/src/index";
 import {startFoundationRuntime,testProviderConfiguration,validateProviderConfiguration} from "../../../runtime/bootstrap/src/index";
 import {IpcCredentialStore} from "../../../host/credentials/src/index";
-import {IpcProviderConfigurationStore} from "../../../host/config/src/index";
+import {IpcProviderConfigurationStore,loadProviderConfigurationSafely} from "../../../host/config/src/index";
 import {IpcCharacterStore} from "../../../host/characters/src/index";
 import {IpcCoreBookStore,InMemoryCoreBookStore} from "../../../host/core-book/src/index";
 import {IpcMemoryStore,InMemoryMemoryStore} from "../../../host/memory/src/index";
@@ -485,11 +485,21 @@ function App(){
     setChatController(current=>current?.getSnapshot().characterId===active.id?current:controllerForCharacter(active.id));
   },[controllerForCharacter]);
 
-  const refreshRuntime=React.useCallback(async(config:ProviderConfiguration|undefined)=>{
+  const refreshRuntime=React.useCallback(async(config:ProviderConfiguration|undefined,configurationLoadError?:string)=>{
     await foundationRef.current?.stop();
     const next=await startFoundationRuntime({providerConfiguration:config,credentialStore,characterStore,coreBookStore,memoryStore,retriever,retrievalIndexWriter:retriever});
     foundationRef.current=next;
-    setRuntime(await publishAndReadRuntimeDiagnostics(await next.diagnostics()));
+    const diagnostics=await next.diagnostics();
+    const withConfigurationError=configurationLoadError?{
+      ...diagnostics,
+      recentErrors:[...diagnostics.recentErrors,{
+        timestamp:new Date().toISOString(),
+        source:"provider-configuration",
+        code:"LOAD_FAILED",
+        message:configurationLoadError
+      }]
+    }:diagnostics;
+    setRuntime(await publishAndReadRuntimeDiagnostics(withConfigurationError));
     await syncCharacters(next);
   },[characterStore,coreBookStore,memoryStore,credentialStore,retriever,syncCharacters]);
 
@@ -498,12 +508,18 @@ function App(){
     let timer:ReturnType<typeof setInterval>|undefined;
     (async()=>{
       try{
-        const saved=await configurationStore.load();
+        const loaded=await loadProviderConfigurationSafely(configurationStore);
         if(!active)return;
+        const saved=loaded.configuration;
         if(saved)setConfiguration(saved);
-        const reference=saved?.credentialReference??credentialReference;
-        if(saved||reference)setCredentialSaved(await credentialStore.exists(reference));
-        await refreshRuntime(saved);
+        if(loaded.error){
+          setCredentialSaved(false);
+          setSettingsMessage("Provider configuration could not be loaded: "+loaded.error+" Fake provider fallback is active.");
+        }else{
+          const reference=saved?.credentialReference??credentialReference;
+          if(saved||reference)setCredentialSaved(await credentialStore.exists(reference));
+        }
+        await refreshRuntime(saved,loaded.error);
         if(!active)return;
         const hostSnapshot=await loadHost();
         if(active)setHost(hostSnapshot);
