@@ -22,7 +22,8 @@
     "host/credentials",
     "runtime/bootstrap",
     "host/config",
-    "host/characters"
+    "host/characters",
+    "host/core-book"
   ],
   "engines": {
     "node": ">=20"
