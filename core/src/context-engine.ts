@@ -185,9 +185,9 @@ export class CoreBookCandidateSource implements ContextCandidateSource {
     }
 
     if(activation.kind==="keyword"){
-      const sourceText=activation.caseSensitive?contextText:contextText.toLocaleLowerCase();
+      const sourceText=activation.caseSensitive?contextText:contextText.toLowerCase();
       const matches=activation.keywords.filter(keyword=>{
-        const needle=activation.caseSensitive?keyword:keyword.toLocaleLowerCase();
+        const needle=activation.caseSensitive?keyword:keyword.toLowerCase();
         return sourceText.includes(needle);
       });
       const matched=matches.length;
