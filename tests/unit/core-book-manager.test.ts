@@ -13,7 +13,7 @@ async function main(){
   const events=new InMemoryEventBus();
   const observed:string[]=[];
   for(const type of ["CoreBookEntryCreated","CoreBookEntryUpdated","CoreBookEntryDeleted","CoreBookEntryEnabledChanged"]){
-    events.subscribe(type,event=>observed.push(event.type));
+    events.subscribe(type,event=>{observed.push(event.type);});
   }
   const characters=new Set(["character.a","character.b"]);
   const manager=new CoreBookManager(store,{clock,idFactory:()=>`core-book.test.${++ids}`,events,characterExists:async id=>characters.has(id)});
