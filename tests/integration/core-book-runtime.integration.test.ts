@@ -25,6 +25,7 @@ async function main(){
     equal((await runtime.getCoreBookEntry(nova.id,novaEntry.id))?.enabled,false,"runtime toggles enabled state");
 
     const reloaded=await startRuntime({characterStore,coreBookStore});
+    await reloaded.start();
     try{
       equal((await reloaded.listCoreBookEntries(nova.id)).length,1,"Core Book survives runtime restart");
       equal((await reloaded.getCoreBookEntry(nova.id,novaEntry.id))?.enabled,false,"enabled state survives runtime restart");
