@@ -347,7 +347,7 @@ export const CONTRACT_VERSIONS={
   contextBudget:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
   contextBuildRequest:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
   contextCandidate:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
-  assembledContext:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION}
+  assembledContext:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
   retrievalSource:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
   retrievalMatch:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
   retrievalQuery:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},

@@ -1,4 +1,4 @@
-import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput} from "../../../contracts/src/index";
+import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever} from "../../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import type {HealthStatus} from "../../../contracts/src/index";
 import {
@@ -21,6 +21,7 @@ import {InMemoryCoreBookStore} from "../../../host/core-book/src/index";
 import {InMemoryMemoryStore} from "../../../host/memory/src/index";
 import type {CoreBookCreateInput,CoreBookUpdateInput} from "../../../core/src/core-book-manager";
 import {activeProviderId,buildConfiguredProvider,testProviderConfiguration} from "./provider-configuration";
+import {RetrievalEventIndexer} from "../../../core/src/retrieval-indexer";
 
 export interface OpenAICompatibleRuntimeConfig{
   config:OpenAICompatibleProviderConfig;
@@ -37,6 +38,8 @@ export interface FoundationRuntimeOptions{
   httpClient?:HttpClient;
   openAICompatible?:OpenAICompatibleRuntimeConfig;
   contextEngine?:ContextEngine;
+  retriever?:Retriever;
+  retrievalIndexWriter?:RetrievalIndexWriter;
 }
 
 export interface FoundationRuntime{
@@ -70,6 +73,9 @@ export interface FoundationRuntime{
   updateMemory(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryUpdateInput):Promise<MemoryItem>;
   supersedeMemory(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryCreateInput):Promise<MemoryItem>;
   archiveMemory(characterId:CharacterId,memoryId:MemoryItemId):Promise<MemoryItem>;
+  searchRetrieval(query:RetrievalQuery):Promise<RetrievalResult>;
+  rebuildRetrieval(characterId:CharacterId):Promise<void>;
+  rebuildAllRetrieval():Promise<void>;
 }
 
 export async function createFoundationRuntime(options:FoundationRuntimeOptions={}):Promise<FoundationRuntime>{
@@ -87,6 +93,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   let providerConfiguration=options.providerConfiguration;
   const contractValidator=new StandardContractValidator();
   const audit=new InMemoryAuditService();
+  let retrievalDegraded=false;
   const memoryBroker:MemoryBroker=new MemoryBrokerImpl({
     store:memoryStore,
     validator:contractValidator,
@@ -103,8 +110,11 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   };
   const contextEngine=options.contextEngine??createDeterministicContextEngine(
     {listCoreBookEntries:characterId=>coreBookManager.listCoreBookEntries(characterId)},
-    {memoryBroker}
+    {memoryBroker,retriever:options.retriever}
   );
+  const retrievalIndexer=options.retrievalIndexWriter
+    ? new RetrievalEventIndexer({events,coreBook:coreBookManager,memory:memoryBroker,writer:options.retrievalIndexWriter})
+    : undefined;
   const permissions=new InMemoryPermissionService();
   const actorResolver=new InMemoryActorIdentityResolver();
   const tools=new InMemoryToolRegistry();
@@ -209,7 +219,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       health:(moduleHealth as Record<string,HealthStatus|undefined>)[item.id]
     }));
     const providerDiagnostics=await providers.diagnostics();
-    const degraded=modules.some(item=>item.state==="error"||item.state==="degraded")||
+    const degraded=retrievalDegraded||modules.some(item=>item.state==="error"||item.state==="degraded")||
       providerDiagnostics.some(item=>item.health?.status!=="healthy");
     const capabilities=new Set<string>();
     for(const item of modules){
@@ -231,8 +241,18 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   };
 
   return {
-    async start(){await characterManager.initialize();await moduleManager.initializeAll();await moduleManager.startAll();runtimeStatus="running";},
-    async stop(){try{await moduleManager.stopAll();}finally{runtimeStatus="stopped";}},
+    async start(){
+      await characterManager.initialize();
+      retrievalIndexer?.start();
+      if(options.retriever){
+        try{await options.retriever.rebuildAll();retrievalDegraded=false}
+        catch(error){retrievalDegraded=true;diagnosticsStore.recordError("retrieval","REBUILD_FAILED",error instanceof Error?error.message:String(error))}
+      }
+      await moduleManager.initializeAll();
+      await moduleManager.startAll();
+      runtimeStatus="running";
+    },
+    async stop(){try{retrievalIndexer?.stop();await moduleManager.stopAll();}finally{runtimeStatus="stopped";}},
     diagnostics:snapshot,
     invoke:request=>broker.execute({request,credential:characterCredential}),
     chat:request=>aiRuntime.generate(request.providerId?request:{...request,providerId:activeProviderId(providerConfiguration)}),
@@ -260,6 +280,9 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     updateMemory:(characterId,memoryId,input)=>memoryBroker.update(characterId,memoryId,input,userMemoryAuthority),
     supersedeMemory:(characterId,memoryId,input)=>memoryBroker.supersede(characterId,memoryId,input,userMemoryAuthority),
     archiveMemory:(characterId,memoryId)=>memoryBroker.archive(characterId,memoryId,userMemoryAuthority),
+    searchRetrieval:query=>{if(!options.retriever)throw new Error("Retrieval runtime is not configured.");return options.retriever.search(query);},
+    rebuildRetrieval:characterId=>{if(!options.retriever)throw new Error("Retrieval runtime is not configured.");return options.retriever.rebuild(characterId);},
+    rebuildAllRetrieval:()=>{if(!options.retriever)throw new Error("Retrieval runtime is not configured.");return options.retriever.rebuildAll();},
     testConfiguredProvider:async()=>{
       if(!providerConfiguration)return {apiVersion:"1",schemaVersion:"1",status:"configuration_error",providerId:"openai-compatible",message:"No provider configuration is saved."};
       return testProviderConfiguration(providerConfiguration,credentialStore,options.httpClient);

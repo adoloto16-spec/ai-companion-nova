@@ -12,7 +12,8 @@ import type {
   CharacterId,
   MemoryBroker,
   MemoryItem,
-  MemorySearchQuery
+  MemorySearchQuery,
+  Retriever
 } from "../../contracts/src/index";
 import {
   CONTEXT_API_VERSION,
@@ -41,6 +42,7 @@ export interface CoreBookCandidateReader {
 
 export interface MemoryCandidateReader {
   search(query:MemorySearchQuery):Promise<readonly MemoryItem[]>;
+  get?(characterId:CharacterId,memoryId:string):Promise<MemoryItem|undefined>;
 }
 
 const DEFAULT_MEMORY_CANDIDATE_LIMIT=8;
@@ -50,7 +52,8 @@ export class MemoryCandidateSource implements ContextCandidateSource {
   constructor(
     private readonly reader:MemoryCandidateReader,
     private readonly estimator:TokenEstimator=new DeterministicApproxTokenEstimator(),
-    private readonly maxResults:number=DEFAULT_MEMORY_CANDIDATE_LIMIT
+    private readonly maxResults:number=DEFAULT_MEMORY_CANDIDATE_LIMIT,
+    private readonly retriever?:Retriever
   ){
     if(!Number.isInteger(maxResults)||maxResults<1)throw new Error("maxResults must be a positive integer.");
   }
@@ -61,16 +64,26 @@ export class MemoryCandidateSource implements ContextCandidateSource {
     if(!query)return [];
 
     let results:readonly MemoryItem[];
-    try{
-      results=await this.reader.search({
-        characterId:request.characterId,
-        query,
-        status:"active",
-        limit:this.maxResults
-      });
-    }catch{
-      // Dynamic Memory is an optional context source. Retrieval failure degrades to no memory candidates.
-      return [];
+    if(this.retriever){
+      let retrieval;
+      try{
+        retrieval=await this.retriever.search({
+          apiVersion:CONTEXT_API_VERSION,
+          schemaVersion:CONTEXT_SCHEMA_VERSION,
+          characterId:request.characterId,
+          query,
+          sources:["memory"],
+          limit:this.maxResults,
+          filters:{status:"active"}
+        });
+      }catch{return []}
+      const canonical=await Promise.all(retrieval.candidates
+        .filter(candidate=>candidate.source==="memory"&&candidate.characterId===request.characterId)
+        .map(candidate=>this.reader.get?.(request.characterId,candidate.sourceId)));
+      results=canonical.filter((item):item is MemoryItem=>Boolean(item));
+    }else{
+      try{results=await this.reader.search({characterId:request.characterId,query,status:"active",limit:this.maxResults});}
+      catch{return []}
     }
 
     return results
@@ -204,13 +217,31 @@ export class CoreBookCandidateSource implements ContextCandidateSource {
   readonly source:ContextSource="core_book";
   constructor(
     private readonly reader:CoreBookCandidateReader,
-    private readonly estimator:TokenEstimator=new DeterministicApproxTokenEstimator()
+    private readonly estimator:TokenEstimator=new DeterministicApproxTokenEstimator(),
+    private readonly retriever?:Retriever
   ){}
 
   async collect(request:ContextBuildRequest):Promise<readonly ContextCandidate[]> {
     const entries=await this.reader.listCoreBookEntries(request.characterId);
     const contextText=request.messages.map(message=>message.content).join("\n");
-    return entries.map(entry=>this.toCandidate(entry,request,contextText));
+    let retrievalIds:Set<string>|undefined;
+    const latestUser=[...request.messages].reverse().find(message=>message.role==="user");
+    const query=latestUser?.content.trim();
+    if(this.retriever&&query){
+      try{
+        const result=await this.retriever.search({apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION,characterId:request.characterId,query,sources:["core_book"],limit:32,filters:{status:"enabled"}});
+        if(!result.degraded)retrievalIds=new Set(result.candidates.filter(candidate=>candidate.source==="core_book"&&candidate.characterId===request.characterId).map(candidate=>candidate.sourceId));
+      }catch{
+        retrievalIds=undefined;
+      }
+    }
+    return entries.map(entry=>{
+      if(retrievalIds&&entry.activation.kind!=="always"&&!retrievalIds.has(entry.id)){
+        const candidate=this.toCandidate(entry,request,contextText);
+        return {...candidate,eligible:false,reason:"Core Book entry was not returned by deterministic full-text retrieval."};
+      }
+      return this.toCandidate(entry,request,contextText);
+    });
   }
 
   private toCandidate(entry:CoreBookEntry,request:ContextBuildRequest,contextText:string):ContextCandidate {
@@ -304,8 +335,9 @@ export class CoreBookCandidateSource implements ContextCandidateSource {
 export interface ContextEngineOptions {
   tokenEstimator?:TokenEstimator;
   recentMessageCount?:number;
-  memoryBroker?:Pick<MemoryBroker,"search">;
+  memoryBroker?:Pick<MemoryBroker,"search"|"get">;
   memoryCandidateLimit?:number;
+  retriever?:Retriever;
 }
 
 export class DeterministicContextEngine implements ContextEngineContract {
@@ -415,13 +447,14 @@ export function createDeterministicContextEngine(
   const estimator=options.tokenEstimator??new DeterministicApproxTokenEstimator();
   const sources:ContextCandidateSource[]=[
     new ConversationCandidateSource(estimator,options.recentMessageCount??RECENT_CONVERSATION_MESSAGES),
-    new CoreBookCandidateSource(coreBookReader,estimator)
+    new CoreBookCandidateSource(coreBookReader,estimator,options.retriever)
   ];
   if(options.memoryBroker){
     sources.push(new MemoryCandidateSource(
       options.memoryBroker,
       estimator,
-      options.memoryCandidateLimit??DEFAULT_MEMORY_CANDIDATE_LIMIT
+      options.memoryCandidateLimit??DEFAULT_MEMORY_CANDIDATE_LIMIT,
+      options.retriever
     ));
   }
   return new DeterministicContextEngine(sources,options);
