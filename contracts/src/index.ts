@@ -153,8 +153,8 @@ export interface MemoryBroker{
 export const CONTEXT_API_VERSION:ApiVersion="1";
 export const CONTEXT_SCHEMA_VERSION="1";
 
-export type ContextSource="conversation"|"core_book";
-export type ContextZone="system"|"character_core"|"retrieved_core_book"|"conversation"|"recent_conversation";
+export type ContextSource="conversation"|"core_book"|"memory";
+export type ContextZone="system"|"character_core"|"retrieved_core_book"|"retrieved_memory"|"conversation"|"recent_conversation";
 
 export interface ContextBudget{
   availableContextTokens:number;
