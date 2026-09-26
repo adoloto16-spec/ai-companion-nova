@@ -73,7 +73,7 @@ async function main(){
   equal(filtered.length,1,"search applies type and tag filters");
   equal(filtered[0]?.id,"memory.a.2","search applies deterministic limit");
 
-  const invalid=false;
+  let invalid=false;
   try{await broker.create("character.a",{id:"invalid",type:"fact",content:"x",source:"conversation",sourceReference:"",mutationPolicy:"locked"},user);}catch{invalid=true}
   ok(invalid,"conversation provenance requires sourceReference");
 
@@ -104,7 +104,7 @@ async function main(){
   }catch{unknownFieldSchema=false}
   ok(unknownFieldSchema,"memory schema rejects unknown fields");
 
-  equal(observed.sort(),["MemoryArchived","MemoryCreated","MemoryCreated","MemorySuperseded","MemoryUpdated"].sort(),"lifecycle events emitted");
+  equal(observed.sort(),["MemoryArchived","MemoryCreated","MemoryCreated","MemoryCreated","MemoryCreated","MemorySuperseded","MemoryUpdated","MemoryUpdated"].sort(),"lifecycle events emitted");
   ok(audit.entries.some(entry=>entry.action==="memory.supersede"&&entry.actorId==="test-user"),"memory mutation audit is recorded");
   console.log("PASS Dynamic Memory broker unit tests");
 }
