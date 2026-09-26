@@ -14,7 +14,7 @@ async function main(){
   const events=new InMemoryEventBus();
   const observed:string[]=[];
   for(const type of ["MemoryCreated","MemoryUpdated","MemorySuperseded","MemoryArchived"]){
-    events.subscribe(type,event=>observed.push(event.type));
+    events.subscribe(type,event=>{observed.push(event.type);});
   }
   const characters=new Set(["character.a","character.b"]);
   const broker=new MemoryBrokerImpl({
