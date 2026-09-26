@@ -1,0 +1,14 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://schemas.ai-companion-nova.dev/memory-store-state/v1",
+  "title":"AI Companion Nova Dynamic Memory Store State v1",
+  "type":"object",
+  "additionalProperties":false,
+  "required":["apiVersion","schemaVersion","characterId","items"],
+  "properties":{
+    "apiVersion":{"enum":["1"]},
+    "schemaVersion":{"enum":["1"]},
+    "characterId":{"type":"string","minLength":1},
+    "items":{"type":"array","items":{"$ref":"https://schemas.ai-companion-nova.dev/memory-item/v1"}}
+  }
+}
