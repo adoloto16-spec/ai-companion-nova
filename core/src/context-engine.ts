@@ -3,7 +3,6 @@ import type {
   ChatMessage,
   ContextBuildRequest,
   ContextCandidate,
-  ContextCandidate as CanonicalContextCandidate,
   ContextEngine as ContextEngineContract,
   ContextSource,
   ContextZone,
