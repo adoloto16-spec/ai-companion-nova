@@ -38,6 +38,12 @@ async function publishAndReadRuntimeDiagnostics(snapshot:RuntimeDiagnostics):Pro
     return live??snapshot;
   }catch{return snapshot}
 }
+function safeStartupError(error:unknown):string{
+  const message=error instanceof Error?error.message:String(error);
+  const normalized=message.replace(/\\s+/g," ").trim();
+  return (normalized||"Unknown startup error").slice(0,512);
+}
+
 function resultLabel(result:ProviderConnectionTestResult):string{
   switch(result.status){
     case "connected":return "Connected";
@@ -448,6 +454,8 @@ function App(){
   const [settingsMessage,setSettingsMessage]=React.useState("");
   const [saving,setSaving]=React.useState(false);
   const [testing,setTesting]=React.useState(false);
+  const [startupStatus,setStartupStatus]=React.useState<"initializing"|"ready"|"error">("initializing");
+  const [startupError,setStartupError]=React.useState("");
   const [characters,setCharacters]=React.useState<readonly Character[]>([]);
   const [activeCharacter,setActiveCharacter]=React.useState<Character|undefined>();
   const [chatController,setChatController]=React.useState<ChatSessionController|null>(null);
@@ -511,6 +519,8 @@ function App(){
 
   React.useEffect(()=>{
     let active=true;
+    setStartupStatus("initializing");
+    setStartupError("");
     let timer:ReturnType<typeof setInterval>|undefined;
     (async()=>{
       try{
@@ -527,6 +537,7 @@ function App(){
         }
         await refreshRuntime(saved,loaded.error);
         if(!active)return;
+        setStartupStatus("ready");
         const hostSnapshot=await loadHost();
         if(active)setHost(hostSnapshot);
         const sync=async()=>{
@@ -542,8 +553,12 @@ function App(){
         };
         await sync();
         timer=setInterval(()=>{void sync()},1000);
-      }catch{
-        if(active)setRuntime({...preview,runtimeStatus:"error",coreStatus:"error"});
+      }catch(error){
+        if(active){
+          setStartupStatus("error");
+          setStartupError(safeStartupError(error));
+          setRuntime({...preview,runtimeStatus:"error",coreStatus:"error"});
+        }
       }
     })();
     return ()=>{
@@ -647,7 +662,12 @@ function App(){
         <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Settings</button>
       </nav>
     </header>
-    {view==="chat"&&activeCharacter&&chatController
+    {startupStatus==="error"
+      ?<section className="loading-panel" role="alert">
+        <strong>Character runtime initialization failed.</strong>
+        <div>{startupError}</div>
+      </section>
+      :view==="chat"&&activeCharacter&&chatController
       ?<ChatView controller={chatController} runtime={foundationRef.current!} character={activeCharacter}/>
       :view==="characters"&&activeCharacter
         ?<CharactersView characters={characters} activeCharacter={activeCharacter}
