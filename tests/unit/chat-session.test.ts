@@ -1,5 +1,5 @@
 import {ChatSessionController,ConversationSession} from "../../core/src";
-import type {ChatRequest,ChatResponse} from "../../contracts/src";
+import type {AssembledContext,ChatRequest,ChatResponse,ContextBuildRequest} from "../../contracts/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(actual!==expected)throw new Error(label+" expected "+String(expected)+" got "+String(actual))}
 function ok(value:unknown,label:string){if(!value)throw new Error(label)}
@@ -43,6 +43,41 @@ async function main(){
   await historyController.submit("second","fake-chat");
   equal(historyRequests[1]?.context.messages.length,3,"full history passed to runtime");
   equal(historyRequests[1]?.context.messages[2]?.content,"second","latest user message passed");
+
+  const contextSession=new ConversationSession("context-conversation","character.context");
+  const contextRequests:ContextBuildRequest[]=[];
+  const contextChatRequests:ChatRequest[]=[];
+  const contextController=new ChatSessionController(contextSession,{
+    async chat(request:ChatRequest){
+      contextChatRequests.push(request);
+      return responseFor(request,"context-aware response");
+    }
+  },{
+    requestIdFactory:()=> "context-1",
+    contextBuilder:{
+      async buildContext(request:ContextBuildRequest):Promise<AssembledContext>{
+        contextRequests.push(request);
+        return {
+          apiVersion:"1",schemaVersion:"1",characterId:request.characterId,conversationId:request.conversationId,
+          messages:[
+            ...request.messages,
+            {id:"memory-ctx",role:"user",content:"memory context",metadata:{contextSource:"memory",contextReferenceId:"memory-ctx"}}
+          ],
+          includedCandidates:[],
+          omittedCandidates:[],
+          budget:request.budget,
+          estimatedTokens:3
+        };
+      }
+    },
+    contextBudget:{availableContextTokens:100,reservedOutputTokens:10,systemOverheadTokens:0,safetyMarginTokens:0}
+  });
+  await contextController.submit("hello","fake-chat");
+  equal(contextRequests.length,1,"chat invokes the unified context engine boundary");
+  equal(contextRequests[0]?.characterId,"character.context","context build is character scoped");
+  equal(contextRequests[0]?.messages.at(-1)?.content,"hello","context query contains latest user message");
+  equal(contextChatRequests[0]?.context.messages.at(-1)?.content,"memory context","assembled context reaches ChatRequest");
+  equal(contextChatRequests[0]?.context.messages.at(-1)?.metadata?.contextSource,"memory","ChatRequest preserves memory provenance");
 
   const errorSession=new ConversationSession("error-conversation","character.error");
   const errorController=new ChatSessionController(errorSession,{
