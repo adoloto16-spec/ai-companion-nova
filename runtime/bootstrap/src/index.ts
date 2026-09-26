@@ -83,7 +83,6 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const coreBookStore=options.coreBookStore??new InMemoryCoreBookStore();
   const coreBookManager=new CoreBookManager(coreBookStore,{events,clock:{now:()=>new Date().toISOString()},characterExists:async characterId=>Boolean(await characterManager.getCharacter(characterId))});
   const memoryStore=options.memoryStore??new InMemoryMemoryStore();
-  const contextEngine=options.contextEngine??createDeterministicContextEngine({listCoreBookEntries:characterId=>coreBookManager.listCoreBookEntries(characterId)});
   const credentialStore=options.credentialStore??options.openAICompatible?.credentialStore??new InMemoryCredentialStore();
   let providerConfiguration=options.providerConfiguration;
   const contractValidator=new StandardContractValidator();
@@ -102,6 +101,10 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     trusted:true,
     capabilities:[]
   };
+  const contextEngine=options.contextEngine??createDeterministicContextEngine(
+    {listCoreBookEntries:characterId=>coreBookManager.listCoreBookEntries(characterId)},
+    {memoryBroker}
+  );
   const permissions=new InMemoryPermissionService();
   const actorResolver=new InMemoryActorIdentityResolver();
   const tools=new InMemoryToolRegistry();
