@@ -12,3 +12,4 @@ export * from "./ai-runtime";
 export * from "./action-broker";
 
 export * from "./core-book-manager";
+export * from "./context-engine";
