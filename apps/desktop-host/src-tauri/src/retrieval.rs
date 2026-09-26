@@ -91,8 +91,8 @@ mod tests{
   #[test]fn restart_preserves_derived_index(){
     let path=std::env::temp_dir().join(format!("nova-retrieval-{}-{}.sqlite",std::process::id(),12345));
     let _=std::fs::remove_file(&path);
-    {let mut c=Connection::open(&path).unwrap();initialize_schema(&c);rebuild(&mut c,None,&[doc("a",RetrievalSource::Memory,"m","","Munich Berlin",&["travel"],"active",Some("fact"))]).unwrap();}
-    {let c=Connection::open(&path).unwrap();initialize_schema(&c);let r=search_inner(&c,&query("a","Munich",None,10,None)).unwrap();assert!(!r.degraded);assert_eq!(r.candidates[0].source_id,"m");}
+    {let mut c=Connection::open(&path).unwrap();initialize_schema(&c).unwrap();rebuild(&mut c,None,&[doc("a",RetrievalSource::Memory,"m","","Munich Berlin",&["travel"],"active",Some("fact"))]).unwrap();}
+    {let c=Connection::open(&path).unwrap();initialize_schema(&c).unwrap();let r=search_inner(&c,&query("a","Munich",None,10,None)).unwrap();assert!(!r.degraded);assert_eq!(r.candidates[0].source_id,"m");}
     let _=std::fs::remove_file(&path);
   }
 }

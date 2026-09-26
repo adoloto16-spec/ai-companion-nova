@@ -14,13 +14,15 @@ async function main(){
   const coreBookStore=new InMemoryCoreBookStore();
   const memoryStore=new InMemoryMemoryStore();
   const retrievalQueries:RetrievalQuery[]=[];
+  let coreBookIndexId:string|undefined;
+  const memoryIndexIds=new Set<string>();
   const retriever:Retriever={
     search:async(query):Promise<RetrievalResult>=>{
       retrievalQueries.push(query);
       const source=query.sources?.[0]??"memory";
-      const sourceId=source==="core_book"?"core.book.placeholder":"memory.placeholder";
+      const ids=source==="core_book"?(coreBookIndexId?[coreBookIndexId]:[]):[...memoryIndexIds];
       const candidates:RetrievalCandidate[]=(query.query.toLowerCase().includes("tea")||query.query.toLowerCase().includes("munich"))
-        ? [{source,sourceId,characterId:query.characterId,score:1,matchedText:"tea",matches:[{field:"content",text:"tea"}],metadata:{updatedAt:"2026-09-26T12:00:00.000Z"}}]
+        ? ids.map(sourceId=>({source,sourceId,characterId:query.characterId,score:1,matchedText:"tea",matches:[{field:"content",text:"tea"}],metadata:{updatedAt:"2026-09-26T12:00:00.000Z"}}))
         : [];
       return {apiVersion:"1",schemaVersion:"1",characterId:query.characterId,query:query.query,candidates,degraded:false};
     },
@@ -40,14 +42,17 @@ async function main(){
       title:"GM canon",content:"GM owns separate lore.",activation:{kind:"always"},
       retentionPriority:100,placementWeight:100,source:"user"
     });
+    coreBookIndexId=novaEntry.id;
     const novaMemory=await runtime.createMemory(nova.id,{
       id:"memory.context.nova.1",type:"preference",content:"Nova likes tea.",tags:["tea"],
       importance:95,confidence:90,source:"user",mutationPolicy:"locked"
     });
+    memoryIndexIds.add(novaMemory.id);
     const gmMemory=await runtime.createMemory(gm.id,{
       id:"memory.context.gm.1",type:"fact",content:"GM character tea note.",tags:["tea"],
       importance:100,confidence:100,source:"user",mutationPolicy:"locked"
     });
+
     const archivedMemory=await runtime.createMemory(nova.id,{
       id:"memory.context.archived",type:"fact",content:"Archived tea note.",tags:["tea"],
       importance:100,confidence:100,source:"user",mutationPolicy:"locked"
@@ -61,6 +66,7 @@ async function main(){
       id:"memory.context.replacement",type:"fact",content:"Current Munich tea note.",tags:["berlin","tea"],
       importance:90,confidence:95,source:"user",mutationPolicy:"locked"
     });
+    memoryIndexIds.add(replacementMemory.id);
 
 
     const build:ContextBuildRequest={
