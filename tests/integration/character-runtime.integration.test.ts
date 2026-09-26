@@ -19,6 +19,7 @@ async function providerConfigurationFailureFallbackTest(){
     providerConfiguration:loaded.configuration,
     characterStore:new InMemoryCharacterStore()
   });
+  await runtime.start();
   try{
     const nova=await runtime.getActiveCharacter();
     equal(nova.name,"Nova","Character initializes after provider config failure");
