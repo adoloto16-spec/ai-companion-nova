@@ -1,4 +1,4 @@
-import {ChatSessionController,ConversationSession,createFoundationRuntime,InMemoryCharacterStore} from "../../core/src";
+import {ChatSessionController,ConversationSession,InMemoryCharacterStore} from "../../core/src";
 import type {ChatRequest,ChatResponse} from "../../contracts/src";
 import {createFoundationRuntime as startRuntime} from "../../runtime/bootstrap/src";
 

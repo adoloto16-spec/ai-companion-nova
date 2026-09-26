@@ -133,9 +133,10 @@ export class CharacterManager{
     this.ensureInitialized();
     const id=requireCharacterId(this.idFactory());
     if(this.characters.has(id))throw new Error("Character id already exists.");
+    const now=this.clock.now();
     const character:Character={
       id,name:requireName(input.name),description:input.description??"",
-      createdAt:this.clock.now(),updatedAt:this.clock.now(),enabled:input.enabled??true
+      createdAt:now,updatedAt:now,enabled:input.enabled??true
     };
     validateCharacter(character);
     this.characters.set(id,character);
@@ -232,11 +233,20 @@ export class CharacterManager{
       activeCharacterId:this.activeCharacterId
     });
   }
+  private async publish(type:"CharacterCreated",payload:{characterId:string}):Promise<void>;
+  private async publish(type:"CharacterUpdated",payload:{characterId:string}):Promise<void>;
+  private async publish(type:"CharacterDeleted",payload:{characterId:string}):Promise<void>;
+  private async publish(type:"ActiveCharacterChanged",payload:{characterId:string;previousCharacterId?:string}):Promise<void>;
   private async publish(
     type:"CharacterCreated"|"CharacterUpdated"|"CharacterDeleted"|"ActiveCharacterChanged",
     payload:{characterId:string;previousCharacterId?:string}
   ):Promise<void>{
     if(!this.events)return;
-    await this.events.publish(createEvent(type,payload,this.source,()=>this.clock.now()));
+    switch(type){
+      case "CharacterCreated":await this.events.publish(createEvent(type,{characterId:payload.characterId},this.source,()=>this.clock.now()));break;
+      case "CharacterUpdated":await this.events.publish(createEvent(type,{characterId:payload.characterId},this.source,()=>this.clock.now()));break;
+      case "CharacterDeleted":await this.events.publish(createEvent(type,{characterId:payload.characterId},this.source,()=>this.clock.now()));break;
+      case "ActiveCharacterChanged":await this.events.publish(createEvent(type,payload,this.source,()=>this.clock.now()));break;
+    }
   }
 }
