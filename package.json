@@ -8,7 +8,7 @@
     "build": "pnpm generate:schemas && tsc -p tsconfig.foundation.json",
     "test:architecture": "node scripts/check-architecture.mjs",
     "test:security": "pnpm build && node build/tests/security/action-broker.security.test.js",
-    "test": "pnpm build && node build/tests/foundation.test.js && node build/tests/contracts/chat-contract.test.js && node build/tests/unit/ai-runtime.test.js && node build/tests/unit/chat-session.test.js && node build/tests/unit/openai-compatible-chat-provider.test.js && node build/tests/unit/secure-provider-config.test.js && node build/tests/integration/ai-runtime.integration.test.js && node build/tests/integration/chat-session.integration.test.js && node build/tests/security/action-broker.security.test.js && node scripts/check-architecture.mjs",
+    "test": "pnpm build && node build/tests/foundation.test.js && node build/tests/contracts/chat-contract.test.js && node build/tests/unit/ai-runtime.test.js && node build/tests/unit/chat-session.test.js && node build/tests/unit/character-manager.test.js && node build/tests/unit/openai-compatible-chat-provider.test.js && node build/tests/unit/secure-provider-config.test.js && node build/tests/integration/ai-runtime.integration.test.js && node build/tests/integration/chat-session.integration.test.js && node build/tests/integration/character-runtime.integration.test.js && node build/tests/security/action-broker.security.test.js && node scripts/check-architecture.mjs",
     "desktop:dev": "pnpm exec tauri dev --config apps/desktop-host/src-tauri/tauri.conf.json"
   },
   "workspaces": [
