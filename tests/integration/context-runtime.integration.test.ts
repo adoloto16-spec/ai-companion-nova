@@ -44,7 +44,7 @@ async function main(){
       importance:100,confidence:100,source:"user",mutationPolicy:"locked"
     });
     const replacementMemory=await runtime.supersedeMemory(nova.id,supersededMemory.id,{
-      id:"memory.context.replacement",type:"fact",content:"Current Munich note.",tags:["berlin"],
+      id:"memory.context.replacement",type:"fact",content:"Current Munich tea note.",tags:["berlin","tea"],
       importance:90,confidence:95,source:"user",mutationPolicy:"locked"
     });
 
