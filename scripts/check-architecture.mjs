@@ -34,5 +34,37 @@ const required=[
   "apps/desktop-host/src-tauri/build.rs","apps/desktop-host/src-tauri/capabilities/default.json","apps/desktop-host/src-tauri/src/memory.rs"
 ];
 for(const file of required)if(!fs.existsSync(file))violations.push("missing: "+file);
+
+const tauriCapabilityPath=path.join(process.cwd(),"apps/desktop-host/src-tauri/capabilities/default.json");
+const tauriBuildPath=path.join(process.cwd(),"apps/desktop-host/src-tauri/build.rs");
+if(fs.existsSync(tauriCapabilityPath)&&fs.existsSync(tauriBuildPath)){
+  let capability;
+  try{capability=JSON.parse(fs.readFileSync(tauriCapabilityPath,"utf8"));}catch(error){violations.push("Tauri default capability must be valid JSON: "+String(error));capability={};}
+  const permissions=Array.isArray(capability.permissions)?capability.permissions:[];
+  const tauriCommands=[
+    "get_characters","save_characters","get_core_book_entries","save_core_book_entries",
+    "get_memory_state","save_memory_state","supersede_memory","search_retrieval_index",
+    "rebuild_retrieval_index","rebuild_all_retrieval_index","upsert_retrieval_document",
+    "remove_retrieval_document","remove_retrieval_character"
+  ];
+  const buildSource=fs.readFileSync(tauriBuildPath,"utf8");
+  for(const command of tauriCommands){
+    const permission="allow-"+command;
+    if(!permissions.includes(permission))violations.push("Tauri default capability missing: "+permission);
+    if(!buildSource.includes("\""+command+"\""))violations.push("Tauri build manifest missing command for generated ACL: "+command);
+  }
+  const forbiddenPermissionPatterns=[
+    /^core:default$/i,
+    /^(?:core:)?fs:/i,
+    /^(?:core:)?shell:/i,
+    /^(?:core:)?process:/i,
+    /^(?:core:)?automation:/i
+  ];
+  for(const permission of permissions){
+    if(typeof permission!=="string")violations.push("Tauri capability permissions must be strings.");
+    else if(permission.includes("*"))violations.push("Tauri capability may not use wildcard permission: "+permission);
+    else if(forbiddenPermissionPatterns.some(pattern=>pattern.test(permission)))violations.push("Tauri capability has forbidden broad permission: "+permission);
+  }
+}
 if(violations.length){console.error(violations.join("\n"));process.exit(1);}
 console.log("Architecture guard passed.");
