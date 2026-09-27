@@ -49,7 +49,7 @@ if(fs.existsSync(tauriCapabilityPath)&&fs.existsSync(tauriBuildPath)){
   ];
   const buildSource=fs.readFileSync(tauriBuildPath,"utf8");
   for(const command of tauriCommands){
-    const permission="allow-"+command;
+    const permission="allow-"+command.replaceAll("_","-");
     if(!permissions.includes(permission))violations.push("Tauri default capability missing: "+permission);
     if(!buildSource.includes("\""+command+"\""))violations.push("Tauri build manifest missing command for generated ACL: "+command);
   }
