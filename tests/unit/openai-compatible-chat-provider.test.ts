@@ -312,8 +312,8 @@ async function modelDiscoveryTest(){
   equal(models.length,2,"malformed model items are ignored");
 
   http.next={status:405,body:""};
-  const fallback=await provider(http).listModels();
-  equal(fallback[0]?.id,"openai-compatible-test-model","unsupported discovery falls back to configured model");
+  const unsupported=await provider(http).listModels();
+  equal(unsupported.length,0,"unsupported discovery switches to manual model mode");
 
   http.next={status:200,body:"malformed"};
   const malformed=await provider(http).listModels();
