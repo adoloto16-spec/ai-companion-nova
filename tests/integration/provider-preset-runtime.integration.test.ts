@@ -1,6 +1,6 @@
 import {createFoundationRuntime} from "../../runtime/bootstrap/src";
-import type {CredentialReference,CredentialStore,ProviderConfiguration} from "../../contracts/src";
-import {OPENAI_COMPATIBLE_PROVIDER_ID,type HttpClient,HttpClientRequest} from "../../providers/chat/openai-compatible/src";
+import type {ChatRequest,CredentialReference,CredentialStore,ProviderConfiguration} from "../../contracts/src";
+import {OPENAI_COMPATIBLE_PROVIDER_ID,type HttpClient,HttpClientRequest,HttpClientResponse} from "../../providers/chat/openai-compatible/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(actual!==expected)throw new Error(label+" expected "+String(expected)+" got "+String(actual));}
 function ok(value:unknown,label:string){if(!value)throw new Error(label);}
@@ -38,7 +38,7 @@ async function main(){
     ],
     activeProviderPresetId:"mistral"
   });
-  const baseRequest={
+  const baseRequest:ChatRequest={
     apiVersion:"1",schemaVersion:"1",requestId:"preset-runtime-test",model:"mistral-model",
     context:{conversationId:"conversation-1",messages:[{role:"user" as const,content:"hello"}]}
   };
