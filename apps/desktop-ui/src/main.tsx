@@ -831,8 +831,9 @@ function App(){
         if(!credentialState)credentialState=emptyCredentialProfileState();
         let presetState=await providerPresetStore.load();
         if(!presetState&&legacy){
-          const migration=migrateProviderConfiguration(legacy);
-          const existing=migration.credentialProfile?credentialState.profiles.find(profile=>profile.credentialReference.id===migration.credentialProfile!.credentialReference.id):undefined;
+          const migrationBase=migrateProviderConfiguration(legacy);
+          const existing=migrationBase.credentialProfile?credentialState.profiles.find(profile=>profile.credentialReference.id===migrationBase.credentialProfile!.credentialReference.id):undefined;
+          const migration=migrateProviderConfiguration(legacy,new Date().toISOString(),existing?.id);
           credentialState={...credentialState,profiles:[...credentialState.profiles,...(migration.credentialProfile&&!existing?[migration.credentialProfile]:[])]};
           presetState={...emptyProviderPresetState(),presets:[migration.preset],activePresetId:migration.preset.id};
           await credentialProfileStore.save(credentialState);
