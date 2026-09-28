@@ -73,15 +73,9 @@ async function main(){
   equal(await store.load(profile.characterId),undefined,"deleted Nova IPC profile no longer loads");
   equal((await store.load("character.gm.v1"))?.model,"gm-ipc-model","deleting Nova does not delete GM");
 
-  const expectedSequence=[
-    MODEL_PROFILE_COMMANDS.get,
-    MODEL_PROFILE_COMMANDS.save,
-    MODEL_PROFILE_COMMANDS.load
-  ].filter(Boolean);
   ok(calls.includes(MODEL_PROFILE_COMMANDS.get),"Ipc path uses get_model_profile");
   ok(calls.includes(MODEL_PROFILE_COMMANDS.save),"Ipc path uses save_model_profile");
   ok(calls.includes(MODEL_PROFILE_COMMANDS.delete),"Ipc path uses delete_model_profile");
-  void expectedSequence;
 
   console.log("PASS model profile IPC integration tests");
 }
