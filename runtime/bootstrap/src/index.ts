@@ -41,6 +41,7 @@ export interface FoundationRuntimeOptions{
   retriever?:Retriever;
   retrievalIndexWriter?:RetrievalIndexWriter;
   providerPresetConfigurations?:readonly {presetId:string;configuration:ProviderConfiguration}[];
+  activeProviderPresetId?:string;
 }
 
 export interface FoundationRuntime{
@@ -54,9 +55,10 @@ export interface FoundationRuntime{
   getActiveChatModel():string;
   getChatModel(providerId?:string):Promise<string>;
   getChatModelForPreset(providerPresetId:string):Promise<string>;
+  getActiveProviderPresetId():string|undefined;
   applyProviderConfiguration(configuration:ProviderConfiguration|undefined):Promise<void>;
   testConfiguredProvider():Promise<import("../../../contracts/src/index").ProviderConnectionTestResult>;
-  setProviderPresetConfigurations(configurations:readonly {presetId:string;configuration:ProviderConfiguration}[]):void;
+  setProviderPresetConfigurations(configurations:readonly {presetId:string;configuration:ProviderConfiguration}[],activePresetId?:string):void;
   listCharacters():Promise<readonly Character[]>;
   getCharacter(id:CharacterId):Promise<Character|undefined>;
   createCharacter(input:import("../../../core/src/index").CharacterCreateInput):Promise<Character>;
@@ -95,6 +97,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const memoryStore=options.memoryStore??new InMemoryMemoryStore();
   const credentialStore=options.credentialStore??options.openAICompatible?.credentialStore??new InMemoryCredentialStore();
   let providerPresetConfigurations=new Map((options.providerPresetConfigurations??[]).map(item=>[item.presetId,item.configuration]));
+  let activeProviderPresetId=options.activeProviderPresetId??options.providerPresetConfigurations?.[0]?.presetId;
   let providerConfiguration=options.providerConfiguration;
   const contractValidator=new StandardContractValidator();
   const audit=new InMemoryAuditService();
@@ -288,6 +291,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
         return activeProviderId(providerConfiguration)==="openai-compatible"&&providerConfiguration?providerConfiguration.model:"fake-chat";
       }
     },
+    getActiveProviderPresetId:()=>activeProviderPresetId,
     getChatModelForPreset:async(providerPresetId)=>{
       const configuration=providerPresetConfigurations.get(providerPresetId);
       if(!configuration)return "fake-chat";
@@ -301,7 +305,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       }
     },
     applyProviderConfiguration:async(configuration)=>{await applyProvider(configuration);},
-    setProviderPresetConfigurations:(configurations)=>{providerPresetConfigurations=new Map(configurations.map(item=>[item.presetId,item.configuration]));},
+    setProviderPresetConfigurations:(configurations,activePresetId)=>{providerPresetConfigurations=new Map(configurations.map(item=>[item.presetId,item.configuration])); activeProviderPresetId=activePresetId??configurations[0]?.presetId;},
     listCharacters:()=>characterManager.listCharacters(),
     getCharacter:id=>characterManager.getCharacter(id),
     createCharacter:input=>characterManager.createCharacter(input),
