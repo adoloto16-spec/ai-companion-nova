@@ -1,4 +1,5 @@
 import {InMemoryConversationStore} from "../../host/conversations/src";
+import {StandardContractValidator,STANDARD_SCHEMAS} from "../../contracts/src";
 import type {Conversation} from "../../contracts/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error(label+" expected "+String(expected)+" got "+String(actual))}
@@ -14,6 +15,11 @@ const nova:Conversation={
 };
 
 async function main(){
+  const validator=new StandardContractValidator();
+  equal(validator.validate(nova,STANDARD_SCHEMAS["conversation"]!).valid,true,"conversation schema accepts canonical state");
+  equal(validator.validate({...nova,characterId:""} as never,STANDARD_SCHEMAS["conversation"]!).valid,false,"conversation schema rejects empty character scope");
+  equal(validator.validate({...nova,messages:[{role:"invalid",content:"x"}]} as never,STANDARD_SCHEMAS["conversation"]!).valid,false,"conversation schema rejects invalid message role");
+
   const store=new InMemoryConversationStore();
   equal(await store.load(nova.characterId),undefined,"fresh store has no conversation");
   await store.save(nova);
