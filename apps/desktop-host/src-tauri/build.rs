@@ -29,6 +29,9 @@ fn main() {
                     "get_conversation",
                     "save_conversation",
                     "clear_conversation",
+                    "get_model_profile",
+                    "save_model_profile",
+                    "delete_model_profile",
                 ]),
             ),
     )
