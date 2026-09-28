@@ -315,7 +315,7 @@ async function modelDiscoveryTest(){
 
   http.next={status:200,body:"malformed"};
   const malformed=await provider(http).listModels();
-  equal(malformed[0]?.id,"openai-compatible-test-model","malformed discovery falls back without provider failure");
+  equal(malformed.length,0,"malformed discovery returns manual mode without provider failure");
 }
 
 async function runtimeIntegrationTest(){
@@ -330,9 +330,11 @@ async function runtimeIntegrationTest(){
 
 async function providerHealthAndModelsTest(){
   const store=new FakeCredentialStore();
-  const p=provider(new FakeHttpClient(),store);
+  const http=new FakeHttpClient();
+  http.next={status:200,body:JSON.stringify({data:[{id:"openai-compatible-test-model",displayName:"Configured Model"}]})};
+  const p=provider(http,store);
   equal((await p.health()).status,"healthy","provider health configured");
-  equal((await p.listModels())[0]?.id,"openai-compatible-test-model","configured model listing");
+  equal((await p.listModels())[0]?.id,"openai-compatible-test-model","configured model discovery listing");
   await store.deleteSecret(credentialReference);
   equal((await p.health()).status,"unavailable","provider health without credential");
   const invalid=new OpenAICompatibleChatProvider({
