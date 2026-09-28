@@ -21,6 +21,7 @@
     "host/core-book/src/**/*.ts",
     "host/memory/src/**/*.ts",
     "host/conversations/src/**/*.ts",
+    "host/model-profiles/src/**/*.ts",
     "host/retrieval/src/**/*.ts"
   ],
   "exclude": [

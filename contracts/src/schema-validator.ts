@@ -95,6 +95,8 @@ export class StandardContractValidator extends MinimalJsonSchemaValidator {
   validateMemoryItem(value:unknown){return this.validate(value,STANDARD_SCHEMAS["memory-item"]!);}
   validateMemorySearchQuery(value:unknown){return this.validate(value,STANDARD_SCHEMAS["memory-search-query"]!);}
   validateMemoryStoreState(value:unknown){return this.validate(value,STANDARD_SCHEMAS["memory-store-state"]!);}
+  validateModelProfile(value:unknown){return this.validate(value,STANDARD_SCHEMAS["model-profile"]!);}
+  validateModelProfileStoreState(value:unknown){return this.validate(value,STANDARD_SCHEMAS["model-profile-store-state"]!);}
   validateContextBudget(value:unknown){return this.validate(value,STANDARD_SCHEMAS["context-budget"]!);}
   validateContextBuildRequest(value:unknown){return this.validate(value,STANDARD_SCHEMAS["context-build-request"]!);}
   validateContextCandidate(value:unknown){return this.validate(value,STANDARD_SCHEMAS["context-candidate"]!);}

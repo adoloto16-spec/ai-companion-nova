@@ -12,10 +12,12 @@ import {IpcCharacterStore} from "../../../host/characters/src/index";
 import {IpcCoreBookStore,InMemoryCoreBookStore} from "../../../host/core-book/src/index";
 import {IpcMemoryStore,InMemoryMemoryStore} from "../../../host/memory/src/index";
 import {IpcConversationStore,InMemoryConversationStore} from "../../../host/conversations/src/index";
+import {IpcModelProfileStore,InMemoryModelProfileStore} from "../../../host/model-profiles/src/index";
 import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
   PROVIDER_CONFIGURATION_API_VERSION,PROVIDER_CONFIGURATION_SCHEMA_VERSION,
-  type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation, defaultConversationId
+  type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation, defaultConversationId,
+  type ModelProfile, defaultModelProfile
 } from "../../../contracts/src/index";
 import "./styles.css";
 
@@ -39,10 +41,36 @@ async function publishAndReadRuntimeDiagnostics(snapshot:RuntimeDiagnostics):Pro
     return live??snapshot;
   }catch{return snapshot}
 }
+function safeErrorMessage(error:unknown,fallback="Unknown error"):string{
+  const extract=(value:unknown):string|undefined=>{
+    if(value instanceof Error)return value.message;
+    if(typeof value==="string")return value;
+    if(value&&typeof value==="object"){
+      const record=value as Record<string,unknown>;
+      for(const key of ["message","reason","error"]){
+        const nested=record[key];
+        if(typeof nested==="string"&&nested.trim())return nested;
+        if(nested&&typeof nested==="object"){
+          const nestedRecord=nested as Record<string,unknown>;
+          for(const nestedKey of ["message","reason"]){
+            const nestedMessage=nestedRecord[nestedKey];
+            if(typeof nestedMessage==="string"&&nestedMessage.trim())return nestedMessage;
+          }
+        }
+      }
+    }
+    return undefined;
+  };
+  const message=extract(error)??fallback;
+  const normalized=message
+    .replace(/\s+/g," ")
+    .trim()
+    .replace(/\b[A-Za-z]:\\(?:[^\\/:*?"<>|\r\n]+\\)*[^\\/:*?"<>|\r\n]*/g,"[path]")
+    .replace(/\bBearer\s+[A-Za-z0-9._-]+/gi,"Bearer [redacted]");
+  return (normalized||fallback).slice(0,512);
+}
 function safeStartupError(error:unknown):string{
-  const message=error instanceof Error?error.message:String(error);
-  const normalized=message.replace(/\s+/g," ").trim();
-  return (normalized||"Unknown startup error").slice(0,512);
+  return safeErrorMessage(error,"Unknown startup error");
 }
 
 function resultLabel(result:ProviderConnectionTestResult):string{
@@ -404,6 +432,110 @@ function CoreBookView({runtime,character}:{runtime:FoundationRuntime;character:C
   </section>;
 }
 
+function ModelProfileView({profile,runtime,onSave}:{profile:ModelProfile;runtime:RuntimeDiagnostics;onSave:(profile:ModelProfile)=>Promise<void>}){
+  const [draft,setDraft]=React.useState<ModelProfile>(()=>profile);
+  const [busy,setBusy]=React.useState(false);
+  const [message,setMessage]=React.useState("");
+  React.useEffect(()=>setDraft(profile),[profile.id,profile.characterId,profile.updatedAt]);
+
+  const chatProviders=runtime.providers.filter(provider=>provider.roles.includes("chat"));
+  const selectedProviderAvailable=!draft.providerId||chatProviders.some(provider=>provider.id===draft.providerId);
+
+  const updateGeneration=(key:"temperature"|"topP"|"maxTokens",value:string)=>{
+    const numeric=value.trim()===""?undefined:Number(value);
+    setDraft(current=>({
+      ...current,
+      generation:{
+        ...current.generation,
+        ...(numeric===undefined?{}:{[key]:numeric})
+      }
+    }));
+  };
+
+  const save=async()=>{
+    setBusy(true);setMessage("");
+    try{
+      const generation={
+        ...(draft.generation.temperature!==undefined?{temperature:draft.generation.temperature}:{}),
+        ...(draft.generation.topP!==undefined?{topP:draft.generation.topP}:{}),
+        ...(draft.generation.maxTokens!==undefined?{maxTokens:draft.generation.maxTokens}:{}),
+        ...(draft.generation.responseFormat!==undefined?{responseFormat:draft.generation.responseFormat}:{}),
+      };
+      const next:ModelProfile={
+        ...draft,
+        ...(draft.providerId?.trim()?{providerId:draft.providerId.trim()}:{}),
+        ...(draft.model?.trim()?{model:draft.model.trim()}:{}),
+        generation,
+        updatedAt:new Date().toISOString()
+      };
+      if(!selectedProviderAvailable)throw new Error("Selected provider is not currently registered.");
+      await onSave(next);
+      setMessage("Model Profile saved.");
+    }catch(error){
+      setMessage("Model Profile could not be saved: "+safeErrorMessage(error));
+    }finally{setBusy(false)}
+  };
+
+  return <section className="settings-grid">
+    <section>
+      <h2>Model Profile</h2>
+      <p className="chat-subtitle">Character-scoped request preferences. Provider credentials and base URLs remain global.</p>
+      <label>Provider
+        <select
+          value={draft.providerId??""}
+          onChange={event=>setDraft(current=>({...current,providerId:event.target.value||undefined}))}
+          disabled={busy}>
+          <option value="">Use active/default provider</option>
+          {!selectedProviderAvailable&&draft.providerId&&<option value={draft.providerId} disabled>Unavailable: {draft.providerId}</option>}
+          {chatProviders.map(provider=><option key={provider.id} value={provider.id}>{provider.id}</option>)}
+        </select>
+      </label>
+      <label>Model
+        <input
+          value={draft.model??""}
+          onChange={event=>setDraft(current=>({...current,model:event.target.value||undefined}))}
+          placeholder={draft.providerId?"Provider default model":"Current runtime model"}
+          disabled={busy}/>
+      </label>
+      <div className="core-book-grid">
+        <label>Temperature
+          <input
+            type="number" min="0" max="2" step="0.01"
+            value={draft.generation.temperature??""}
+            onChange={event=>updateGeneration("temperature",event.target.value)}
+            placeholder="Runtime default"
+            disabled={busy}/>
+        </label>
+        <label>Top P
+          <input
+            type="number" min="0" max="1" step="0.01"
+            value={draft.generation.topP??""}
+            onChange={event=>updateGeneration("topP",event.target.value)}
+            placeholder="Runtime default"
+            disabled={busy}/>
+        </label>
+      </div>
+      <label>Max Tokens
+        <input
+          type="number" min="1" step="1"
+          value={draft.generation.maxTokens??""}
+          onChange={event=>updateGeneration("maxTokens",event.target.value)}
+          placeholder="Runtime default"
+          disabled={busy}/>
+      </label>
+      <div className="actions"><button onClick={()=>void save()} disabled={busy}>{busy?"Saving…":"Save Model Profile"}</button></div>
+      {message&&<div className="notice" role="status">{message}</div>}
+      <p className="hint">No API keys, credentials or base URLs are stored here.</p>
+    </section>
+    <section>
+      <h2>Available chat providers</h2>
+      {chatProviders.length===0?<div>No registered chat providers.</div>:chatProviders.map(provider=>
+        <div className="row" key={provider.id}><span>{provider.id}</span><span>{provider.health?.status??"unknown"}</span></div>
+      )}
+    </section>
+  </section>;
+}
+
 function SettingsView({
   runtime,host,configuration,setConfiguration,credentialSaved,apiKey,setApiKey,settingsMessage,saving,testing,onSave,onTest,onRemoveCredential
 }:{
@@ -465,7 +597,7 @@ function isTauriRuntime():boolean{
 }
 
 function App(){
-  const [view,setView]=React.useState<"chat"|"characters"|"core-book"|"settings">("chat");
+  const [view,setView]=React.useState<"chat"|"characters"|"core-book"|"model-profile"|"settings">("chat");
   const [runtime,setRuntime]=React.useState<RuntimeDiagnostics>(preview);
   const [host,setHost]=React.useState<HostDiagnostics>({status:"starting",runtime:"unknown",capabilities:[]});
   const [configuration,setConfiguration]=React.useState<ProviderConfiguration>(defaultConfiguration());
@@ -478,10 +610,12 @@ function App(){
   const [startupError,setStartupError]=React.useState("");
   const [characters,setCharacters]=React.useState<readonly Character[]>([]);
   const [activeCharacter,setActiveCharacter]=React.useState<Character|undefined>();
+  const [activeModelProfile,setActiveModelProfile]=React.useState<ModelProfile|undefined>();
   const [chatController,setChatController]=React.useState<ChatSessionController|null>(null);
   const foundationRef=React.useRef<FoundationRuntime|undefined>();
   const providerConfigurationErrorRef=React.useRef<string|undefined>();
   const conversationLoadErrorRef=React.useRef<string|undefined>();
+  const modelProfileLoadErrorRef=React.useRef<string|undefined>();
   const conversationMetadataRef=React.useRef(new Map<string,{id:string;createdAt:string}>());
   const credentialStore=React.useMemo(()=>new IpcCredentialStore(invoke),[]);
   const configurationStore=React.useMemo(()=>new IpcProviderConfigurationStore(invoke),[]);
@@ -489,6 +623,7 @@ function App(){
   const coreBookStore=React.useMemo(()=>isTauriRuntime()?new IpcCoreBookStore(invoke):new InMemoryCoreBookStore(),[]);
   const memoryStore=React.useMemo(()=>isTauriRuntime()?new IpcMemoryStore(invoke):new InMemoryMemoryStore(),[]);
   const conversationStore=React.useMemo(()=>isTauriRuntime()?new IpcConversationStore(invoke):new InMemoryConversationStore(),[]);
+  const modelProfileStore=React.useMemo(()=>isTauriRuntime()?new IpcModelProfileStore(invoke):new InMemoryModelProfileStore(),[]);
   const retriever=React.useMemo(()=>isTauriRuntime()?new IpcFullTextRetriever(invoke):undefined,[]);
 
   const controllerForSession=React.useCallback((session:ConversationSession)=>new ChatSessionController(
@@ -498,6 +633,11 @@ function App(){
         const foundation=foundationRef.current;
         if(!foundation)return Promise.reject(new Error("Chat runtime is not available."));
         return foundation.chat(request);
+      },
+      getChatModel:providerId=>{
+        const foundation=foundationRef.current;
+        if(!foundation)return Promise.reject(new Error("Chat runtime is not available."));
+        return foundation.getChatModel(providerId);
       }
     },
     {
@@ -534,9 +674,31 @@ function App(){
     }
   },[conversationStore]);
 
+  const loadModelProfile=React.useCallback(async(characterId:string):Promise<ModelProfile>=>{
+    try{
+      const stored=await modelProfileStore.load(characterId);
+      if(stored){
+        if(stored.characterId!==characterId)throw new Error("Model Profile character scope mismatch.");
+        modelProfileLoadErrorRef.current=undefined;
+        return stored;
+      }
+      modelProfileLoadErrorRef.current=undefined;
+      return defaultModelProfile(characterId);
+    }catch(error){
+      modelProfileLoadErrorRef.current=safeStartupError(error);
+      return defaultModelProfile(characterId);
+    }
+  },[modelProfileStore]);
+
   const controllerForCharacter=React.useCallback(async(characterId:string)=>{
-    return controllerForSession(await loadConversationSession(characterId));
-  },[controllerForSession,loadConversationSession]);
+    const [session,profile]=await Promise.all([
+      loadConversationSession(characterId),
+      loadModelProfile(characterId)
+    ]);
+    const controller=controllerForSession(session);
+    controller.setModelProfile(profile);
+    return controller;
+  },[controllerForSession,loadConversationSession,loadModelProfile]);
 
   const persistConversation=React.useCallback(async(controller:ChatSessionController)=>{
     const snapshot=controller.getSnapshot();
@@ -569,6 +731,7 @@ function App(){
     const controller=await controllerForCharacter(active.id);
     setCharacters(list);
     setActiveCharacter(active);
+    setActiveModelProfile(controller.getModelProfile()??defaultModelProfile(active.id));
     setChatController(current=>current?.getSnapshot().characterId===active.id?current:controller);
   },[controllerForCharacter]);
 
@@ -576,6 +739,7 @@ function App(){
     const recentErrors=[...diagnostics.recentErrors];
     const providerMessage=providerConfigurationErrorRef.current;
     const conversationMessage=conversationLoadErrorRef.current;
+    const modelProfileMessage=modelProfileLoadErrorRef.current;
     if(providerMessage){
       recentErrors.push({
         timestamp:new Date().toISOString(),
@@ -590,6 +754,14 @@ function App(){
         source:"conversation-storage",
         code:"LOAD_FAILED",
         message:conversationMessage
+      });
+    }
+    if(modelProfileMessage){
+      recentErrors.push({
+        timestamp:new Date().toISOString(),
+        source:"model-profile-storage",
+        code:"LOAD_FAILED",
+        message:modelProfileMessage
       });
     }
     return recentErrors.length===diagnostics.recentErrors.length?diagnostics:{...diagnostics,recentErrors};
@@ -665,6 +837,7 @@ function App(){
     const selected=await foundation.setActiveCharacter(id);
     const controller=await controllerForCharacter(selected.id);
     setActiveCharacter(selected);
+    setActiveModelProfile(controller.getModelProfile()??defaultModelProfile(selected.id));
     setChatController(controller);
     setCharacters(await foundation.listCharacters());
     setView("chat");
@@ -690,11 +863,26 @@ function App(){
     if(!foundation)return;
     const before=activeCharacter;
     await foundation.deleteCharacter(id);
+    try{await modelProfileStore.delete(id)}catch(error){modelProfileLoadErrorRef.current=safeStartupError(error)}
     const nextActive=await foundation.getActiveCharacter();
     setCharacters(await foundation.listCharacters());
     setActiveCharacter(nextActive);
-    if(before?.id!==nextActive.id)setChatController(await controllerForCharacter(nextActive.id));
-  },[activeCharacter,controllerForCharacter]);
+    if(before?.id===id||before?.id!==nextActive.id){
+      const controller=await controllerForCharacter(nextActive.id);
+      setActiveModelProfile(controller.getModelProfile()??defaultModelProfile(nextActive.id));
+      setChatController(controller);
+    }
+  },[activeCharacter,controllerForCharacter,modelProfileStore]);
+
+  const saveModelProfile=React.useCallback(async(profile:ModelProfile)=>{
+    await modelProfileStore.save(profile);
+    modelProfileLoadErrorRef.current=undefined;
+    setActiveModelProfile(profile);
+    setChatController(current=>{
+      current?.setModelProfile(profile);
+      return current;
+    });
+  },[modelProfileStore]);
 
   const save=async()=>{
     setSettingsMessage("");
@@ -750,10 +938,13 @@ function App(){
         <button className={view==="chat"?"nav-button active":"nav-button"} onClick={()=>setView("chat")}>Chat</button>
         <button className={view==="characters"?"nav-button active":"nav-button"} onClick={()=>setView("characters")}>Characters</button>
         <button className={view==="core-book"?"nav-button active":"nav-button"} onClick={()=>setView("core-book")}>Core Book</button>
+        <button className={view==="model-profile"?"nav-button active":"nav-button"} onClick={()=>setView("model-profile")}>Model Profile</button>
         <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Settings</button>
       </nav>
     </header>
-    {view==="settings"
+    {view==="model-profile"&&activeCharacter&&activeModelProfile
+      ?<ModelProfileView profile={activeModelProfile} runtime={runtime} onSave={saveModelProfile}/>
+      :view==="settings"
       ?<SettingsView runtime={runtime} host={host} configuration={configuration} setConfiguration={setConfiguration}
             credentialSaved={credentialSaved} apiKey={apiKey} setApiKey={setApiKey} settingsMessage={settingsMessage}
             saving={saving} testing={testing} onSave={save} onTest={test} onRemoveCredential={removeCredential}/>
