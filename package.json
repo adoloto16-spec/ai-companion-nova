@@ -26,7 +26,9 @@
     "host/core-book",
     "host/memory",
     "host/retrieval",
-    "host/model-profiles"
+    "host/model-profiles",
+    "host/credential-profiles",
+    "host/provider-presets"
   ],
   "engines": {
     "node": ">=20"
