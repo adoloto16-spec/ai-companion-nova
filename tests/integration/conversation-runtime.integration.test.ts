@@ -55,28 +55,45 @@ async function main(){
     const novaAgain=await controllerFor(runtime,store,nova.id);
     equal(novaAgain.controller.getSnapshot().messages.map(message=>message.content).join("|"),"hello Nova|fake response","Nova history survives Character switch");
     ok(!novaAgain.controller.getSnapshot().messages.some(message=>message.content==="hello GM"),"GM message never enters Nova conversation");
-
-    await store.clear(nova.id);
-    novaAgain.controller.clear();
-    const afterClear=await controllerFor(runtime,store,nova.id);
-    equal(afterClear.controller.getSnapshot().messages.length,0,"clear removes persistent conversation");
   }finally{await runtime.stop()}
 
   const restarted=await createFoundationRuntime({characterStore});
   await restarted.start();
   try{
     const nova=await restarted.getActiveCharacter();
-    const restored=await controllerFor(restarted,store,nova.id);
-    equal(restored.controller.getSnapshot().messages.length,0,"cleared conversation remains empty after restart");
+    const restoredNova=await controllerFor(restarted,store,nova.id);
+    equal(restoredNova.controller.getSnapshot().messages.map(message=>message.content).join("|"),"hello Nova|fake response","Nova history survives runtime restart");
+    await restarted.setActiveCharacter((await restarted.listCharacters()).find(character=>character.name==="GM")!.id);
+    const restoredGm=await controllerFor(restarted,store,(await restarted.getActiveCharacter()).id);
+    equal(restoredGm.controller.getSnapshot().messages.map(message=>message.content).join("|"),"hello GM|fake response","GM history survives runtime restart");
   }finally{await restarted.stop()}
 
+  const clearedRuntime=await createFoundationRuntime({characterStore});
+  await clearedRuntime.start();
+  try{
+    const nova=await clearedRuntime.getActiveCharacter();
+    const restored=await controllerFor(clearedRuntime,store,nova.id);
+    await store.clear(nova.id);
+    restored.controller.clear();
+    equal((await controllerFor(clearedRuntime,store,nova.id)).controller.getSnapshot().messages.length,0,"clear removes persistent conversation");
+  }finally{await clearedRuntime.stop()}
+
+  const clearedRestart=await createFoundationRuntime({characterStore});
+  await clearedRestart.start();
+  try{
+    const nova=await clearedRestart.getActiveCharacter();
+    const afterClear=await controllerFor(clearedRestart,store,nova.id);
+    equal(afterClear.controller.getSnapshot().messages.length,0,"cleared conversation remains empty after restart");
+  }finally{await clearedRestart.stop()}
+
+  const providerFallbackStore=new InMemoryConversationStore();
   const providerFallback=await createFoundationRuntime({characterStore:new InMemoryCharacterStore()});
   await providerFallback.start();
   try{
     const nova=await providerFallback.getActiveCharacter();
-    const fallback=await controllerFor(providerFallback,new InMemoryConversationStore(),nova.id);
-    await sendAndPersist(providerFallback,new InMemoryConversationStore(),fallback.controller,fallback.createdAt,"fallback conversation");
-    equal(fallback.controller.getSnapshot().messages.length,2,"Conversation remains valid with Fake provider fallback");
+    const fallback=await controllerFor(providerFallback,providerFallbackStore,nova.id);
+    await sendAndPersist(providerFallback,providerFallbackStore,fallback.controller,fallback.createdAt,"fallback conversation");
+    equal((await providerFallbackStore.load(nova.id))?.messages.length,2,"Conversation remains valid with Fake provider fallback");
   }finally{await providerFallback.stop()}
 
   const failing:Retriever={
