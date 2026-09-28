@@ -97,6 +97,42 @@ export async function testProviderConfiguration(configuration:ProviderConfigurat
   catch(error){return classify(error,configuration.providerId);}
 }
 
+function validateProviderPresetConfiguration(configuration:ProviderConfiguration):{valid:boolean;errors:readonly string[]}{
+  const errors:string[]=[];
+  const schemaResult=validator.validate(configuration,STANDARD_SCHEMAS["provider-configuration"]!);
+  if(!schemaResult.valid)errors.push(...schemaResult.errors);
+  if(configuration.providerId!==OPENAI_COMPATIBLE_PROVIDER_ID)errors.push("Unsupported chat provider: "+configuration.providerId);
+  if(configuration.baseUrl!==configuration.baseUrl.trim())errors.push("Provider base URL must not have surrounding whitespace.");
+  if(configuration.model!==configuration.model.trim()||configuration.model.length===0)errors.push("Provider model must be a non-empty trimmed string.");
+  const providerErrors=validateOpenAICompatibleProviderConfig({
+    baseUrl:configuration.baseUrl,model:configuration.model,credential:configuration.credentialReference,timeoutMs:configuration.timeoutMs
+  });
+  for(const error of providerErrors)if(!errors.includes(error)&&!error.includes("credential"))errors.push(error);
+  return {valid:errors.length===0,errors};
+}
+
+export function buildProviderForPreset(configuration:ProviderConfiguration,credentialStore:CredentialStore,httpClient?:HttpClient):ChatProvider|undefined{
+  const validation=validateProviderPresetConfiguration(configuration);
+  if(!validation.valid)return undefined;
+  return new OpenAICompatibleChatProvider({
+    baseUrl:configuration.baseUrl,model:configuration.model,credential:configuration.credentialReference,timeoutMs:configuration.timeoutMs
+  },credentialStore,httpClient);
+}
+
+export async function testProviderPresetConfiguration(configuration:ProviderConfiguration,credentialStore:CredentialStore,httpClient?:HttpClient):Promise<ProviderConnectionTestResult>{
+  const validation=validateProviderPresetConfiguration(configuration);
+  if(!validation.valid)return result("configuration_error",configuration.providerId,validation.errors.join(" "));
+  if(!configuration.enabled)return result("configuration_error",configuration.providerId,"Provider preset is not active.");
+  const provider=buildProviderForPreset(configuration,credentialStore,httpClient);
+  if(!provider)return result("configuration_error",configuration.providerId,"Provider preset configuration is invalid.");
+  const providers=new ProviderRegistry();
+  providers.register(provider,["chat"]);
+  const aiRuntime=new AiRuntime(providers,{validator,diagnostics:new InMemoryDiagnosticsStore()});
+  const request:ChatRequest={apiVersion:"1",schemaVersion:"1",requestId:"provider-preset-test",providerId:OPENAI_COMPATIBLE_PROVIDER_ID,model:configuration.model,context:{conversationId:"provider-preset-test",messages:[{role:"user",content:"Connection test. Reply with OK."}]}};
+  try{await aiRuntime.generate(request);return result("connected",configuration.providerId,"Provider connection succeeded.");}
+  catch(error){return classify(error,configuration.providerId);}
+}
+
 export function buildProviderForDiscovery(configuration:ProviderConfiguration,credentialStore:CredentialStore,httpClient?:HttpClient):ChatProvider|undefined{
   if(configuration.providerId!==OPENAI_COMPATIBLE_PROVIDER_ID)return undefined;
   if(validateOpenAICompatibleProviderConfig({
