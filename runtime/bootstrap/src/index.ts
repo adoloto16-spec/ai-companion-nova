@@ -343,3 +343,5 @@ export async function startFoundationRuntime(options:FoundationRuntimeOptions={}
   return runtime;
 }
 export type {RuntimeDiagnostics,ActorIdentity};
+
+export {activeProviderId,buildConfiguredProvider,buildProviderForDiscovery,testProviderConfiguration,testProviderPresetConfiguration,listProviderModels} from "./provider-configuration";
