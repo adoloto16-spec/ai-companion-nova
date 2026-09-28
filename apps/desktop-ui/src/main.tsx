@@ -445,7 +445,6 @@ function ModelProfileView({profile,runtime,onSave}:{profile:ModelProfile;runtime
         ...(draft.generation.maxTokens!==undefined?{maxTokens:draft.generation.maxTokens}:{}),
         ...(draft.generation.responseFormat!==undefined?{responseFormat:draft.generation.responseFormat}:{}),
       };
-      if(draft.temperature===undefined){}
       const next:ModelProfile={
         ...draft,
         ...(draft.providerId?.trim()?{providerId:draft.providerId.trim()}:{}),
