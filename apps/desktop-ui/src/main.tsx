@@ -274,16 +274,6 @@ function CoreBookView({runtime,character}:{runtime:FoundationRuntime;character:C
     setMessage("");
   };
 
-  const saveModelProfile=React.useCallback(async(profile:ModelProfile)=>{
-    await modelProfileStore.save(profile);
-    modelProfileLoadErrorRef.current=undefined;
-    setActiveModelProfile(profile);
-    setChatController(current=>{
-      current?.setModelProfile(profile);
-      return current;
-    });
-  },[modelProfileStore]);
-
   const save=async()=>{
     setBusy(true);setMessage("");
     try{
@@ -857,6 +847,16 @@ function App(){
       setChatController(controller);
     }
   },[activeCharacter,controllerForCharacter,modelProfileStore]);
+
+  const saveModelProfile=React.useCallback(async(profile:ModelProfile)=>{
+    await modelProfileStore.save(profile);
+    modelProfileLoadErrorRef.current=undefined;
+    setActiveModelProfile(profile);
+    setChatController(current=>{
+      current?.setModelProfile(profile);
+      return current;
+    });
+  },[modelProfileStore]);
 
   const save=async()=>{
     setSettingsMessage("");
