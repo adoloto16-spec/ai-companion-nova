@@ -22,7 +22,7 @@ export function materializeProviderConfiguration(
     apiVersion:"1",
     schemaVersion:"1",
     providerId:preset.providerId,
-    enabled:Boolean(model&&credentialReference),
+    enabled:Boolean(model),
     baseUrl:preset.baseUrl,
     model,
     credentialReference,
