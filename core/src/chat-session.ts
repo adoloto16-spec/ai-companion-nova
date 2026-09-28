@@ -165,9 +165,10 @@ export class ChatSessionController{
     }
 
     const profile=this.modelProfile;
+    const profileProviderId=profile?.providerId;
     let resolvedModel=model;
-    if(profile?.model===undefined&&profile.providerId!==undefined&&this.runtime.getChatModel){
-      try{resolvedModel=await this.runtime.getChatModel(profile.providerId)}catch{resolvedModel=model}
+    if(profile?.model===undefined&&profileProviderId!==undefined&&this.runtime.getChatModel){
+      try{resolvedModel=await this.runtime.getChatModel(profileProviderId)}catch{resolvedModel=model}
     }
     const resolvedGeneration=profile?.generation;
     const hasGeneration=Boolean(resolvedGeneration&&Object.keys(resolvedGeneration).length>0);
