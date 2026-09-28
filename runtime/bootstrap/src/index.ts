@@ -20,7 +20,7 @@ import {InMemoryCredentialStore} from "../../../host/credentials/src/index";
 import {InMemoryCoreBookStore} from "../../../host/core-book/src/index";
 import {InMemoryMemoryStore} from "../../../host/memory/src/index";
 import type {CoreBookCreateInput,CoreBookUpdateInput} from "../../../core/src/core-book-manager";
-import {activeProviderId,buildConfiguredProvider,testProviderConfiguration} from "./provider-configuration";
+import {activeProviderId,buildConfiguredProvider,buildProviderForDiscovery,testProviderConfiguration} from "./provider-configuration";
 import {RetrievalEventIndexer} from "../../../core/src/retrieval-indexer";
 
 export interface OpenAICompatibleRuntimeConfig{
@@ -40,6 +40,7 @@ export interface FoundationRuntimeOptions{
   contextEngine?:ContextEngine;
   retriever?:Retriever;
   retrievalIndexWriter?:RetrievalIndexWriter;
+  providerPresetConfigurations?:readonly {presetId:string;configuration:ProviderConfiguration}[];
 }
 
 export interface FoundationRuntime{
@@ -47,13 +48,15 @@ export interface FoundationRuntime{
   stop():Promise<void>;
   diagnostics():Promise<RuntimeDiagnostics>;
   invoke(request:import("../../../contracts/src/index").ActionRequest):Promise<import("../../../contracts/src/index").ActionResult>;
-  chat(request:ChatRequest):Promise<ChatResponse>;
+  chat(request:ChatRequest,providerPresetId?:string):Promise<ChatResponse>;
   aiRuntimeHealth():Promise<HealthStatus>;
   getProviderConfiguration():ProviderConfiguration|undefined;
   getActiveChatModel():string;
   getChatModel(providerId?:string):Promise<string>;
+  getChatModelForPreset(providerPresetId:string):Promise<string>;
   applyProviderConfiguration(configuration:ProviderConfiguration|undefined):Promise<void>;
   testConfiguredProvider():Promise<import("../../../contracts/src/index").ProviderConnectionTestResult>;
+  setProviderPresetConfigurations(configurations:readonly {presetId:string;configuration:ProviderConfiguration}[]):void;
   listCharacters():Promise<readonly Character[]>;
   getCharacter(id:CharacterId):Promise<Character|undefined>;
   createCharacter(input:import("../../../core/src/index").CharacterCreateInput):Promise<Character>;
@@ -91,6 +94,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const coreBookManager=new CoreBookManager(coreBookStore,{events,clock:{now:()=>new Date().toISOString()},characterExists:async characterId=>Boolean(await characterManager.getCharacter(characterId))});
   const memoryStore=options.memoryStore??new InMemoryMemoryStore();
   const credentialStore=options.credentialStore??options.openAICompatible?.credentialStore??new InMemoryCredentialStore();
+  let providerPresetConfigurations=new Map((options.providerPresetConfigurations??[]).map(item=>[item.presetId,item.configuration]));
   let providerConfiguration=options.providerConfiguration;
   const contractValidator=new StandardContractValidator();
   const audit=new InMemoryAuditService();
@@ -256,7 +260,20 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     async stop(){try{retrievalIndexer?.stop();await moduleManager.stopAll();}finally{runtimeStatus="stopped";}},
     diagnostics:snapshot,
     invoke:request=>broker.execute({request,credential:characterCredential}),
-    chat:request=>aiRuntime.generate(request.providerId?request:{...request,providerId:activeProviderId(providerConfiguration)}),
+    chat:async(request,providerPresetId)=>{
+      if(providerPresetId){
+        const configuration=providerPresetConfigurations.get(providerPresetId);
+        const effectiveConfiguration=configuration?{...configuration,model:request.model}:undefined;
+        const scopedProviders=new ProviderRegistry();
+        if(effectiveConfiguration){
+          const configured=buildConfiguredProvider(effectiveConfiguration,credentialStore,options.httpClient);
+          if(configured)scopedProviders.register(configured,["chat"]);
+        }
+        const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
+        return scopedRuntime.generate({...request,providerId:"openai-compatible"});
+      }
+      return aiRuntime.generate(request.providerId?request:{...request,providerId:activeProviderId(providerConfiguration)});
+    },
     aiRuntimeHealth:()=>aiRuntime.health(),
     getProviderConfiguration:()=>providerConfiguration,
     getActiveChatModel:()=>activeProviderId(providerConfiguration)==="openai-compatible"&&providerConfiguration?providerConfiguration.model:"fake-chat",
@@ -271,7 +288,20 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
         return activeProviderId(providerConfiguration)==="openai-compatible"&&providerConfiguration?providerConfiguration.model:"fake-chat";
       }
     },
+    getChatModelForPreset:async(providerPresetId)=>{
+      const configuration=providerPresetConfigurations.get(providerPresetId);
+      if(!configuration)return "fake-chat";
+      const provider=buildProviderForDiscovery(configuration,credentialStore,options.httpClient);
+      if(!provider)return configuration.model||"fake-chat";
+      try{
+        const models=await provider.listModels();
+        return models[0]?.id??configuration.model||"fake-chat";
+      }catch{
+        return configuration.model||"fake-chat";
+      }
+    },
     applyProviderConfiguration:async(configuration)=>{await applyProvider(configuration);},
+    setProviderPresetConfigurations:(configurations)=>{providerPresetConfigurations=new Map(configurations.map(item=>[item.presetId,item.configuration]));},
     listCharacters:()=>characterManager.listCharacters(),
     getCharacter:id=>characterManager.getCharacter(id),
     createCharacter:input=>characterManager.createCharacter(input),
