@@ -263,7 +263,7 @@ mod tests{
     fn accepts_canonical_tauri_save_payload(){ 
         let payload=serde_json::json!({
             "apiVersion":"1",
-            "schemaVersion":"1",
+            "schemaVersion":"2",
             "id":"model-profile:nova:default.v1",
             "characterId":"character.nova.default.v1",
             "providerId":"fake.chat",
@@ -321,6 +321,8 @@ mod tests{
             serde_json::to_value(&profile.generation.response_format).expect("expected responseFormat")
         );
         fs::remove_dir_all(path.parent().expect("directory")).expect("cleanup");
+    }
+
     #[test]
     fn migrates_schema_v1_to_v2(){
         let payload=serde_json::json!({
