@@ -20,9 +20,11 @@ async function controllerFor(runtime:Awaited<ReturnType<typeof createFoundationR
   const session=new ConversationSession(stored?.id??"conversation:"+characterId+":default.v1",characterId);
   for(const message of stored?.messages??[])session.addMessage(message);
   const controller=new ChatSessionController(session,{
-    chat:request=>runtime.chat(request),
+    chat:request=>runtime.chat(request)
+  },{
+    requestIdFactory:(()=>{let n=0;return ()=> "conversation-request-"+(++n)})(),
     contextBuilder:{buildContext:request=>runtime.buildContext(request)}
-  },{requestIdFactory:(()=>{let n=0;return ()=> "conversation-request-"+(++n)})()});
+  });
   return {controller,createdAt:stored?.createdAt??createdAtValue};
 }
 async function sendAndPersist(runtime:Awaited<ReturnType<typeof createFoundationRuntime>>,store:InMemoryConversationStore,controller:ChatSessionController,recordCreatedAt:string,content:string){
