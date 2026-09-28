@@ -571,17 +571,26 @@ function App(){
   },[controllerForCharacter]);
 
   const addConfigurationLoadError=React.useCallback((diagnostics:RuntimeDiagnostics):RuntimeDiagnostics=>{
-    const message=providerConfigurationErrorRef.current;
-    if(!message)return diagnostics;
-    return {
-      ...diagnostics,
-      recentErrors:[...diagnostics.recentErrors,{
+    const recentErrors=[...diagnostics.recentErrors];
+    const providerMessage=providerConfigurationErrorRef.current;
+    const conversationMessage=conversationLoadErrorRef.current;
+    if(providerMessage){
+      recentErrors.push({
         timestamp:new Date().toISOString(),
         source:"provider-configuration",
         code:"LOAD_FAILED",
-        message
-      }]
-    };
+        message:providerMessage
+      });
+    }
+    if(conversationMessage){
+      recentErrors.push({
+        timestamp:new Date().toISOString(),
+        source:"conversation-storage",
+        code:"LOAD_FAILED",
+        message:conversationMessage
+      });
+    }
+    return recentErrors.length===diagnostics.recentErrors.length?diagnostics:{...diagnostics,recentErrors};
   },[]);
 
   const refreshRuntime=React.useCallback(async(config:ProviderConfiguration|undefined,configurationLoadError?:string)=>{
