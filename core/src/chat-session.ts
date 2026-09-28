@@ -1,7 +1,10 @@
 import type {AssembledContext,ChatErrorCode,ChatMessage,ChatRequest,ChatResponse,CharacterId,ContextBuildRequest,ContextBudget,Unsubscribe,ModelProfile} from "../../contracts/src/index";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION} from "../../contracts/src/index";
 
-export interface ChatRuntimeBoundary{chat(request:ChatRequest):Promise<ChatResponse>}
+export interface ChatRuntimeBoundary{
+  chat(request:ChatRequest):Promise<ChatResponse>;
+  getChatModel?(providerId?:string):Promise<string>;
+}
 
 export interface ConversationSnapshot{
   conversationId:string;
@@ -162,6 +165,10 @@ export class ChatSessionController{
     }
 
     const profile=this.modelProfile;
+    let resolvedModel=model;
+    if(profile?.model===undefined&&profile.providerId!==undefined&&this.runtime.getChatModel){
+      try{resolvedModel=await this.runtime.getChatModel(profile.providerId)}catch{resolvedModel=model}
+    }
     const resolvedGeneration=profile?.generation;
     const hasGeneration=Boolean(resolvedGeneration&&Object.keys(resolvedGeneration).length>0);
     const request:ChatRequest={
@@ -169,7 +176,7 @@ export class ChatSessionController{
       schemaVersion:CHAT_SCHEMA_VERSION,
       requestId,
       ...(profile?.providerId!==undefined?{providerId:profile.providerId}:{}),
-      model:profile?.model??model,
+      model:profile?.model??resolvedModel,
       context:{
         conversationId:this.session.conversationId,
         messages:contextMessages
