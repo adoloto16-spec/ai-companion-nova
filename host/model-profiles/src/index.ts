@@ -16,18 +16,7 @@ function cloneProfile(profile:ModelProfile):ModelProfile{
     characterId:profile.characterId,
     ...(profile.providerId!==undefined?{providerId:profile.providerId}:{}),
     ...(profile.model!==undefined?{model:profile.model}:{}),
-    generation:{
-      ...(profile.generation.temperature!==undefined?{temperature:profile.generation.temperature}:{}),
-      ...(profile.generation.topP!==undefined?{topP:profile.generation.topP}:{}),
-      ...(profile.generation.maxTokens!==undefined?{maxTokens:profile.generation.maxTokens}:{}),
-      ...(profile.generation.responseFormat?{
-        responseFormat:{
-          type:profile.generation.responseFormat.type,
-          ...(profile.generation.responseFormat.type==="json"&&profile.generation.responseFormat.schema!==undefined
-            ?{schema:{...profile.generation.responseFormat.schema}}:{} )
-        }
-      }: {})
-    },
+    generation:{...profile.generation},
     createdAt:profile.createdAt,
     updatedAt:profile.updatedAt
   };
