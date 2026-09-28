@@ -19,7 +19,81 @@
     "conversations": {
       "type": "array",
       "items": {
-        "$ref": "https://schemas.ai-companion-nova.dev/conversation/v1"
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://schemas.ai-companion-nova.dev/conversation/v1",
+        "title": "AI Companion Nova Conversation v1",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "apiVersion",
+          "schemaVersion",
+          "id",
+          "characterId",
+          "messages",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "apiVersion": {
+            "const": "1"
+          },
+          "schemaVersion": {
+            "const": "1"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "characterId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "role",
+                "content"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "role": {
+                  "enum": [
+                    "system",
+                    "user",
+                    "assistant",
+                    "tool"
+                  ]
+                },
+                "content": {
+                  "type": "string"
+                },
+                "toolCallId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "metadata": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "createdAt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "updatedAt": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
       }
     }
   }
