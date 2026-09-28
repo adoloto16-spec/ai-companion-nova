@@ -26,7 +26,7 @@ pub struct ChatGenerationOptions{
     pub temperature:Option<f64>,
     #[serde(rename="maxTokens",skip_serializing_if="Option::is_none")]
     pub max_tokens:Option<i64>,
-    #[serde(skip_serializing_if="Option::is_none")]
+    #[serde(rename="topP",skip_serializing_if="Option::is_none")]
     pub top_p:Option<f64>,
     #[serde(rename="responseFormat",skip_serializing_if="Option::is_none")]
     pub response_format:Option<ResponseFormat>,
@@ -222,6 +222,91 @@ mod tests{
     }
 
     #[test]
+    fn canonical_generation_json_names_round_trip(){ 
+        let mut schema=Map::new();
+        schema.insert("kind".to_string(),Value::String("example".to_string()));
+        let generation=ChatGenerationOptions{
+            temperature:Some(0.55),
+            max_tokens:Some(321),
+            top_p:Some(0.75),
+            response_format:Some(ResponseFormat{format_type:ResponseFormatType::Json,schema:Some(schema)})
+        };
+        let value=serde_json::to_value(&generation).expect("serialize");
+        let object=value.as_object().expect("object");
+        assert_eq!(object.get("temperature").and_then(Value::as_f64),Some(0.55));
+        assert_eq!(object.get("maxTokens").and_then(Value::as_i64),Some(321));
+        assert_eq!(object.get("topP").and_then(Value::as_f64),Some(0.75));
+        assert!(object.get("responseFormat").is_some());
+        assert!(object.get("top_p").is_none());
+        assert!(object.get("max_tokens").is_none());
+        assert!(object.get("response_format").is_none());
+        let decoded:ChatGenerationOptions=serde_json::from_value(value).expect("deserialize");
+        assert_eq!(decoded.temperature,Some(0.55));
+        assert_eq!(decoded.max_tokens,Some(321));
+        assert_eq!(decoded.top_p,Some(0.75));
+        assert!(decoded.response_format.is_some());
+    }
+
+    #[test]
+    fn accepts_canonical_tauri_save_payload(){ 
+        let payload=serde_json::json!({
+            "apiVersion":"1",
+            "schemaVersion":"1",
+            "id":"model-profile:nova:default.v1",
+            "characterId":"character.nova.default.v1",
+            "providerId":"fake.chat",
+            "model":"nova-model",
+            "generation":{
+                "temperature":0.55,
+                "maxTokens":321,
+                "topP":0.75,
+                "responseFormat":{"type":"json","schema":{"kind":"example"}}
+            },
+            "createdAt":"2026-09-28T10:00:00.000Z",
+            "updatedAt":"2026-09-28T10:01:00.000Z"
+        });
+        let profile:ModelProfile=serde_json::from_value(payload).expect("canonical Tauri payload must deserialize");
+        assert_eq!(profile.provider_id.as_deref(),Some("fake.chat"));
+        assert_eq!(profile.model.as_deref(),Some("nova-model"));
+        assert_eq!(profile.generation.temperature,Some(0.55));
+        assert_eq!(profile.generation.max_tokens,Some(321));
+        assert_eq!(profile.generation.top_p,Some(0.75));
+        assert!(profile.generation.response_format.is_some());
+        assert!(validate_profile(&profile).is_ok());
+    }
+
+    #[test]
+    fn model_profile_file_round_trip_preserves_canonical_fields(){
+        let path=temp_path("round-trip");
+        let profile=valid_profile("model-profile:nova:default.v1","character.nova.default.v1");
+        let state=ModelProfileStoreState{
+            api_version:API_VERSION.to_string(),
+            schema_version:SCHEMA_VERSION.to_string(),
+            profiles:vec![profile.clone()]
+        };
+        save_to_path(&path,&state).expect("save");
+        let raw=fs::read_to_string(&path).expect("read");
+        assert!(raw.contains(""providerId""));
+        assert!(raw.contains(""maxTokens""));
+        assert!(raw.contains(""topP""));
+        assert!(!raw.contains(""top_p""));
+        let loaded=load_from_path(&path).expect("load").expect("state");
+        let restored=&loaded.profiles[0];
+        assert_eq!(restored.api_version,profile.api_version);
+        assert_eq!(restored.schema_version,profile.schema_version);
+        assert_eq!(restored.id,profile.id);
+        assert_eq!(restored.character_id,profile.character_id);
+        assert_eq!(restored.provider_id,profile.provider_id);
+        assert_eq!(restored.model,profile.model);
+        assert_eq!(restored.generation.temperature,profile.generation.temperature);
+        assert_eq!(restored.generation.max_tokens,profile.generation.max_tokens);
+        assert_eq!(restored.generation.top_p,profile.generation.top_p);
+        assert_eq!(restored.created_at,profile.created_at);
+        assert_eq!(restored.updated_at,profile.updated_at);
+        fs::remove_dir_all(path.parent().expect("directory")).expect("cleanup");
+    }
+
+  #[test]
     fn accepts_valid_state(){
         assert!(decode(&serde_json::to_vec(&valid_state()).expect("encode")).is_ok());
     }
