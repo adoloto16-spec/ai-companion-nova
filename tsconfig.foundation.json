@@ -22,6 +22,8 @@
     "host/memory/src/**/*.ts",
     "host/conversations/src/**/*.ts",
     "host/model-profiles/src/**/*.ts",
+    "host/credential-profiles/src/**/*.ts",
+    "host/provider-presets/src/**/*.ts",
     "host/retrieval/src/**/*.ts"
   ],
   "exclude": [
