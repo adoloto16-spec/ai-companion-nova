@@ -31,7 +31,8 @@ export function materializeProviderConfiguration(
 }
 export function migrateProviderConfiguration(
   configuration:ProviderConfiguration,
-  now=new Date().toISOString()
+  now=new Date().toISOString(),
+  existingCredentialProfileId?:string
 ):{preset:ProviderPreset;credentialProfile:CredentialProfile|undefined}{
   const reference=configuration.credentialReference??undefined;
   const credentialProfile=reference?{
@@ -49,7 +50,7 @@ export function migrateProviderConfiguration(
       name:"Migrated Provider",
       providerId:configuration.providerId,
       baseUrl:configuration.baseUrl,
-      ...(credentialProfile?{credentialProfileId:credentialProfile.id}:{}),
+      ...(credentialProfile?{credentialProfileId:existingCredentialProfileId??credentialProfile.id}:{}),
       ...(configuration.model?{model:configuration.model}:{}),
       ...(configuration.timeoutMs===undefined?{}:{timeoutMs:configuration.timeoutMs}),
       createdAt:now,
