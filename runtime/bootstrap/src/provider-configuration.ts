@@ -97,6 +97,27 @@ export async function testProviderConfiguration(configuration:ProviderConfigurat
   catch(error){return classify(error,configuration.providerId);}
 }
 
+export function buildProviderForDiscovery(configuration:ProviderConfiguration,credentialStore:CredentialStore,httpClient?:HttpClient):ChatProvider|undefined{
+  if(configuration.providerId!==OPENAI_COMPATIBLE_PROVIDER_ID)return undefined;
+  if(validateOpenAICompatibleProviderConfig({
+    baseUrl:configuration.baseUrl,
+    model:configuration.model,
+    credential:configuration.credentialReference,
+    timeoutMs:configuration.timeoutMs
+  },{allowEmptyModel:true}).length>0)return undefined;
+  return new OpenAICompatibleChatProvider({
+    baseUrl:configuration.baseUrl,
+    model:configuration.model,
+    credential:configuration.credentialReference,
+    timeoutMs:configuration.timeoutMs
+  },credentialStore,httpClient);
+}
+
+export async function listProviderModels(configuration:ProviderConfiguration,credentialStore:CredentialStore,httpClient?:HttpClient){
+  const provider=buildProviderForDiscovery(configuration,credentialStore,httpClient);
+  return provider?provider.listModels():[];
+}
+
 export function buildConfiguredProvider(configuration:ProviderConfiguration|undefined,credentialStore:CredentialStore,httpClient?:HttpClient):ChatProvider|undefined{
   if(!configuration||!configuration.enabled)return undefined;
   const validation=validateProviderConfiguration(configuration);
