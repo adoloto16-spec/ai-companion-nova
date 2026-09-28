@@ -97,6 +97,10 @@ export class StandardContractValidator extends MinimalJsonSchemaValidator {
   validateMemoryStoreState(value:unknown){return this.validate(value,STANDARD_SCHEMAS["memory-store-state"]!);}
   validateModelProfile(value:unknown){return this.validate(value,STANDARD_SCHEMAS["model-profile"]!);}
   validateModelProfileStoreState(value:unknown){return this.validate(value,STANDARD_SCHEMAS["model-profile-store-state"]!);}
+  validateCredentialProfile(value:unknown){return this.validate(value,STANDARD_SCHEMAS["credential-profile"]!);}
+  validateCredentialProfileStoreState(value:unknown){return this.validate(value,STANDARD_SCHEMAS["credential-profile-store-state"]!);}
+  validateProviderPreset(value:unknown){return this.validate(value,STANDARD_SCHEMAS["provider-preset"]!);}
+  validateProviderPresetStoreState(value:unknown){return this.validate(value,STANDARD_SCHEMAS["provider-preset-store-state"]!);}
   validateContextBudget(value:unknown){return this.validate(value,STANDARD_SCHEMAS["context-budget"]!);}
   validateContextBuildRequest(value:unknown){return this.validate(value,STANDARD_SCHEMAS["context-build-request"]!);}
   validateContextCandidate(value:unknown){return this.validate(value,STANDARD_SCHEMAS["context-candidate"]!);}
