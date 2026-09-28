@@ -81,7 +81,7 @@ export async function testProviderConfiguration(configuration:ProviderConfigurat
   const validation=validateProviderConfiguration(configuration);
   if(!validation.valid)return result("configuration_error",configuration.providerId,"Provider configuration is invalid.");
   if(!configuration.enabled)return result("configuration_error",configuration.providerId,"Real chat provider is disabled.");
-  if(configuration.providerId!==OPENAI_COMPATIBLE_PROVIDER_ID||!configuration.credentialReference)return result("configuration_error",configuration.providerId,"Configured provider is not supported or has no credential reference.");
+  if(configuration.providerId!==OPENAI_COMPATIBLE_PROVIDER_ID)return result("configuration_error",configuration.providerId,"Configured provider is not supported.");
   const provider=new OpenAICompatibleChatProvider({
     baseUrl:configuration.baseUrl,model:configuration.model,credential:configuration.credentialReference,timeoutMs:configuration.timeoutMs
   },credentialStore,httpClient);
@@ -113,6 +113,13 @@ export function buildProviderForDiscovery(configuration:ProviderConfiguration,cr
   },credentialStore,httpClient);
 }
 
+export async function testProviderConfigurationForPreset(configuration:ProviderConfiguration,credentialStore:CredentialStore,httpClient?:HttpClient):Promise<ProviderConnectionTestResult>{
+  const validation=validateProviderConfiguration(configuration);
+  if(!validation.valid)return result("configuration_error",configuration.providerId,"Provider preset configuration is invalid.");
+  if(!configuration.enabled)return result("configuration_error",configuration.providerId,"Provider preset is not active.");
+  return testProviderConfiguration(configuration,credentialStore,httpClient);
+}
+
 export async function listProviderModels(configuration:ProviderConfiguration,credentialStore:CredentialStore,httpClient?:HttpClient){
   const provider=buildProviderForDiscovery(configuration,credentialStore,httpClient);
   return provider?provider.listModels():[];
@@ -121,7 +128,7 @@ export async function listProviderModels(configuration:ProviderConfiguration,cre
 export function buildConfiguredProvider(configuration:ProviderConfiguration|undefined,credentialStore:CredentialStore,httpClient?:HttpClient):ChatProvider|undefined{
   if(!configuration||!configuration.enabled)return undefined;
   const validation=validateProviderConfiguration(configuration);
-  if(!validation.valid||!configuration.credentialReference)return undefined;
+  if(!validation.valid)return undefined;
   if(configuration.providerId===OPENAI_COMPATIBLE_PROVIDER_ID){
     return new OpenAICompatibleChatProvider({
       baseUrl:configuration.baseUrl,model:configuration.model,credential:configuration.credentialReference,timeoutMs:configuration.timeoutMs
