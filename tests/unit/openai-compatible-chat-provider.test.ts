@@ -113,7 +113,9 @@ async function requestMappingTest(){
   });
   equal(result.message.content,"hello from provider","mapped response text");
   equal(http.requests.length,1,"one HTTP request");
-  const sent=JSON.parse(http.requests[0]!.body) as {
+  const requestBody=http.requests[0]!.body;
+  if(requestBody===undefined)throw new Error("expected POST request body");
+  const sent=JSON.parse(requestBody) as {
     model:string;
     messages:Array<{role:string;content:string}>;
     stream:boolean;
