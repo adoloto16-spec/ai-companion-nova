@@ -498,7 +498,9 @@ function App(){
         const foundation=foundationRef.current;
         if(!foundation)return Promise.reject(new Error("Chat runtime is not available."));
         return foundation.chat(request);
-      },
+      }
+    },
+    {
       contextBuilder:{
         buildContext:request=>{
           const foundation=foundationRef.current;
