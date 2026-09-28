@@ -10,6 +10,8 @@ mod memory;
 mod retrieval;
 #[cfg(feature="tauri-app")]
 mod conversations;
+#[cfg(feature="tauri-app")]
+mod model_profiles;
 mod windows_credentials;
 
 use serde::Serialize;
@@ -182,6 +184,16 @@ fn save_conversation(app:tauri::AppHandle,conversation:conversations::Conversati
 #[cfg(feature="tauri-app")]
 #[tauri::command]
 fn clear_conversation(app:tauri::AppHandle,character_id:String)->Result<(),String>{conversations::clear(&app,&character_id)}
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn get_model_profile(app:tauri::AppHandle,character_id:String)->Result<Option<model_profiles::ModelProfile>,String>{model_profiles::load(&app,&character_id)}
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn save_model_profile(app:tauri::AppHandle,profile:model_profiles::ModelProfile)->Result<(),String>{model_profiles::save(&app,&profile)}
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn delete_model_profile(app:tauri::AppHandle,character_id:String)->Result<(),String>{model_profiles::delete(&app,&character_id)}
+
 
 #[derive(Default)]
 struct RuntimeDiagnosticsState(Mutex<Option<Value>>);
@@ -218,7 +230,10 @@ fn main(){
             remove_retrieval_character,
             get_conversation,
             save_conversation,
-            clear_conversation
+            clear_conversation,
+            get_model_profile,
+            save_model_profile,
+            delete_model_profile
         ])
         .run(tauri::generate_context!())
         .expect("Tauri runtime failed");
