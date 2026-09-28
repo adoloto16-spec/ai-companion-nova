@@ -54,6 +54,42 @@ export function defaultConversationId(characterId:CharacterId):ConversationId{
   if(!characterId.trim())throw new Error("Character id must not be empty.");
   return "conversation:"+characterId+":default.v1";
 }
+export type ModelProfileId=string;
+export const MODEL_PROFILE_API_VERSION:ApiVersion="1";
+export const MODEL_PROFILE_SCHEMA_VERSION="1";
+export interface ModelProfile{
+  apiVersion:ApiVersion;
+  schemaVersion:string;
+  id:ModelProfileId;
+  characterId:CharacterId;
+  providerId?:string;
+  model?:string;
+  generation:ChatGenerationOptions;
+  createdAt:string;
+  updatedAt:string;
+}
+export interface ModelProfileStoreState{
+  apiVersion:ApiVersion;
+  schemaVersion:string;
+  profiles:readonly ModelProfile[];
+}
+export interface ModelProfileStore{
+  load(characterId:CharacterId):Promise<ModelProfile|undefined>;
+  save(profile:ModelProfile):Promise<void>;
+  delete(characterId:CharacterId):Promise<void>;
+}
+export function defaultModelProfile(characterId:CharacterId,now=new Date().toISOString()):ModelProfile{
+  if(!characterId.trim())throw new Error("Character id must not be empty.");
+  return {
+    apiVersion:MODEL_PROFILE_API_VERSION,
+    schemaVersion:MODEL_PROFILE_SCHEMA_VERSION,
+    id:"model-profile:"+characterId+":default.v1",
+    characterId,
+    generation:{},
+    createdAt:now,
+    updatedAt:now
+  };
+}
 export type CoreBookEntryId=string;
 export const CORE_BOOK_API_VERSION:ApiVersion="1";
 export const CORE_BOOK_SCHEMA_VERSION="1";
