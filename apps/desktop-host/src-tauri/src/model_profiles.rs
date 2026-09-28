@@ -347,8 +347,6 @@ mod tests{
         assert_eq!(state.profiles[0].provider_preset_id,None);
     }
 
-    }
-
   #[test]
     fn accepts_valid_state(){
         assert!(decode(&serde_json::to_vec(&valid_state()).expect("encode")).is_ok());
