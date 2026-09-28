@@ -66,5 +66,31 @@ if(fs.existsSync(tauriCapabilityPath)&&fs.existsSync(tauriBuildPath)){
     else if(forbiddenPermissionPatterns.some(pattern=>pattern.test(permission)))violations.push("Tauri capability has forbidden broad permission: "+permission);
   }
 }
+function assertNoSecretFields(file){
+  if(!fs.existsSync(file))return;
+  let value;
+  try{value=JSON.parse(fs.readFileSync(file,"utf8"));}catch{return;}
+  const forbidden=/^(secret|apiKey|api_key|password|accessToken|token)$/i;
+  const walk=(node,path)=>{
+    if(Array.isArray(node)){node.forEach((item,index)=>walk(item,path+"["+index+"]"));return;}
+    if(node&&typeof node==="object"){
+      for(const [key,child] of Object.entries(node)){
+        if(forbidden.test(key))violations.push(file+" contains forbidden secret field: "+path+"."+key);
+        walk(child,path+"."+key);
+      }
+    }
+  };
+  walk(value,"$");
+}
+assertNoSecretFields("contracts/schemas/credential-profile.schema.json");
+assertNoSecretFields("contracts/schemas/credential-profile-store-state.schema.json");
+assertNoSecretFields("contracts/schemas/provider-preset.schema.json");
+assertNoSecretFields("contracts/schemas/provider-preset-store-state.schema.json");
+
+const uiMain=path.join(process.cwd(),"apps/desktop-ui/src/main.tsx");
+if(fs.existsSync(uiMain)){
+  const uiSource=fs.readFileSync(uiMain,"utf8");
+  if(/credentialStore\.getSecret\s*\(/.test(uiSource))violations.push("Desktop UI must not read credential secrets.");
+}
 if(violations.length){console.error(violations.join("\n"));process.exit(1);}
 console.log("Architecture guard passed.");
