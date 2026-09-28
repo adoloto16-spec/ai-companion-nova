@@ -762,8 +762,8 @@ function App(){
         </section>
       :view==="chat"&&activeCharacter&&chatController
       ?<ChatView controller={chatController} runtime={foundationRef.current!} character={activeCharacter}
-          onPersist={()=>persistConversation(chatController)}
-          onClear={()=>clearConversation(activeCharacter.id,chatController)}/>
+          onPersist={()=>persistConversation(chatController!)}
+          onClear={()=>clearConversation(activeCharacter.id,chatController!)}/>
       :view==="characters"&&activeCharacter
         ?<CharactersView characters={characters} activeCharacter={activeCharacter}
           onSelect={selectCharacter} onCreate={createCharacter} onRename={renameCharacter} onDelete={deleteCharacter}/>
