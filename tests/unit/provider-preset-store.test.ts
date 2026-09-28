@@ -62,7 +62,7 @@ async function main(){
 
   const reloaded=new InMemoryCredentialProfileStore();
   await reloaded.save(credentials);
-  equal((await reloaded.load())?.profiles[0]?.credentialReference.id,"cred-a","credential metadata never becomes secret payload");
+  equal((await reloaded.load())?.profiles[0]?.credentialReference.id,"cred-profile-a","credential metadata keeps only opaque reference");
 
   console.log("PASS provider preset and credential profile store tests");
 }
