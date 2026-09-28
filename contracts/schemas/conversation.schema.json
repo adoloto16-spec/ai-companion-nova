@@ -5,6 +5,8 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "apiVersion",
+    "schemaVersion",
     "id",
     "characterId",
     "messages",
@@ -12,6 +14,12 @@
     "updatedAt"
   ],
   "properties": {
+    "apiVersion": {
+      "const": "1"
+    },
+    "schemaVersion": {
+      "const": "1"
+    },
     "id": {
       "type": "string",
       "minLength": 1,
