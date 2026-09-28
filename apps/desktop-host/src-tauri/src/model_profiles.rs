@@ -303,6 +303,10 @@ mod tests{
         assert_eq!(restored.generation.top_p,profile.generation.top_p);
         assert_eq!(restored.created_at,profile.created_at);
         assert_eq!(restored.updated_at,profile.updated_at);
+        assert_eq!(
+            serde_json::to_value(&restored.generation.response_format).expect("restored responseFormat"),
+            serde_json::to_value(&profile.generation.response_format).expect("expected responseFormat")
+        );
         fs::remove_dir_all(path.parent().expect("directory")).expect("cleanup");
     }
 
