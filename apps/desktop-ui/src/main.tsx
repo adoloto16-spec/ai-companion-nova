@@ -852,6 +852,25 @@ function isTauriRuntime():boolean{
   return typeof window!=="undefined" && Boolean((window as unknown as Record<string,unknown>).__TAURI_INTERNALS__);
 }
 
+function materializePresetConfigurations(
+  presets:readonly ProviderPreset[],
+  profiles:readonly CredentialProfile[]
+):readonly {presetId:string;configuration:ProviderConfiguration}[]{
+  return presets.map(preset=>{
+    const credential=profiles.find(profile=>profile.id===preset.credentialProfileId);
+    return {presetId:preset.id,configuration:materializeProviderConfiguration(preset,credential)};
+  });
+}
+function credentialSavedEntries(
+  profiles:readonly CredentialProfile[],
+  saved:Record<string,boolean>
+):Record<string,boolean>{
+  return profiles.reduce<Record<string,boolean>>((result,profile)=>{
+    result[profile.id]=saved[profile.id]??false;
+    return result;
+  },{});
+}
+
 function App(){
   const [view,setView]=React.useState<"chat"|"characters"|"core-book"|"model-profile"|"settings">("chat");
   const [runtime,setRuntime]=React.useState<RuntimeDiagnostics>(preview);
