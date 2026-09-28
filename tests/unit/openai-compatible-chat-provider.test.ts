@@ -293,6 +293,31 @@ async function secretSafetyTest(){
   }
 }
 
+async function modelDiscoveryTest(){
+  const http=new FakeHttpClient();
+  http.next={status:200,body:JSON.stringify({data:[
+    {id:"discovered-model-a",display_name:"Ignored Name"},
+    {id:"discovered-model-b",displayName:"Discovered B"},
+    {id:17}
+  ]})};
+  const models=await provider(http).listModels();
+  equal(http.requests.length,1,"one discovery request");
+  equal(http.requests[0]!.method,"GET","model discovery uses GET");
+  equal(http.requests[0]!.url,"https://provider.example.test/v1/models","model discovery endpoint");
+  equal(http.requests[0]!.headers.Authorization,"Bearer unit-test-secret-value","model discovery authorization");
+  equal(models[0]?.id,"discovered-model-a","first discovered model id");
+  equal(models[1]?.displayName,"Discovered B","discovered displayName");
+  equal(models.length,2,"malformed model items are ignored");
+
+  http.next={status:405,body:""};
+  const fallback=await provider(http).listModels();
+  equal(fallback[0]?.id,"openai-compatible-test-model","unsupported discovery falls back to configured model");
+
+  http.next={status:200,body:"malformed"};
+  const malformed=await provider(http).listModels();
+  equal(malformed[0]?.id,"openai-compatible-test-model","malformed discovery falls back without provider failure");
+}
+
 async function runtimeIntegrationTest(){
   const http=new FakeHttpClient();
   const registry=new ProviderRegistry();
@@ -373,6 +398,7 @@ void (async()=>{
     ["Timeout and connection",timeoutAndConnectionTest],
     ["Credential and unsupported inputs",credentialAndUnsupportedTest],
     ["Secret safety",secretSafetyTest],
+    ["Model discovery",modelDiscoveryTest],
     ["AiRuntime integration",runtimeIntegrationTest],
     ["Health and model listing",providerHealthAndModelsTest],
     ["Composition Root",compositionRootTest]
