@@ -1,4 +1,4 @@
-import type {AssembledContext,ChatErrorCode,ChatMessage,ChatRequest,ChatResponse,CharacterId,ContextBuildRequest,ContextBudget,Unsubscribe} from "../../contracts/src/index";
+import type {AssembledContext,ChatErrorCode,ChatMessage,ChatRequest,ChatResponse,CharacterId,ContextBuildRequest,ContextBudget,Unsubscribe,ModelProfile} from "../../contracts/src/index";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION} from "../../contracts/src/index";
 
 export interface ChatRuntimeBoundary{chat(request:ChatRequest):Promise<ChatResponse>}
@@ -85,6 +85,7 @@ export class ChatSessionController{
   private readonly requestIdFactory:()=>string;
   private readonly contextBuilder?:ChatContextBuilderBoundary;
   private readonly contextBudget:ContextBudget;
+  private modelProfile?:ModelProfile;
   private sending=false;
   private error?:string;
   private errorCode?:ChatErrorCode;
@@ -97,6 +98,16 @@ export class ChatSessionController{
     this.requestIdFactory=options.requestIdFactory??defaultRequestId;
     this.contextBuilder=options.contextBuilder;
     this.contextBudget=options.contextBudget??DEFAULT_CHAT_CONTEXT_BUDGET;
+  }
+
+  setModelProfile(profile:ModelProfile|undefined):void{
+    if(profile&&profile.characterId!==this.session.characterId)throw new Error("Model profile character scope does not match the conversation.");
+    this.modelProfile=profile;
+    this.notify();
+  }
+
+  getModelProfile():ModelProfile|undefined{
+    return this.modelProfile;
   }
 
   getSnapshot():ConversationSnapshot{
@@ -150,15 +161,20 @@ export class ChatSessionController{
       contextMessages=assembled.messages;
     }
 
+    const profile=this.modelProfile;
+    const resolvedGeneration=profile?.generation;
+    const hasGeneration=Boolean(resolvedGeneration&&Object.keys(resolvedGeneration).length>0);
     const request:ChatRequest={
       apiVersion:CHAT_API_VERSION,
       schemaVersion:CHAT_SCHEMA_VERSION,
       requestId,
-      model,
+      ...(profile?.providerId!==undefined?{providerId:profile.providerId}:{}),
+      model:profile?.model??model,
       context:{
         conversationId:this.session.conversationId,
         messages:contextMessages
-      }
+      },
+      ...(hasGeneration&&resolvedGeneration?{generation:{...resolvedGeneration}}:{})
     };
 
     try{
