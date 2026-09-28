@@ -34,6 +34,9 @@
     "allow-remove-retrieval-character",
     "allow-get-conversation",
     "allow-save-conversation",
-    "allow-clear-conversation"
+    "allow-clear-conversation",
+    "allow-get-model-profile",
+    "allow-save-model-profile",
+    "allow-delete-model-profile"
   ]
 }
