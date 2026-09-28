@@ -18,6 +18,19 @@
     "allow-credential-exists",
     "allow-get-provider-configuration",
     "allow-save-provider-configuration",
-    "allow-delete-provider-configuration"
+    "allow-delete-provider-configuration",
+    "allow-get-characters",
+    "allow-save-characters",
+    "allow-get-core-book-entries",
+    "allow-save-core-book-entries",
+    "allow-get-memory-state",
+    "allow-save-memory-state",
+    "allow-supersede-memory",
+    "allow-search-retrieval-index",
+    "allow-rebuild-retrieval-index",
+    "allow-rebuild-all-retrieval-index",
+    "allow-upsert-retrieval-document",
+    "allow-remove-retrieval-document",
+    "allow-remove-retrieval-character"
   ]
 }

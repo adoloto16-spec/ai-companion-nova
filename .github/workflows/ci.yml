@@ -73,6 +73,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo check --workspace
       - run: cargo check --workspace --all-features
+      - run: cargo test -p nova-desktop-host --all-features characters::tests
 
   windows-installer:
     runs-on: windows-latest

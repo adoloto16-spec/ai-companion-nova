@@ -6,7 +6,7 @@ import {
   type CredentialReference,
   type ProviderConfiguration
 } from "../../contracts/src";
-import {InMemoryProviderConfigurationStore,serializeProviderConfiguration} from "../../host/config/src";
+import {InMemoryProviderConfigurationStore,serializeProviderConfiguration,loadProviderConfigurationSafely} from "../../host/config/src";
 import {InMemoryCredentialStore,IpcCredentialStore} from "../../host/credentials/src";
 import {activeProviderId,buildConfiguredProvider,testProviderConfiguration,validateProviderConfiguration} from "../../runtime/bootstrap/src";
 import {OPENAI_COMPATIBLE_PROVIDER_ID,type HttpClient,type HttpClientRequest,type HttpClientResponse,OpenAICompatibleChatProvider} from "../../providers/chat/openai-compatible/src";
@@ -51,6 +51,16 @@ async function configurationPersistenceTest(){
   ok(serialized.includes("test-model"),"serialized config contains model");
   ok(!serialized.includes("secret-value"),"serialized config contains no secret");
   ok(!serialized.includes("apiKey"),"serialized config has no apiKey field");
+}
+
+async function safeConfigurationLoadTest(){
+  const result=await loadProviderConfigurationSafely({
+    load:async()=>{throw new Error("invalid provider configuration: credentialReference.version must be string")},
+    save:async()=>{},
+    clear:async()=>{}
+  });
+  equal(result.configuration,undefined,"failed configuration load falls back to no real configuration");
+  equal(result.error,"invalid provider configuration: credentialReference.version must be string","configuration load error is preserved for diagnostics");
 }
 
 async function credentialCrudTest(){
@@ -163,6 +173,7 @@ void (async()=>{
     ["schema validation",schemaValidationTest],
     ["configuration persistence",configurationPersistenceTest],
     ["credential CRUD",credentialCrudTest],
+    ["safe configuration load",safeConfigurationLoadTest],
     ["configuration validation",validationTest],
     ["provider selection",selectionTest],
     ["connection test semantics",connectionTestTest],

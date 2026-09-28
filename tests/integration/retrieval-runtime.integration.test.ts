@@ -52,8 +52,18 @@ async function main(){
     const diagnostics=await degradedRuntime.diagnostics();
     equal(diagnostics.runtimeStatus,"degraded","retrieval rebuild failure degrades runtime");
     const character=await degradedRuntime.getActiveCharacter();
+    equal(character.id,"character.nova.default.v1","Character initialization survives degraded retrieval");
     const entry=await degradedRuntime.createCoreBookEntry(character.id,{title:"Canonical survives",content:"Still stored",activation:{kind:"always"},source:"user"});
     equal(entry.title,"Canonical survives","canonical Core Book remains usable when retrieval is degraded");
+    equal((await degradedRuntime.listCoreBookEntries(character.id)).length,1,"Core Book remains readable when retrieval is degraded");
+    const response=await degradedRuntime.chat({
+      apiVersion:"1",
+      schemaVersion:"1",
+      requestId:"retrieval-degraded",
+      model:"fake-chat",
+      context:{conversationId:"retrieval-degraded",messages:[{role:"user",content:"hello"}]}
+    });
+    equal(response.providerId,"fake.chat","Chat remains available when retrieval is degraded");
   }finally{await degradedRuntime.stop()}
   console.log("PASS Retrieval runtime integration tests");
 }
