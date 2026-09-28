@@ -286,10 +286,10 @@ mod tests{
         };
         save_to_path(&path,&state).expect("save");
         let raw=fs::read_to_string(&path).expect("read");
-        assert!(raw.contains(""providerId""));
-        assert!(raw.contains(""maxTokens""));
-        assert!(raw.contains(""topP""));
-        assert!(!raw.contains(""top_p""));
+        assert!(raw.contains("\"providerId\""));
+        assert!(raw.contains("\"maxTokens\""));
+        assert!(raw.contains("\"topP\""));
+        assert!(!raw.contains("\"top_p\""));
         let loaded=load_from_path(&path).expect("load").expect("state");
         let restored=&loaded.profiles[0];
         assert_eq!(restored.api_version,profile.api_version);
