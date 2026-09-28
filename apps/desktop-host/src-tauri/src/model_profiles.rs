@@ -139,8 +139,7 @@ fn load_from_path(path:&Path)->Result<Option<ModelProfileStoreState>,String>{
         Ok(state)=>Ok(Some(state)),
         Err(reason)=>{
             quarantine_invalid_storage(path)?;
-            let _=reason;
-            Ok(None)
+            Err(format!("model profile storage was quarantined after validation failed: {reason}"))
         }
     }
 }
@@ -258,8 +257,8 @@ mod tests{
         let path=temp_path("quarantine");
         let original=br#"{"legacy":true}"#;
         fs::write(&path,original).expect("write");
-        let result=load_from_path(&path).expect("invalid state should recover safely");
-        assert!(result.is_none());
+        let result=load_from_path(&path).expect_err("invalid state should be quarantined and reported");
+        assert!(result.contains("quarantined"));
         assert!(!path.exists());
         assert_eq!(fs::read(invalid_backup_path(&path)).expect("backup"),original);
         fs::remove_dir_all(path.parent().expect("directory")).expect("cleanup");
