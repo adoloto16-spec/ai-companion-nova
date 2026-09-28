@@ -2277,5 +2277,182 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       "core_book",
       "memory"
     ]
+  },
+  "conversation": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.ai-companion-nova.dev/conversation/v1",
+    "title": "AI Companion Nova Conversation v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "apiVersion",
+      "schemaVersion",
+      "id",
+      "characterId",
+      "messages",
+      "createdAt",
+      "updatedAt"
+    ],
+    "properties": {
+      "apiVersion": {
+        "const": "1"
+      },
+      "schemaVersion": {
+        "const": "1"
+      },
+      "id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "characterId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "messages": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "role",
+            "content"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "role": {
+              "enum": [
+                "system",
+                "user",
+                "assistant",
+                "tool"
+              ]
+            },
+            "content": {
+              "type": "string"
+            },
+            "toolCallId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        }
+      },
+      "createdAt": {
+        "type": "string",
+        "minLength": 1
+      },
+      "updatedAt": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "conversation-store-state": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.ai-companion-nova.dev/conversation-store-state/v1",
+    "title": "AI Companion Nova Conversation Store State v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "apiVersion",
+      "schemaVersion",
+      "conversations"
+    ],
+    "properties": {
+      "apiVersion": {
+        "const": "1"
+      },
+      "schemaVersion": {
+        "const": "1"
+      },
+      "conversations": {
+        "type": "array",
+        "items": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "$id": "https://schemas.ai-companion-nova.dev/conversation/v1",
+          "title": "AI Companion Nova Conversation v1",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "apiVersion",
+            "schemaVersion",
+            "id",
+            "characterId",
+            "messages",
+            "createdAt",
+            "updatedAt"
+          ],
+          "properties": {
+            "apiVersion": {
+              "const": "1"
+            },
+            "schemaVersion": {
+              "const": "1"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "characterId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "messages": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "role",
+                  "content"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "role": {
+                    "enum": [
+                      "system",
+                      "user",
+                      "assistant",
+                      "tool"
+                    ]
+                  },
+                  "content": {
+                    "type": "string"
+                  },
+                  "toolCallId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "metadata": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            },
+            "createdAt": {
+              "type": "string",
+              "minLength": 1
+            },
+            "updatedAt": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    }
   }
 } as unknown as Record<string, JsonSchema>;

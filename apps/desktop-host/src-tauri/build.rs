@@ -26,6 +26,9 @@ fn main() {
                     "upsert_retrieval_document",
                     "remove_retrieval_document",
                     "remove_retrieval_character",
+                    "get_conversation",
+                    "save_conversation",
+                    "clear_conversation",
                 ]),
             ),
     )

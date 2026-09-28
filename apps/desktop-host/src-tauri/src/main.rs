@@ -8,6 +8,8 @@ mod core_book;
 mod memory;
 #[cfg(feature="tauri-app")]
 mod retrieval;
+#[cfg(feature="tauri-app")]
+mod conversations;
 mod windows_credentials;
 
 use serde::Serialize;
@@ -171,6 +173,16 @@ fn remove_retrieval_document(app:tauri::AppHandle,character_id:String,source:ret
 #[tauri::command]
 fn remove_retrieval_character(app:tauri::AppHandle,character_id:String,state:tauri::State<'_,retrieval::RetrievalIndexLock>)->Result<(),String>{retrieval::remove_character(&app,&character_id,&state)}
 
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn get_conversation(app:tauri::AppHandle,character_id:String)->Result<Option<conversations::Conversation>,String>{conversations::load(&app,&character_id)}
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn save_conversation(app:tauri::AppHandle,conversation:conversations::Conversation)->Result<(),String>{conversations::save(&app,&conversation)}
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn clear_conversation(app:tauri::AppHandle,character_id:String)->Result<(),String>{conversations::clear(&app,&character_id)}
+
 #[derive(Default)]
 struct RuntimeDiagnosticsState(Mutex<Option<Value>>);
 
@@ -203,7 +215,10 @@ fn main(){
             rebuild_all_retrieval_index,
             upsert_retrieval_document,
             remove_retrieval_document,
-            remove_retrieval_character
+            remove_retrieval_character,
+            get_conversation,
+            save_conversation,
+            clear_conversation
         ])
         .run(tauri::generate_context!())
         .expect("Tauri runtime failed");

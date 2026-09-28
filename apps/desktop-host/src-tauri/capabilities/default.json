@@ -31,6 +31,9 @@
     "allow-rebuild-all-retrieval-index",
     "allow-upsert-retrieval-document",
     "allow-remove-retrieval-document",
-    "allow-remove-retrieval-character"
+    "allow-remove-retrieval-character",
+    "allow-get-conversation",
+    "allow-save-conversation",
+    "allow-clear-conversation"
   ]
 }

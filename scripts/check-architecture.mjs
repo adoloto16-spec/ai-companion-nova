@@ -31,7 +31,7 @@ const required=[
   "contracts/schemas/chat-request.schema.json","contracts/schemas/chat-response.schema.json","contracts/schemas/chat-error.schema.json","contracts/schemas/core-book-entry.schema.json","contracts/schemas/context-source.schema.json","contracts/schemas/context-zone.schema.json","contracts/schemas/context-budget.schema.json","contracts/schemas/context-build-request.schema.json","contracts/schemas/memory-item.schema.json","contracts/schemas/memory-search-query.schema.json","contracts/schemas/memory-store-state.schema.json","contracts/schemas/context-candidate.schema.json","contracts/schemas/assembled-context.schema.json","contracts/src/schema-validator.ts",
   "contracts/src/generated-schemas.ts","runtime/bootstrap/src/index.ts","core/src/context-engine.ts","core/src/memory-broker.ts","host/config/src/index.ts","host/credentials/src/index.ts","apps/desktop-ui/src/main.tsx","host/characters/src/index.ts","host/core-book/src/index.ts","host/memory/src/index.ts",
   "host/retrieval/src/index.ts","core/src/retrieval-indexer.ts","contracts/schemas/retrieval-source.schema.json","contracts/schemas/retrieval-match.schema.json","contracts/schemas/retrieval-query.schema.json","contracts/schemas/retrieval-candidate.schema.json","contracts/schemas/retrieval-result.schema.json","contracts/schemas/retrieval-index-document.schema.json",
-  "apps/desktop-host/src-tauri/build.rs","apps/desktop-host/src-tauri/capabilities/default.json","apps/desktop-host/src-tauri/src/memory.rs"
+  "apps/desktop-host/src-tauri/build.rs","apps/desktop-host/src-tauri/capabilities/default.json","apps/desktop-host/src-tauri/src/memory.rs","apps/desktop-host/src-tauri/src/conversations.rs","host/conversations/src/index.ts"
 ];
 for(const file of required)if(!fs.existsSync(file))violations.push("missing: "+file);
 
@@ -45,7 +45,7 @@ if(fs.existsSync(tauriCapabilityPath)&&fs.existsSync(tauriBuildPath)){
     "get_characters","save_characters","get_core_book_entries","save_core_book_entries",
     "get_memory_state","save_memory_state","supersede_memory","search_retrieval_index",
     "rebuild_retrieval_index","rebuild_all_retrieval_index","upsert_retrieval_document",
-    "remove_retrieval_document","remove_retrieval_character"
+    "remove_retrieval_document","remove_retrieval_character","get_conversation","save_conversation","clear_conversation"
   ];
   const buildSource=fs.readFileSync(tauriBuildPath,"utf8");
   for(const command of tauriCommands){
