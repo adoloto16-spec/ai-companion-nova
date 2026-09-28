@@ -4,7 +4,7 @@ use std::{collections::HashSet,fs,io::Write,path::{Path,PathBuf}};
 use tauri::Manager;
 
 const API_VERSION:&str="1";
-const SCHEMA_VERSION:&str="1";
+const SCHEMA_VERSION:&str="2";
 
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(rename_all="lowercase")]
@@ -44,6 +44,8 @@ pub struct ModelProfile{
     pub character_id:String,
     #[serde(rename="providerId",skip_serializing_if="Option::is_none")]
     pub provider_id:Option<String>,
+    #[serde(rename="providerPresetId",skip_serializing_if="Option::is_none")]
+    pub provider_preset_id:Option<String>,
     #[serde(skip_serializing_if="Option::is_none")]
     pub model:Option<String>,
     pub generation:ChatGenerationOptions,
@@ -94,6 +96,9 @@ fn validate_profile(profile:&ModelProfile)->Result<(),String>{
     if let Some(provider_id)=&profile.provider_id{
         if provider_id.trim().is_empty(){return Err("model profile providerId must not be empty".to_string());}
     }
+    if let Some(provider_preset_id)=&profile.provider_preset_id{
+        if provider_preset_id.trim().is_empty(){return Err("model profile providerPresetId must not be empty".to_string());}
+    }
     if let Some(model)=&profile.model{
         if model.trim().is_empty(){return Err("model profile model must not be empty".to_string());}
     }
@@ -114,7 +119,13 @@ fn validate_state(state:&ModelProfileStoreState)->Result<(),String>{
 }
 
 fn decode(bytes:&[u8])->Result<ModelProfileStoreState,String>{
-    let state:ModelProfileStoreState=serde_json::from_slice(bytes).map_err(|e|format!("invalid model profile storage file: {e}"))?;
+    let value:Value=serde_json::from_slice(bytes).map_err(|e|format!("invalid model profile storage file: {e}"))?;
+    let legacy=value.get("schemaVersion").and_then(Value::as_str)==Some("1");
+    let mut state:ModelProfileStoreState=serde_json::from_value(value).map_err(|e|format!("invalid model profile storage file: {e}"))?;
+    if legacy{
+        state.schema_version=SCHEMA_VERSION.to_string();
+        for profile in &mut state.profiles{profile.schema_version=SCHEMA_VERSION.to_string();}
+    }
     validate_state(&state)?;
     Ok(state)
 }
@@ -199,6 +210,7 @@ mod tests{
             id:id.to_string(),
             character_id:character_id.to_string(),
             provider_id:Some("fake.chat".to_string()),
+            provider_preset_id:None,
             model:Some("fake-chat".to_string()),
             generation:ChatGenerationOptions{temperature:Some(0.7),max_tokens:Some(200),top_p:Some(0.9),response_format:None},
             created_at:"2026-09-28T10:00:00.000Z".to_string(),
@@ -297,6 +309,7 @@ mod tests{
         assert_eq!(restored.id,profile.id);
         assert_eq!(restored.character_id,profile.character_id);
         assert_eq!(restored.provider_id,profile.provider_id);
+        assert_eq!(restored.provider_preset_id,profile.provider_preset_id);
         assert_eq!(restored.model,profile.model);
         assert_eq!(restored.generation.temperature,profile.generation.temperature);
         assert_eq!(restored.generation.max_tokens,profile.generation.max_tokens);
@@ -308,6 +321,30 @@ mod tests{
             serde_json::to_value(&profile.generation.response_format).expect("expected responseFormat")
         );
         fs::remove_dir_all(path.parent().expect("directory")).expect("cleanup");
+    #[test]
+    fn migrates_schema_v1_to_v2(){
+        let payload=serde_json::json!({
+            "apiVersion":"1",
+            "schemaVersion":"1",
+            "profiles":[{
+                "apiVersion":"1",
+                "schemaVersion":"1",
+                "id":"model-profile:nova:default.v1",
+                "characterId":"character.nova.default.v1",
+                "providerId":"openai-compatible",
+                "model":"legacy-model",
+                "generation":{},
+                "createdAt":"2026-09-28T10:00:00.000Z",
+                "updatedAt":"2026-09-28T10:00:00.000Z"
+            }]
+        });
+        let state=decode(&serde_json::to_vec(&payload).expect("encode")).expect("legacy profile should migrate");
+        assert_eq!(state.schema_version,"2");
+        assert_eq!(state.profiles[0].schema_version,"2");
+        assert_eq!(state.profiles[0].provider_id.as_deref(),Some("openai-compatible"));
+        assert_eq!(state.profiles[0].provider_preset_id,None);
+    }
+
     }
 
   #[test]
