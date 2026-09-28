@@ -131,7 +131,6 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     if(!this.validConfig(true))return [];
     const now=Date.now();
     if(this.modelsCache&&this.modelsCache.expiresAt>now)return this.modelsCache.models.map(model=>({...model}));
-    const fallback=this.config.model?{id:this.config.model,displayName:this.config.model,capabilities:this.capabilities()}:undefined;
     try{
       const secret=await this.resolveCredentialOptional();
       const response=await this.requestWithTimeoutRaw({
@@ -142,10 +141,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
           ...(secret?{Authorization:"Bearer "+secret}:{}),
         }
       },this.timeoutMs());
-      if(response.status<200||response.status>=300){
-        if(fallback)return [fallback];
-        return [];
-      }
+      if(response.status<200||response.status>=300)return [];
       const payload:unknown=JSON.parse(response.body);
       const items=Array.isArray(payload)
         ?payload
@@ -159,11 +155,11 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
         const displayName=typeof record.displayName==="string"?record.displayName:typeof record.name==="string"?record.name:record.id;
         return [{id:record.id,displayName,capabilities:this.capabilities()}];
       });
-      if(models.length===0&&fallback)return [fallback];
+      if(models.length===0)return [];
       this.modelsCache={expiresAt:now+60_000,models};
       return models.map(model=>({...model}));
     }catch{
-      return fallback?[fallback]:[];
+      return [];
     }
   }
 
