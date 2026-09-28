@@ -410,6 +410,8 @@ export const CONTRACT_VERSIONS={
   contextBuildRequest:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
   contextCandidate:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
   assembledContext:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
+  modelProfile:{apiVersion:MODEL_PROFILE_API_VERSION,schemaVersion:MODEL_PROFILE_SCHEMA_VERSION},
+  modelProfileStoreState:{apiVersion:MODEL_PROFILE_API_VERSION,schemaVersion:MODEL_PROFILE_SCHEMA_VERSION},
   retrievalSource:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
   retrievalMatch:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
   retrievalQuery:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
