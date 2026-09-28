@@ -5,7 +5,7 @@ import {
   ChatSessionController,ConversationSession,type Character,type FoundationRuntime,InMemoryCharacterStore,type RuntimeDiagnostics,
   type CoreBookActivation,type CoreBookEntry
 } from "../../../core/src/index";
-import {startFoundationRuntime,testProviderConfiguration,validateProviderConfiguration,listProviderModels} from "../../../runtime/bootstrap/src/index";
+import {startFoundationRuntime,testProviderConfiguration,testProviderPresetConfiguration,validateProviderConfiguration,listProviderModels} from "../../../runtime/bootstrap/src/index";
 import {IpcCredentialStore,InMemoryCredentialStore} from "../../../host/credentials/src/index";
 import {IpcCredentialProfileStore,InMemoryCredentialProfileStore,emptyCredentialProfileState} from "../../../host/credential-profiles/src/index";
 import {IpcProviderPresetStore,InMemoryProviderPresetStore,materializeProviderConfiguration,migrateProviderConfiguration,emptyProviderPresetState} from "../../../host/provider-presets/src/index";
@@ -972,9 +972,7 @@ function App(){
       if(!first)return {apiVersion:"1",schemaVersion:"1",status:"configuration_error",providerId:preset.providerId,message:"Model discovery is unavailable; choose a model manually."};
       config={...config,model:first,enabled:true};
     }
-    const validation=validateProviderConfiguration(config);
-    if(!validation.valid)return {apiVersion:"1",schemaVersion:"1",status:"configuration_error",providerId:preset.providerId,message:validation.errors.join(" ")};
-    return testProviderConfiguration(config,credentialStore);
+    return testProviderPresetConfiguration(config,credentialStore);
   },[credentialStore]);
 
   const saveModelProfile=React.useCallback(async(profile:ModelProfile)=>{
