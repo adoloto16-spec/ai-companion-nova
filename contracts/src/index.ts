@@ -28,6 +28,32 @@ export const CHARACTER_SCHEMA_VERSION="1";
 export interface Character{id:CharacterId;name:string;description:string;createdAt:string;updatedAt:string;enabled:boolean}
 export interface CharacterStoreState{apiVersion:ApiVersion;schemaVersion:string;characters:readonly Character[];activeCharacterId:CharacterId}
 export interface CharacterStore{load():Promise<CharacterStoreState|undefined>;save(state:CharacterStoreState):Promise<void>}
+export type ConversationId=string;
+export const CONVERSATION_API_VERSION:ApiVersion="1";
+export const CONVERSATION_SCHEMA_VERSION="1";
+export interface Conversation{
+  apiVersion:ApiVersion;
+  schemaVersion:string;
+  id:ConversationId;
+  characterId:CharacterId;
+  messages:readonly ChatMessage[];
+  createdAt:string;
+  updatedAt:string;
+}
+export interface ConversationStoreState{
+  apiVersion:ApiVersion;
+  schemaVersion:string;
+  conversations:readonly Conversation[];
+}
+export interface ConversationStore{
+  load(characterId:CharacterId):Promise<Conversation|undefined>;
+  save(conversation:Conversation):Promise<void>;
+  clear(characterId:CharacterId):Promise<void>;
+}
+export function defaultConversationId(characterId:CharacterId):ConversationId{
+  if(!characterId.trim())throw new Error("Character id must not be empty.");
+  return "conversation:"+characterId+":default.v1";
+}
 export type CoreBookEntryId=string;
 export const CORE_BOOK_API_VERSION:ApiVersion="1";
 export const CORE_BOOK_SCHEMA_VERSION="1";
