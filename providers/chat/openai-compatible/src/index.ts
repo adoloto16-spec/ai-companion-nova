@@ -143,12 +143,12 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       },this.timeoutMs());
       if(response.status<200||response.status>=300)return [];
       const payload:unknown=JSON.parse(response.body);
-      const items=Array.isArray(payload)
-        ?payload
+      const items:unknown[]=Array.isArray(payload)
+        ?payload as unknown[]
         :payload&&typeof payload==="object"&&Array.isArray((payload as Record<string,unknown>).data)
-          ?(payload as Record<string,unknown>).data
+          ?(payload as Record<string,unknown>).data as unknown[]
           :[];
-      const models=items.flatMap(item=>{
+      const models=items.flatMap((item:unknown)=>{
         if(!item||typeof item!=="object"||Array.isArray(item))return [];
         const record=item as Record<string,unknown>;
         if(typeof record.id!=="string"||!record.id.trim())return [];
