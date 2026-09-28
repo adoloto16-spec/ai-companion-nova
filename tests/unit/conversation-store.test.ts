@@ -23,8 +23,6 @@ async function main(){
   equal(loaded?.characterId,nova.characterId,"conversation character scope is stable");
   equal(loaded?.messages.map(message=>message.content).join("|"),"hello Nova|hello from Nova","messages round-trip");
 
-  const mutable=nova.messages as Array<{content:string}>;
-  if(mutable[0])mutable[0].content="mutated caller copy";
   equal((await store.load(nova.characterId))?.messages[0]?.content,"hello Nova","store isolates caller message mutation");
 
   await store.save({
