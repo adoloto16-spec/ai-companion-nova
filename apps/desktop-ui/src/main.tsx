@@ -435,6 +435,191 @@ function CoreBookView({runtime,character}:{runtime:FoundationRuntime;character:C
   </section>;
 }
 
+function ProviderPresetsView({
+  presets,activePresetId,credentialProfiles,credentialSaved,runtime,
+  onSavePreset,onActivatePreset,onDeletePreset,onCreateCredential,onDeleteCredential,onRefreshModels,onTestPreset
+}:{
+  presets:readonly ProviderPreset[];
+  activePresetId:string|null;
+  credentialProfiles:readonly CredentialProfile[];
+  credentialSaved:Record<string,boolean>;
+  runtime:RuntimeDiagnostics;
+  onSavePreset:(preset:ProviderPreset,activate:boolean)=>Promise<void>;
+  onActivatePreset:(id:string)=>Promise<void>;
+  onDeletePreset:(id:string)=>Promise<void>;
+  onCreateCredential:(label:string,secret:string)=>Promise<CredentialProfile>;
+  onDeleteCredential:(id:string)=>Promise<void>;
+  onRefreshModels:(preset:ProviderPreset)=>Promise<readonly ModelInfo[]>;
+  onTestPreset:(preset:ProviderPreset)=>Promise<ProviderConnectionTestResult>;
+}){
+  const [selectedId,setSelectedId]=React.useState<string|undefined>(presets.find(p=>p.id===activePresetId)?.id??presets[0]?.id);
+  const [draft,setDraft]=React.useState<ProviderPreset>(()=>presets.find(p=>p.id===selectedId)??{
+    id:"provider-preset:new-"+Date.now(),name:"",providerId:"openai-compatible",baseUrl:"https://api.openai.com/v1",
+    createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()
+  });
+  const [models,setModels]=React.useState<readonly ModelInfo[]>([]);
+  const [busy,setBusy]=React.useState(false);
+  const [message,setMessage]=React.useState("");
+  const [credentialChoice,setCredentialChoice]=React.useState(draft.credentialProfileId??"");
+  const [newCredentialLabel,setNewCredentialLabel]=React.useState("");
+  const [newCredentialSecret,setNewCredentialSecret]=React.useState("");
+
+  React.useEffect(()=>{
+    const next=presets.find(p=>p.id===selectedId)??presets[0];
+    if(next){setSelectedId(next.id);setDraft({...next});setCredentialChoice(next.credentialProfileId??"");}
+  },[selectedId,presets]);
+
+  const save=async(activate:boolean)=>{
+    setBusy(true);setMessage("");
+    try{
+      const next:ProviderPreset={
+        ...draft,
+        name:draft.name.trim(),
+        baseUrl:draft.baseUrl.trim(),
+        providerId:"openai-compatible",
+        credentialProfileId:credentialChoice||undefined,
+        model:draft.model?.trim()||undefined,
+        updatedAt:new Date().toISOString()
+      };
+      if(!next.name)throw new Error("Provider preset name is required.");
+      await onSavePreset(next,activate);setDraft(next);setSelectedId(next.id);
+      setMessage(activate?"Provider preset saved and activated.":"Provider preset saved.");
+    }catch(error){setMessage("Provider preset could not be saved: "+safeErrorMessage(error))}
+    finally{setBusy(false)}
+  };
+
+  const saveAsNew=async()=>{
+    const now=new Date().toISOString();
+    const next={...draft,id:"provider-preset:"+(draft.name.trim()||"preset").toLowerCase().replace(/[^a-z0-9]+/g,"-")+":"+Date.now(),createdAt:now,updatedAt:now};
+    setDraft(next);setSelectedId(next.id);
+    await (async()=>{
+      setBusy(true);setMessage("");
+      try{await onSavePreset(next,false);setMessage("Provider preset saved as new preset.")}
+      catch(error){setMessage("Provider preset could not be saved: "+safeErrorMessage(error))}
+      finally{setBusy(false)}
+    })();
+  };
+
+  const activate=async()=>{
+    if(!selectedId)return;
+    setBusy(true);setMessage("");
+    try{await onActivatePreset(selectedId);setMessage("Provider preset activated.")}
+    catch(error){setMessage("Provider preset could not be activated: "+safeErrorMessage(error))}
+    finally{setBusy(false)}
+  };
+
+  const removePreset=async()=>{
+    if(!selectedId)return;
+    setBusy(true);setMessage("");
+    try{await onDeletePreset(selectedId);setMessage("Provider preset deleted.")}
+    catch(error){setMessage("Provider preset could not be deleted: "+safeErrorMessage(error))}
+    finally{setBusy(false)}
+  };
+
+  const refresh=async()=>{
+    setBusy(true);setMessage("");
+    try{
+      const result=await onRefreshModels(draft);setModels(result);
+      setMessage(result.length>0?"Models refreshed.":"Model discovery unavailable; manual model input is active.");
+    }catch(error){setModels([]);setMessage("Model discovery failed: "+safeErrorMessage(error))}
+    finally{setBusy(false)}
+  };
+
+  const test=async()=>{
+    setBusy(true);setMessage("");
+    try{
+      const result=await onTestPreset(draft);setMessage(resultLabel(result)+(result.message?" · "+result.message:""));
+    }catch(error){setMessage("Provider test failed: "+safeErrorMessage(error))}
+    finally{setBusy(false)}
+  };
+
+  const createCredential=async()=>{
+    setBusy(true);setMessage("");
+    try{
+      if(!newCredentialLabel.trim()||!newCredentialSecret)throw new Error("Credential label and API key are required.");
+      const profile=await onCreateCredential(newCredentialLabel.trim(),newCredentialSecret);
+      setCredentialChoice(profile.id);setNewCredentialLabel("");setNewCredentialSecret("");
+      setMessage("Credential saved. The API key is no longer displayed.");
+    }catch(error){setMessage("Credential could not be saved: "+safeErrorMessage(error))}
+    finally{setBusy(false)}
+  };
+
+  const deleteCredential=async(id:string)=>{
+    const used=presets.filter(p=>p.credentialProfileId===id);
+    if(used.length>0){setMessage("Credential is used by: "+used.map(p=>p.name||p.id).join(", ")+". Reassign the preset before deletion.");return;}
+    setBusy(true);setMessage("");
+    try{await onDeleteCredential(id);if(credentialChoice===id)setCredentialChoice("");setMessage("Credential removed.")}
+    catch(error){setMessage("Credential could not be removed: "+safeErrorMessage(error))}
+    finally{setBusy(false)}
+  };
+
+  const setStarter=(name:string,baseUrl:string)=>{const now=new Date().toISOString();setDraft({id:"provider-preset:"+name.toLowerCase()+":"+Date.now(),name,providerId:"openai-compatible",baseUrl,createdAt:now,updatedAt:now});setCredentialChoice("");setModels([]);};
+
+  return <section className="settings-grid">
+    <section>
+      <h2>Provider Presets</h2>
+      <p className="chat-subtitle">Saved connections. API secrets remain in the OS credential store.</p>
+      <label>Active preset
+        <select value={activePresetId??""} onChange={event=>{if(event.target.value)void onActivatePreset(event.target.value)}} disabled={busy||presets.length===0}>
+          {presets.length===0?<option value="">No saved presets</option>:presets.map(p=><option key={p.id} value={p.id}>{p.name||p.id}</option>)}
+        </select>
+      </label>
+      <label>Preset to edit
+        <select value={selectedId??""} onChange={event=>setSelectedId(event.target.value)} disabled={busy||presets.length===0}>
+          {presets.length===0?<option value="">Create a preset below</option>:presets.map(p=><option key={p.id} value={p.id}>{p.name||p.id}</option>)}
+        </select>
+      </label>
+      <label>Name<input value={draft.name} onChange={event=>setDraft(current=>({...current,name:event.target.value}))} disabled={busy}/></label>
+      <label>Provider type<select value="openai-compatible" disabled><option value="openai-compatible">OpenAI-compatible</option></select></label>
+      <label>Base URL<input value={draft.baseUrl} onChange={event=>setDraft(current=>({...current,baseUrl:event.target.value}))} disabled={busy}/></label>
+      <label>API credential
+        <select value={credentialChoice} onChange={event=>setCredentialChoice(event.target.value)} disabled={busy}>
+          <option value="">No credential / local server</option>
+          {credentialProfiles.map(profile=><option key={profile.id} value={profile.id}>{profile.label} {credentialSaved[profile.id]?"••••••••":"(not saved)"}</option>)}
+          <option value="__new__">+ Add new credential</option>
+        </select>
+      </label>
+      {credentialChoice==="__new__"&&<div className="character-actions">
+        <label>Label<input value={newCredentialLabel} onChange={event=>setNewCredentialLabel(event.target.value)} disabled={busy}/></label>
+        <label>API key<input type="password" autoComplete="off" value={newCredentialSecret} onChange={event=>setNewCredentialSecret(event.target.value)} disabled={busy}/></label>
+        <button onClick={()=>void createCredential()} disabled={busy}>Save credential</button>
+      </div>}
+      <label>Model
+        {models.length>0
+          ?<select value={draft.model??""} onChange={event=>setDraft(current=>({...current,model:event.target.value||undefined}))} disabled={busy}>
+            {models.map(model=><option key={model.id} value={model.id}>{model.displayName&&model.displayName!==model.id?model.displayName+" · "+model.id:model.id}</option>)}
+          </select>
+          :<input value={draft.model??""} onChange={event=>setDraft(current=>({...current,model:event.target.value||undefined}))} placeholder="model-id" disabled={busy}/>}
+      </label>
+      <label>Timeout (ms)<input type="number" min="1" value={draft.timeoutMs??30000} onChange={event=>setDraft(current=>({...current,timeoutMs:Number(event.target.value)}))} disabled={busy}/></label>
+      <div className="actions">
+        <button onClick={()=>void refresh()} disabled={busy}>Refresh models</button>
+        <button onClick={()=>void test()} disabled={busy||!draft.name.trim()}>Test provider</button>
+        <button onClick={()=>void save(false)} disabled={busy||!draft.name.trim()}>Save</button>
+        <button onClick={()=>void save(true)} disabled={busy||!draft.name.trim()}>Save &amp; activate</button>
+        <button onClick={()=>void saveAsNew()} disabled={busy||!draft.name.trim()}>Save as new preset</button>
+        {selectedId&&<button onClick={()=>void activate()} disabled={busy||activePresetId===selectedId}>Activate preset</button>}
+        {selectedId&&<button onClick={()=>void removePreset()} disabled={busy}>Delete preset</button>}
+      </div>
+      <div className="actions">
+        <button onClick={()=>setStarter("Mistral","https://api.mistral.ai/v1")} disabled={busy}>Starter: Mistral</button>
+        <button onClick={()=>setStarter("Groq","https://api.groq.com/openai/v1")} disabled={busy}>Starter: Groq</button>
+        <button onClick={()=>setStarter("OpenAI","https://api.openai.com/v1")} disabled={busy}>Starter: OpenAI</button>
+      </div>
+      {message&&<div className="notice" role="status">{message}</div>}
+      <p className="hint">API keys are never loaded back into this UI.</p>
+    </section>
+    <section>
+      <h2>Saved API credentials</h2>
+      {credentialProfiles.length===0?<div>No saved credential metadata.</div>:credentialProfiles.map(profile=>
+        <div className="row" key={profile.id}><span>{profile.label} {credentialSaved[profile.id]?"••••••••":"(not saved)"}</span><button onClick={()=>void deleteCredential(profile.id)} disabled={busy}>Delete</button></div>
+      )}
+      <h2>Runtime</h2>
+      <div className="status-grid"><span>Runtime</span><strong>{runtime.runtimeStatus}</strong><span>Active</span><strong>{activePresetId??"none"}</strong></div>
+    </section>
+  </section>;
+}
+
 function ModelProfileView({
   profile,runtime,presets,activePresetId,onSave
 }:{
