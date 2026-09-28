@@ -1,4 +1,4 @@
-import type {CharacterId,Conversation,ConversationStore,ChatMessage,ConversationStoreState} from "../../../contracts/src/index";
+import type {CharacterId,Conversation,ConversationStore,ChatMessage} from "../../../contracts/src/index";
 
 export type ConversationStoreInvoke=(command:string,args?:Record<string,unknown>)=>Promise<unknown>;
 
@@ -22,13 +22,7 @@ function cloneConversation(conversation:Conversation):Conversation{
     updatedAt:conversation.updatedAt
   };
 }
-function cloneState(state:ConversationStoreState):ConversationStoreState{
-  return {
-    apiVersion:state.apiVersion,
-    schemaVersion:state.schemaVersion,
-    conversations:state.conversations.map(cloneConversation)
-  };
-}
+
 
 export class InMemoryConversationStore implements ConversationStore{
   private readonly conversations=new Map<CharacterId,Conversation>();
