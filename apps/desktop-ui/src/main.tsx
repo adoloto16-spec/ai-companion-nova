@@ -7,8 +7,8 @@ import {
 } from "../../../core/src/index";
 import {startFoundationRuntime,testProviderConfiguration,validateProviderConfiguration,listProviderModels} from "../../../runtime/bootstrap/src/index";
 import {IpcCredentialStore,InMemoryCredentialStore} from "../../../host/credentials/src/index";
-import {IpcCredentialProfileStore,InMemoryCredentialProfileStore} from "../../../host/credential-profiles/src/index";
-import {IpcProviderPresetStore,InMemoryProviderPresetStore,materializeProviderConfiguration,migrateProviderConfiguration} from "../../../host/provider-presets/src/index";
+import {IpcCredentialProfileStore,InMemoryCredentialProfileStore,emptyCredentialProfileState} from "../../../host/credential-profiles/src/index";
+import {IpcProviderPresetStore,InMemoryProviderPresetStore,materializeProviderConfiguration,migrateProviderConfiguration,emptyProviderPresetState} from "../../../host/provider-presets/src/index";
 import {IpcProviderConfigurationStore,loadProviderConfigurationSafely} from "../../../host/config/src/index";
 import {IpcCharacterStore} from "../../../host/characters/src/index";
 import {IpcCoreBookStore,InMemoryCoreBookStore} from "../../../host/core-book/src/index";
@@ -880,20 +880,36 @@ function App(){
   const memoryStore=React.useMemo(()=>isTauriRuntime()?new IpcMemoryStore(invoke):new InMemoryMemoryStore(),[]);
   const conversationStore=React.useMemo(()=>isTauriRuntime()?new IpcConversationStore(invoke):new InMemoryConversationStore(),[]);
   const modelProfileStore=React.useMemo(()=>isTauriRuntime()?new IpcModelProfileStore(invoke):new InMemoryModelProfileStore(),[]);
+  const credentialProfileStore=React.useMemo(()=>isTauriRuntime()?new IpcCredentialProfileStore(invoke):new InMemoryCredentialProfileStore(),[]);
+  const providerPresetStore=React.useMemo(()=>isTauriRuntime()?new IpcProviderPresetStore(invoke):new InMemoryProviderPresetStore(),[]);
+  const [credentialProfiles,setCredentialProfiles]=React.useState<readonly CredentialProfile[]>([]);
+  const [credentialSavedMap,setCredentialSavedMap]=React.useState<Record<string,boolean>>({});
+  const [providerPresets,setProviderPresets]=React.useState<readonly ProviderPreset[]>([]);
+  const [activePresetId,setActivePresetId]=React.useState<string|null>(null);
+  const credentialProfileStateRef=React.useRef<CredentialProfileStoreState>(emptyCredentialProfileState());
+  const providerPresetStateRef=React.useRef<ProviderPresetStoreState>(emptyProviderPresetState());
   const retriever=React.useMemo(()=>isTauriRuntime()?new IpcFullTextRetriever(invoke):undefined,[]);
 
   const controllerForSession=React.useCallback((session:ConversationSession)=>new ChatSessionController(
     session,
     {
-      chat:request=>{
+      chat:(request,providerPresetId)=>{
         const foundation=foundationRef.current;
         if(!foundation)return Promise.reject(new Error("Chat runtime is not available."));
-        return foundation.chat(request);
+        return foundation.chat(request,providerPresetId);
       },
       getChatModel:providerId=>{
         const foundation=foundationRef.current;
         if(!foundation)return Promise.reject(new Error("Chat runtime is not available."));
         return foundation.getChatModel(providerId);
+      },
+      getChatModelForPreset:providerPresetId=>{
+        const foundation=foundationRef.current;
+        if(!foundation)return Promise.reject(new Error("Chat runtime is not available."));
+        return foundation.getChatModelForPreset(providerPresetId);
+      },
+      getActiveProviderPresetId:()=>{
+        return foundationRef.current?.getActiveProviderPresetId();
       }
     },
     {
