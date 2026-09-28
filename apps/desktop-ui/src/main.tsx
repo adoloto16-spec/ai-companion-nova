@@ -1131,7 +1131,7 @@ function App(){
     else await refreshRuntime(undefined,undefined,nextState,credentialProfileStateRef.current);
   },[providerPresetStore,refreshRuntime]);
 
-  const createCredentialProfile=React.useCallback(async(label:string,secret:string):Promise<CredentialProfile>{
+  const createCredentialProfile=React.useCallback(async(label:string,secret:string):Promise<CredentialProfile>=>{
     const now=new Date().toISOString();const reference={id:"credential."+slugId(label)+"."+Date.now(),kind:"api-key",provider:"openai-compatible",version:"1"} as const;
     await credentialStore.setSecret(reference,secret);
     const profile:CredentialProfile={id:"credential-profile:"+slugId(label)+":"+Date.now(),label,providerId:"openai-compatible",credentialReference:reference,createdAt:now,updatedAt:now};
