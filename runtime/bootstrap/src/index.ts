@@ -335,8 +335,6 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     }
   };
 }
-export {activeProviderId,buildConfiguredProvider,testProviderConfiguration,validateProviderConfiguration} from "./provider-configuration";
-
 export async function startFoundationRuntime(options:FoundationRuntimeOptions={}){
   const runtime=await createFoundationRuntime(options);
   await runtime.start();
@@ -344,4 +342,4 @@ export async function startFoundationRuntime(options:FoundationRuntimeOptions={}
 }
 export type {RuntimeDiagnostics,ActorIdentity};
 
-export {activeProviderId,buildConfiguredProvider,buildProviderForDiscovery,testProviderConfiguration,testProviderPresetConfiguration,listProviderModels} from "./provider-configuration";
+export {activeProviderId,buildConfiguredProvider,buildProviderForDiscovery,testProviderConfiguration,testProviderPresetConfiguration,validateProviderConfiguration,listProviderModels} from "./provider-configuration";
