@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/conversation/v1",
+  "title": "AI Companion Nova Conversation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "characterId",
+    "messages",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "characterId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "messages": {
+      "type": "array",
+      "items": {
+        "$ref": "https://schemas.ai-companion-nova.dev/chat-message/v1"
+      }
+    },
+    "createdAt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "updatedAt": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}
