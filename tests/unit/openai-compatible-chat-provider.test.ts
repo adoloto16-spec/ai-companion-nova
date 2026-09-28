@@ -123,7 +123,7 @@ async function requestMappingTest(){
     response_format?:unknown;
   };
   equal(http.requests[0]!.url,"https://provider.example.test/v1/chat/completions","chat endpoint");
-  equal(http.requests[0]!.headers.Authorization,"Bearer unit-test-secret-value","authorization boundary");
+  equal(http.requests[0]!.headers.Authorization??"","Bearer unit-test-secret-value","authorization boundary");
   equal(sent.model,"openai-compatible-test-model","model mapping");
   equal(sent.stream,false,"non-streaming request");
   equal(sent.temperature,0.4,"temperature mapping");
