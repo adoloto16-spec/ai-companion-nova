@@ -5,8 +5,10 @@ import {
   ChatSessionController,ConversationSession,type Character,type FoundationRuntime,InMemoryCharacterStore,type RuntimeDiagnostics,
   type CoreBookActivation,type CoreBookEntry
 } from "../../../core/src/index";
-import {startFoundationRuntime,testProviderConfiguration,validateProviderConfiguration} from "../../../runtime/bootstrap/src/index";
-import {IpcCredentialStore} from "../../../host/credentials/src/index";
+import {startFoundationRuntime,testProviderConfiguration,validateProviderConfiguration,listProviderModels} from "../../../runtime/bootstrap/src/index";
+import {IpcCredentialStore,InMemoryCredentialStore} from "../../../host/credentials/src/index";
+import {IpcCredentialProfileStore,InMemoryCredentialProfileStore} from "../../../host/credential-profiles/src/index";
+import {IpcProviderPresetStore,InMemoryProviderPresetStore,materializeProviderConfiguration,migrateProviderConfiguration} from "../../../host/provider-presets/src/index";
 import {IpcProviderConfigurationStore,loadProviderConfigurationSafely} from "../../../host/config/src/index";
 import {IpcCharacterStore} from "../../../host/characters/src/index";
 import {IpcCoreBookStore,InMemoryCoreBookStore} from "../../../host/core-book/src/index";
@@ -17,7 +19,8 @@ import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
   PROVIDER_CONFIGURATION_API_VERSION,PROVIDER_CONFIGURATION_SCHEMA_VERSION,
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation, defaultConversationId,
-  type ModelProfile, defaultModelProfile
+  type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState,
+  type ProviderPreset, type ProviderPresetStoreState, type ModelInfo
 } from "../../../contracts/src/index";
 import "./styles.css";
 
