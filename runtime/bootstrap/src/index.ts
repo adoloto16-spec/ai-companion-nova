@@ -299,7 +299,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       if(!provider)return configuration.model||"fake-chat";
       try{
         const models=await provider.listModels();
-        return models[0]?.id??configuration.model||"fake-chat";
+        return models[0]?.id??(configuration.model||"fake-chat");
       }catch{
         return configuration.model||"fake-chat";
       }
