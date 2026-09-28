@@ -3,7 +3,7 @@ import {createRoot} from "react-dom/client";
 import {invoke} from "@tauri-apps/api/core";
 import {
   ChatSessionController,ConversationSession,type Character,type FoundationRuntime,InMemoryCharacterStore,type RuntimeDiagnostics,
-  type CoreBookActivation,type CoreBookEntry,type Conversation,defaultConversationId
+  type CoreBookActivation,type CoreBookEntry
 } from "../../../core/src/index";
 import {startFoundationRuntime,testProviderConfiguration,validateProviderConfiguration} from "../../../runtime/bootstrap/src/index";
 import {IpcCredentialStore} from "../../../host/credentials/src/index";
@@ -15,7 +15,7 @@ import {IpcConversationStore,InMemoryConversationStore} from "../../../host/conv
 import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
   PROVIDER_CONFIGURATION_API_VERSION,PROVIDER_CONFIGURATION_SCHEMA_VERSION,
-  type ProviderConfiguration, type ProviderConnectionTestResult
+  type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation, defaultConversationId
 } from "../../../contracts/src/index";
 import "./styles.css";
 
