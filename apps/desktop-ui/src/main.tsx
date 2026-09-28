@@ -41,10 +41,36 @@ async function publishAndReadRuntimeDiagnostics(snapshot:RuntimeDiagnostics):Pro
     return live??snapshot;
   }catch{return snapshot}
 }
+function safeErrorMessage(error:unknown,fallback="Unknown error"):string{
+  const extract=(value:unknown):string|undefined=>{
+    if(value instanceof Error)return value.message;
+    if(typeof value==="string")return value;
+    if(value&&typeof value==="object"){
+      const record=value as Record<string,unknown>;
+      for(const key of ["message","reason","error"]){
+        const nested=record[key];
+        if(typeof nested==="string"&&nested.trim())return nested;
+        if(nested&&typeof nested==="object"){
+          const nestedRecord=nested as Record<string,unknown>;
+          for(const nestedKey of ["message","reason"]){
+            const nestedMessage=nestedRecord[nestedKey];
+            if(typeof nestedMessage==="string"&&nestedMessage.trim())return nestedMessage;
+          }
+        }
+      }
+    }
+    return undefined;
+  };
+  const message=extract(error)??fallback;
+  const normalized=message
+    .replace(/\s+/g," ")
+    .trim()
+    .replace(/\b[A-Za-z]:\\(?:[^\\/:*?"<>|\r\n]+\\)*[^\\/:*?"<>|\r\n]*/g,"[path]")
+    .replace(/\bBearer\s+[A-Za-z0-9._-]+/gi,"Bearer [redacted]");
+  return (normalized||fallback).slice(0,512);
+}
 function safeStartupError(error:unknown):string{
-  const message=error instanceof Error?error.message:String(error);
-  const normalized=message.replace(/\s+/g," ").trim();
-  return (normalized||"Unknown startup error").slice(0,512);
+  return safeErrorMessage(error,"Unknown startup error");
 }
 
 function resultLabel(result:ProviderConnectionTestResult):string{
@@ -446,7 +472,7 @@ function ModelProfileView({profile,runtime,onSave}:{profile:ModelProfile;runtime
       await onSave(next);
       setMessage("Model Profile saved.");
     }catch(error){
-      setMessage(error instanceof Error?error.message:"Model Profile could not be saved.");
+      setMessage("Model Profile could not be saved: "+safeErrorMessage(error));
     }finally{setBusy(false)}
   };
 
