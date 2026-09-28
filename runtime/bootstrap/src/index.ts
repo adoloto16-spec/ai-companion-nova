@@ -20,7 +20,7 @@ import {InMemoryCredentialStore} from "../../../host/credentials/src/index";
 import {InMemoryCoreBookStore} from "../../../host/core-book/src/index";
 import {InMemoryMemoryStore} from "../../../host/memory/src/index";
 import type {CoreBookCreateInput,CoreBookUpdateInput} from "../../../core/src/core-book-manager";
-import {activeProviderId,buildConfiguredProvider,buildProviderForDiscovery,testProviderConfiguration} from "./provider-configuration";
+import {activeProviderId,buildConfiguredProvider,buildProviderForDiscovery,buildProviderForPreset,testProviderConfiguration} from "./provider-configuration";
 import {RetrievalEventIndexer} from "../../../core/src/retrieval-indexer";
 
 export interface OpenAICompatibleRuntimeConfig{
@@ -269,7 +269,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
         const effectiveConfiguration=configuration?{...configuration,model:request.model}:undefined;
         const scopedProviders=new ProviderRegistry();
         if(effectiveConfiguration){
-          const configured=buildConfiguredProvider(effectiveConfiguration,credentialStore,options.httpClient);
+          const configured=buildProviderForPreset(effectiveConfiguration,credentialStore,options.httpClient);
           if(configured)scopedProviders.register(configured,["chat"]);
         }
         const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
