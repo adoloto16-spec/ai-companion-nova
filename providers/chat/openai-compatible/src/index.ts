@@ -65,7 +65,7 @@ interface OpenAIChatMessage{
   content:string;
 }
 
-export function validateOpenAICompatibleProviderConfig(config:Omit<OpenAICompatibleProviderConfig,"credential">&{credential:CredentialReference|null}):string[]{
+export function validateOpenAICompatibleProviderConfig(config:OpenAICompatibleProviderConfig,options:{allowEmptyModel?:boolean}={}):string[]{
   const errors:string[]=[];
   try{
     const url=new URL(config.baseUrl);
@@ -73,7 +73,7 @@ export function validateOpenAICompatibleProviderConfig(config:Omit<OpenAICompati
     if(url.username||url.password)errors.push("Provider base URL must not contain credentials.");
     if(url.search||url.hash)errors.push("Provider base URL must not contain query or fragment components.");
   }catch{errors.push("Provider base URL is invalid.");}
-  if(!config.model||config.model.trim().length===0)errors.push("Provider model is not configured.");
+  if(!options.allowEmptyModel&&(!config.model||config.model.trim().length===0))errors.push("Provider model is not configured.");
   if(config.credential!==undefined&&config.credential!==null&&(!config.credential.id||config.credential.id.trim().length===0))errors.push("Provider credential reference is not configured.");
   if(config.timeoutMs!==undefined&&(!Number.isFinite(config.timeoutMs)||config.timeoutMs<=0))errors.push("Provider timeout must be a finite positive number.");
   return errors;
@@ -128,7 +128,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
   }
 
   async listModels():Promise<ModelInfo[]>{
-    if(!this.validConfig())return [];
+    if(!this.validConfig(true))return [];
     const now=Date.now();
     if(this.modelsCache&&this.modelsCache.expiresAt>now)return this.modelsCache.models.map(model=>({...model}));
     const fallback=this.config.model?{id:this.config.model,displayName:this.config.model,capabilities:this.capabilities()}:undefined;
@@ -170,6 +170,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
   async health():Promise<HealthStatus>{
     const configError=this.configError();
     if(configError)return {status:"unavailable",message:configError.message,capabilities:["chat"]};
+    if(!this.config.credential)return {status:"unavailable",message:"Chat provider credential is not configured.",capabilities:["chat"]};
     try{
       const secret=await this.credentialStore.getSecret(this.config.credential);
       if(!secret)return {status:"unavailable",message:"Chat provider credential is not configured.",capabilities:["chat"]};
@@ -244,10 +245,10 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     return this.mapResponse(payload,request,durationMs);
   }
 
-  private validConfig():boolean{return this.configError()===undefined;}
+  private validConfig(allowEmptyModel=false):boolean{return this.configError(allowEmptyModel)===undefined;}
 
-  private configError():OpenAICompatibleProviderError|undefined{
-    const errors=validateOpenAICompatibleProviderConfig(this.config);
+  private configError(allowEmptyModel=false):OpenAICompatibleProviderError|undefined{
+    const errors=validateOpenAICompatibleProviderConfig(this.config,{allowEmptyModel});
     return errors.length>0?safeConfigError(errors[0]!):undefined;
   }
 
