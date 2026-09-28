@@ -1,5 +1,5 @@
 import {createFoundationRuntime} from "../../runtime/bootstrap/src";
-import type {CredentialReference,CredentialStore,HttpClientResponse,ProviderConfiguration} from "../../contracts/src";
+import type {CredentialReference,CredentialStore,ProviderConfiguration} from "../../contracts/src";
 import {OPENAI_COMPATIBLE_PROVIDER_ID,type HttpClient,HttpClientRequest} from "../../providers/chat/openai-compatible/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(actual!==expected)throw new Error(label+" expected "+String(expected)+" got "+String(actual));}
