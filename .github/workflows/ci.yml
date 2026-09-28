@@ -75,6 +75,7 @@ jobs:
       - run: cargo check --workspace --all-features
       - run: cargo test -p nova-desktop-host --all-features characters::tests
       - run: cargo test -p nova-desktop-host --all-features conversations::tests
+      - run: cargo test -p nova-desktop-host --all-features model_profiles::tests
 
   windows-installer:
     runs-on: windows-latest
