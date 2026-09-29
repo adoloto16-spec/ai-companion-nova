@@ -365,27 +365,31 @@ async function malformedStreamingEventTest(){
 async function streamingAbortTest(){
   const http=new FakeHttpClient();
   const signalController=new AbortController();
+  let httpSignal:AbortSignal|undefined;
   http.streamNext=async()=>({
     status:200,
     headers:{"content-type":"text/event-stream"},
     body:{
       async *[Symbol.asyncIterator](){
-        while(true){
-          if(signalController.signal.aborted)throw new Error("aborted by fake transport");
+            while(true){
+          if(httpSignal?.aborted)throw new Error("aborted by fake transport");
           await new Promise(resolve=>setTimeout(resolve,5));
+          if(httpSignal?.aborted)throw new Error("aborted by fake transport");
           yield "data: "+JSON.stringify({choices:[{delta:{content:"x"}}]})+"\n\n";
         }
       }
     }
   });
   const pending=provider(http).stream(request(),{onEvent:()=>{}},{signal:signalController.signal});
+  httpSignal=http.requests[0]?.signal;
   setTimeout(()=>signalController.abort(),15);
   await throwsAsync(
     ()=>pending,
     error=>error instanceof Error&&error.name==="AbortError",
     "caller abort propagates as AbortError"
   );
-  equal(http.requests[0]?.signal,signalController.signal,"caller abort is linked to HTTP stream");
+  if(!httpSignal)throw new Error("provider must pass an AbortSignal to HTTP streaming transport");
+  equal(httpSignal.aborted,true,"caller abort is linked to HTTP stream");
 }
 
 async function modelDiscoveryTest(){
