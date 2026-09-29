@@ -442,17 +442,17 @@ export class ChatSessionController{
   private markInterrupted(active:ActiveRun,current?:ChatMessage):ChatActionResult{
     const original=active.originalAssistant;
     let message=current?cloneMessage(current):original?cloneMessage(original):undefined;
-    if(message?.id&&active.mode!=="submit"&&original){
-      message=cloneMessage(original);
-      const messageId=message.id;
-      if(messageId&&this.session.getMessages().some(item=>item.id===messageId))this.session.replaceMessage(messageId,message);
-    }else if(message?.id&&active.mode==="submit"){
+    if(message?.id&&active.mode==="submit"){
       if(message.content){
         this.session.replaceMessage(message.id,withStreamMetadata(message,"interrupted"));
       }else{
         this.session.removeMessage(message.id);
         message=undefined;
       }
+    }else if(message?.id&&original&&message.content.length===0){
+      message=cloneMessage(original);
+      const messageId=message.id;
+      if(messageId&&this.session.getMessages().some(item=>item.id===messageId))this.session.replaceMessage(messageId,message);
     }else if(message?.id){
       this.session.replaceMessage(message.id,withStreamMetadata(message,"interrupted"));
     }
