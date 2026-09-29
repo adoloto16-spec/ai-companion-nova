@@ -621,7 +621,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     const payload:{
       model:string;
       messages:OpenAIChatMessage[];
-      stream:false;
+      stream:boolean;
       temperature?:number;
       max_tokens?:number;
       top_p?:number;
