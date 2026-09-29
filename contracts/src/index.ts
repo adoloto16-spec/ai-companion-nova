@@ -1,3 +1,4 @@
+import type {ChatStreamHandlers,ChatStreamOptions} from "./chat-stream";
 export type ApiVersion = "1";
 export const FOUNDATION_API_VERSION:ApiVersion="1";
 export const FOUNDATION_SCHEMA_VERSION="1";
@@ -379,7 +380,7 @@ export interface ChatError{apiVersion:ApiVersion;schemaVersion:string;code:ChatE
 export interface ChatRequest{apiVersion:ApiVersion;schemaVersion:string;requestId:string;providerId?:string;model:string;context:ChatContext;generation?:ChatGenerationOptions;metadata?:Record<string,unknown>}
 export interface ChatResponse{apiVersion:ApiVersion;schemaVersion:string;requestId:string;conversationId:string;providerId:string;model:string;message:ChatMessage;finishReason:ChatFinishReason;usage?:ChatUsage;metadata?:Record<string,unknown>}
 export interface ChatProviderMetadata{id:string;kind:"chat";displayName:string;version:string;description?:string}
-export interface ChatProvider{id:string;metadata():ChatProviderMetadata;capabilities():ProviderCapabilities;listModels():Promise<ModelInfo[]>;chat(request:ChatRequest):Promise<ChatResponse>;health():Promise<HealthStatus>}
+export interface ChatProvider{id:string;metadata():ChatProviderMetadata;capabilities():ProviderCapabilities;listModels():Promise<ModelInfo[]>;chat(request:ChatRequest):Promise<ChatResponse>;stream?(request:ChatRequest,handlers:ChatStreamHandlers,options?:ChatStreamOptions):Promise<ChatResponse>;health():Promise<HealthStatus>}
 export type Message=ChatMessage;
 export type Usage=ChatUsage;
 export interface STTRequest{audio:Uint8Array;language?:string}
