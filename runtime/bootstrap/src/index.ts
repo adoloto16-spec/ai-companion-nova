@@ -264,7 +264,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     async stop(){try{retrievalIndexer?.stop();await moduleManager.stopAll();}finally{runtimeStatus="stopped";}},
     diagnostics:snapshot,
     invoke:request=>broker.execute({request,credential:characterCredential}),
-    stream:async(request,handlers,options={},providerPresetId)=>{
+    stream:async(request,handlers,streamOptions={},providerPresetId)=>{
       if(providerPresetId){
         const configuration=providerPresetConfigurations.get(providerPresetId);
         const effectiveConfiguration=configuration?{...configuration,model:request.model}:undefined;
@@ -274,9 +274,9 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
           if(configured)scopedProviders.register(configured,["chat"]);
         }
         const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
-        return scopedRuntime.stream({...request,providerId:"openai-compatible"},handlers,options);
+        return scopedRuntime.stream({...request,providerId:"openai-compatible"},handlers,streamOptions);
       }
-      return aiRuntime.stream(request,handlers,options);
+      return aiRuntime.stream(request,handlers,streamOptions);
     },
     chat:async(request,providerPresetId)=>{
       if(providerPresetId){
