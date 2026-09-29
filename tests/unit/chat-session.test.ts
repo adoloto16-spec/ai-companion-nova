@@ -169,10 +169,13 @@ async function main(){
   const contextStreamingController=new ChatSessionController(
     new ConversationSession("stream-context","character.context-stream"),
     contextRuntime,
-    {requestIdFactory:()=> "context-stream-1",contextBuilder:{async buildContext(request){contextBuilds++;return {
-      apiVersion:"1",schemaVersion:"1",characterId:request.characterId,conversationId:request.conversationId,messages:request.messages,
-      includedCandidates:[],omittedCandidates:[],budget:request.budget,estimatedTokens:0
-    }} as import("../../contracts/src").AssembledContext}}
+    {requestIdFactory:()=> "context-stream-1",contextBuilder:{async buildContext(request){
+      contextBuilds++;
+      return {
+        apiVersion:"1",schemaVersion:"1",characterId:request.characterId,conversationId:request.conversationId,messages:request.messages,
+        includedCandidates:[],omittedCandidates:[],budget:request.budget,estimatedTokens:0
+      };
+    }}}
   );
   await contextStreamingController.submit("context once","fake-streaming-chat");
   equal(contextBuilds,1,"Context Engine builds once for one stream request");
