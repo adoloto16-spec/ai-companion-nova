@@ -115,6 +115,27 @@ async function main(){
   ok(observed>0,"controller notifies subscribers");
   equal(busyController.getSnapshot().messages.length,0,"controller clear");
 
+  const legacySession=new ConversationSession("legacy-conversation","character.legacy");
+  legacySession.addMessage({id:"legacy-user",role:"user",content:"legacy question"});
+  legacySession.addMessage({id:"legacy-assistant",role:"assistant",content:"legacy answer"});
+  let legacyRegenerated=false;
+  const legacyRuntime={
+    async chat(request:ChatRequest):Promise<ChatResponse>{return responseFor(request,"legacy chat")},
+    async stream(request:ChatRequest,handlers:import("../../contracts/src").ChatStreamHandlers):Promise<ChatResponse>{
+      legacyRegenerated=true;
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"delta",text:"new legacy answer"});
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"completed",finishReason:"stop"});
+      return responseFor(request,"new legacy answer");
+    }
+  };
+  const legacyController=new ChatSessionController(legacySession,legacyRuntime,{requestIdFactory:()=> "legacy-regenerate-1"});
+  equal(legacyController.getSnapshot().status,"completed","legacy persisted assistant is treated as complete");
+  const legacyRegeneratedResult=await legacyController.regenerate("fake-streaming-chat");
+  equal(legacyRegeneratedResult.status,"sent","Regenerate remains available for legacy assistant messages");
+  ok(legacyRegenerated,"legacy regenerate used streaming path");
+  equal(legacySession.getMessages()[1]?.id,"legacy-assistant","legacy regenerate reuses assistant id");
+  equal(legacySession.getMessages()[1]?.content,"new legacy answer","legacy regenerate replaces the old answer");
+
   const streamingSession=new ConversationSession("stream-conversation","character.stream");
   const streamingSnapshots:ReturnType<ChatSessionController["getSnapshot"]>[]=[];
   const streamingRuntime={
