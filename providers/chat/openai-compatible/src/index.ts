@@ -162,7 +162,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       kind:"chat" as const,
       displayName:"OpenAI-Compatible Chat Provider",
       version:"1.0.0",
-      description:"Synchronous OpenAI-compatible Chat Completions adapter."
+      description:"OpenAI-compatible Chat Completions adapter with synchronous and SSE streaming paths."
     };
   }
 
@@ -489,14 +489,14 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
 
   async health():Promise<HealthStatus>{
     const configError=this.configError();
-    if(configError)return {status:"unavailable",message:configError.message,capabilities:["chat"]};
-    if(!this.config.credential)return {status:"unavailable",message:"Chat provider credential is not configured.",capabilities:["chat"]};
+    if(configError)return {status:"unavailable",message:configError.message,capabilities:["chat","streaming"]};
+    if(!this.config.credential)return {status:"unavailable",message:"Chat provider credential is not configured.",capabilities:["chat","streaming"]};
     try{
       const secret=await this.credentialStore.getSecret(this.config.credential);
       if(!secret)return {status:"unavailable",message:"Chat provider credential is not configured.",capabilities:["chat"]};
-      return {status:"healthy",capabilities:["chat"]};
+      return {status:"healthy",capabilities:["chat","streaming"]};
     }catch{
-      return {status:"unavailable",message:"Chat provider credential is unavailable.",capabilities:["chat"]};
+      return {status:"unavailable",message:"Chat provider credential is unavailable.",capabilities:["chat","streaming"]};
     }
   }
 
