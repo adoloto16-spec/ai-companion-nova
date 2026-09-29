@@ -204,12 +204,10 @@ async function main(){
   const firstContinue=continueController.submit("hello","fake-streaming-chat");
   await Promise.resolve();
   const firstResult=await firstContinue;
-  equal(firstResult.status,"error","unexpected stream abort is retryable error");
+  equal(firstResult.status,"interrupted","aborted stream enters interrupted state");
   const firstAssistant=continueSession.getMessages().find(message=>message.role==="assistant");
   ok(Boolean(firstAssistant),"partial stream keeps assistant for continuation");
-  equal(firstAssistant?.content,"Hel","partial text before error");
-  if(firstAssistant?.id)continueSession.replaceMessage(firstAssistant.id,{...firstAssistant,metadata:{...firstAssistant.metadata,streamStatus:"interrupted"}});
-  // The controller normally marks aborts as interrupted; normalize the explicit synthetic abort above for this deterministic continuation setup.
+  equal(firstAssistant?.content,"Hel","partial text before Stop/abort");
   const beforeContinueId=continueSession.getMessages().find(message=>message.role==="assistant")?.id;
   const continued=await continueController.continue("fake-streaming-chat");
   equal(continued.status,"sent","Continue succeeds");
