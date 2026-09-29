@@ -42,6 +42,7 @@ class FakeCredentialStore implements CredentialStore{
 
 class FakeHttpClient implements HttpClient{
   requests:HttpClientRequest[]=[];
+  lastStreamSignal?:AbortSignal;
   next:HttpClientResponse|Error|(()=>Promise<HttpClientResponse>)={
     status:200,
     body:JSON.stringify({
@@ -68,6 +69,7 @@ class FakeHttpClient implements HttpClient{
   }
   async stream(request:HttpClientRequest):Promise<HttpClientStreamResponse>{
     this.requests.push(request);
+    this.lastStreamSignal=request.signal;
     if(this.streamNext instanceof Error)throw this.streamNext;
     if(typeof this.streamNext==="function")return this.streamNext();
     return this.streamNext;
@@ -381,7 +383,8 @@ async function streamingAbortTest(){
     }
   });
   const pending=provider(http).stream(request(),{onEvent:()=>{}},{signal:signalController.signal});
-  httpSignal=http.requests[0]?.signal;
+  await Promise.resolve();
+  httpSignal=http.lastStreamSignal;
   setTimeout(()=>signalController.abort(),15);
   await throwsAsync(
     ()=>pending,
