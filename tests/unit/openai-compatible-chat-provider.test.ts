@@ -383,7 +383,7 @@ async function streamingAbortTest(){
     }
   });
   const pending=provider(http).stream(request(),{onEvent:()=>{}},{signal:signalController.signal});
-  await Promise.resolve();
+  for(let attempt=0;attempt<20&&http.lastStreamSignal===undefined;attempt++)await new Promise(resolve=>setTimeout(resolve,1));
   httpSignal=http.lastStreamSignal;
   setTimeout(()=>signalController.abort(),15);
   await throwsAsync(
