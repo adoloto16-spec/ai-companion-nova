@@ -493,7 +493,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     if(!this.config.credential)return {status:"unavailable",message:"Chat provider credential is not configured.",capabilities:["chat","streaming"]};
     try{
       const secret=await this.credentialStore.getSecret(this.config.credential);
-      if(!secret)return {status:"unavailable",message:"Chat provider credential is not configured.",capabilities:["chat"]};
+      if(!secret)return {status:"unavailable",message:"Chat provider credential is not configured.",capabilities:["chat","streaming"]};
       return {status:"healthy",capabilities:["chat","streaming"]};
     }catch{
       return {status:"unavailable",message:"Chat provider credential is unavailable.",capabilities:["chat","streaming"]};
