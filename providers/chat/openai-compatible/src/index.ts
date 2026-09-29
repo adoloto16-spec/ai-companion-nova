@@ -416,11 +416,15 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
               .split(/\r\n|\n|\r/)
               .filter(line=>line.startsWith("data:"))
               .map(line=>line.slice(5).startsWith(" ")?line.slice(6):line.slice(5));
-            if(dataLines.length>0)await processEvent(dataLines.join("\n"));
+            if(dataLines.length>0){
+              await processEvent(dataLines.join("\n"));
+              if(completed){buffer="";break;}
+            }
           }
+          if(completed)break;
         }
 
-        if(buffer.trim()){
+        if(buffer.trim()&&!completed){
           const dataLines=buffer
             .split(/\r\n|\n|\r/)
             .filter(line=>line.startsWith("data:"))
