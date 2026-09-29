@@ -441,7 +441,8 @@ export class ChatSessionController{
     let message=current?cloneMessage(current):original?cloneMessage(original):undefined;
     if(message?.id&&active.mode!=="submit"&&original){
       message=cloneMessage(original);
-      if(this.session.getMessages().some(item=>item.id===message!.id))this.session.replaceMessage(message.id,message);
+      const messageId=message.id;
+      if(messageId&&this.session.getMessages().some(item=>item.id===messageId))this.session.replaceMessage(messageId,message);
     }else if(message?.id&&active.mode==="submit"){
       if(message.content){
         this.session.replaceMessage(message.id,withStreamMetadata(message,"interrupted"));
