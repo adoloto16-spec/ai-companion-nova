@@ -171,8 +171,8 @@ function ChatView({controller,runtime,character,onPersist,onClear}:{
 
   const lastAssistant=[...snapshot.messages].reverse().find(message=>message.role==="assistant");
   const lastAssistantStatus=lastAssistant?messageStreamStatus(lastAssistant):undefined;
-  const showContinue=lastAssistantStatus==="interrupted"&&!snapshot.sending;
-  const showRegenerate=(lastAssistantStatus==="complete"||lastAssistantStatus==="interrupted")&&!snapshot.sending;
+  const showContinue=snapshot.status==="interrupted"&&lastAssistantStatus==="interrupted"&&!snapshot.sending;
+  const showRegenerate=(snapshot.status==="completed"||snapshot.status==="interrupted")&&(lastAssistantStatus==="complete"||lastAssistantStatus==="interrupted")&&!snapshot.sending;
   const showRetry=snapshot.status==="error"&&!snapshot.sending;
 
   return <section className="chat-panel">
