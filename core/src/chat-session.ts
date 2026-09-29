@@ -2,8 +2,10 @@ import type {AssembledContext,ChatErrorCode,ChatMessage,ChatRequest,ChatResponse
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION} from "../../contracts/src/index";
 
 export interface ChatRuntimeBoundary{
-  chat(request:ChatRequest):Promise<ChatResponse>;
+  chat(request:ChatRequest,providerPresetId?:string):Promise<ChatResponse>;
   getChatModel?(providerId?:string):Promise<string>;
+  getChatModelForPreset?(providerPresetId:string):Promise<string>;
+  getActiveProviderPresetId?():string|undefined;
 }
 
 export interface ConversationSnapshot{
@@ -166,8 +168,11 @@ export class ChatSessionController{
 
     const profile=this.modelProfile;
     const profileProviderId=profile?.providerId;
+    const profileProviderPresetId=profile?.providerPresetId??this.runtime.getActiveProviderPresetId?.();
     let resolvedModel=model;
-    if(profile?.model===undefined&&profileProviderId!==undefined&&this.runtime.getChatModel){
+    if(profile?.model===undefined&&profileProviderPresetId!==undefined&&this.runtime.getChatModelForPreset){
+      try{resolvedModel=await this.runtime.getChatModelForPreset(profileProviderPresetId)}catch{resolvedModel=model}
+    }else if(profile?.model===undefined&&profileProviderPresetId===undefined&&profileProviderId!==undefined&&this.runtime.getChatModel){
       try{resolvedModel=await this.runtime.getChatModel(profileProviderId)}catch{resolvedModel=model}
     }
     const resolvedGeneration=profile?.generation;
@@ -186,7 +191,7 @@ export class ChatSessionController{
     };
 
     try{
-      const response=await this.runtime.chat(request);
+      const response=await this.runtime.chat(request,profileProviderPresetId);
       this.session.addMessage(response.message);
       this.notify();
       return {status:"sent",response};

@@ -17,9 +17,9 @@ const DEFAULT_TIMEOUT_MS=30000;
 
 export interface HttpClientRequest{
   url:string;
-  method:"POST";
+  method:"GET"|"POST";
   headers:Readonly<Record<string,string>>;
-  body:string;
+  body?:string;
   signal?:AbortSignal;
 }
 
@@ -37,7 +37,7 @@ export class FetchHttpClient implements HttpClient{
     const response=await fetch(request.url,{
       method:request.method,
       headers:request.headers,
-      body:request.body,
+      ...(request.body===undefined?{}:{body:request.body}),
       signal:request.signal
     });
     return {status:response.status,body:await response.text()};
@@ -47,7 +47,7 @@ export class FetchHttpClient implements HttpClient{
 export interface OpenAICompatibleProviderConfig{
   baseUrl:string;
   model:string;
-  credential:CredentialReference;
+  credential?:CredentialReference|null;
   timeoutMs?:number;
 }
 
@@ -65,7 +65,7 @@ interface OpenAIChatMessage{
   content:string;
 }
 
-export function validateOpenAICompatibleProviderConfig(config:Omit<OpenAICompatibleProviderConfig,"credential">&{credential:CredentialReference|null}):string[]{
+export function validateOpenAICompatibleProviderConfig(config:OpenAICompatibleProviderConfig,options:{allowEmptyModel?:boolean}={}):string[]{
   const errors:string[]=[];
   try{
     const url=new URL(config.baseUrl);
@@ -73,8 +73,8 @@ export function validateOpenAICompatibleProviderConfig(config:Omit<OpenAICompati
     if(url.username||url.password)errors.push("Provider base URL must not contain credentials.");
     if(url.search||url.hash)errors.push("Provider base URL must not contain query or fragment components.");
   }catch{errors.push("Provider base URL is invalid.");}
-  if(!config.model||config.model.trim().length===0)errors.push("Provider model is not configured.");
-  if(config.credential!==null&&(!config.credential.id||config.credential.id.trim().length===0))errors.push("Provider credential reference is not configured.");
+  if(!options.allowEmptyModel&&(!config.model||config.model.trim().length===0))errors.push("Provider model is not configured.");
+  if(config.credential!==undefined&&config.credential!==null&&(!config.credential.id||config.credential.id.trim().length===0))errors.push("Provider credential reference is not configured.");
   if(config.timeoutMs!==undefined&&(!Number.isFinite(config.timeoutMs)||config.timeoutMs<=0))errors.push("Provider timeout must be a finite positive number.");
   return errors;
 }
@@ -96,6 +96,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
   private readonly config:OpenAICompatibleProviderConfig;
   private readonly credentialStore:CredentialStore;
   private readonly httpClient:HttpClient;
+  private modelsCache:{expiresAt:number;models:ModelInfo[]}|undefined;
 
   constructor(
     config:OpenAICompatibleProviderConfig,
@@ -127,17 +128,45 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
   }
 
   async listModels():Promise<ModelInfo[]>{
-    if(!this.validConfig())return [];
-    return [{
-      id:this.config.model,
-      displayName:this.config.model,
-      capabilities:this.capabilities()
-    }];
+    if(!this.validConfig(true))return [];
+    const now=Date.now();
+    if(this.modelsCache&&this.modelsCache.expiresAt>now)return this.modelsCache.models.map(model=>({...model}));
+    try{
+      const secret=await this.resolveCredentialOptional();
+      const response=await this.requestWithTimeoutRaw({
+        url:this.modelsUrl(),
+        method:"GET",
+        headers:{
+          Accept:"application/json",
+          ...(secret?{Authorization:"Bearer "+secret}:{}),
+        }
+      },this.timeoutMs());
+      if(response.status<200||response.status>=300)return [];
+      const payload:unknown=JSON.parse(response.body);
+      const items:unknown[]=Array.isArray(payload)
+        ?payload as unknown[]
+        :payload&&typeof payload==="object"&&Array.isArray((payload as Record<string,unknown>).data)
+          ?(payload as Record<string,unknown>).data as unknown[]
+          :[];
+      const models=items.flatMap((item:unknown)=>{
+        if(!item||typeof item!=="object"||Array.isArray(item))return [];
+        const record=item as Record<string,unknown>;
+        if(typeof record.id!=="string"||!record.id.trim())return [];
+        const displayName=typeof record.displayName==="string"?record.displayName:typeof record.name==="string"?record.name:record.id;
+        return [{id:record.id,displayName,capabilities:this.capabilities()}];
+      });
+      if(models.length===0)return [];
+      this.modelsCache={expiresAt:now+60_000,models};
+      return models.map(model=>({...model}));
+    }catch{
+      return [];
+    }
   }
 
   async health():Promise<HealthStatus>{
     const configError=this.configError();
     if(configError)return {status:"unavailable",message:configError.message,capabilities:["chat"]};
+    if(!this.config.credential)return {status:"unavailable",message:"Chat provider credential is not configured.",capabilities:["chat"]};
     try{
       const secret=await this.credentialStore.getSecret(this.config.credential);
       if(!secret)return {status:"unavailable",message:"Chat provider credential is not configured.",capabilities:["chat"]};
@@ -149,14 +178,8 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
 
   async chat(request:ChatRequest):Promise<ChatResponse>{
     this.ensureConfig(request);
-    if(request.model!==this.config.model){
-      throw this.failure({
-        code:"INVALID_REQUEST",
-        message:"Requested model is not configured for this provider.",
-        request,
-        retryable:false,
-        details:{category:"configuration"}
-      });
+    if(!request.model.trim()){
+      throw this.failure({code:"INVALID_REQUEST",message:"Requested model is not configured for this provider.",request,retryable:false,details:{category:"configuration"}});
     }
     if(request.generation?.responseFormat?.type==="json"){
       throw this.failure({
@@ -181,7 +204,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
         headers:{
           Accept:"application/json",
           "Content-Type":"application/json",
-          Authorization:"Bearer "+secret
+          ...(secret?{Authorization:"Bearer "+secret}:{}),
         },
         body
       },this.timeoutMs(),request);
@@ -218,10 +241,10 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     return this.mapResponse(payload,request,durationMs);
   }
 
-  private validConfig():boolean{return this.configError()===undefined;}
+  private validConfig(allowEmptyModel=false):boolean{return this.configError(allowEmptyModel)===undefined;}
 
-  private configError():OpenAICompatibleProviderError|undefined{
-    const errors=validateOpenAICompatibleProviderConfig(this.config);
+  private configError(allowEmptyModel=false):OpenAICompatibleProviderError|undefined{
+    const errors=validateOpenAICompatibleProviderConfig(this.config,{allowEmptyModel});
     return errors.length>0?safeConfigError(errors[0]!):undefined;
   }
 
@@ -234,6 +257,11 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
   }
 
   private timeoutMs():number{return this.config.timeoutMs??DEFAULT_TIMEOUT_MS;}
+
+  private modelsUrl():string{
+    const base=this.config.baseUrl.replace(/\/+$/,"");
+    return base+"/models";
+  }
 
   private chatCompletionsUrl():string{
     const base=this.config.baseUrl.replace(/\/+$/,"");
@@ -284,7 +312,10 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     return payload;
   }
 
-  private async resolveCredential(request:ChatRequest):Promise<string>{
+  private async resolveCredential(request:ChatRequest):Promise<string|undefined>{
+    if(!this.config.credential){
+      return undefined;
+    }
     try{
       const secret=await this.credentialStore.getSecret(this.config.credential);
       if(!secret){
@@ -307,6 +338,21 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
         details:{category:"credential"}
       });
     }
+  }
+
+  private async resolveCredentialOptional():Promise<string|undefined>{
+    if(!this.config.credential)return undefined;
+    try{return await this.credentialStore.getSecret(this.config.credential)||undefined;}catch{return undefined;}
+  }
+
+  private async requestWithTimeoutRaw(request:HttpClientRequest,timeoutMs:number):Promise<HttpClientResponse>{
+    const controller=new AbortController();
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    const timeoutPromise=new Promise<never>((_,reject)=>{
+      timer=setTimeout(()=>{controller.abort();reject(new Error("request timeout"));},timeoutMs);
+    });
+    try{return await Promise.race([this.httpClient.request({...request,signal:controller.signal}),timeoutPromise]);}
+    finally{if(timer)clearTimeout(timer);controller.abort();}
   }
 
   private async requestWithTimeout(

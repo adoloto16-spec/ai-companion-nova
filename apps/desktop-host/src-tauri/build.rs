@@ -32,6 +32,12 @@ fn main() {
                     "get_model_profile",
                     "save_model_profile",
                     "delete_model_profile",
+                    "get_credential_profiles",
+                    "save_credential_profiles",
+                    "delete_credential_profile",
+                    "get_provider_presets",
+                    "save_provider_presets",
+                    "delete_provider_preset",
                 ]),
             ),
     )

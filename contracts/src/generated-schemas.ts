@@ -2456,202 +2456,300 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
     }
   },
   "model-profile": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/model-profile/v1",
-    "title": "AI Companion Nova Character Model Profile v1",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "apiVersion",
-      "schemaVersion",
-      "id",
-      "characterId",
-      "generation",
-      "createdAt",
-      "updatedAt"
-    ],
-    "properties": {
-      "apiVersion": {
-        "const": "1"
-      },
-      "schemaVersion": {
-        "const": "1"
-      },
-      "id": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200
-      },
-      "characterId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "providerId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "model": {
-        "type": "string",
-        "minLength": 1
-      },
-      "generation": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "temperature": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 2
-          },
-          "maxTokens": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "topP": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 1
-          },
-          "responseFormat": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "type"
-            ],
-            "properties": {
-              "type": {
-                "enum": [
-                  "text",
-                  "json"
-                ]
-              },
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
-      },
-      "createdAt": {
-        "type": "string",
-        "minLength": 1
-      },
-      "updatedAt": {
-        "type": "string",
-        "minLength": 1
-      }
-    }
-  },
-  "model-profile-store-state": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/model-profile-store-state/v1",
-    "title": "AI Companion Nova Model Profile Store State v1",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "apiVersion",
-      "schemaVersion",
-      "profiles"
-    ],
-    "properties": {
-      "apiVersion": {
-        "const": "1"
-      },
-      "schemaVersion": {
-        "const": "1"
-      },
-      "profiles": {
-        "type": "array",
-        "items": {
-          "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "$id": "https://schemas.ai-companion-nova.dev/model-profile/v1",
-          "title": "AI Companion Nova Character Model Profile v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/model-profile/v2",
+  "title": "AI Companion Nova Character Model Profile v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "schemaVersion",
+    "id",
+    "characterId",
+    "generation",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "apiVersion": {
+      "const": "1"
+    },
+    "schemaVersion": {
+      "const": "2"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "characterId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "providerId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "maxTokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "topP": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "responseFormat": {
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "apiVersion",
-            "schemaVersion",
-            "id",
-            "characterId",
-            "generation",
-            "createdAt",
-            "updatedAt"
+            "type"
           ],
           "properties": {
-            "apiVersion": {
-              "const": "1"
+            "type": {
+              "enum": [
+                "text",
+                "json"
+              ]
             },
-            "schemaVersion": {
-              "const": "1"
-            },
-            "id": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 200
-            },
-            "characterId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "providerId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "model": {
-              "type": "string",
-              "minLength": 1
-            },
-            "generation": {
+            "schema": {
               "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "temperature": {
-                  "type": "number",
-                  "minimum": 0,
-                  "maximum": 2
-                },
-                "maxTokens": {
-                  "type": "integer",
-                  "minimum": 1
-                },
-                "topP": {
-                  "type": "number",
-                  "minimum": 0,
-                  "maximum": 1
-                },
-                "responseFormat": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "required": [
-                    "type"
-                  ],
-                  "properties": {
-                    "type": {
-                      "enum": [
-                        "text",
-                        "json"
-                      ]
-                    },
-                    "schema": {
-                      "type": "object",
-                      "additionalProperties": true
-                    }
-                  }
-                }
-              }
-            },
-            "createdAt": {
-              "type": "string",
-              "minLength": 1
-            },
-            "updatedAt": {
-              "type": "string",
-              "minLength": 1
+              "additionalProperties": true
             }
           }
         }
       }
+    },
+    "createdAt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "updatedAt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "providerPresetId": {
+      "type": "string",
+      "minLength": 1
     }
   }
+},
+  "model-profile-store-state": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/model-profile-store-state/v2",
+  "title": "AI Companion Nova Model Profile Store State v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "schemaVersion",
+    "profiles"
+  ],
+  "properties": {
+    "apiVersion": {
+      "const": "1"
+    },
+    "schemaVersion": {
+      "const": "2"
+    },
+    "profiles": {
+      "type": "array",
+      "items": {
+        "$ref": "https://schemas.ai-companion-nova.dev/model-profile/v2"
+      }
+    }
+  }
+},
+  "credential-profile": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/credential-profile/v1",
+  "title": "AI Companion Nova Credential Profile v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "label",
+    "providerId",
+    "credentialReference",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "label": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "providerId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "credentialReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "createdAt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "updatedAt": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+},
+  "credential-profile-store-state": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/credential-profile-store-state/v1",
+  "title": "AI Companion Nova Credential Profile Store State v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "schemaVersion",
+    "profiles"
+  ],
+  "properties": {
+    "apiVersion": {
+      "const": "1"
+    },
+    "schemaVersion": {
+      "const": "1"
+    },
+    "profiles": {
+      "type": "array",
+      "items": {
+        "$ref": "https://schemas.ai-companion-nova.dev/credential-profile/v1"
+      }
+    }
+  }
+},
+  "provider-preset": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/provider-preset/v1",
+  "title": "AI Companion Nova Provider Preset v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "name",
+    "providerId",
+    "baseUrl",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "providerId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "baseUrl": {
+      "type": "string",
+      "minLength": 1
+    },
+    "credentialProfileId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timeoutMs": {
+      "type": "number",
+      "minimum": 0.000001
+    },
+    "createdAt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "updatedAt": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+},
+  "provider-preset-store-state": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/provider-preset-store-state/v1",
+  "title": "AI Companion Nova Provider Preset Store State v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "schemaVersion",
+    "presets",
+    "activePresetId"
+  ],
+  "properties": {
+    "apiVersion": {
+      "const": "1"
+    },
+    "schemaVersion": {
+      "const": "1"
+    },
+    "presets": {
+      "type": "array",
+      "items": {
+        "$ref": "https://schemas.ai-companion-nova.dev/provider-preset/v1"
+      }
+    },
+    "activePresetId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}
 } as unknown as Record<string, JsonSchema>;

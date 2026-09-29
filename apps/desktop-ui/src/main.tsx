@@ -5,8 +5,10 @@ import {
   ChatSessionController,ConversationSession,type Character,type FoundationRuntime,InMemoryCharacterStore,type RuntimeDiagnostics,
   type CoreBookActivation,type CoreBookEntry
 } from "../../../core/src/index";
-import {startFoundationRuntime,testProviderConfiguration,validateProviderConfiguration} from "../../../runtime/bootstrap/src/index";
-import {IpcCredentialStore} from "../../../host/credentials/src/index";
+import {startFoundationRuntime,testProviderConfiguration,testProviderPresetConfiguration,validateProviderConfiguration,listProviderModels} from "../../../runtime/bootstrap/src/index";
+import {IpcCredentialStore,InMemoryCredentialStore} from "../../../host/credentials/src/index";
+import {IpcCredentialProfileStore,InMemoryCredentialProfileStore,emptyCredentialProfileState} from "../../../host/credential-profiles/src/index";
+import {IpcProviderPresetStore,InMemoryProviderPresetStore,materializeProviderConfiguration,migrateProviderConfiguration,emptyProviderPresetState} from "../../../host/provider-presets/src/index";
 import {IpcProviderConfigurationStore,loadProviderConfigurationSafely} from "../../../host/config/src/index";
 import {IpcCharacterStore} from "../../../host/characters/src/index";
 import {IpcCoreBookStore,InMemoryCoreBookStore} from "../../../host/core-book/src/index";
@@ -17,7 +19,8 @@ import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
   PROVIDER_CONFIGURATION_API_VERSION,PROVIDER_CONFIGURATION_SCHEMA_VERSION,
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation, defaultConversationId,
-  type ModelProfile, defaultModelProfile
+  type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState,
+  type ProviderPreset, type ProviderPresetStoreState, type ModelInfo
 } from "../../../contracts/src/index";
 import "./styles.css";
 
@@ -71,6 +74,16 @@ function safeErrorMessage(error:unknown,fallback="Unknown error"):string{
 }
 function safeStartupError(error:unknown):string{
   return safeErrorMessage(error,"Unknown startup error");
+}
+
+function slugId(value:string):string{
+  const normalized=value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g,"-")
+    .replace(/^-+|-+$/g,"")
+    .slice(0,64);
+  return normalized||"credential";
 }
 
 function resultLabel(result:ProviderConnectionTestResult):string{
@@ -432,24 +445,210 @@ function CoreBookView({runtime,character}:{runtime:FoundationRuntime;character:C
   </section>;
 }
 
-function ModelProfileView({profile,runtime,onSave}:{profile:ModelProfile;runtime:RuntimeDiagnostics;onSave:(profile:ModelProfile)=>Promise<void>}){
+function ProviderPresetsView({
+  presets,activePresetId,credentialProfiles,credentialSaved,runtime,
+  onSavePreset,onActivatePreset,onDeletePreset,onCreateCredential,onDeleteCredential,onRefreshModels,onTestPreset
+}:{
+  presets:readonly ProviderPreset[];
+  activePresetId:string|null;
+  credentialProfiles:readonly CredentialProfile[];
+  credentialSaved:Record<string,boolean>;
+  runtime:RuntimeDiagnostics;
+  onSavePreset:(preset:ProviderPreset,activate:boolean)=>Promise<void>;
+  onActivatePreset:(id:string)=>Promise<void>;
+  onDeletePreset:(id:string)=>Promise<void>;
+  onCreateCredential:(label:string,secret:string)=>Promise<CredentialProfile>;
+  onDeleteCredential:(id:string)=>Promise<void>;
+  onRefreshModels:(preset:ProviderPreset)=>Promise<readonly ModelInfo[]>;
+  onTestPreset:(preset:ProviderPreset)=>Promise<ProviderConnectionTestResult>;
+}){
+  const [selectedId,setSelectedId]=React.useState<string|undefined>(presets.find(p=>p.id===activePresetId)?.id??presets[0]?.id);
+  const [draft,setDraft]=React.useState<ProviderPreset>(()=>presets.find(p=>p.id===selectedId)??{
+    id:"provider-preset:new-"+Date.now(),name:"",providerId:"openai-compatible",baseUrl:"https://api.openai.com/v1",
+    createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()
+  });
+  const [models,setModels]=React.useState<readonly ModelInfo[]>([]);
+  const [busy,setBusy]=React.useState(false);
+  const [message,setMessage]=React.useState("");
+  const [credentialChoice,setCredentialChoice]=React.useState(draft.credentialProfileId??"");
+  const [newCredentialLabel,setNewCredentialLabel]=React.useState("");
+  const [newCredentialSecret,setNewCredentialSecret]=React.useState("");
+
+  React.useEffect(()=>{
+    const next=presets.find(p=>p.id===selectedId)??presets[0];
+    if(next){setSelectedId(next.id);setDraft({...next});setCredentialChoice(next.credentialProfileId??"");}
+  },[selectedId,presets]);
+
+  const save=async(activate:boolean)=>{
+    setBusy(true);setMessage("");
+    try{
+      const next:ProviderPreset={
+        ...draft,
+        name:draft.name.trim(),
+        baseUrl:draft.baseUrl.trim(),
+        providerId:"openai-compatible",
+        credentialProfileId:credentialChoice||undefined,
+        model:draft.model?.trim()||undefined,
+        updatedAt:new Date().toISOString()
+      };
+      if(!next.name)throw new Error("Provider preset name is required.");
+      await onSavePreset(next,activate);setDraft(next);setSelectedId(next.id);
+      setMessage(activate?"Provider preset saved and activated.":"Provider preset saved.");
+    }catch(error){setMessage("Provider preset could not be saved: "+safeErrorMessage(error))}
+    finally{setBusy(false)}
+  };
+
+  const saveAsNew=async()=>{
+    const now=new Date().toISOString();
+    const next={...draft,id:"provider-preset:"+(draft.name.trim()||"preset").toLowerCase().replace(/[^a-z0-9]+/g,"-")+":"+Date.now(),createdAt:now,updatedAt:now};
+    setDraft(next);setSelectedId(next.id);
+    await (async()=>{
+      setBusy(true);setMessage("");
+      try{await onSavePreset(next,false);setMessage("Provider preset saved as new preset.")}
+      catch(error){setMessage("Provider preset could not be saved: "+safeErrorMessage(error))}
+      finally{setBusy(false)}
+    })();
+  };
+
+  const activate=async()=>{
+    if(!selectedId)return;
+    setBusy(true);setMessage("");
+    try{await onActivatePreset(selectedId);setMessage("Provider preset activated.")}
+    catch(error){setMessage("Provider preset could not be activated: "+safeErrorMessage(error))}
+    finally{setBusy(false)}
+  };
+
+  const removePreset=async()=>{
+    if(!selectedId)return;
+    setBusy(true);setMessage("");
+    try{await onDeletePreset(selectedId);setMessage("Provider preset deleted.")}
+    catch(error){setMessage("Provider preset could not be deleted: "+safeErrorMessage(error))}
+    finally{setBusy(false)}
+  };
+
+  const refresh=async()=>{
+    setBusy(true);setMessage("");
+    try{
+      const result=await onRefreshModels(draft);setModels(result);
+      setMessage(result.length>0?"Models refreshed.":"Model discovery unavailable; manual model input is active.");
+    }catch(error){setModels([]);setMessage("Model discovery failed: "+safeErrorMessage(error))}
+    finally{setBusy(false)}
+  };
+
+  const test=async()=>{
+    setBusy(true);setMessage("");
+    try{
+      const result=await onTestPreset(draft);setMessage(resultLabel(result)+(result.message?" · "+result.message:""));
+    }catch(error){setMessage("Provider test failed: "+safeErrorMessage(error))}
+    finally{setBusy(false)}
+  };
+
+  const createCredential=async()=>{
+    setBusy(true);setMessage("");
+    try{
+      if(!newCredentialLabel.trim()||!newCredentialSecret)throw new Error("Credential label and API key are required.");
+      const profile=await onCreateCredential(newCredentialLabel.trim(),newCredentialSecret);
+      setCredentialChoice(profile.id);setNewCredentialLabel("");setNewCredentialSecret("");
+      setMessage("Credential saved. The API key is no longer displayed.");
+    }catch(error){setMessage("Credential could not be saved: "+safeErrorMessage(error))}
+    finally{setBusy(false)}
+  };
+
+  const deleteCredential=async(id:string)=>{
+    const used=presets.filter(p=>p.credentialProfileId===id);
+    if(used.length>0){setMessage("Credential is used by: "+used.map(p=>p.name||p.id).join(", ")+". Reassign the preset before deletion.");return;}
+    setBusy(true);setMessage("");
+    try{await onDeleteCredential(id);if(credentialChoice===id)setCredentialChoice("");setMessage("Credential removed.")}
+    catch(error){setMessage("Credential could not be removed: "+safeErrorMessage(error))}
+    finally{setBusy(false)}
+  };
+
+  const setStarter=(name:string,baseUrl:string)=>{const now=new Date().toISOString();setDraft({id:"provider-preset:"+name.toLowerCase()+":"+Date.now(),name,providerId:"openai-compatible",baseUrl,createdAt:now,updatedAt:now});setCredentialChoice("");setModels([]);};
+
+  return <section className="settings-grid">
+    <section>
+      <h2>Provider Presets</h2>
+      <p className="chat-subtitle">Saved connections. API secrets remain in the OS credential store.</p>
+      <label>Active preset
+        <select value={activePresetId??""} onChange={event=>{if(event.target.value)void onActivatePreset(event.target.value)}} disabled={busy||presets.length===0}>
+          {presets.length===0?<option value="">No saved presets</option>:presets.map(p=><option key={p.id} value={p.id}>{p.name||p.id}</option>)}
+        </select>
+      </label>
+      <label>Preset to edit
+        <select value={selectedId??""} onChange={event=>setSelectedId(event.target.value)} disabled={busy||presets.length===0}>
+          {presets.length===0?<option value="">Create a preset below</option>:presets.map(p=><option key={p.id} value={p.id}>{p.name||p.id}</option>)}
+        </select>
+      </label>
+      <label>Name<input value={draft.name} onChange={event=>setDraft(current=>({...current,name:event.target.value}))} disabled={busy}/></label>
+      <label>Provider type<select value="openai-compatible" disabled><option value="openai-compatible">OpenAI-compatible</option></select></label>
+      <label>Base URL<input value={draft.baseUrl} onChange={event=>setDraft(current=>({...current,baseUrl:event.target.value}))} disabled={busy}/></label>
+      <label>API credential
+        <select value={credentialChoice} onChange={event=>setCredentialChoice(event.target.value)} disabled={busy}>
+          <option value="">No credential / local server</option>
+          {credentialProfiles.map(profile=><option key={profile.id} value={profile.id}>{profile.label} {credentialSaved[profile.id]?"••••••••":"(not saved)"}</option>)}
+          <option value="__new__">+ Add new credential</option>
+        </select>
+      </label>
+      {credentialChoice==="__new__"&&<div className="character-actions">
+        <label>Label<input value={newCredentialLabel} onChange={event=>setNewCredentialLabel(event.target.value)} disabled={busy}/></label>
+        <label>API key<input type="password" autoComplete="off" value={newCredentialSecret} onChange={event=>setNewCredentialSecret(event.target.value)} disabled={busy}/></label>
+        <button onClick={()=>void createCredential()} disabled={busy}>Save credential</button>
+      </div>}
+      <label>Model
+        {models.length>0
+          ?<select value={draft.model??""} onChange={event=>setDraft(current=>({...current,model:event.target.value||undefined}))} disabled={busy}>
+            {models.map(model=><option key={model.id} value={model.id}>{model.displayName&&model.displayName!==model.id?model.displayName+" · "+model.id:model.id}</option>)}
+          </select>
+          :<input value={draft.model??""} onChange={event=>setDraft(current=>({...current,model:event.target.value||undefined}))} placeholder="model-id" disabled={busy}/>}
+      </label>
+      <label>Timeout (ms)<input type="number" min="1" value={draft.timeoutMs??30000} onChange={event=>setDraft(current=>({...current,timeoutMs:Number(event.target.value)}))} disabled={busy}/></label>
+      <div className="actions">
+        <button onClick={()=>void refresh()} disabled={busy}>Refresh models</button>
+        <button onClick={()=>void test()} disabled={busy||!draft.name.trim()}>Test provider</button>
+        <button onClick={()=>void save(false)} disabled={busy||!draft.name.trim()}>Save</button>
+        <button onClick={()=>void save(true)} disabled={busy||!draft.name.trim()}>Save &amp; activate</button>
+        <button onClick={()=>void saveAsNew()} disabled={busy||!draft.name.trim()}>Save as new preset</button>
+        {selectedId&&<button onClick={()=>void activate()} disabled={busy||activePresetId===selectedId}>Activate preset</button>}
+        {selectedId&&<button onClick={()=>void removePreset()} disabled={busy}>Delete preset</button>}
+      </div>
+      <div className="actions">
+        <button onClick={()=>setStarter("Mistral","https://api.mistral.ai/v1")} disabled={busy}>Starter: Mistral</button>
+        <button onClick={()=>setStarter("Groq","https://api.groq.com/openai/v1")} disabled={busy}>Starter: Groq</button>
+        <button onClick={()=>setStarter("OpenAI","https://api.openai.com/v1")} disabled={busy}>Starter: OpenAI</button>
+      </div>
+      {message&&<div className="notice" role="status">{message}</div>}
+      <p className="hint">API keys are never loaded back into this UI.</p>
+    </section>
+    <section>
+      <h2>Saved API credentials</h2>
+      {credentialProfiles.length===0?<div>No saved credential metadata.</div>:credentialProfiles.map(profile=>
+        <div className="row" key={profile.id}><span>{profile.label} {credentialSaved[profile.id]?"••••••••":"(not saved)"}</span><button onClick={()=>void deleteCredential(profile.id)} disabled={busy}>Delete</button></div>
+      )}
+      <h2>Runtime</h2>
+      <div className="status-grid"><span>Runtime</span><strong>{runtime.runtimeStatus}</strong><span>Active</span><strong>{activePresetId??"none"}</strong></div>
+    </section>
+  </section>;
+}
+
+function ModelProfileView({
+  profile,runtime,presets,activePresetId,onSave
+}:{
+  profile:ModelProfile;
+  runtime:RuntimeDiagnostics;
+  presets:readonly ProviderPreset[];
+  activePresetId:string|null;
+  onSave:(profile:ModelProfile)=>Promise<void>
+}){
   const [draft,setDraft]=React.useState<ModelProfile>(()=>profile);
   const [busy,setBusy]=React.useState(false);
   const [message,setMessage]=React.useState("");
   React.useEffect(()=>setDraft(profile),[profile.id,profile.characterId,profile.updatedAt]);
 
-  const chatProviders=runtime.providers.filter(provider=>provider.roles.includes("chat"));
-  const selectedProviderAvailable=!draft.providerId||chatProviders.some(provider=>provider.id===draft.providerId);
+  const selectedPresetAvailable=!draft.providerPresetId||presets.some(preset=>preset.id===draft.providerPresetId);
 
   const updateGeneration=(key:"temperature"|"topP"|"maxTokens",value:string)=>{
     const numeric=value.trim()===""?undefined:Number(value);
-    setDraft(current=>({
-      ...current,
-      generation:{
-        ...current.generation,
-        ...(numeric===undefined?{}:{[key]:numeric})
-      }
-    }));
+    setDraft(current=>({...current,generation:{...current.generation,...(numeric===undefined?{}:{[key]:numeric})}}));
   };
 
   const save=async()=>{
@@ -463,75 +662,65 @@ function ModelProfileView({profile,runtime,onSave}:{profile:ModelProfile;runtime
       };
       const next:ModelProfile={
         ...draft,
-        ...(draft.providerId?.trim()?{providerId:draft.providerId.trim()}:{}),
-        ...(draft.model?.trim()?{model:draft.model.trim()}:{}),
+        ...(draft.providerPresetId?.trim()?{providerPresetId:draft.providerPresetId}:{}),
+        ...(draft.providerPresetId?{providerId:undefined}:{providerId:undefined}),
+        ...(draft.model?.trim()?{model:draft.model.trim()}:{model:undefined}),
         generation,
         updatedAt:new Date().toISOString()
       };
-      if(!selectedProviderAvailable)throw new Error("Selected provider is not currently registered.");
+      if(!selectedPresetAvailable)throw new Error("Selected provider preset is no longer available.");
       await onSave(next);
       setMessage("Model Profile saved.");
-    }catch(error){
-      setMessage("Model Profile could not be saved: "+safeErrorMessage(error));
-    }finally{setBusy(false)}
+    }catch(error){setMessage("Model Profile could not be saved: "+safeErrorMessage(error))}
+    finally{setBusy(false)}
   };
 
   return <section className="settings-grid">
     <section>
       <h2>Model Profile</h2>
-      <p className="chat-subtitle">Character-scoped request preferences. Provider credentials and base URLs remain global.</p>
-      <label>Provider
+      <p className="chat-subtitle">Character-scoped request preferences. Provider presets control the connection; this profile can pin one preset.</p>
+      <label>Provider preset
         <select
-          value={draft.providerId??""}
-          onChange={event=>setDraft(current=>({...current,providerId:event.target.value||undefined}))}
+          value={draft.providerPresetId??""}
+          onChange={event=>setDraft(current=>({...current,providerPresetId:event.target.value||undefined,providerId:undefined}))}
           disabled={busy}>
-          <option value="">Use active/default provider</option>
-          {!selectedProviderAvailable&&draft.providerId&&<option value={draft.providerId} disabled>Unavailable: {draft.providerId}</option>}
-          {chatProviders.map(provider=><option key={provider.id} value={provider.id}>{provider.id}</option>)}
+          <option value="">Use active preset{activePresetId?" ("+(presets.find(preset=>preset.id===activePresetId)?.name??"active")+")":""}</option>
+          {!selectedPresetAvailable&&draft.providerPresetId&&<option value={draft.providerPresetId} disabled>Unavailable: {draft.providerPresetId}</option>}
+          {presets.map(preset=><option key={preset.id} value={preset.id}>{preset.name||preset.id}</option>)}
         </select>
       </label>
       <label>Model
         <input
           value={draft.model??""}
           onChange={event=>setDraft(current=>({...current,model:event.target.value||undefined}))}
-          placeholder={draft.providerId?"Provider default model":"Current runtime model"}
+          placeholder={draft.providerPresetId?"Preset default / discovered model":"Active preset model"}
           disabled={busy}/>
       </label>
       <div className="core-book-grid">
         <label>Temperature
-          <input
-            type="number" min="0" max="2" step="0.01"
-            value={draft.generation.temperature??""}
-            onChange={event=>updateGeneration("temperature",event.target.value)}
-            placeholder="Runtime default"
-            disabled={busy}/>
+          <input type="number" min="0" max="2" step="0.01" value={draft.generation.temperature??""}
+            onChange={event=>updateGeneration("temperature",event.target.value)} placeholder="Runtime default" disabled={busy}/>
         </label>
         <label>Top P
-          <input
-            type="number" min="0" max="1" step="0.01"
-            value={draft.generation.topP??""}
-            onChange={event=>updateGeneration("topP",event.target.value)}
-            placeholder="Runtime default"
-            disabled={busy}/>
+          <input type="number" min="0" max="1" step="0.01" value={draft.generation.topP??""}
+            onChange={event=>updateGeneration("topP",event.target.value)} placeholder="Runtime default" disabled={busy}/>
         </label>
       </div>
       <label>Max Tokens
-        <input
-          type="number" min="1" step="1"
-          value={draft.generation.maxTokens??""}
-          onChange={event=>updateGeneration("maxTokens",event.target.value)}
-          placeholder="Runtime default"
-          disabled={busy}/>
+        <input type="number" min="1" step="1" value={draft.generation.maxTokens??""}
+          onChange={event=>updateGeneration("maxTokens",event.target.value)} placeholder="Runtime default" disabled={busy}/>
       </label>
       <div className="actions"><button onClick={()=>void save()} disabled={busy}>{busy?"Saving…":"Save Model Profile"}</button></div>
       {message&&<div className="notice" role="status">{message}</div>}
-      <p className="hint">No API keys, credentials or base URLs are stored here.</p>
+      <p className="hint">No API keys, credentials or base URLs are stored in a Model Profile.</p>
     </section>
     <section>
-      <h2>Available chat providers</h2>
-      {chatProviders.length===0?<div>No registered chat providers.</div>:chatProviders.map(provider=>
-        <div className="row" key={provider.id}><span>{provider.id}</span><span>{provider.health?.status??"unknown"}</span></div>
+      <h2>Provider presets</h2>
+      {presets.length===0?<div>No provider presets saved; this profile follows the fake/default provider until a preset is activated.</div>:presets.map(preset=>
+        <div className="row" key={preset.id}><span>{preset.name||preset.id}</span><span>{preset.id===activePresetId?"active":"saved"}</span></div>
       )}
+      <small>Legacy Model Profiles without providerPresetId continue to follow the active provider preset after migration.</small>
+      <div className="row"><span>Registered chat providers</span><span>{runtime.providers.filter(provider=>provider.roles.includes("chat")).length}</span></div>
     </section>
   </section>;
 }
@@ -596,6 +785,25 @@ function isTauriRuntime():boolean{
   return typeof window!=="undefined" && Boolean((window as unknown as Record<string,unknown>).__TAURI_INTERNALS__);
 }
 
+function materializePresetConfigurations(
+  presets:readonly ProviderPreset[],
+  profiles:readonly CredentialProfile[]
+):readonly {presetId:string;configuration:ProviderConfiguration}[]{
+  return presets.map(preset=>{
+    const credential=profiles.find(profile=>profile.id===preset.credentialProfileId);
+    return {presetId:preset.id,configuration:materializeProviderConfiguration(preset,credential)};
+  });
+}
+function credentialSavedEntries(
+  profiles:readonly CredentialProfile[],
+  saved:Record<string,boolean>
+):Record<string,boolean>{
+  return profiles.reduce<Record<string,boolean>>((result,profile)=>{
+    result[profile.id]=saved[profile.id]??false;
+    return result;
+  },{});
+}
+
 function App(){
   const [view,setView]=React.useState<"chat"|"characters"|"core-book"|"model-profile"|"settings">("chat");
   const [runtime,setRuntime]=React.useState<RuntimeDiagnostics>(preview);
@@ -624,20 +832,36 @@ function App(){
   const memoryStore=React.useMemo(()=>isTauriRuntime()?new IpcMemoryStore(invoke):new InMemoryMemoryStore(),[]);
   const conversationStore=React.useMemo(()=>isTauriRuntime()?new IpcConversationStore(invoke):new InMemoryConversationStore(),[]);
   const modelProfileStore=React.useMemo(()=>isTauriRuntime()?new IpcModelProfileStore(invoke):new InMemoryModelProfileStore(),[]);
+  const credentialProfileStore=React.useMemo(()=>isTauriRuntime()?new IpcCredentialProfileStore(invoke):new InMemoryCredentialProfileStore(),[]);
+  const providerPresetStore=React.useMemo(()=>isTauriRuntime()?new IpcProviderPresetStore(invoke):new InMemoryProviderPresetStore(),[]);
+  const [credentialProfiles,setCredentialProfiles]=React.useState<readonly CredentialProfile[]>([]);
+  const [credentialSavedMap,setCredentialSavedMap]=React.useState<Record<string,boolean>>({});
+  const [providerPresets,setProviderPresets]=React.useState<readonly ProviderPreset[]>([]);
+  const [activePresetId,setActivePresetId]=React.useState<string|null>(null);
+  const credentialProfileStateRef=React.useRef<CredentialProfileStoreState>(emptyCredentialProfileState());
+  const providerPresetStateRef=React.useRef<ProviderPresetStoreState>(emptyProviderPresetState());
   const retriever=React.useMemo(()=>isTauriRuntime()?new IpcFullTextRetriever(invoke):undefined,[]);
 
   const controllerForSession=React.useCallback((session:ConversationSession)=>new ChatSessionController(
     session,
     {
-      chat:request=>{
+      chat:(request,providerPresetId)=>{
         const foundation=foundationRef.current;
         if(!foundation)return Promise.reject(new Error("Chat runtime is not available."));
-        return foundation.chat(request);
+        return foundation.chat(request,providerPresetId);
       },
       getChatModel:providerId=>{
         const foundation=foundationRef.current;
         if(!foundation)return Promise.reject(new Error("Chat runtime is not available."));
         return foundation.getChatModel(providerId);
+      },
+      getChatModelForPreset:providerPresetId=>{
+        const foundation=foundationRef.current;
+        if(!foundation)return Promise.reject(new Error("Chat runtime is not available."));
+        return foundation.getChatModelForPreset(providerPresetId);
+      },
+      getActiveProviderPresetId:()=>{
+        return foundationRef.current?.getActiveProviderPresetId();
       }
     },
     {
@@ -767,10 +991,21 @@ function App(){
     return recentErrors.length===diagnostics.recentErrors.length?diagnostics:{...diagnostics,recentErrors};
   },[]);
 
-  const refreshRuntime=React.useCallback(async(config:ProviderConfiguration|undefined,configurationLoadError?:string)=>{
+  const refreshRuntime=React.useCallback(async(
+    config:ProviderConfiguration|undefined,
+    configurationLoadError?:string,
+    presetState:ProviderPresetStoreState=providerPresetStateRef.current,
+    credentialState:CredentialProfileStoreState=credentialProfileStateRef.current
+  )=>{
     providerConfigurationErrorRef.current=configurationLoadError;
+    providerPresetStateRef.current=presetState;
+    credentialProfileStateRef.current=credentialState;
     await foundationRef.current?.stop();
-    const next=await startFoundationRuntime({providerConfiguration:config,credentialStore,characterStore,coreBookStore,memoryStore,retriever,retrievalIndexWriter:retriever});
+    const next=await startFoundationRuntime({
+      providerConfiguration:config,credentialStore,characterStore,coreBookStore,memoryStore,retriever,retrievalIndexWriter:retriever,
+      providerPresetConfigurations:materializePresetConfigurations(presetState.presets,credentialState.profiles),
+      activeProviderPresetId:presetState.activePresetId??undefined
+    });
     foundationRef.current=next;
     setRuntime(await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(await next.diagnostics())));
     await syncCharacters(next);
@@ -781,55 +1016,63 @@ function App(){
 
   React.useEffect(()=>{
     let active=true;
-    setStartupStatus("initializing");
-    setStartupError("");
+    setStartupStatus("initializing");setStartupError("");
     let timer:ReturnType<typeof setInterval>|undefined;
     (async()=>{
       try{
         const loaded=await loadProviderConfigurationSafely(configurationStore);
-        if(!active)return;
-        const saved=loaded.configuration;
-        if(saved)setConfiguration(saved);
-        if(loaded.error){
-          setCredentialSaved(false);
-          setSettingsMessage("Provider configuration could not be loaded: "+loaded.error+" Fake provider fallback is active.");
-        }else{
-          const reference=saved?.credentialReference??credentialReference;
-          if(saved||reference)setCredentialSaved(await credentialStore.exists(reference));
+        const legacy=loaded.configuration;
+        let credentialState=await credentialProfileStore.load();
+        if(!credentialState)credentialState=emptyCredentialProfileState();
+        let presetState=await providerPresetStore.load();
+        if(!presetState&&legacy){
+          const migrationBase=migrateProviderConfiguration(legacy);
+          const existing=migrationBase.credentialProfile?credentialState.profiles.find(profile=>profile.credentialReference.id===migrationBase.credentialProfile!.credentialReference.id):undefined;
+          const migration=migrateProviderConfiguration(legacy,new Date().toISOString(),existing?.id);
+          credentialState={...credentialState,profiles:[...credentialState.profiles,...(migration.credentialProfile&&!existing?[migration.credentialProfile]:[])]};
+          presetState={...emptyProviderPresetState(),presets:[migration.preset],activePresetId:migration.preset.id};
+          await credentialProfileStore.save(credentialState);
+          await providerPresetStore.save(presetState);
         }
-        await refreshRuntime(saved,loaded.error);
+        if(!presetState)presetState=emptyProviderPresetState();
+        if(presetState.presets.length>0&&!presetState.activePresetId){
+          presetState={...presetState,activePresetId:presetState.presets[0]!.id};
+          await providerPresetStore.save(presetState);
+        }
+        if(legacy)setConfiguration(legacy);
+        const savedMap:Record<string,boolean>={};
+        for(const profile of credentialState.profiles){
+          try{savedMap[profile.id]=await credentialStore.exists(profile.credentialReference)}catch{savedMap[profile.id]=false;}
+        }
+        const activePreset=presetState.activePresetId?presetState.presets.find(preset=>preset.id===presetState.activePresetId):undefined;
+        const activeCredential=activePreset?.credentialProfileId?credentialState.profiles.find(profile=>profile.id===activePreset.credentialProfileId):undefined;
+        const activeConfiguration=activePreset?materializeProviderConfiguration(activePreset,activeCredential):undefined;
+        setCredentialProfiles(credentialState.profiles);
+        setCredentialSavedMap(savedMap);
+        setProviderPresets(presetState.presets);
+        setActivePresetId(presetState.activePresetId);
+        providerPresetStateRef.current=presetState;
+        credentialProfileStateRef.current=credentialState;
+        if(legacy){
+          const legacyProfile=credentialState.profiles.find(profile=>profile.credentialReference.id===legacy.credentialReference?.id);
+          setCredentialSaved(Boolean(legacyProfile&&savedMap[legacyProfile.id]));
+        }else setCredentialSaved(false);
+        if(loaded.error)setSettingsMessage("Legacy provider configuration could not be loaded: "+loaded.error);
+        await refreshRuntime(activeConfiguration,loaded.error,presetState,credentialState);
         if(!active)return;
-        setStartupStatus("ready");
-        const hostSnapshot=await loadHost();
-        if(active)setHost(hostSnapshot);
+        const hostSnapshot=await loadHost();if(active)setHost(hostSnapshot);
         const sync=async()=>{
-          const foundation=foundationRef.current;
-          if(!foundation||!active)return;
-          try{
-            const snapshot=await foundation.diagnostics();
-            const live=await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(snapshot));
-            if(active)setRuntime(live);
-          }catch{
-            if(active)setRuntime(current=>({...current,runtimeStatus:"error",coreStatus:"error"}));
-          }
+          const foundation=foundationRef.current;if(!foundation||!active)return;
+          try{const snapshot=await foundation.diagnostics();const live=await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(snapshot));if(active)setRuntime(live)}
+          catch{if(active)setRuntime(current=>({...current,runtimeStatus:"error",coreStatus:"error"}))}
         };
-        await sync();
-        timer=setInterval(()=>{void sync()},1000);
+        await sync();timer=setInterval(()=>{void sync()},1000);
       }catch(error){
-        if(active){
-          setStartupStatus("error");
-          setStartupError(safeStartupError(error));
-          setRuntime({...preview,runtimeStatus:"error",coreStatus:"error"});
-        }
+        if(active){setStartupStatus("error");setStartupError(safeStartupError(error));setRuntime({...preview,runtimeStatus:"error",coreStatus:"error"});}
       }
     })();
-    return ()=>{
-      active=false;
-      if(timer)clearInterval(timer);
-      void foundationRef.current?.stop();
-      foundationRef.current=undefined;
-    };
-  },[configurationStore,credentialStore,refreshRuntime]);
+    return ()=>{active=false;if(timer)clearInterval(timer);void foundationRef.current?.stop();foundationRef.current=undefined};
+  },[configurationStore,credentialProfileStore,providerPresetStore,credentialStore,refreshRuntime]);
 
   const selectCharacter=React.useCallback(async(id:string)=>{
     const foundation=foundationRef.current;
@@ -873,6 +1116,64 @@ function App(){
       setChatController(controller);
     }
   },[activeCharacter,controllerForCharacter,modelProfileStore]);
+
+  const saveProviderPreset=React.useCallback(async(preset:ProviderPreset,activate:boolean)=>{
+    const current=providerPresetStateRef.current;
+    const nextState:ProviderPresetStoreState={...current,presets:[...current.presets.filter(item=>item.id!==preset.id),preset],activePresetId:activate?preset.id:current.activePresetId};
+    await providerPresetStore.save(nextState);providerPresetStateRef.current=nextState;setProviderPresets(nextState.presets);setActivePresetId(nextState.activePresetId);
+    if(activate||current.activePresetId===preset.id){
+      const credential=preset.credentialProfileId?credentialProfileStateRef.current.profiles.find(profile=>profile.id===preset.credentialProfileId):undefined;
+      await refreshRuntime(materializeProviderConfiguration(preset,credential),undefined,nextState,credentialProfileStateRef.current);
+    }
+  },[providerPresetStore,refreshRuntime]);
+
+  const activateProviderPreset=React.useCallback(async(id:string)=>{
+    const preset=providerPresetStateRef.current.presets.find(item=>item.id===id);if(!preset)throw new Error("Provider preset was not found.");
+    const nextState={...providerPresetStateRef.current,activePresetId:id};await providerPresetStore.save(nextState);providerPresetStateRef.current=nextState;setProviderPresets(nextState.presets);setActivePresetId(id);
+    const credential=preset.credentialProfileId?credentialProfileStateRef.current.profiles.find(profile=>profile.id===preset.credentialProfileId):undefined;
+    await refreshRuntime(materializeProviderConfiguration(preset,credential),undefined,nextState,credentialProfileStateRef.current);
+  },[providerPresetStore,refreshRuntime]);
+
+  const deleteProviderPreset=React.useCallback(async(id:string)=>{
+    const current=providerPresetStateRef.current;const remaining=current.presets.filter(item=>item.id!==id);const nextActive=current.activePresetId===id?(remaining[0]?.id??null):current.activePresetId;
+    const nextState={...current,presets:remaining,activePresetId:nextActive};await providerPresetStore.save(nextState);providerPresetStateRef.current=nextState;setProviderPresets(remaining);setActivePresetId(nextActive);
+    if(nextActive){const preset=remaining.find(item=>item.id===nextActive)!;const credential=preset.credentialProfileId?credentialProfileStateRef.current.profiles.find(profile=>profile.id===preset.credentialProfileId):undefined;await refreshRuntime(materializeProviderConfiguration(preset,credential),undefined,nextState,credentialProfileStateRef.current)}
+    else await refreshRuntime(undefined,undefined,nextState,credentialProfileStateRef.current);
+  },[providerPresetStore,refreshRuntime]);
+
+  const createCredentialProfile=React.useCallback(async(label:string,secret:string):Promise<CredentialProfile>=>{
+    const now=new Date().toISOString();const reference={id:"credential."+slugId(label)+"."+Date.now(),kind:"api-key",provider:"openai-compatible",version:"1"} as const;
+    await credentialStore.setSecret(reference,secret);
+    const saved=await credentialStore.exists(reference);
+    if(!saved){
+      throw new Error("Credential could not be verified after saving.");
+    }
+    const profile:CredentialProfile={id:"credential-profile:"+slugId(label)+":"+Date.now(),label,providerId:"openai-compatible",credentialReference:reference,createdAt:now,updatedAt:now};
+    const nextState={...credentialProfileStateRef.current,profiles:[...credentialProfileStateRef.current.profiles,profile]};await credentialProfileStore.save(nextState);credentialProfileStateRef.current=nextState;setCredentialProfiles(nextState.profiles);setCredentialSavedMap(current=>({...current,[profile.id]:true}));
+    return profile;
+  },[credentialStore,credentialProfileStore]);
+
+  const deleteCredentialProfile=React.useCallback(async(id:string)=>{
+    if(providerPresetStateRef.current.presets.some(preset=>preset.credentialProfileId===id))throw new Error("Credential is still used by a provider preset.");
+    const removed=credentialProfileStateRef.current.profiles.find(profile=>profile.id===id);if(removed)await credentialStore.deleteSecret(removed.credentialReference);
+    const nextState={...credentialProfileStateRef.current,profiles:credentialProfileStateRef.current.profiles.filter(profile=>profile.id!==id)};await credentialProfileStore.save(nextState);credentialProfileStateRef.current=nextState;setCredentialProfiles(nextState.profiles);setCredentialSavedMap(current=>{const next={...current};delete next[id];return next;});
+  },[credentialProfileStore,credentialStore]);
+
+  const refreshPresetModels=React.useCallback(async(preset:ProviderPreset):Promise<readonly ModelInfo[]>=>{
+    const credential=credentialProfileStateRef.current.profiles.find(profile=>profile.id===preset.credentialProfileId);
+    return listProviderModels(materializeProviderConfiguration(preset,credential),credentialStore);
+  },[credentialStore]);
+
+  const testPreset=React.useCallback(async(preset:ProviderPreset):Promise<ProviderConnectionTestResult>=>{
+    const credential=credentialProfileStateRef.current.profiles.find(profile=>profile.id===preset.credentialProfileId);
+    let config=materializeProviderConfiguration(preset,credential);
+    if(!config.model){
+      const models=await listProviderModels(config,credentialStore);const first=models[0]?.id;
+      if(!first)return {apiVersion:"1",schemaVersion:"1",status:"configuration_error",providerId:preset.providerId,message:"Model discovery is unavailable; choose a model manually."};
+      config={...config,model:first,enabled:true};
+    }
+    return testProviderPresetConfiguration(config,credentialStore);
+  },[credentialStore]);
 
   const saveModelProfile=React.useCallback(async(profile:ModelProfile)=>{
     await modelProfileStore.save(profile);
@@ -939,15 +1240,15 @@ function App(){
         <button className={view==="characters"?"nav-button active":"nav-button"} onClick={()=>setView("characters")}>Characters</button>
         <button className={view==="core-book"?"nav-button active":"nav-button"} onClick={()=>setView("core-book")}>Core Book</button>
         <button className={view==="model-profile"?"nav-button active":"nav-button"} onClick={()=>setView("model-profile")}>Model Profile</button>
-        <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Settings</button>
+        <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Provider Presets</button>
       </nav>
     </header>
     {view==="model-profile"&&activeCharacter&&activeModelProfile
-      ?<ModelProfileView profile={activeModelProfile} runtime={runtime} onSave={saveModelProfile}/>
+      ?<ModelProfileView profile={activeModelProfile} runtime={runtime} presets={providerPresets} activePresetId={activePresetId} onSave={saveModelProfile}/>
       :view==="settings"
-      ?<SettingsView runtime={runtime} host={host} configuration={configuration} setConfiguration={setConfiguration}
-            credentialSaved={credentialSaved} apiKey={apiKey} setApiKey={setApiKey} settingsMessage={settingsMessage}
-            saving={saving} testing={testing} onSave={save} onTest={test} onRemoveCredential={removeCredential}/>
+      ?<ProviderPresetsView presets={providerPresets} activePresetId={activePresetId} credentialProfiles={credentialProfiles} credentialSaved={credentialSavedMap}
+          runtime={runtime} onSavePreset={saveProviderPreset} onActivatePreset={activateProviderPreset} onDeletePreset={deleteProviderPreset}
+          onCreateCredential={createCredentialProfile} onDeleteCredential={deleteCredentialProfile} onRefreshModels={refreshPresetModels} onTestPreset={testPreset}/>
       :startupStatus==="error"
         ?<section className="loading-panel" role="alert">
           <strong>Character runtime initialization failed.</strong>

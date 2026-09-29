@@ -59,6 +59,42 @@ async function main(){
     equal(requests[0]?.generation?.maxTokens,222,"maxTokens reaches canonical generation");
 
     const defaultProfile=defaultModelProfile(gm.id,"2026-09-28T11:00:00.000Z");
+    const pinnedRequests:ChatRequest[]=[];
+    const pinnedController=new ChatSessionController(
+      new ConversationSession("conversation:"+nova.id+":pinned",nova.id),
+      {
+        chat:async(request:ChatRequest,providerPresetId?:string)=>{
+          equal(providerPresetId,"preset-groq","pinned Model Profile uses its provider preset");
+          pinnedRequests.push(request);
+          return responseFor(request);
+        },
+        getChatModelForPreset:async(providerPresetId)=>{
+          equal(providerPresetId,"preset-groq","preset model resolution receives pinned preset");
+          return "groq-discovered-model";
+        }
+      }
+    );
+    pinnedController.setModelProfile({...defaultModelProfile(nova.id),providerPresetId:"preset-groq"});
+    equal((await pinnedController.submit("pinned","ignored")).status,"sent","pinned provider preset chat succeeds");
+    equal(pinnedRequests[0]?.model,"groq-discovered-model","pinned preset supplies discovered model");
+
+    const activeRequests:ChatRequest[]=[];
+    const activeController=new ChatSessionController(
+      new ConversationSession("conversation:"+nova.id+":active",nova.id),
+      {
+        chat:async(request:ChatRequest,providerPresetId?:string)=>{
+          equal(providerPresetId,"preset-mistral","unPinned profile follows active provider preset");
+          activeRequests.push(request);
+          return responseFor(request);
+        },
+        getActiveProviderPresetId:()=> "preset-mistral",
+        getChatModelForPreset:async()=> "mistral-discovered-model"
+      }
+    );
+    activeController.setModelProfile(defaultModelProfile(nova.id));
+    equal((await activeController.submit("active","ignored")).status,"sent","active provider preset chat succeeds");
+    equal(activeRequests[0]?.model,"mistral-discovered-model","active preset supplies discovered model");
+
     const gmRequests:ChatRequest[]=[];
     const gmController=new ChatSessionController(
       new ConversationSession("conversation:"+gm.id+":default.v1",gm.id),

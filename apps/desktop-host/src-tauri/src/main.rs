@@ -12,6 +12,10 @@ mod retrieval;
 mod conversations;
 #[cfg(feature="tauri-app")]
 mod model_profiles;
+#[cfg(feature="tauri-app")]
+mod credential_profiles;
+#[cfg(feature="tauri-app")]
+mod provider_presets;
 mod windows_credentials;
 
 use serde::Serialize;
@@ -37,6 +41,8 @@ fn get_host_diagnostics()->HostDiagnostics{
             "runtime-diagnostics",
             "credential-store",
             "provider-configuration",
+            "provider-presets",
+            "credential-profiles",
             "character-storage",
             "core-book-storage",
             "dynamic-memory-storage"
@@ -107,6 +113,30 @@ fn save_provider_configuration(app:tauri::AppHandle,configuration:config::Provid
 fn delete_provider_configuration(app:tauri::AppHandle)->Result<(),String>{
     config::clear(&app)
 }
+
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn get_credential_profiles(app:tauri::AppHandle)->Result<Option<credential_profiles::CredentialProfileStoreState>,String>{credential_profiles::load(&app)}
+
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn save_credential_profiles(app:tauri::AppHandle,state:credential_profiles::CredentialProfileStoreState)->Result<(),String>{credential_profiles::save(&app,&state)}
+
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn delete_credential_profile(app:tauri::AppHandle,id:String)->Result<(),String>{credential_profiles::delete(&app,&id)}
+
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn get_provider_presets(app:tauri::AppHandle)->Result<Option<provider_presets::ProviderPresetStoreState>,String>{provider_presets::load(&app)}
+
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn save_provider_presets(app:tauri::AppHandle,state:provider_presets::ProviderPresetStoreState)->Result<(),String>{provider_presets::save(&app,&state)}
+
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn delete_provider_preset(app:tauri::AppHandle,id:String)->Result<(),String>{provider_presets::delete(&app,&id)}
 
 #[cfg(feature="tauri-app")]
 #[tauri::command]
@@ -233,7 +263,13 @@ fn main(){
             clear_conversation,
             get_model_profile,
             save_model_profile,
-            delete_model_profile
+            delete_model_profile,
+            get_credential_profiles,
+            save_credential_profiles,
+            delete_credential_profile,
+            get_provider_presets,
+            save_provider_presets,
+            delete_provider_preset
         ])
         .run(tauri::generate_context!())
         .expect("Tauri runtime failed");

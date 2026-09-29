@@ -113,7 +113,9 @@ async function requestMappingTest(){
   });
   equal(result.message.content,"hello from provider","mapped response text");
   equal(http.requests.length,1,"one HTTP request");
-  const sent=JSON.parse(http.requests[0]!.body) as {
+  const requestBody=http.requests[0]!.body;
+  if(requestBody===undefined)throw new Error("expected POST request body");
+  const sent=JSON.parse(requestBody) as {
     model:string;
     messages:Array<{role:string;content:string}>;
     stream:boolean;
@@ -123,7 +125,7 @@ async function requestMappingTest(){
     response_format?:unknown;
   };
   equal(http.requests[0]!.url,"https://provider.example.test/v1/chat/completions","chat endpoint");
-  equal(http.requests[0]!.headers.Authorization,"Bearer unit-test-secret-value","authorization boundary");
+  equal(String(http.requests[0]!.headers.Authorization??"") ,"Bearer unit-test-secret-value","authorization boundary");
   equal(sent.model,"openai-compatible-test-model","model mapping");
   equal(sent.stream,false,"non-streaming request");
   equal(sent.temperature,0.4,"temperature mapping");
@@ -293,6 +295,31 @@ async function secretSafetyTest(){
   }
 }
 
+async function modelDiscoveryTest(){
+  const http=new FakeHttpClient();
+  http.next={status:200,body:JSON.stringify({data:[
+    {id:"discovered-model-a",display_name:"Ignored Name"},
+    {id:"discovered-model-b",displayName:"Discovered B"},
+    {id:17}
+  ]})};
+  const models=await provider(http).listModels();
+  equal(http.requests.length,1,"one discovery request");
+  equal(http.requests[0]!.method,"GET","model discovery uses GET");
+  equal(http.requests[0]!.url,"https://provider.example.test/v1/models","model discovery endpoint");
+  equal(http.requests[0]!.headers.Authorization,"Bearer unit-test-secret-value","model discovery authorization");
+  equal(models[0]?.id,"discovered-model-a","first discovered model id");
+  equal(models[1]?.displayName,"Discovered B","discovered displayName");
+  equal(models.length,2,"malformed model items are ignored");
+
+  http.next={status:405,body:""};
+  const unsupported=await provider(http).listModels();
+  equal(unsupported.length,0,"unsupported discovery switches to manual model mode");
+
+  http.next={status:200,body:"malformed"};
+  const malformed=await provider(http).listModels();
+  equal(malformed.length,0,"malformed discovery returns manual mode without provider failure");
+}
+
 async function runtimeIntegrationTest(){
   const http=new FakeHttpClient();
   const registry=new ProviderRegistry();
@@ -305,9 +332,11 @@ async function runtimeIntegrationTest(){
 
 async function providerHealthAndModelsTest(){
   const store=new FakeCredentialStore();
-  const p=provider(new FakeHttpClient(),store);
+  const http=new FakeHttpClient();
+  http.next={status:200,body:JSON.stringify({data:[{id:"openai-compatible-test-model",displayName:"Configured Model"}]})};
+  const p=provider(http,store);
   equal((await p.health()).status,"healthy","provider health configured");
-  equal((await p.listModels())[0]?.id,"openai-compatible-test-model","configured model listing");
+  equal((await p.listModels())[0]?.id,"openai-compatible-test-model","configured model discovery listing");
   await store.deleteSecret(credentialReference);
   equal((await p.health()).status,"unavailable","provider health without credential");
   const invalid=new OpenAICompatibleChatProvider({
@@ -373,6 +402,7 @@ void (async()=>{
     ["Timeout and connection",timeoutAndConnectionTest],
     ["Credential and unsupported inputs",credentialAndUnsupportedTest],
     ["Secret safety",secretSafetyTest],
+    ["Model discovery",modelDiscoveryTest],
     ["AiRuntime integration",runtimeIntegrationTest],
     ["Health and model listing",providerHealthAndModelsTest],
     ["Composition Root",compositionRootTest]

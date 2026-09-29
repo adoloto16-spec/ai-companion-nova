@@ -20,6 +20,55 @@ export interface CredentialStore{getSecret(reference:CredentialReference):Promis
 export const PROVIDER_CONFIGURATION_API_VERSION:ApiVersion="1";
 export const PROVIDER_CONFIGURATION_SCHEMA_VERSION="1";
 export type ProviderConnectionTestStatus="connected"|"authentication_failed"|"configuration_error"|"network_error"|"timeout"|"provider_error";
+export const CREDENTIAL_PROFILE_API_VERSION:ApiVersion="1";
+export const CREDENTIAL_PROFILE_SCHEMA_VERSION="1";
+export interface CredentialProfile{
+  id:string;
+  label:string;
+  providerId:string;
+  credentialReference:CredentialReference;
+  createdAt:string;
+  updatedAt:string;
+}
+export interface CredentialProfileStoreState{
+  apiVersion:ApiVersion;
+  schemaVersion:string;
+  profiles:readonly CredentialProfile[];
+}
+export interface CredentialProfileStore{
+  load():Promise<CredentialProfileStoreState|undefined>;
+  save(state:CredentialProfileStoreState):Promise<void>;
+  delete(id:string):Promise<void>;
+}
+
+export const PROVIDER_PRESET_API_VERSION:ApiVersion="1";
+export const PROVIDER_PRESET_SCHEMA_VERSION="1";
+export interface ProviderPreset{
+  id:string;
+  name:string;
+  providerId:string;
+  baseUrl:string;
+  credentialProfileId?:string;
+  model?:string;
+  timeoutMs?:number;
+  createdAt:string;
+  updatedAt:string;
+}
+export interface ProviderPresetStoreState{
+  apiVersion:ApiVersion;
+  schemaVersion:string;
+  presets:readonly ProviderPreset[];
+  activePresetId:string|null;
+}
+export interface ProviderPresetStore{
+  load():Promise<ProviderPresetStoreState|undefined>;
+  save(state:ProviderPresetStoreState):Promise<void>;
+  delete(id:string):Promise<void>;
+}
+export interface ProviderPresetModelResolver{
+  listModels(presetId:string):Promise<readonly ModelInfo[]>;
+}
+
 export interface ProviderConfiguration{apiVersion:ApiVersion;schemaVersion:string;providerId:string;enabled:boolean;baseUrl:string;model:string;credentialReference:CredentialReference|null;timeoutMs?:number}
 export interface ProviderConnectionTestResult{apiVersion:ApiVersion;schemaVersion:string;status:ProviderConnectionTestStatus;providerId:string;message?:string}
 export type CharacterId=string;
@@ -56,13 +105,14 @@ export function defaultConversationId(characterId:CharacterId):ConversationId{
 }
 export type ModelProfileId=string;
 export const MODEL_PROFILE_API_VERSION:ApiVersion="1";
-export const MODEL_PROFILE_SCHEMA_VERSION="1";
+export const MODEL_PROFILE_SCHEMA_VERSION="2";
 export interface ModelProfile{
   apiVersion:ApiVersion;
   schemaVersion:string;
   id:ModelProfileId;
   characterId:CharacterId;
   providerId?:string;
+  providerPresetId?:string;
   model?:string;
   generation:ChatGenerationOptions;
   createdAt:string;
@@ -411,7 +461,11 @@ export const CONTRACT_VERSIONS={
   contextCandidate:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
   assembledContext:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
   modelProfile:{apiVersion:MODEL_PROFILE_API_VERSION,schemaVersion:MODEL_PROFILE_SCHEMA_VERSION},
-  modelProfileStoreState:{apiVersion:MODEL_PROFILE_API_VERSION,schemaVersion:MODEL_PROFILE_SCHEMA_VERSION},
+  credentialProfile:{apiVersion:CREDENTIAL_PROFILE_API_VERSION,schemaVersion:CREDENTIAL_PROFILE_SCHEMA_VERSION},
+  credentialProfileStoreState:{apiVersion:CREDENTIAL_PROFILE_API_VERSION,schemaVersion:CREDENTIAL_PROFILE_SCHEMA_VERSION},
+  providerPreset:{apiVersion:PROVIDER_PRESET_API_VERSION,schemaVersion:PROVIDER_PRESET_SCHEMA_VERSION},
+  providerPresetStoreState:{apiVersion:PROVIDER_PRESET_API_VERSION,schemaVersion:PROVIDER_PRESET_SCHEMA_VERSION},
+    modelProfileStoreState:{apiVersion:MODEL_PROFILE_API_VERSION,schemaVersion:MODEL_PROFILE_SCHEMA_VERSION},
   retrievalSource:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
   retrievalMatch:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
   retrievalQuery:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
