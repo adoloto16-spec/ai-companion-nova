@@ -76,6 +76,16 @@ function safeStartupError(error:unknown):string{
   return safeErrorMessage(error,"Unknown startup error");
 }
 
+function slugId(value:string):string{
+  const normalized=value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g,"-")
+    .replace(/^-+|-+$/g,"")
+    .slice(0,64);
+  return normalized||"credential";
+}
+
 function resultLabel(result:ProviderConnectionTestResult):string{
   switch(result.status){
     case "connected":return "Connected";
@@ -1134,6 +1144,10 @@ function App(){
   const createCredentialProfile=React.useCallback(async(label:string,secret:string):Promise<CredentialProfile>=>{
     const now=new Date().toISOString();const reference={id:"credential."+slugId(label)+"."+Date.now(),kind:"api-key",provider:"openai-compatible",version:"1"} as const;
     await credentialStore.setSecret(reference,secret);
+    const saved=await credentialStore.exists(reference);
+    if(!saved){
+      throw new Error("Credential could not be verified after saving.");
+    }
     const profile:CredentialProfile={id:"credential-profile:"+slugId(label)+":"+Date.now(),label,providerId:"openai-compatible",credentialReference:reference,createdAt:now,updatedAt:now};
     const nextState={...credentialProfileStateRef.current,profiles:[...credentialProfileStateRef.current.profiles,profile]};await credentialProfileStore.save(nextState);credentialProfileStateRef.current=nextState;setCredentialProfiles(nextState.profiles);setCredentialSavedMap(current=>({...current,[profile.id]:true}));
     return profile;
