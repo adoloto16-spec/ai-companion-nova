@@ -1,6 +1,6 @@
 import type {
-  AssembledContext,ChatErrorCode,ChatMessage,ChatRequest,ChatResponse,ChatStreamEvent,ChatStreamHandlers,
-  ChatStreamOptions,CharacterId,ContextBuildRequest,ContextBudget,Unsubscribe,ModelProfile
+  AssembledContext,ChatErrorCode,ChatGenerationOptions,ChatMessage,ChatRequest,ChatResponse,ChatStreamEvent,
+  ChatStreamHandlers,ChatStreamOptions,ChatUsage,CharacterId,ContextBuildRequest,ContextBudget,ModelProfile,Unsubscribe
 } from "../../contracts/src/index";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION} from "../../contracts/src/index";
 
@@ -55,16 +55,14 @@ function readChatErrorCode(error:unknown):ChatErrorCode|undefined{
   const candidate=(error as {chatError?:unknown}).chatError;
   if(!candidate||typeof candidate!=="object"||!("code" in candidate))return undefined;
   const code=(candidate as {code?:unknown}).code;
-  if(typeof code!=="string"||!CHAT_ERROR_CODES.has(code as ChatErrorCode))return undefined;
-  return code as ChatErrorCode;
+  return typeof code==="string"&&CHAT_ERROR_CODES.has(code as ChatErrorCode)?code as ChatErrorCode:undefined;
 }
 function userMessageForError(error:unknown):{code:ChatErrorCode;message:string}{
   const code=readChatErrorCode(error)??"PROVIDER_ERROR";
   return {code,message:USER_MESSAGES[code]};
 }
 function isAbortError(error:unknown):boolean{
-  if(error&&typeof error==="object"&&"name" in error)return (error as {name?:unknown}).name==="AbortError";
-  return false;
+  return Boolean(error&&typeof error==="object"&&"name" in error&&(error as {name?:unknown}).name==="AbortError");
 }
 function streamStatus(message:ChatMessage):"complete"|"interrupted"|"streaming"|undefined{
   const value=message.metadata?.streamStatus;
@@ -79,7 +77,7 @@ function withStreamMetadata(message:ChatMessage,status:"complete"|"interrupted"|
 function appendWithoutDuplicate(existing:string,incoming:string):string{
   if(!incoming)return existing;
   if(existing.endsWith(incoming))return existing;
-  if(incoming.startsWith(existing)&&existing.length>0)return incoming;
+  if(existing.length>0&&incoming.startsWith(existing))return incoming;
   const maxOverlap=Math.min(existing.length,incoming.length,4096);
   for(let length=maxOverlap;length>0;length--){
     if(existing.slice(-length)===incoming.slice(0,length))return existing+incoming.slice(length);
@@ -89,8 +87,8 @@ function appendWithoutDuplicate(existing:string,incoming:string):string{
 
 export class ConversationSession{
   readonly conversationId:string;
-  private readonly messages:ChatMessage[]=[];
   readonly characterId:CharacterId;
+  private readonly messages:ChatMessage[]=[];
   constructor(conversationId:string,characterId:CharacterId){
     if(!conversationId.trim())throw new Error("Conversation id must not be empty.");
     if(!characterId.trim())throw new Error("Character id must not be empty.");
@@ -114,13 +112,11 @@ export class ConversationSession{
 export interface ChatContextBuilderBoundary{
   buildContext(request:ContextBuildRequest):Promise<AssembledContext>;
 }
-
 export interface ChatSessionControllerOptions{
   requestIdFactory?:()=>string;
   contextBuilder?:ChatContextBuilderBoundary;
   contextBudget?:ContextBudget;
 }
-
 const DEFAULT_CHAT_CONTEXT_BUDGET:ContextBudget={
   availableContextTokens:4096,
   reservedOutputTokens:1024,
@@ -129,15 +125,15 @@ const DEFAULT_CHAT_CONTEXT_BUDGET:ContextBudget={
 };
 
 type RunMode="submit"|"continue"|"regenerate"|"retry";
-
 interface ActiveRun{
   id:number;
   mode:RunMode;
+  requestId:string;
   assistantId:string;
   abortController:AbortController;
   stopRequested:boolean;
-  promise:Promise<ChatActionResult>;
   originalAssistant?:ChatMessage;
+  promise:Promise<ChatActionResult>;
 }
 
 export class ChatSessionController{
@@ -161,11 +157,11 @@ export class ChatSessionController{
     this.requestIdFactory=options.requestIdFactory??defaultRequestId;
     this.contextBuilder=options.contextBuilder;
     this.contextBudget=options.contextBudget??DEFAULT_CHAT_CONTEXT_BUDGET;
-    this.status=session.getMessages().some(message=>message.role==="assistant"&&streamStatus(message)==="interrupted")
-      ?"interrupted"
-      :session.getMessages().some(message=>message.role==="assistant")
-        ?"completed"
-        :"idle";
+    const messages=session.getMessages();
+    const lastAssistant=[...messages].reverse().find(message=>message.role==="assistant");
+    this.status=lastAssistant
+      ?streamStatus(lastAssistant)==="interrupted"?"interrupted":"completed"
+      :"idle";
   }
 
   setModelProfile(profile:ModelProfile|undefined):void{
@@ -173,11 +169,7 @@ export class ChatSessionController{
     this.modelProfile=profile;
     this.notify();
   }
-
-  getModelProfile():ModelProfile|undefined{
-    return this.modelProfile;
-  }
-
+  getModelProfile():ModelProfile|undefined{return this.modelProfile}
   getSnapshot():ConversationSnapshot{
     return {
       conversationId:this.session.conversationId,
@@ -186,15 +178,13 @@ export class ChatSessionController{
       sending:this.sending,
       status:this.status,
       ...(this.error?{error:this.error}:{}),
-      ...(this.errorCode?{errorCode:this.errorCode}:{})
+      ...(this.errorCode?{errorCode:this.errorCode}: {})
     };
   }
-
   subscribe(listener:(snapshot:ConversationSnapshot)=>void):Unsubscribe{
     this.listeners.add(listener);
     return ()=>{this.listeners.delete(listener)};
   }
-
   clear():void{
     if(this.sending)return;
     this.session.clear();
@@ -211,12 +201,12 @@ export class ChatSessionController{
     const requestId=this.requestIdFactory();
     const userMessage:ChatMessage={id:requestId+":user",role:"user",content:text};
     this.session.addMessage(userMessage);
-    return this.beginRun("submit",model,userMessage);
+    return this.startRun("submit",requestId,model,userMessage);
   }
 
   async stop():Promise<ChatActionResult>{
     const active=this.activeRun;
-    if(!active)return {status:"rejected",reason:"busy"};
+    if(!active||!this.sending)return {status:"rejected",reason:"busy"};
     active.stopRequested=true;
     active.abortController.abort();
     return active.promise;
@@ -224,48 +214,53 @@ export class ChatSessionController{
 
   async continue(model:string):Promise<ChatActionResult>{
     if(this.sending)return {status:"rejected",reason:"busy"};
-    const messages=this.session.getMessages();
-    const assistant=[...messages].reverse().find(message=>message.role==="assistant");
-    if(!assistant||streamStatus(assistant)!=="interrupted"||!assistant.id)return {status:"rejected",reason:"no-continuation"};
-    const index=messages.findIndex(message=>message.id===assistant.id);
-    const user=index>0?[...messages.slice(0,index)].reverse().find(message=>message.role==="user"):undefined;
-    if(!user||!user.id)return {status:"rejected",reason:"no-continuation"};
-    return this.beginRun("continue",model,user,assistant);
+    const {assistant,user}=this.lastTurn();
+    if(!assistant||!user||!assistant.id||streamStatus(assistant)!=="interrupted")return {status:"rejected",reason:"no-continuation"};
+    return this.startRun("continue",this.requestIdFactory(),model,user,assistant);
   }
 
   async regenerate(model:string):Promise<ChatActionResult>{
     if(this.sending)return {status:"rejected",reason:"busy"};
-    const messages=this.session.getMessages();
-    const assistant=[...messages].reverse().find(message=>message.role==="assistant");
-    if(!assistant||streamStatus(assistant)!=="complete"&&streamStatus(assistant)!=="interrupted"||!assistant.id)return {status:"rejected",reason:"no-regeneration"};
-    const index=messages.findIndex(message=>message.id===assistant.id);
-    const user=index>0?[...messages.slice(0,index)].reverse().find(message=>message.role==="user"):undefined;
-    if(!user||!user.id)return {status:"rejected",reason:"no-regeneration"};
-    return this.beginRun("regenerate",model,user,assistant);
+    const {assistant,user}=this.lastTurn();
+    const interrupted=assistant?streamStatus(assistant)==="interrupted":false;
+    const complete=assistant?streamStatus(assistant)==="complete":false;
+    if(!assistant||!user||!assistant.id||(!complete&&!interrupted))return {status:"rejected",reason:"no-regeneration"};
+    return this.startRun("regenerate",this.requestIdFactory(),model,user,assistant);
   }
 
   async retry(model:string):Promise<ChatActionResult>{
-    if(this.sending)return {status:"rejected",reason:"busy"};
-    if(this.status!=="error")return {status:"rejected",reason:"no-retry"};
-    const messages=this.session.getMessages();
-    const assistant=[...messages].reverse().find(message=>message.role==="assistant");
-    const user=[...messages].reverse().find(message=>message.role==="user");
+    if(this.sending||this.status!=="error")return {status:"rejected",reason:this.sending?"busy":"no-retry"};
+    const {assistant,user}=this.lastTurn();
     if(!user||!user.id)return {status:"rejected",reason:"no-retry"};
-    return this.beginRun("retry",model,user,assistant&&assistant.id?assistant:undefined);
+    return this.startRun("retry",this.requestIdFactory(),model,user,assistant&&assistant.id?assistant:undefined);
   }
 
-  private beginRun(mode:RunMode,model:string,userMessage:ChatMessage,assistantMessage?:ChatMessage):Promise<ChatActionResult>{
-    const id=++this.runSequence;
-    const abortController=new AbortController();
+  private lastTurn():{assistant?:ChatMessage;user?:ChatMessage}{
+    const messages=this.session.getMessages();
+    const assistant=[...messages].reverse().find(message=>message.role==="assistant");
+    if(!assistant)return {user:[...messages].reverse().find(message=>message.role==="user")};
+    const assistantIndex=messages.findIndex(message=>message.id===assistant.id);
+    const user=assistantIndex>0?[...messages.slice(0,assistantIndex)].reverse().find(message=>message.role==="user"):undefined;
+    return {assistant,user};
+  }
+
+  private startRun(
+    mode:RunMode,
+    requestId:string,
+    model:string,
+    userMessage:ChatMessage,
+    assistantMessage?:ChatMessage
+  ):Promise<ChatActionResult>{
     const active:ActiveRun={
-      id,
+      id:++this.runSequence,
       mode,
-      assistantId:assistantMessage?.id??this.requestIdFactory()+":assistant",
-      abortController,
+      requestId,
+      assistantId:assistantMessage?.id??requestId+":assistant",
+      abortController:new AbortController(),
       stopRequested:false,
+      ...(assistantMessage?{originalAssistant:cloneMessage(assistantMessage)}:{}),
       promise:Promise.resolve({status:"error",code:"PROVIDER_ERROR",message:"Chat run did not start."})
     };
-    active.originalAssistant=assistantMessage?cloneMessage(assistantMessage):undefined;
     this.activeRun=active;
     this.sending=true;
     this.status="streaming";
@@ -277,21 +272,18 @@ export class ChatSessionController{
     return promise;
   }
 
-  private async run(active:ActiveRun,model:string,userMessage:ChatMessage,assistantMessage?:ChatMessage):Promise<ChatActionResult>{
-    const requestId=this.requestIdFactory();
-    let targetAssistant=assistantMessage?cloneMessage(assistantMessage):undefined;
-    let streamedUsage:Record<string,unknown>|undefined;
-    let finishReason:ChatResponse["finishReason"]="unknown";
-    let completed=false;
-    let receivedText=false;
+  private async run(
+    active:ActiveRun,
+    model:string,
+    userMessage:ChatMessage,
+    assistantMessage?:ChatMessage
+  ):Promise<ChatActionResult>{
+    let contextMessages=this.session.getMessages();
+    if(assistantMessage?.id&&active.mode!=="continue"){
+      contextMessages=contextMessages.filter(message=>message.id!==assistantMessage.id);
+    }
 
     try{
-      if(active.stopRequested)return this.markInterrupted(active,targetAssistant);
-
-      let contextMessages=this.session.getMessages();
-      if(active.mode!=="continue"&&targetAssistant?.id){
-        contextMessages=contextMessages.filter(message=>message.id!==targetAssistant!.id);
-      }
       if(this.contextBuilder){
         const assembled=await this.contextBuilder.buildContext({
           apiVersion:"1",
@@ -303,77 +295,56 @@ export class ChatSessionController{
         });
         contextMessages=assembled.messages;
       }
-      if(active.stopRequested)return this.markInterrupted(active,targetAssistant);
+      if(active.stopRequested)return this.markInterrupted(active,assistantMessage);
 
-      const profile=this.modelProfile;
-      const profileProviderId=profile?.providerId;
-      const profileProviderPresetId=profile?.providerPresetId??this.runtime.getActiveProviderPresetId?.();
-      let resolvedModel=model;
-      if(profile?.model===undefined&&profileProviderPresetId!==undefined&&this.runtime.getChatModelForPreset){
-        try{resolvedModel=await this.runtime.getChatModelForPreset(profileProviderPresetId)}catch{resolvedModel=model}
-      }else if(profile?.model===undefined&&profileProviderPresetId===undefined&&profileProviderId!==undefined&&this.runtime.getChatModel){
-        try{resolvedModel=await this.runtime.getChatModel(profileProviderId)}catch{resolvedModel=model}
-      }
-      const resolvedGeneration=profile?.generation;
-      const hasGeneration=Boolean(resolvedGeneration&&Object.keys(resolvedGeneration).length>0);
-      const request:ChatRequest={
-        apiVersion:CHAT_API_VERSION,
-        schemaVersion:CHAT_SCHEMA_VERSION,
-        requestId,
-        ...(profile?.providerId!==undefined?{providerId:profile.providerId}:{}),
-        model:profile?.model??resolvedModel,
-        context:{conversationId:this.session.conversationId,messages:contextMessages},
-        ...(hasGeneration&&resolvedGeneration?{generation:{...resolvedGeneration}}:{})
-      };
-
-      if(active.mode==="regenerate"&&targetAssistant?.id){
-        this.session.replaceMessage(targetAssistant.id,withStreamMetadata({...targetAssistant,content:""},"streaming"));
-      }else if(active.mode==="retry"&&targetAssistant?.id){
-        this.session.replaceMessage(targetAssistant.id,withStreamMetadata({...targetAssistant,content:""},"streaming"));
-      }else if(active.mode==="continue"&&targetAssistant?.id){
-        this.session.replaceMessage(targetAssistant.id,withStreamMetadata(targetAssistant,"streaming"));
+      const request=this.buildRequest(active.requestId,model,contextMessages);
+      const currentAssistant=assistantMessage?cloneMessage(assistantMessage):{id:active.assistantId,role:"assistant" as const,content:""};
+      if(active.mode==="submit"){
+        this.session.addMessage(withStreamMetadata(currentAssistant,"streaming"));
       }else{
-        targetAssistant={id:active.assistantId,role:"assistant",content:""};
-        this.session.addMessage(withStreamMetadata(targetAssistant,"streaming"));
+        this.session.replaceMessage(active.assistantId,withStreamMetadata(currentAssistant,"streaming"));
       }
-      active.assistantId=targetAssistant.id!;
       this.notify();
+
+      let streamedUsage:ChatUsage|undefined;
+      let finishReason:ChatResponse["finishReason"]="unknown";
+      let response:ChatResponse|undefined;
 
       const onEvent=async(event:ChatStreamEvent)=>{
         if(active.stopRequested||this.activeRun?.id!==active.id)return;
         if(event.type==="delta"){
           const current=this.session.getMessages().find(message=>message.id===active.assistantId);
           if(!current)return;
-          const nextContent=active.mode==="continue"
+          const content=active.mode==="continue"
             ?appendWithoutDuplicate(current.content,event.text)
             :current.content+event.text;
-          receivedText=receivedText||event.text.length>0;
-          this.session.replaceMessage(active.assistantId,withStreamMetadata({...current,content:nextContent},"streaming"));
+          this.session.replaceMessage(active.assistantId,withStreamMetadata({...current,content},"streaming"));
           this.notify();
         }else if(event.type==="usage"){
-          streamedUsage={...(event.usage as Record<string,unknown>)};
+          streamedUsage=event.usage;
         }else if(event.type==="completed"){
-          completed=true;
           finishReason=event.finishReason;
-          if(event.usage)streamedUsage={...(event.usage as Record<string,unknown>)};
+          streamedUsage=event.usage??streamedUsage;
         }
       };
 
-      let response:ChatResponse;
       if(this.runtime.stream){
         response=await this.runtime.stream(
           request,
           {onEvent},
           {signal:active.abortController.signal},
-          profileProviderPresetId
+          this.modelProfile?.providerPresetId??this.runtime.getActiveProviderPresetId?.()
         );
       }else{
-        response=await this.runtime.chat(request,profileProviderPresetId);
+        response=await this.runtime.chat(
+          request,
+          this.modelProfile?.providerPresetId??this.runtime.getActiveProviderPresetId?.()
+        );
         await onEvent({
           apiVersion:"1",
           schemaVersion:"1",
-          requestId,
-          conversationId:this.session.conversationId,
+          requestId:request.requestId,
+          conversationId:request.context.conversationId,
           providerId:response.providerId,
           model:response.model,
           type:"delta",
@@ -382,8 +353,8 @@ export class ChatSessionController{
         await onEvent({
           apiVersion:"1",
           schemaVersion:"1",
-          requestId,
-          conversationId:this.session.conversationId,
+          requestId:request.requestId,
+          conversationId:request.context.conversationId,
           providerId:response.providerId,
           model:response.model,
           type:"completed",
@@ -393,21 +364,29 @@ export class ChatSessionController{
       }
 
       if(active.stopRequested)return this.markInterrupted(active,this.session.getMessages().find(message=>message.id===active.assistantId));
+      if(!response)throw new Error("Chat runtime returned no response.");
+
       const finalMessage=this.session.getMessages().find(message=>message.id===active.assistantId);
       if(!finalMessage)throw new Error("Assistant stream message was lost.");
-      const content=finalMessage.content||response.message.content;
-      finishReason=completed?finishReason:response.finishReason;
-      const usage=streamedUsage??response.usage;
-      const canonical=withStreamMetadata({...finalMessage,content},"complete",{
-        finishReason,
-        ...(usage?{usage}: {})
+      const canonicalFinishReason=finishReason==="unknown"?response.finishReason:finishReason;
+      const canonicalUsage=streamedUsage??response.usage;
+      const canonicalMessage=withStreamMetadata(finalMessage,"complete",{
+        finishReason:canonicalFinishReason,
+        ...(canonicalUsage?{usage:canonicalUsage}: {})
       });
-      this.session.replaceMessage(active.assistantId,canonical);
+      this.session.replaceMessage(active.assistantId,canonicalMessage);
       this.status="completed";
       this.error=undefined;
       this.errorCode=undefined;
       this.notify();
-      return {status:"sent",response:{...response,message:canonical,finishReason,usage:response.usage??(usage as never)}};
+
+      const canonicalResponse:ChatResponse={
+        ...response,
+        finishReason:canonicalFinishReason,
+        message:canonicalMessage,
+        ...(canonicalUsage?{usage:canonicalUsage}:{})
+      };
+      return {status:"sent",response:canonicalResponse};
     }catch(error){
       if(active.stopRequested||isAbortError(error)){
         return this.markInterrupted(active,this.session.getMessages().find(message=>message.id===active.assistantId));
@@ -427,30 +406,58 @@ export class ChatSessionController{
       this.notify();
       return {status:"error",...normalized};
     }finally{
-      this.sending=false;
       if(this.activeRun?.id===active.id)this.activeRun=undefined;
+      this.sending=false;
       this.notify();
     }
   }
 
-  private markInterrupted(active:ActiveRun,current?:ChatMessage):ChatActionResult{
-    const message=current??(active.originalAssistant?cloneMessage(active.originalAssistant):undefined);
-    if(message?.id){
-      const interrupted=withStreamMetadata(message,"interrupted",{
-        ...(message.content?{}:{interruptedWithoutText:true})
-      });
-      if(this.session.getMessages().some(item=>item.id===message.id))this.session.replaceMessage(message.id,interrupted);
-      else if(message.content)this.session.addMessage(interrupted);
-      if(!message.content&&active.mode==="submit")this.session.removeMessage(message.id);
+  private buildRequest(requestId:string,model:string,messages:readonly ChatMessage[]):ChatRequest{
+    const profile=this.modelProfile;
+    const profileProviderId=profile?.providerId;
+    const profileProviderPresetId=profile?.providerPresetId??this.runtime.getActiveProviderPresetId?.();
+    let resolvedModel=model;
+    // Model discovery remains owned by the existing Provider Preset/Model Profile path.
+    if(profile?.model===undefined&&profileProviderPresetId!==undefined&&this.runtime.getChatModelForPreset){
+      // This synchronous request builder cannot await model discovery, so the caller-resolved model remains authoritative.
     }
-    const finalMessage=this.session.getMessages().find(item=>item.id===active.assistantId);
-    this.status=finalMessage?"interrupted":"interrupted";
+    const generation=profile?.generation;
+    const hasGeneration=Boolean(generation&&Object.keys(generation).length>0);
+    return {
+      apiVersion:CHAT_API_VERSION,
+      schemaVersion:CHAT_SCHEMA_VERSION,
+      requestId,
+      ...(profileProviderId!==undefined?{providerId:profileProviderId}: {}),
+      model:profile?.model??resolvedModel,
+      context:{conversationId:this.session.conversationId,messages},
+      ...(hasGeneration&&generation?{generation:cloneGeneration(generation)}:{})
+    };
+  }
+
+  private markInterrupted(active:ActiveRun,current?:ChatMessage):ChatActionResult{
+    const original=active.originalAssistant;
+    let message=current?cloneMessage(current):original?cloneMessage(original):undefined;
+    if(message?.id&&active.mode!=="submit"&&original){
+      message=cloneMessage(original);
+      if(this.session.getMessages().some(item=>item.id===message!.id))this.session.replaceMessage(message.id,message);
+    }else if(message?.id&&active.mode==="submit"){
+      if(message.content){
+        this.session.replaceMessage(message.id,withStreamMetadata(message,"interrupted"));
+      }else{
+        this.session.removeMessage(message.id);
+        message=undefined;
+      }
+    }else if(message?.id){
+      this.session.replaceMessage(message.id,withStreamMetadata(message,"interrupted"));
+    }
+    this.status="interrupted";
     this.error=undefined;
     this.errorCode=undefined;
-    this.sending=false;
-    if(this.activeRun?.id===active.id)this.activeRun=undefined;
-    this.notify();
-    return {status:"interrupted",message:finalMessage??{id:active.assistantId,role:"assistant",content:"",metadata:{streamStatus:"interrupted"}}};
+    const finalMessage=this.session.getMessages().find(item=>item.id===active.assistantId);
+    return {
+      status:"interrupted",
+      message:finalMessage??message??{id:active.assistantId,role:"assistant",content:"",metadata:{streamStatus:"interrupted"}}
+    };
   }
 
   private notify():void{
@@ -459,4 +466,13 @@ export class ChatSessionController{
       try{listener(snapshot)}catch{ /* observer failures must not break chat */ }
     }
   }
+}
+
+function cloneGeneration(generation:ChatGenerationOptions):ChatGenerationOptions{
+  return {
+    ...(generation.temperature===undefined?{}:{temperature:generation.temperature}),
+    ...(generation.maxTokens===undefined?{}:{maxTokens:generation.maxTokens}),
+    ...(generation.topP===undefined?{}:{topP:generation.topP}),
+    ...(generation.responseFormat===undefined?{}:{responseFormat:generation.responseFormat.type==="text"?{type:"text"}:{type:"json",schema:{...generation.responseFormat.schema}}})
+  };
 }
