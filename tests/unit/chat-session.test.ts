@@ -115,6 +115,175 @@ async function main(){
   ok(observed>0,"controller notifies subscribers");
   equal(busyController.getSnapshot().messages.length,0,"controller clear");
 
+  const streamingSession=new ConversationSession("stream-conversation","character.stream");
+  const streamingSnapshots:ReturnType<ChatSessionController["getSnapshot"]>[]=[];
+  const streamingRuntime={
+    async chat(request:ChatRequest):Promise<ChatResponse>{return responseFor(request,"chat fallback")},
+    async stream(request:ChatRequest,handlers:import("../../contracts/src").ChatStreamHandlers,options?:import("../../contracts/src").ChatStreamOptions):Promise<ChatResponse>{
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"delta",text:"Hel"});
+      if(options?.signal?.aborted)throw abortError();
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"delta",text:"lo"});
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"completed",finishReason:"stop"});
+      return responseFor(request,"Hello");
+    }
+  };
+  const streamingController=new ChatSessionController(streamingSession,streamingRuntime,{requestIdFactory:(()=>{let n=0;return ()=>"stream-"+(++n)})()});
+  streamingController.subscribe(snapshot=>streamingSnapshots.push(snapshot));
+  const streamed=await streamingController.submit("hello","fake-streaming-chat");
+  equal(streamed.status,"sent","controller streaming success");
+  equal(streamingSnapshots.some(snapshot=>snapshot.status==="streaming"&&snapshot.messages.at(-1)?.content==="Hel"),true,"partial assistant appears while streaming");
+  equal(streamingSession.getMessages().length,2,"streaming keeps one assistant message");
+  equal(streamingSession.getMessages()[1]?.content,"Hello","streaming assembles final assistant content");
+  equal(streamingSession.getMessages()[1]?.metadata?.streamStatus,"complete","completed assistant state");
+
+  let contextBuilds=0;
+  const contextRuntime={
+    async chat(request:ChatRequest):Promise<ChatResponse>{return responseFor(request,"fallback")},
+    async stream(request:ChatRequest,handlers:import("../../contracts/src").ChatStreamHandlers):Promise<ChatResponse>{
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"delta",text:"ok"});
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"completed",finishReason:"stop"});
+      return responseFor(request,"ok");
+    }
+  };
+  const contextStreamingController=new ChatSessionController(
+    new ConversationSession("stream-context","character.context-stream"),
+    contextRuntime,
+    {requestIdFactory:()=> "context-stream-1",contextBuilder:{async buildContext(request){contextBuilds++;return {
+      apiVersion:"1",schemaVersion:"1",characterId:request.characterId,conversationId:request.conversationId,messages:request.messages,
+      includedCandidates:[],omittedCandidates:[],budget:request.budget,estimatedTokens:0
+    }} as import("../../contracts/src").AssembledContext}}
+  );
+  await contextStreamingController.submit("context once","fake-streaming-chat");
+  equal(contextBuilds,1,"Context Engine builds once for one stream request");
+
+  let stopResolver:(()=>void)|undefined;
+  const stopRuntime={
+    async chat(request:ChatRequest):Promise<ChatResponse>{return responseFor(request,"unused")},
+    async stream(request:ChatRequest,handlers:import("../../contracts/src").ChatStreamHandlers,options?:import("../../contracts/src").ChatStreamOptions):Promise<ChatResponse>{
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"delta",text:"partial "});
+      await new Promise<void>((resolve,reject)=>{
+        stopResolver=resolve;
+        const signal=options?.signal;
+        if(!signal)return;
+        const onAbort=()=>{signal.removeEventListener("abort",onAbort);reject(abortError())};
+        signal.addEventListener("abort",onAbort,{once:true});
+      });
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"delta",text:"must not append"});
+      throw abortError();
+    }
+  };
+  const stopController=new ChatSessionController(new ConversationSession("stop-conversation","character.stop"),stopRuntime,{requestIdFactory:()=> "stop-1"});
+  const stopPromise=stopController.submit("stop me","fake-streaming-chat");
+  while(!stopController.getSnapshot().messages.some(message=>message.content==="partial ")){await Promise.resolve();}
+  const stopped=await stopController.stop();
+  stopResolver?.();
+  equal(stopped.status,"interrupted","Stop transitions to interrupted");
+  equal(stopController.getSnapshot().sending,false,"Stop clears loading");
+  equal(stopController.getSnapshot().status,"interrupted","Stop status is interrupted");
+  equal(stopController.getSnapshot().messages.at(-1)?.content,"partial ","Stop preserves partial assistant text");
+  equal(stopController.getSnapshot().messages.at(-1)?.metadata?.streamStatus,"interrupted","Stop marks assistant interrupted");
+  await stopPromise;
+
+  let continueCalls=0;
+  const continueRuntime={
+    async chat(request:ChatRequest):Promise<ChatResponse>{return responseFor(request,"unused")},
+    async stream(request:ChatRequest,handlers:import("../../contracts/src").ChatStreamHandlers):Promise<ChatResponse>{
+      continueCalls++;
+      if(continueCalls===1){
+        await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"delta",text:"Hel"});
+        throw abortError();
+      }
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"delta",text:"Hel"});
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"delta",text:"lo!"});
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"completed",finishReason:"stop"});
+      return responseFor(request,"Hello!");
+    }
+  };
+  const continueSession=new ConversationSession("continue-conversation","character.continue");
+  const continueController=new ChatSessionController(continueSession,continueRuntime,{requestIdFactory:(()=>{let n=0;return ()=>"continue-"+(++n)})()});
+  const firstContinue=continueController.submit("hello","fake-streaming-chat");
+  await Promise.resolve();
+  const firstResult=await firstContinue;
+  equal(firstResult.status,"error","unexpected stream abort is retryable error");
+  const firstAssistant=continueSession.getMessages().find(message=>message.role==="assistant");
+  ok(Boolean(firstAssistant),"partial stream keeps assistant for continuation");
+  equal(firstAssistant?.content,"Hel","partial text before error");
+  if(firstAssistant?.id)continueSession.replaceMessage(firstAssistant.id,{...firstAssistant,metadata:{...firstAssistant.metadata,streamStatus:"interrupted"}});
+  // The controller normally marks aborts as interrupted; normalize the explicit synthetic abort above for this deterministic continuation setup.
+  const beforeContinueId=continueSession.getMessages().find(message=>message.role==="assistant")?.id;
+  const continued=await continueController.continue("fake-streaming-chat");
+  equal(continued.status,"sent","Continue succeeds");
+  const afterContinue=continueSession.getMessages().filter(message=>message.role==="assistant");
+  equal(afterContinue.length,1,"Continue keeps one assistant message");
+  equal(afterContinue[0]?.id,beforeContinueId,"Continue reuses assistant message id");
+  equal(afterContinue[0]?.content,"Hello!","Continue appends without duplicating partial text");
+
+  let regenerateCalls=0;
+  const regenerateRuntime={
+    async chat(request:ChatRequest):Promise<ChatResponse>{return responseFor(request,"unused")},
+    async stream(request:ChatRequest,handlers:import("../../contracts/src").ChatStreamHandlers):Promise<ChatResponse>{
+      regenerateCalls++;
+      const text=regenerateCalls===1?"Answer A":"Answer B";
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"delta",text});
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"completed",finishReason:"stop"});
+      return responseFor(request,text);
+    }
+  };
+  const regenerateSession=new ConversationSession("regenerate-conversation","character.regenerate");
+  const regenerateController=new ChatSessionController(regenerateSession,regenerateRuntime,{requestIdFactory:(()=>{let n=0;return ()=>"regenerate-"+(++n)})()});
+  await regenerateController.submit("question","fake-streaming-chat");
+  const regenerateId=regenerateSession.getMessages()[1]?.id;
+  const regenerated=await regenerateController.regenerate("fake-streaming-chat");
+  equal(regenerated.status,"sent","Regenerate succeeds");
+  equal(regenerateSession.getMessages().length,2,"Regenerate keeps one assistant message");
+  equal(regenerateSession.getMessages()[1]?.id,regenerateId,"Regenerate preserves assistant identity");
+  equal(regenerateSession.getMessages()[1]?.content,"Answer B","Regenerate replaces previous answer");
+
+  let retryCalls=0;
+  const retryRuntime={
+    async chat(request:ChatRequest):Promise<ChatResponse>{return responseFor(request,"unused")},
+    async stream(request:ChatRequest,handlers:import("../../contracts/src").ChatStreamHandlers):Promise<ChatResponse>{
+      retryCalls++;
+      if(retryCalls===1)throw {chatError:{apiVersion:"1",schemaVersion:"1",code:"PROVIDER_ERROR",message:"provider failed",requestId:request.requestId,providerId:"fake.streaming",retryable:true}};
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"delta",text:"Recovered"});
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"completed",finishReason:"stop"});
+      return responseFor(request,"Recovered");
+    }
+  };
+  const retrySession=new ConversationSession("retry-conversation","character.retry");
+  const retryController=new ChatSessionController(retrySession,retryRuntime,{requestIdFactory:(()=>{let n=0;return ()=>"retry-"+(++n)})()});
+  const failedRetry=await retryController.submit("please retry","fake-streaming-chat");
+  equal(failedRetry.status,"error","provider failure enters error state");
+  equal(retrySession.getMessages().filter(message=>message.role==="user").length,1,"failed request keeps one user message");
+  equal(retrySession.getMessages().filter(message=>message.role==="assistant").length,0,"provider error without partial keeps no assistant history");
+  const retried=await retryController.retry("fake-streaming-chat");
+  equal(retried.status,"sent","Retry succeeds");
+  equal(retrySession.getMessages().filter(message=>message.role==="user").length,1,"Retry does not duplicate user message");
+  equal(retrySession.getMessages().filter(message=>message.role==="assistant").length,1,"Retry creates one assistant response");
+
+  const cancelRaceEvents:import("../../contracts/src").ChatStreamEvent[]=[];
+  let raceAbortResolver:(()=>void)|undefined;
+  const raceRuntime={
+    async chat(request:ChatRequest):Promise<ChatResponse>{return responseFor(request,"unused")},
+    async stream(request:ChatRequest,handlers:import("../../contracts/src").ChatStreamHandlers,options?:import("../../contracts/src").ChatStreamOptions):Promise<ChatResponse>{
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"delta",text:"before-stop"});
+      await new Promise<void>(resolve=>{raceAbortResolver=resolve});
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"delta",text:"after-stop"});
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"completed",finishReason:"stop"});
+      return responseFor(request,"before-stopafter-stop");
+    }
+  };
+  const raceController=new ChatSessionController(new ConversationSession("race","character.race"),raceRuntime,{requestIdFactory:()=> "race-1"});
+  const racePromise=raceController.submit("race","fake-streaming-chat");
+  while(raceController.getSnapshot().messages.at(-1)?.content!=="before-stop"){await Promise.resolve();}
+  const raceStop=raceController.stop();
+  raceAbortResolver?.();
+  equal((await raceStop).status,"interrupted","stop/chunk race is interrupted");
+  await racePromise;
+  equal(raceController.getSnapshot().messages.at(-1)?.content,"before-stop","late chunk after Stop is ignored");
+
+  console.log("PASS Chat session streaming actions: stream/stop/continue/regenerate/retry/race");
   console.log("PASS Chat session/controller unit tests");
 }
+function abortError():Error{const error=new Error("The operation was aborted.");error.name="AbortError";return error;}
 void main().catch(error=>{console.error(error);process.exitCode=1});
