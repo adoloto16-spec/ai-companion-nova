@@ -1,9 +1,13 @@
 import type {
   ChatError,
+  ChatFinishReason,
   ChatMessage,
   ChatProvider,
   ChatRequest,
   ChatResponse,
+  ChatStreamDone,
+  ChatStreamHandlers,
+  ChatStreamOptions,
   ChatUsage,
   CredentialReference,
   CredentialStore,
@@ -27,9 +31,14 @@ export interface HttpClientResponse{
   status:number;
   body:string;
 }
-
+export interface HttpClientStreamResponse{
+  status:number;
+  body:AsyncIterable<string>;
+  headers?:Readonly<Record<string,string>>;
+}
 export interface HttpClient{
   request(request:HttpClientRequest):Promise<HttpClientResponse>;
+  stream?(request:HttpClientRequest):Promise<HttpClientStreamResponse>;
 }
 
 export class FetchHttpClient implements HttpClient{
@@ -41,6 +50,39 @@ export class FetchHttpClient implements HttpClient{
       signal:request.signal
     });
     return {status:response.status,body:await response.text()};
+  }
+
+  async stream(request:HttpClientRequest):Promise<HttpClientStreamResponse>{
+    const response=await fetch(request.url,{
+      method:request.method,
+      headers:request.headers,
+      ...(request.body===undefined?{}:{body:request.body}),
+      signal:request.signal
+    });
+    const body=response.body;
+    if(!body)throw new Error("Streaming response body is unavailable.");
+    const reader=body.getReader();
+    const headers=Object.fromEntries(response.headers.entries());
+    const iterable:AsyncIterable<string>={
+      async *[Symbol.asyncIterator](){
+        const decoder=new TextDecoder();
+        try{
+          while(true){
+            const next=await reader.read();
+            if(next.done)break;
+            if(next.value){
+              const text=decoder.decode(next.value,{stream:true});
+              if(text)yield text;
+            }
+          }
+          const tail=decoder.decode();
+          if(tail)yield tail;
+        }finally{
+          reader.releaseLock();
+        }
+      }
+    };
+    return {status:response.status,headers,body:iterable};
   }
 }
 
@@ -120,7 +162,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
 
   capabilities():ProviderCapabilities{
     return {
-      streaming:false,
+      streaming:true,
       toolCalling:false,
       structuredOutput:false,
       reasoning:false
@@ -292,7 +334,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     });
   }
 
-  private mapRequest(request:ChatRequest,messages:readonly OpenAIChatMessage[]){
+  private mapRequest(request:ChatRequest,messages:readonly OpenAIChatMessage[],stream=false){
     const generation=request.generation;
     const payload:{
       model:string;
@@ -304,7 +346,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     }={
       model:request.model,
       messages:[...messages],
-      stream:false
+      stream
     };
     if(generation?.temperature!==undefined)payload.temperature=generation.temperature;
     if(generation?.maxTokens!==undefined)payload.max_tokens=generation.maxTokens;
