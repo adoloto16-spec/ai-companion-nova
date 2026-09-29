@@ -99,31 +99,74 @@ export class AiRuntime{
     const streamingSupported=provider.capabilities().streaming===true&&typeof provider.stream==="function";
     if(!streamingSupported){
       try{
-        const response=await this.generate(request);
+        const response=await provider.chat(request);
+        const normalized:ChatResponse={
+          ...response,
+          apiVersion:CHAT_API_VERSION,
+          schemaVersion:CHAT_SCHEMA_VERSION,
+          requestId:request.requestId,
+          conversationId:request.context.conversationId,
+          providerId,
+          model:request.model
+        };
+        const responseResult=this.validator.validate(normalized,STANDARD_SCHEMAS["chat-response"]!);
+        if(!responseResult.valid){
+          return this.fail({
+            apiVersion:CHAT_API_VERSION,
+            schemaVersion:CHAT_SCHEMA_VERSION,
+            code:"INVALID_RESPONSE",
+            message:"Chat provider returned an invalid canonical response.",
+            requestId:request.requestId,
+            providerId,
+            details:{errors:[...responseResult.errors]}
+          },request.context.conversationId);
+        }
         await emit({
           apiVersion:CHAT_STREAM_API_VERSION,
           schemaVersion:CHAT_STREAM_SCHEMA_VERSION,
           requestId:request.requestId,
           conversationId:request.context.conversationId,
           providerId,
-          model:response.model,
+          model:normalized.model,
           type:"delta",
-          text:response.message.content
-        } as ChatStreamEvent);
+          text:normalized.message.content
+        });
         await emit({
           apiVersion:CHAT_STREAM_API_VERSION,
           schemaVersion:CHAT_STREAM_SCHEMA_VERSION,
           requestId:request.requestId,
           conversationId:request.context.conversationId,
           providerId,
-          model:response.model,
+          model:normalized.model,
           type:"completed",
-          finishReason:response.finishReason,
-          ...(response.usage?{usage:response.usage}: {})
-        } as ChatStreamDone);
-        return response;
+          finishReason:normalized.finishReason,
+          ...(normalized.usage?{usage:normalized.usage}: {})
+        });
+        await this.options.events?.publish(createEvent("ChatResponseReceived",{
+          requestId:request.requestId,
+          conversationId:request.context.conversationId,
+          providerId,
+          model:normalized.model,
+          finishReason:normalized.finishReason
+        },"ai-runtime",this.clock,request.requestId+":received"));
+        return normalized;
       }catch(error){
-        throw error;
+        const providerError=readProviderChatError(error,this.validator);
+        if(providerError)return this.fail({
+          ...providerError,
+          apiVersion:CHAT_API_VERSION,
+          schemaVersion:CHAT_SCHEMA_VERSION,
+          requestId:request.requestId,
+          providerId
+        },request.context.conversationId);
+        return this.fail({
+          apiVersion:CHAT_API_VERSION,
+          schemaVersion:CHAT_SCHEMA_VERSION,
+          code:"PROVIDER_ERROR",
+          message:"Chat provider generation failed.",
+          requestId:request.requestId,
+          providerId
+        },request.context.conversationId);
       }
     }
 
