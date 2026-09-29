@@ -297,7 +297,7 @@ export class ChatSessionController{
       }
       if(active.stopRequested)return this.markInterrupted(active,assistantMessage);
 
-      const request=this.buildRequest(active.requestId,model,contextMessages);
+      const request=await this.buildRequest(active.requestId,model,contextMessages);
       const currentAssistant=assistantMessage?cloneMessage(assistantMessage):{id:active.assistantId,role:"assistant" as const,content:""};
       if(active.mode==="submit"){
         this.session.addMessage(withStreamMetadata(currentAssistant,"streaming"));
@@ -412,14 +412,15 @@ export class ChatSessionController{
     }
   }
 
-  private buildRequest(requestId:string,model:string,messages:readonly ChatMessage[]):ChatRequest{
+  private async buildRequest(requestId:string,model:string,messages:readonly ChatMessage[]):Promise<ChatRequest>{
     const profile=this.modelProfile;
     const profileProviderId=profile?.providerId;
     const profileProviderPresetId=profile?.providerPresetId??this.runtime.getActiveProviderPresetId?.();
     let resolvedModel=model;
-    // Model discovery remains owned by the existing Provider Preset/Model Profile path.
     if(profile?.model===undefined&&profileProviderPresetId!==undefined&&this.runtime.getChatModelForPreset){
-      // This synchronous request builder cannot await model discovery, so the caller-resolved model remains authoritative.
+      try{resolvedModel=await this.runtime.getChatModelForPreset(profileProviderPresetId)}catch{/* manual model remains fallback */}
+    }else if(profile?.model===undefined&&profileProviderPresetId===undefined&&profileProviderId!==undefined&&this.runtime.getChatModel){
+      try{resolvedModel=await this.runtime.getChatModel(profileProviderId)}catch{/* manual model remains fallback */}
     }
     const generation=profile?.generation;
     const hasGeneration=Boolean(generation&&Object.keys(generation).length>0);
