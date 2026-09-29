@@ -3,6 +3,7 @@ export const FOUNDATION_API_VERSION:ApiVersion="1";
 export const FOUNDATION_SCHEMA_VERSION="1";
 export const CHAT_API_VERSION:ApiVersion="1";
 export const CHAT_SCHEMA_VERSION="1";
+export * from "./chat-stream";
 
 export type ModuleType="service"|"adapter"|"worker"|"ui";
 export type ModuleRuntime="typescript"|"rust";
