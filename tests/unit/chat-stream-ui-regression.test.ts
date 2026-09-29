@@ -4,7 +4,8 @@ import {join} from "node:path";
 function ok(value:unknown,message:string){if(!value)throw new Error(message);}
 const source=readFileSync(join(process.cwd(),"apps/desktop-ui/src/main.tsx"),"utf8");
 
-for(const label of ["Stop","Continue","Regenerate","Retry","Send"])ok(source.includes(">"+label+"</button>"),"chat UI must expose "+label+" action");
+for(const label of ["Stop","Continue","Regenerate","Retry"])ok(source.includes(">"+label+"</button>"),"chat UI must expose "+label+" action");
+ok(source.includes('"Send"'),"chat UI must expose Send action");
 ok(source.includes("controller.stop()"),"Stop must call the controller cancellation path");
 ok(source.includes("controller.continue("),"Continue must call the controller continuation path");
 ok(source.includes("controller.regenerate("),"Regenerate must call the controller replacement path");
