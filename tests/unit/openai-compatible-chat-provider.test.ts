@@ -54,11 +54,11 @@ class FakeHttpClient implements HttpClient{
   streamNext:HttpClientStreamResponse|Error|(()=>Promise<HttpClientStreamResponse>)={
     status:200,
     headers:{"content-type":"text/event-stream"},
-    body:streamChunks([
-      "data: "+JSON.stringify({id:"chunk-1",model:"openai-compatible-test-model",choices:[{delta:{content:"hello "},finish_reason:null}])+"\n\n",
-      "data: "+JSON.stringify({choices:[{delta:{content:"from stream"},finish_reason:"stop"}]})+"\n\n",
-      "data: [DONE]\n\n"
-    ])
+    body:streamChunks((()=>{
+      const first="data: "+JSON.stringify({id:"chunk-1",model:"openai-compatible-test-model",choices:[{delta:{content:"hello "},finish_reason:null}]});
+      const second="data: "+JSON.stringify({choices:[{delta:{content:"from stream"},finish_reason:"stop"}]});
+      return [first.slice(0,18),first.slice(18)+"\r\n", "\r\n"+second.slice(0,12),second.slice(12)+"\n\n", "data: [DONE]\n\n"];
+    })())
   };
   async request(request:HttpClientRequest):Promise<HttpClientResponse>{
     this.requests.push(request);
