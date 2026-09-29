@@ -117,6 +117,90 @@ async function main(){
     equal((await degradedStore.load(nova.id))?.messages.length,2,"Conversation persists while retrieval is degraded");
   }finally{await degradedRuntime.stop()}
 
+  const streamStore=new InMemoryConversationStore();
+  const streamRuntime={
+    async chat(request:import("../../contracts/src").ChatRequest):Promise<import("../../contracts/src").ChatResponse>{
+      return {
+        apiVersion:request.apiVersion,schemaVersion:request.schemaVersion,requestId:request.requestId,
+        conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,
+        message:{id:request.requestId+":assistant",role:"assistant",content:"fallback"},finishReason:"stop"
+      };
+    },
+    async stream(
+      request:import("../../contracts/src").ChatRequest,
+      handlers:import("../../contracts/src").ChatStreamHandlers
+    ):Promise<import("../../contracts/src").ChatResponse>{
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"delta",text:"stream "});
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"delta",text:"restored"});
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"completed",finishReason:"stop"});
+      return {
+        apiVersion:request.apiVersion,schemaVersion:request.schemaVersion,requestId:request.requestId,
+        conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,
+        message:{id:request.requestId+":assistant",role:"assistant",content:"stream restored"},finishReason:"stop"
+      };
+    }
+  };
+  const streamCharacterId="character.stream.persistence";
+  const completedController=new ChatSessionController(
+    new ConversationSession("conversation:"+streamCharacterId+":default.v1",streamCharacterId),
+    streamRuntime,
+    {requestIdFactory:()=> "stream-persist-1"}
+  );
+  const completedResult=await completedController.submit("persist streamed","fake-streaming-chat");
+  equal(completedResult.status,"sent","stream completed for persistence");
+  await streamStore.save(persistable(completedController,createdAt));
+  const completedStored=await streamStore.load(streamCharacterId);
+  equal(completedStored?.messages.map(message=>message.content).join("|"),"persist streamed|stream restored","completed stream persistence");
+
+  const completedRestartedSession=new ConversationSession(completedStored!.id,streamCharacterId);
+  for(const message of completedStored!.messages)completedRestartedSession.addMessage(message);
+  const completedRestartedController=new ChatSessionController(completedRestartedSession,streamRuntime);
+  equal(completedRestartedController.getSnapshot().messages.map(message=>message.content).join("|"),"persist streamed|stream restored","completed stream survives controller restart");
+
+  const stoppedCharacterId="character.stream.stopped";
+  let releaseStop:(()=>void)|undefined;
+  const stoppedRuntime={
+    async chat(request:import("../../contracts/src").ChatRequest):Promise<import("../../contracts/src").ChatResponse>{
+      return {...(await streamRuntime.chat(request)),providerId:"fake.streaming"};
+    },
+    async stream(
+      request:import("../../contracts/src").ChatRequest,
+      handlers:import("../../contracts/src").ChatStreamHandlers,
+      options?:import("../../contracts/src").ChatStreamOptions
+    ):Promise<import("../../contracts/src").ChatResponse>{
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"delta",text:"partial persisted"});
+      await new Promise<void>((resolve,reject)=>{
+        releaseStop=resolve;
+        const signal=options?.signal;
+        if(!signal)return;
+        const onAbort=()=>{signal.removeEventListener("abort",onAbort);reject(Object.assign(new Error("The operation was aborted."),{name:"AbortError"}))};
+        signal.addEventListener("abort",onAbort,{once:true});
+      });
+      return {...(await streamRuntime.chat(request)),providerId:"fake.streaming"};
+    }
+  };
+  const stoppedController=new ChatSessionController(
+    new ConversationSession("conversation:"+stoppedCharacterId+":default.v1",stoppedCharacterId),
+    stoppedRuntime,
+    {requestIdFactory:()=> "stream-stop-persist-1"}
+  );
+  const stoppedPromise=stoppedController.submit("stop and persist","fake-streaming-chat");
+  while(stoppedController.getSnapshot().messages.at(-1)?.content!=="partial persisted"){await Promise.resolve();}
+  const stoppedResult=await stoppedController.stop();
+  releaseStop?.();
+  await stoppedPromise;
+  equal(stoppedResult.status,"interrupted","stopped stream is interrupted");
+  await streamStore.save(persistable(stoppedController,createdAt));
+  const stoppedStored=await streamStore.load(stoppedCharacterId);
+  equal(stoppedStored?.messages.at(-1)?.content,"partial persisted","partial assistant is persisted after Stop");
+  equal(stoppedStored?.messages.at(-1)?.metadata?.streamStatus,"interrupted","persisted partial assistant keeps interrupted metadata");
+
+  const stoppedRestartedSession=new ConversationSession(stoppedStored!.id,stoppedCharacterId);
+  for(const message of stoppedStored!.messages)stoppedRestartedSession.addMessage(message);
+  const stoppedRestartedController=new ChatSessionController(stoppedRestartedSession,stoppedRuntime);
+  equal(stoppedRestartedController.getSnapshot().messages.at(-1)?.content,"partial persisted","stopped partial survives restart");
+  equal(stoppedRestartedController.getSnapshot().status,"interrupted","stopped state survives restart");
+
   console.log("PASS conversation persistence/runtime integration tests");
 }
 void main().catch(error=>{console.error(error);process.exitCode=1});
