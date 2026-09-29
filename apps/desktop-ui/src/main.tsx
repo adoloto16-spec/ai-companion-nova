@@ -97,9 +97,10 @@ function resultLabel(result:ProviderConnectionTestResult):string{
   }
 }
 
-function messageStreamStatus(message:{metadata?:Record<string,unknown>}):"complete"|"interrupted"|"streaming"|undefined{
+function messageStreamStatus(message:{role?:string;metadata?:Record<string,unknown>}):"complete"|"interrupted"|"streaming"|undefined{
   const value=message.metadata?.streamStatus;
-  return value==="complete"||value==="interrupted"||value==="streaming"?value:undefined;
+  if(value==="complete"||value==="interrupted"||value==="streaming")return value;
+  return message.role==="assistant"?"complete":undefined;
 }
 
 function ChatView({controller,runtime,character,onPersist,onClear}:{
