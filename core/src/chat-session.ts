@@ -66,7 +66,8 @@ function isAbortError(error:unknown):boolean{
 }
 function streamStatus(message:ChatMessage):"complete"|"interrupted"|"streaming"|undefined{
   const value=message.metadata?.streamStatus;
-  return value==="complete"||value==="interrupted"||value==="streaming"?value:undefined;
+  if(value==="complete"||value==="interrupted"||value==="streaming")return value;
+  return message.role==="assistant"?"complete":undefined;
 }
 function withStreamMetadata(message:ChatMessage,status:"complete"|"interrupted"|"streaming",extra:Record<string,unknown>={}):ChatMessage{
   return {
