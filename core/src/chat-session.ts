@@ -300,10 +300,13 @@ export class ChatSessionController{
 
       const request=await this.buildRequest(active.requestId,model,contextMessages);
       const currentAssistant=assistantMessage?cloneMessage(assistantMessage):{id:active.assistantId,role:"assistant" as const,content:""};
+      const generationAssistant=(active.mode==="regenerate"||active.mode==="retry")
+        ?{...currentAssistant,content:""}
+        :currentAssistant;
       if(active.mode==="submit"){
-        this.session.addMessage(withStreamMetadata(currentAssistant,"streaming"));
+        this.session.addMessage(withStreamMetadata(generationAssistant,"streaming"));
       }else{
-        this.session.replaceMessage(active.assistantId,withStreamMetadata(currentAssistant,"streaming"));
+        this.session.replaceMessage(active.assistantId,withStreamMetadata(generationAssistant,"streaming"));
       }
       this.notify();
 
