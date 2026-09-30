@@ -205,7 +205,8 @@ fn load_state_from_path(path:&Path)->Result<Option<ConversationStoreState>,Strin
         Ok(state)=>Ok(Some(state)),
         Err(reason)=>{
             quarantine_invalid_storage(path)?;
-            Err(format!("conversation storage was quarantined after validation failed: {reason}"))
+            let _=reason;
+            Ok(None)
         }
     }
 }
@@ -222,9 +223,9 @@ fn load_state(app:&tauri::AppHandle)->Result<Option<ConversationStoreState>,Stri
             save_to_path(&path,&state)?;
             Ok(Some(state))
         },
-        Err(reason)=>{
+        Err(_reason)=>{
             quarantine_invalid_storage(&legacy_path)?;
-            Err(format!("legacy conversation storage was quarantined after migration validation failed: {reason}"))
+            Ok(None)
         }
     }
 }
