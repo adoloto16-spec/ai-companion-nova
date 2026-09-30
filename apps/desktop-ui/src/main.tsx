@@ -18,7 +18,7 @@ import {IpcModelProfileStore,InMemoryModelProfileStore} from "../../../host/mode
 import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
   PROVIDER_CONFIGURATION_API_VERSION,PROVIDER_CONFIGURATION_SCHEMA_VERSION,
-  type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation, defaultConversationId,
+  type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState,
   type ProviderPreset, type ProviderPresetStoreState, type ModelInfo
 } from "../../../contracts/src/index";
@@ -1124,7 +1124,7 @@ function App(){
     setRuntime(await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(await next.diagnostics())));
     setStartupStatus("ready");
     setStartupError("");
-  },[addConfigurationLoadError,characterStore,coreBookStore,memoryStore,credentialStore,retriever,syncCharacters]);
+  },[addConfigurationLoadError,characterStore,coreBookStore,memoryStore,credentialStore,retriever,conversationStore,syncCharacters]);
 
   React.useEffect(()=>{
     let active=true;
