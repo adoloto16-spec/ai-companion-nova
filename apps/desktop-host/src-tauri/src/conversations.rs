@@ -54,7 +54,7 @@ pub struct ConversationStoreState{
     pub active_conversation_ids:HashMap<String,String>,
 }
 
-#[derive(Debug,Deserialize,Clone)]
+#[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(deny_unknown_fields)]
 struct LegacyConversation{
     #[serde(rename="apiVersion")]
@@ -71,7 +71,7 @@ struct LegacyConversation{
     updated_at:String,
 }
 
-#[derive(Debug,Deserialize)]
+#[derive(Debug,Deserialize,Serialize)]
 #[serde(deny_unknown_fields)]
 struct LegacyConversationStoreState{
     #[serde(rename="apiVersion")]
@@ -365,6 +365,14 @@ pub fn clear(app:&tauri::AppHandle,character_id:&str,conversation_id:&str)->Resu
 #[cfg(test)]
 mod tests{
     use super::*;
+    use std::time::{SystemTime,UNIX_EPOCH};
+
+    fn temp_path(test_name:&str)->PathBuf{
+        let stamp=SystemTime::now().duration_since(UNIX_EPOCH).expect("clock").as_nanos();
+        let directory=std::env::temp_dir().join(format!("ai-companion-nova-conversations-{test_name}-{}-{stamp}",std::process::id()));
+        fs::create_dir_all(&directory).expect("create temp directory");
+        directory.join("conversations-v2.json")
+    }
 
     fn valid_conversation(id:&str,character_id:&str,content:&str)->Conversation{
         Conversation{
