@@ -37,8 +37,8 @@ ok(validator.validate(extractionResult,STANDARD_SCHEMAS["memory-extraction-resul
 ok(validator.validate(query,STANDARD_SCHEMAS["memory-search-query"]!).valid,"MemorySearchQuery requires conversation scope");
 
 const invalidMemory={...memory,conversationId:""} as MemoryItem;
-notOk(validator.validate(invalidMemory,(await import("../../contracts/src")).STANDARD_SCHEMAS["memory-item"]!).valid,"empty conversationId is rejected");
+notOk(validator.validate(invalidMemory,STANDARD_SCHEMAS["memory-item"]!).valid,"empty conversationId is rejected");
 const invalidQuery={...query,conversationId:""} as MemorySearchQuery;
-notOk(validator.validate(invalidQuery,(await import("../../contracts/src")).STANDARD_SCHEMAS["memory-search-query"]!).valid,"empty conversation scope is rejected");
+notOk(validator.validate(invalidQuery,STANDARD_SCHEMAS["memory-search-query"]!).valid,"empty conversation scope is rejected");
 
 console.log("PASS Memory v2 and extraction contract validation");
