@@ -406,6 +406,32 @@ mod tests{
     }
 
     #[test]
+    fn accepts_multiple_conversations_for_one_character(){
+        let mut state=valid_state();
+        let second=Conversation{
+            id:"conversation:nova:second.v2".to_string(),
+            title:"Second".to_string(),
+            created_at:"2026-09-28T00:00:02.000Z".to_string(),
+            updated_at:"2026-09-28T00:00:03.000Z".to_string(),
+            messages:Vec::new(),
+            ..state.conversations[0].clone()
+        };
+        state.conversations.push(second.clone());
+        state.active_conversation_ids.insert("character.nova.default.v1".to_string(),second.id.clone());
+        assert!(decode_v2(&serde_json::to_vec(&state).expect("encode")).is_ok());
+    }
+
+    #[test]
+    fn quarantines_invalid_v2_and_returns_empty_state_for_recovery(){
+        let path=temp_path("v2-quarantine");
+        fs::write(&path,br#"{"bad":true}"#).expect("write");
+        assert!(load_state_from_path(&path).expect("recovery read").is_none());
+        assert!(!path.exists());
+        assert_eq!(fs::read(invalid_backup_path(&path)).expect("backup"),br#"{"bad":true}"#);
+        fs::remove_dir_all(path.parent().expect("directory")).expect("cleanup");
+    }
+
+    #[test]
     fn rejects_active_scope_mismatch(){
         let mut state=valid_state();
         state.active_conversation_ids.insert("character.gm.v1".to_string(),"conversation:nova:default.v2".to_string());
