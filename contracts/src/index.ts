@@ -313,7 +313,6 @@ export interface MemoryExtractionResult{
   apiVersion:ApiVersion;
   schemaVersion:string;
   characterId:CharacterId;
-  model?:string;
   conversationId:ConversationId;
   memories:readonly MemoryCandidate[];
 }
