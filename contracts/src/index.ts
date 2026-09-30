@@ -195,7 +195,7 @@ export interface CoreBookStore{
 }
 export type MemoryItemId=string;
 export const MEMORY_API_VERSION:ApiVersion="1";
-export const MEMORY_SCHEMA_VERSION="1";
+export const MEMORY_SCHEMA_VERSION="2";
 export type MemoryType="fact"|"preference"|"relationship"|"event"|"experience"|"goal"|"instruction"|"observation";
 export type MemoryStatus="active"|"superseded"|"archived";
 export type MemorySource="user"|"conversation"|"file"|"tool"|"model"|"system";
@@ -275,11 +275,11 @@ export const RETRIEVAL_SCHEMA_VERSION="1";
 export type RetrievalSource="core_book"|"memory";
 export interface RetrievalMatch{field:"title"|"content"|"tags";text:string}
 export interface RetrievalFilters{status?:string;type?:string;tags?:readonly string[]}
-export interface RetrievalQuery{apiVersion:ApiVersion;schemaVersion:string;characterId:CharacterId;query:string;sources?:readonly RetrievalSource[];limit?:number;filters?:RetrievalFilters}
-export interface RetrievalCandidate{source:RetrievalSource;sourceId:string;characterId:CharacterId;score:number;matchedText:string;matches:readonly RetrievalMatch[];metadata?:{title?:string;status?:string;type?:string;updatedAt:string}}
+export interface RetrievalQuery{apiVersion:ApiVersion;schemaVersion:string;characterId:CharacterId;conversationId?:ConversationId;query:string;sources?:readonly RetrievalSource[];limit?:number;filters?:RetrievalFilters}
+export interface RetrievalCandidate{source:RetrievalSource;sourceId:string;characterId:CharacterId;conversationId?:ConversationId;score:number;matchedText:string;matches:readonly RetrievalMatch[];metadata?:{title?:string;status?:string;type?:string;updatedAt:string}}
 export interface RetrievalResult{apiVersion:ApiVersion;schemaVersion:string;characterId:CharacterId;query:string;candidates:readonly RetrievalCandidate[];degraded:boolean;error?:string}
 export interface Retriever{search(query:RetrievalQuery):Promise<RetrievalResult>;rebuild(characterId:CharacterId):Promise<void>;rebuildAll():Promise<void>}
-export interface RetrievalIndexDocument{apiVersion:ApiVersion;schemaVersion:string;characterId:CharacterId;source:RetrievalSource;sourceId:string;title:string;content:string;tags:readonly string[];status?:string;type?:string;updatedAt:string}
+export interface RetrievalIndexDocument{apiVersion:ApiVersion;schemaVersion:string;characterId:CharacterId;conversationId?:ConversationId;source:RetrievalSource;sourceId:string;title:string;content:string;tags:readonly string[];status?:string;type?:string;updatedAt:string}
 export interface RetrievalIndexWriter{upsert(document:RetrievalIndexDocument):Promise<void>;remove(characterId:CharacterId,source:RetrievalSource,sourceId:string):Promise<void>;removeCharacter(characterId:CharacterId):Promise<void>}
 
 export interface MemoryBroker{
@@ -368,10 +368,10 @@ export interface EventPayloadMap{
   CoreBookEntryUpdated:{characterId:string;entryId:string};
   CoreBookEntryDeleted:{characterId:string;entryId:string};
   CoreBookEntryEnabledChanged:{characterId:string;entryId:string;enabled:boolean};
-  MemoryCreated:{characterId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
-  MemoryUpdated:{characterId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
-  MemorySuperseded:{characterId:string;memoryId:string;previousMemoryId:string;status:MemoryStatus;updatedAt:string};
-  MemoryArchived:{characterId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
+  MemoryCreated:{characterId:string;conversationId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
+  MemoryUpdated:{characterId:string;conversationId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
+  MemorySuperseded:{characterId:string;conversationId:string;memoryId:string;previousMemoryId:string;status:MemoryStatus;updatedAt:string};
+  MemoryArchived:{characterId:string;conversationId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
   ChatResponseReceived:{requestId:string;conversationId:string;providerId:string;model:string;finishReason:ChatFinishReason};
   ConversationCreated:{characterId:string;conversationId:string};
   ConversationUpdated:{characterId:string;conversationId:string};
