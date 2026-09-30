@@ -207,7 +207,7 @@ export class IpcConversationStore implements ConversationStore{
 
   async getActive(characterId:CharacterId):Promise<Conversation|undefined>{
     const value=await this.invoke(CONVERSATION_COMMANDS.getActive,{characterId});
-    return normalizeOptionalConversation(value);
+    return normalizeOptionalConversation(value,characterId);
   }
 
   async load(characterId:CharacterId):Promise<Conversation|undefined>{return this.getActive(characterId)}
