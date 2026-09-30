@@ -46,14 +46,14 @@ async function main(){
   let suggestDenied=false;
   try{await broker.update("character.a",convA,suggested.id,{content:"Likes green tea"},{actorId:"model",actorType:"model",trusted:true,capabilities:["memory.write.auto"]});}catch{suggestDenied=true}
   ok(suggestDenied,"suggest mutation policy blocks direct model mutation");
-  const applied=await broker.update("character.a",suggested.id,{content:"Likes green tea"},{actorId:"moderator",actorType:"model",trusted:true,capabilities:["memory.write.suggest.apply"]});
+  const applied=await broker.update("character.a",convA,suggested.id,{content:"Likes green tea"},{actorId:"moderator",actorType:"model",trusted:true,capabilities:["memory.write.suggest.apply"]});
   equal(applied.content,"Likes green tea","explicit suggest authority applies model mutation");
 
   const autoMemory=await broker.create("character.a",convA,{id:"memory.a.4",type:"observation",content:"Auto-write enabled memory",tags:["auto"],importance:40,confidence:40,source:"system",mutationPolicy:"auto"},user);
   let autoDenied=false;
   try{await broker.update("character.a",convA,autoMemory.id,{content:"still denied"},{actorId:"model",actorType:"model",trusted:true,capabilities:[]});}catch{autoDenied=true}
   ok(autoDenied,"auto mutation policy requires explicit authority");
-  const autoApplied=await broker.update("character.a",autoMemory.id,{content:"Auto-write applied"},{actorId:"memory-worker",actorType:"model",trusted:true,capabilities:["memory.write.auto"]});
+  const autoApplied=await broker.update("character.a",convA,autoMemory.id,{content:"Auto-write applied"},{actorId:"memory-worker",actorType:"model",trusted:true,capabilities:["memory.write.auto"]});
   equal(autoApplied.content,"Auto-write applied","auto mutation policy permits explicit authority");
 
   const superseded=await broker.supersede("character.a",convA,locked.id,{
@@ -62,14 +62,14 @@ async function main(){
   },user);
   equal(superseded.status,"active","replacement stays active");
   equal((await broker.get("character.a",convA,"memory.a.1"))?.status,"superseded","old memory is retained and superseded");
-  equal((await broker.get("character.a","memory.a.1"))?.sourceReference,"conversation/message-1","old provenance remains preserved");
-  equal((await broker.search({characterId:"character.a",query:"",status:"active"})).filter(item=>item.type==="fact").length,1,"supersede leaves one active fact version");
-  equal((await broker.search({characterId:"character.a",query:"Berlin"})).length,0,"active search excludes superseded memory");
-  equal((await broker.search({characterId:"character.a",query:"Berlin",status:"superseded"})).length,1,"status filter finds superseded history");
+  equal((await broker.get("character.a",convA,"memory.a.1"))?.sourceReference,"conversation/message-1","old provenance remains preserved");
+  equal((await broker.search({characterId:"character.a",conversationId:convA,query:"",status:"active"})).filter(item=>item.type==="fact").length,1,"supersede leaves one active fact version");
+  equal((await broker.search({characterId:"character.a",conversationId:convA,query:"Berlin"})).length,0,"active search excludes superseded memory");
+  equal((await broker.search({characterId:"character.a",conversationId:convA,query:"Berlin",status:"superseded"})).length,1,"status filter finds superseded history");
 
   const archived=await broker.archive("character.b",convB,b.id,user);
   equal(archived.status,"archived","archive preserves memory data");
-  equal((await broker.search({characterId:"character.b",query:"tea"})).length,0,"ordinary search excludes archived memory");
+  equal((await broker.search({characterId:"character.b",conversationId:convB,query:"tea"})).length,0,"ordinary search excludes archived memory");
 
   let invalidTransition=false;
   try{await broker.update("character.a",convA,locked.id,{content:"cannot edit superseded" },user);}catch{invalidTransition=true}
