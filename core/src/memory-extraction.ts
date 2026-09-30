@@ -7,6 +7,7 @@ import {
   STANDARD_SCHEMAS
 } from "../../contracts/src/index";
 import {AiRuntimeError} from "./ai-runtime";
+import {StandardContractValidator} from "../../contracts/src/schema-validator";
 
 export interface MemoryExtractionChatBoundary{
   chat(request:ChatRequest):Promise<ChatResponse>;
@@ -135,9 +136,7 @@ export class MemoryExtractionService{
   private readonly processed=new Set<string>();
 
   constructor(private readonly options:MemoryExtractionServiceOptions){
-    this.validator=options.validator??({
-      validate(value,schema){return {valid:JSON.stringify(value)!==undefined,errors:[]};}
-    } as SchemaValidator);
+    this.validator=options.validator??new StandardContractValidator();
     this.clock=options.clock??now;
     this.diagnostics=options.diagnostics;
   }
