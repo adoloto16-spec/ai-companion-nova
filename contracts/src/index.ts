@@ -373,6 +373,11 @@ export interface EventPayloadMap{
   MemorySuperseded:{characterId:string;memoryId:string;previousMemoryId:string;status:MemoryStatus;updatedAt:string};
   MemoryArchived:{characterId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
   ChatResponseReceived:{requestId:string;conversationId:string;providerId:string;model:string;finishReason:ChatFinishReason};
+  ConversationCreated:{characterId:string;conversationId:string};
+  ConversationUpdated:{characterId:string;conversationId:string};
+  ConversationDeleted:{characterId:string;conversationId:string};
+  ActiveConversationChanged:{characterId:string;conversationId:string};
+
   ChatRequestFailed:{requestId:string;conversationId?:string;providerId?:string;code:ChatError["code"]};
 }
 export interface ErrorDiagnostic{timestamp:string;source:string;code:string;message:string;metadata?:Record<string,unknown>}
