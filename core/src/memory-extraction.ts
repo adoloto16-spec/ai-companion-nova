@@ -61,9 +61,11 @@ function extractionSystemPrompt():string{
   ].join("\n");
 }
 function safeMemoryMetadata(candidate:MemoryCandidate,request:MemoryExtractionRequest):Record<string,unknown>{
-  const memoryKey=candidate.metadata&&typeof candidate.metadata.memoryKey==="string"
-    ?candidate.metadata.memoryKey.trim().slice(0,MAX_MEMORY_KEY_LENGTH)
+  const rawMemoryKey=candidate.metadata&&typeof candidate.metadata.memoryKey==="string"
+    ?candidate.metadata.memoryKey.trim()
     :"";
+  if(rawMemoryKey&&looksLikeSecret(rawMemoryKey))throw new Error("Candidate metadata resembles credential or authorization data.");
+  const memoryKey=rawMemoryKey.slice(0,MAX_MEMORY_KEY_LENGTH);
   return {
     sourceTurnId:request.requestId,
     ...(memoryKey?{memoryKey}: {})
@@ -199,6 +201,7 @@ export class MemoryExtractionService{
         const candidateValidation=this.validator.validate(rawCandidate,STANDARD_SCHEMAS["memory-candidate"]!);
         if(!candidateValidation.valid)throw new Error("Candidate failed schema validation: "+candidateValidation.errors.join("; "));
         if(looksLikeSecret(rawCandidate.content)||looksLikeSecret(rawCandidate.tags.join(" ")))throw new Error("Candidate resembles credential or authorization data.");
+        if(/\b(api[_ -]?key|access[_ -]?token|authorization|password|secret)\b/i.test(rawCandidate.content))throw new Error("Candidate resembles credential or sensitive authentication data.");
         if(rawCandidate.sourceReference&&looksLikeSecret(rawCandidate.sourceReference))throw new Error("Candidate source reference resembles credential data.");
 
         const input=candidateToInput(rawCandidate,request);
