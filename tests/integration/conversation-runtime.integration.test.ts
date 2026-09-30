@@ -11,7 +11,7 @@ const createdAt="2026-09-28T10:00:00.000Z";
 function persistable(controller:ChatSessionController,createdAt:string):Conversation{
   const snapshot=controller.getSnapshot();
   return {
-    apiVersion:"1",schemaVersion:"1",id:snapshot.conversationId,characterId:snapshot.characterId,
+    apiVersion:"1",schemaVersion:"2",id:snapshot.conversationId,characterId:snapshot.characterId,title:"Main",
     messages:snapshot.messages,createdAt,updatedAt:"2026-09-28T10:00:01.000Z"
   };
 }

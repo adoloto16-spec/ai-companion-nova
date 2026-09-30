@@ -81,29 +81,43 @@ export interface CharacterStoreState{apiVersion:ApiVersion;schemaVersion:string;
 export interface CharacterStore{load():Promise<CharacterStoreState|undefined>;save(state:CharacterStoreState):Promise<void>}
 export type ConversationId=string;
 export const CONVERSATION_API_VERSION:ApiVersion="1";
-export const CONVERSATION_SCHEMA_VERSION="1";
+export const CONVERSATION_SCHEMA_VERSION="2";
 export interface Conversation{
   apiVersion:ApiVersion;
   schemaVersion:string;
   id:ConversationId;
   characterId:CharacterId;
+  title:string;
   messages:readonly ChatMessage[];
   createdAt:string;
   updatedAt:string;
+}
+export interface ConversationCreateInput{
+  id?:ConversationId;
+  title?:string;
+}
+export interface ConversationUpdateInput{
+  title?:string;
+  messages?:readonly ChatMessage[];
 }
 export interface ConversationStoreState{
   apiVersion:ApiVersion;
   schemaVersion:string;
   conversations:readonly Conversation[];
+  activeConversationIds:Readonly<Record<CharacterId,ConversationId>>;
 }
 export interface ConversationStore{
-  load(characterId:CharacterId):Promise<Conversation|undefined>;
+  list(characterId:CharacterId):Promise<readonly Conversation[]>;
+  get(characterId:CharacterId,conversationId:ConversationId):Promise<Conversation|undefined>;
   save(conversation:Conversation):Promise<void>;
-  clear(characterId:CharacterId):Promise<void>;
+  delete(characterId:CharacterId,conversationId:ConversationId):Promise<void>;
+  setActive(characterId:CharacterId,conversationId:ConversationId):Promise<void>;
+  getActive(characterId:CharacterId):Promise<Conversation|undefined>;
+  clear(characterId:CharacterId,conversationId:ConversationId):Promise<void>;
 }
 export function defaultConversationId(characterId:CharacterId):ConversationId{
   if(!characterId.trim())throw new Error("Character id must not be empty.");
-  return "conversation:"+characterId+":default.v1";
+  return "conversation:"+characterId+":default.v2";
 }
 export type ModelProfileId=string;
 export const MODEL_PROFILE_API_VERSION:ApiVersion="1";
@@ -359,6 +373,11 @@ export interface EventPayloadMap{
   MemorySuperseded:{characterId:string;memoryId:string;previousMemoryId:string;status:MemoryStatus;updatedAt:string};
   MemoryArchived:{characterId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
   ChatResponseReceived:{requestId:string;conversationId:string;providerId:string;model:string;finishReason:ChatFinishReason};
+  ConversationCreated:{characterId:string;conversationId:string};
+  ConversationUpdated:{characterId:string;conversationId:string};
+  ConversationDeleted:{characterId:string;conversationId:string};
+  ActiveConversationChanged:{characterId:string;conversationId:string};
+
   ChatRequestFailed:{requestId:string;conversationId?:string;providerId?:string;code:ChatError["code"]};
 }
 export interface ErrorDiagnostic{timestamp:string;source:string;code:string;message:string;metadata?:Record<string,unknown>}

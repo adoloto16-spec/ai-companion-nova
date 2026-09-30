@@ -32,18 +32,21 @@
     "allow-upsert-retrieval-document",
     "allow-remove-retrieval-document",
     "allow-remove-retrieval-character",
-    "allow-get-conversation",
-    "allow-save-conversation",
-    "allow-clear-conversation",
     "allow-get-model-profile",
     "allow-save-model-profile",
-    "allow-delete-model-profile"
-,
+    "allow-delete-model-profile",
     "allow-get-credential-profiles",
     "allow-save-credential-profiles",
     "allow-delete-credential-profile",
     "allow-get-provider-presets",
     "allow-save-provider-presets",
-    "allow-delete-provider-preset"
+    "allow-delete-provider-preset",
+    "allow-list-conversations",
+    "allow-get-conversation",
+    "allow-save-conversation",
+    "allow-delete-conversation",
+    "allow-set-active-conversation",
+    "allow-get-active-conversation",
+    "allow-clear-conversation"
   ]
 }

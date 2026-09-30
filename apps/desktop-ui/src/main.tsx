@@ -18,7 +18,7 @@ import {IpcModelProfileStore,InMemoryModelProfileStore} from "../../../host/mode
 import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
   PROVIDER_CONFIGURATION_API_VERSION,PROVIDER_CONFIGURATION_SCHEMA_VERSION,
-  type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation, defaultConversationId,
+  type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState,
   type ProviderPreset, type ProviderPresetStoreState, type ModelInfo
 } from "../../../contracts/src/index";
@@ -103,12 +103,58 @@ function messageStreamStatus(message:{role?:string;metadata?:Record<string,unkno
   return message.role==="assistant"?"complete":undefined;
 }
 
-function ChatView({controller,runtime,character,onPersist,onClear}:{
+function ConversationSwitcher({conversations,activeConversationId,sending,onSelect,onCreate,onRename,onDelete}:{
+  conversations:readonly Conversation[];
+  activeConversationId:string;
+  sending:boolean;
+  onSelect:(id:string)=>Promise<void>;
+  onCreate:()=>Promise<void>;
+  onRename:(conversation:Conversation)=>Promise<void>;
+  onDelete:(conversation:Conversation)=>Promise<void>;
+}){
+  return <div className="conversation-switcher">
+    <div className="conversation-header">
+      <strong>Conversation</strong>
+      <button type="button" onClick={()=>void onCreate()} disabled={sending}>New Conversation</button>
+    </div>
+    <div className="conversation-list" role="listbox" aria-label="Conversations">
+      {conversations.map(conversation=>
+        <button
+          type="button"
+          key={conversation.id}
+          className={conversation.id===activeConversationId?"conversation-row active":"conversation-row"}
+          onClick={()=>void onSelect(conversation.id)}
+          disabled={sending}
+        >
+          <span className="conversation-title">{conversation.title}</span>
+          <span className="conversation-meta">{conversation.messages.length} messages</span>
+        </button>
+      )}
+    </div>
+    {conversations.length>0&&(()=>{
+      const active=conversations.find(conversation=>conversation.id===activeConversationId);
+      return active
+        ?<div className="conversation-actions">
+          <button type="button" onClick={()=>void onRename(active)} disabled={sending}>Rename</button>
+          <button type="button" onClick={()=>void onDelete(active)} disabled={sending}>Delete</button>
+        </div>
+        :null;
+    })()}
+  </div>;
+}
+
+function ChatView({controller,runtime,character,conversations,activeConversation,onPersist,onClear,onSelectConversation,onCreateConversation,onRenameConversation,onDeleteConversation}:{
   controller:ChatSessionController;
   runtime:FoundationRuntime;
   character:Character;
+  conversations:readonly Conversation[];
+  activeConversation:Conversation;
   onPersist:()=>Promise<void>;
   onClear:()=>Promise<void>;
+  onSelectConversation:(id:string)=>Promise<void>;
+  onCreateConversation:()=>Promise<void>;
+  onRenameConversation:(conversation:Conversation)=>Promise<void>;
+  onDeleteConversation:(conversation:Conversation)=>Promise<void>;
 }){
   const [snapshot,setSnapshot]=React.useState(()=>controller.getSnapshot());
   const [input,setInput]=React.useState("");
@@ -180,7 +226,7 @@ function ChatView({controller,runtime,character,onPersist,onClear}:{
     <div className="chat-toolbar">
       <div>
         <h2>Chat · {character.name}</h2>
-        <p className="chat-subtitle">Conversation is persistent and scoped to {character.name}.</p>
+        <p className="chat-subtitle">{activeConversation.title} · persistent and scoped to {character.name}.</p>
       </div>
       <div className="chat-toolbar-actions">
         {snapshot.status==="streaming"&&<button type="button" onClick={()=>void stop()}>Stop</button>}
@@ -190,6 +236,17 @@ function ChatView({controller,runtime,character,onPersist,onClear}:{
         <button type="button" onClick={()=>void clear()} disabled={snapshot.sending||snapshot.messages.length===0}>Clear</button>
       </div>
     </div>
+
+    <ConversationSwitcher
+      conversations={conversations}
+      activeConversationId={activeConversation.id}
+      sending={snapshot.sending}
+      onSelect={onSelectConversation}
+      onCreate={onCreateConversation}
+      onRename={onRenameConversation}
+      onDelete={onDeleteConversation}
+    />
+
     <div className="message-list" aria-live="polite">
       {snapshot.messages.length===0&&<div className="empty-chat">Write a message to start the conversation.</div>}
       {snapshot.messages.map((message,index)=>{
@@ -871,11 +928,12 @@ function App(){
   const [activeCharacter,setActiveCharacter]=React.useState<Character|undefined>();
   const [activeModelProfile,setActiveModelProfile]=React.useState<ModelProfile|undefined>();
   const [chatController,setChatController]=React.useState<ChatSessionController|null>(null);
+  const [conversations,setConversations]=React.useState<readonly Conversation[]>([]);
+  const [activeConversation,setActiveConversation]=React.useState<Conversation|undefined>();
   const foundationRef=React.useRef<FoundationRuntime|undefined>();
   const providerConfigurationErrorRef=React.useRef<string|undefined>();
   const conversationLoadErrorRef=React.useRef<string|undefined>();
   const modelProfileLoadErrorRef=React.useRef<string|undefined>();
-  const conversationMetadataRef=React.useRef(new Map<string,{id:string;createdAt:string}>());
   const credentialStore=React.useMemo(()=>new IpcCredentialStore(invoke),[]);
   const configurationStore=React.useMemo(()=>new IpcProviderConfigurationStore(invoke),[]);
   const characterStore=React.useMemo(()=>isTauriRuntime()?new IpcCharacterStore(invoke):new InMemoryCharacterStore(),[]);
@@ -931,34 +989,19 @@ function App(){
     }
   ),[]);
 
-  const loadConversationSession=React.useCallback(async(characterId:string):Promise<ConversationSession>=>{
-    try{
-      const stored=await conversationStore.load(characterId);
-      if(stored){
-        if(stored.characterId!==characterId)throw new Error("Conversation storage character scope mismatch.");
-        conversationMetadataRef.current.set(characterId,{id:stored.id,createdAt:stored.createdAt});
-        conversationLoadErrorRef.current=undefined;
-        const session=new ConversationSession(stored.id,characterId);
-        for(const message of stored.messages)session.addMessage(message);
-        return session;
-      }
-      const conversationId=defaultConversationId(characterId);
-      conversationMetadataRef.current.set(characterId,{id:conversationId,createdAt:new Date().toISOString()});
-      conversationLoadErrorRef.current=undefined;
-      return new ConversationSession(conversationId,characterId);
-    }catch(error){
-      conversationLoadErrorRef.current=safeStartupError(error);
-      const conversationId=defaultConversationId(characterId);
-      conversationMetadataRef.current.set(characterId,{id:conversationId,createdAt:new Date().toISOString()});
-      return new ConversationSession(conversationId,characterId);
-    }
-  },[conversationStore]);
+  const controllerForConversation=React.useCallback((conversation:Conversation,profile:ModelProfile)=> {
+    const session=new ConversationSession(conversation.id,conversation.characterId);
+    for(const message of conversation.messages)session.addMessage(message);
+    const controller=controllerForSession(session);
+    controller.setModelProfile(profile);
+    return controller;
+  },[controllerForSession]);
 
   const loadModelProfile=React.useCallback(async(characterId:string):Promise<ModelProfile>=>{
     try{
       const stored=await modelProfileStore.load(characterId);
       if(stored){
-        if(stored.characterId!==characterId)throw new Error("Model Profile character scope mismatch.");
+        if(stored.characterId!==characterId)throw new Error("Model profile character scope mismatch.");
         modelProfileLoadErrorRef.current=undefined;
         return stored;
       }
@@ -970,50 +1013,63 @@ function App(){
     }
   },[modelProfileStore]);
 
-  const controllerForCharacter=React.useCallback(async(characterId:string)=>{
-    const [session,profile]=await Promise.all([
-      loadConversationSession(characterId),
+  const loadActiveConversation=React.useCallback(async(characterId:string):Promise<{conversation:Conversation;controller:ChatSessionController}>=>{
+    const foundation=foundationRef.current;
+    if(!foundation)throw new Error("Conversation runtime is not available.");
+    const [conversation,profile]=await Promise.all([
+      foundation.getActiveConversation(characterId),
       loadModelProfile(characterId)
     ]);
-    const controller=controllerForSession(session);
-    controller.setModelProfile(profile);
-    return controller;
-  },[controllerForSession,loadConversationSession,loadModelProfile]);
+    return {conversation,controller:controllerForConversation(conversation,profile)};
+  },[controllerForConversation,loadModelProfile]);
 
   const persistConversation=React.useCallback(async(controller:ChatSessionController)=>{
     const snapshot=controller.getSnapshot();
-    const current=conversationMetadataRef.current.get(snapshot.characterId);
-    const metadata=current??{id:snapshot.conversationId,createdAt:new Date().toISOString()};
-    const conversation:Conversation={
-      apiVersion:"1",
-      schemaVersion:"1",
-      id:metadata.id,
-      characterId:snapshot.characterId,
-      messages:snapshot.messages,
-      createdAt:metadata.createdAt,
-      updatedAt:new Date().toISOString()
-    };
-    await conversationStore.save(conversation);
-    conversationMetadataRef.current.set(snapshot.characterId,{id:conversation.id,createdAt:conversation.createdAt});
+    const foundation=foundationRef.current;
+    if(!foundation)throw new Error("Conversation runtime is not available.");
+    const updated=await foundation.updateConversation(
+      snapshot.characterId,
+      snapshot.conversationId,
+      {messages:snapshot.messages}
+    );
+    if(snapshot.characterId===activeCharacter?.id){
+      const listed=await foundation.listConversations(snapshot.characterId);
+      setConversations(listed);
+      setActiveConversation(updated);
+    }
     conversationLoadErrorRef.current=undefined;
-  },[conversationStore]);
+  },[activeCharacter]);
 
-  const clearConversation=React.useCallback(async(characterId:string,controller:ChatSessionController)=>{
-    await conversationStore.clear(characterId);
-    conversationMetadataRef.current.delete(characterId);
+  const clearConversation=React.useCallback(async(controller:ChatSessionController)=>{
+    const foundation=foundationRef.current;
+    if(!foundation)throw new Error("Conversation runtime is not available.");
+    const snapshot=controller.getSnapshot();
+    await foundation.clearConversation(snapshot.characterId,snapshot.conversationId);
+    const active=await foundation.getActiveConversation(snapshot.characterId);
+    const profile=await loadModelProfile(snapshot.characterId);
+    const nextController=controllerForConversation(active,profile);
+    setActiveConversation(active);
+    setConversations(await foundation.listConversations(snapshot.characterId));
+    setActiveModelProfile(profile);
+    setChatController(nextController);
     conversationLoadErrorRef.current=undefined;
-    controller.clear();
-  },[conversationStore]);
+  },[controllerForConversation,loadModelProfile]);
 
   const syncCharacters=React.useCallback(async(runtimeInstance:FoundationRuntime)=>{
     const list=await runtimeInstance.listCharacters();
     const active=await runtimeInstance.getActiveCharacter();
-    const controller=await controllerForCharacter(active.id);
+    const loaded=await (async()=>{
+      const conversation=await runtimeInstance.getActiveConversation(active.id);
+      const profile=await loadModelProfile(active.id);
+      return {conversation,profile,controller:controllerForConversation(conversation,profile)};
+    })();
     setCharacters(list);
     setActiveCharacter(active);
-    setActiveModelProfile(controller.getModelProfile()??defaultModelProfile(active.id));
-    setChatController(current=>current?.getSnapshot().characterId===active.id?current:controller);
-  },[controllerForCharacter]);
+    setConversations(await runtimeInstance.listConversations(active.id));
+    setActiveConversation(loaded.conversation);
+    setActiveModelProfile(loaded.profile);
+    setChatController(current=>current?.getSnapshot().characterId===active.id&&current.getSnapshot().conversationId===loaded.conversation.id?current:loaded.controller);
+  },[controllerForConversation,loadModelProfile]);
 
   const addConfigurationLoadError=React.useCallback((diagnostics:RuntimeDiagnostics):RuntimeDiagnostics=>{
     const recentErrors=[...diagnostics.recentErrors];
@@ -1068,7 +1124,7 @@ function App(){
     setRuntime(await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(await next.diagnostics())));
     setStartupStatus("ready");
     setStartupError("");
-  },[addConfigurationLoadError,characterStore,coreBookStore,memoryStore,credentialStore,retriever,syncCharacters]);
+  },[addConfigurationLoadError,characterStore,coreBookStore,memoryStore,credentialStore,retriever,conversationStore,syncCharacters]);
 
   React.useEffect(()=>{
     let active=true;
@@ -1132,15 +1188,66 @@ function App(){
 
   const selectCharacter=React.useCallback(async(id:string)=>{
     const foundation=foundationRef.current;
-    if(!foundation)return;
+    if(!foundation||chatController?.getSnapshot().sending)return;
     const selected=await foundation.setActiveCharacter(id);
-    const controller=await controllerForCharacter(selected.id);
+    const loaded=await loadActiveConversation(selected.id);
     setActiveCharacter(selected);
-    setActiveModelProfile(controller.getModelProfile()??defaultModelProfile(selected.id));
-    setChatController(controller);
-    setCharacters(await foundation.listCharacters());
+    setActiveConversation(loaded.conversation);
+    setConversations(await foundation.listConversations(selected.id));
+    setActiveModelProfile(loaded.controller.getModelProfile()??defaultModelProfile(selected.id));
+    setChatController(loaded.controller);
     setView("chat");
-  },[controllerForCharacter]);
+  },[chatController,loadActiveConversation]);
+
+  const selectConversation=React.useCallback(async(id:string)=>{
+    const foundation=foundationRef.current;
+    const character=activeCharacter;
+    if(!foundation||!character||chatController?.getSnapshot().sending)return;
+    const conversation=await foundation.setActiveConversation(character.id,id);
+    const profile=activeModelProfile??await loadModelProfile(character.id);
+    const controller=controllerForConversation(conversation,profile);
+    setActiveConversation(conversation);
+    setConversations(await foundation.listConversations(character.id));
+    setChatController(controller);
+    setView("chat");
+  },[activeCharacter,activeModelProfile,chatController,controllerForConversation,loadModelProfile]);
+
+  const createConversation=React.useCallback(async()=>{
+    const foundation=foundationRef.current;
+    const character=activeCharacter;
+    if(!foundation||!character||chatController?.getSnapshot().sending)return;
+    const conversation=await foundation.createConversation(character.id);
+    const profile=activeModelProfile??await loadModelProfile(character.id);
+    const controller=controllerForConversation(conversation,profile);
+    setActiveConversation(conversation);
+    setConversations(await foundation.listConversations(character.id));
+    setChatController(controller);
+    setView("chat");
+  },[activeCharacter,activeModelProfile,chatController,controllerForConversation,loadModelProfile]);
+
+  const renameConversation=React.useCallback(async(conversation:Conversation)=>{
+    const foundation=foundationRef.current;
+    const character=activeCharacter;
+    if(!foundation||!character||chatController?.getSnapshot().sending)return;
+    const value=window.prompt("Conversation name",conversation.title);
+    if(value===null||!value.trim()||value.trim()===conversation.title)return;
+    const updated=await foundation.updateConversation(character.id,conversation.id,{title:value});
+    setConversations(await foundation.listConversations(character.id));
+    if(activeConversation?.id===updated.id)setActiveConversation(updated);
+  },[activeCharacter,activeConversation,chatController]);
+
+  const deleteConversation=React.useCallback(async(conversation:Conversation)=>{
+    const foundation=foundationRef.current;
+    const character=activeCharacter;
+    if(!foundation||!character||chatController?.getSnapshot().sending)return;
+    const replacement=await foundation.deleteConversation(character.id,conversation.id);
+    const profile=activeModelProfile??await loadModelProfile(character.id);
+    const controller=controllerForConversation(replacement,profile);
+    setActiveConversation(replacement);
+    setConversations(await foundation.listConversations(character.id));
+    setChatController(controller);
+    setActiveModelProfile(profile);
+  },[activeCharacter,activeModelProfile,chatController,controllerForConversation,loadModelProfile]);
 
   const createCharacter=React.useCallback(async(name:string)=>{
     const foundation=foundationRef.current;
@@ -1160,18 +1267,19 @@ function App(){
   const deleteCharacter=React.useCallback(async(id:string)=>{
     const foundation=foundationRef.current;
     if(!foundation)return;
+    if(chatController?.getSnapshot().sending)throw new Error("Stop the current response before changing Character.");
     const before=activeCharacter;
     await foundation.deleteCharacter(id);
     try{await modelProfileStore.delete(id)}catch(error){modelProfileLoadErrorRef.current=safeStartupError(error)}
     const nextActive=await foundation.getActiveCharacter();
+    const loaded=await loadActiveConversation(nextActive.id);
     setCharacters(await foundation.listCharacters());
     setActiveCharacter(nextActive);
-    if(before?.id===id||before?.id!==nextActive.id){
-      const controller=await controllerForCharacter(nextActive.id);
-      setActiveModelProfile(controller.getModelProfile()??defaultModelProfile(nextActive.id));
-      setChatController(controller);
-    }
-  },[activeCharacter,controllerForCharacter,modelProfileStore]);
+    setConversations(await foundation.listConversations(nextActive.id));
+    setActiveConversation(loaded.conversation);
+    setActiveModelProfile(loaded.controller.getModelProfile()??defaultModelProfile(nextActive.id));
+    if(before?.id===id||before?.id!==nextActive.id)setChatController(loaded.controller);
+  },[activeCharacter,chatController,loadActiveConversation,modelProfileStore]);
 
   const saveProviderPreset=React.useCallback(async(preset:ProviderPreset,activate:boolean)=>{
     const current=providerPresetStateRef.current;
@@ -1310,10 +1418,15 @@ function App(){
           <strong>Character runtime initialization failed.</strong>
           <div>{startupError}</div>
         </section>
-      :view==="chat"&&activeCharacter&&chatController
+      :view==="chat"&&activeCharacter&&chatController&&activeConversation
       ?<ChatView controller={chatController} runtime={foundationRef.current!} character={activeCharacter}
+          conversations={conversations} activeConversation={activeConversation}
           onPersist={()=>persistConversation(chatController!)}
-          onClear={()=>clearConversation(activeCharacter.id,chatController!)}/>
+          onClear={()=>clearConversation(chatController!)}
+          onSelectConversation={selectConversation}
+          onCreateConversation={createConversation}
+          onRenameConversation={renameConversation}
+          onDeleteConversation={deleteConversation}/>
       :view==="characters"&&activeCharacter
         ?<CharactersView characters={characters} activeCharacter={activeCharacter}
           onSelect={selectCharacter} onCreate={createCharacter} onRename={renameCharacter} onDelete={deleteCharacter}/>

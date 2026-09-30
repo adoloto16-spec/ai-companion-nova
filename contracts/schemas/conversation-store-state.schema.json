@@ -1,27 +1,28 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.ai-companion-nova.dev/conversation-store-state/v1",
-  "title": "AI Companion Nova Conversation Store State v1",
+  "$id": "https://schemas.ai-companion-nova.dev/conversation-store-state/v2",
+  "title": "AI Companion Nova Conversation Store State v2",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "apiVersion",
     "schemaVersion",
-    "conversations"
+    "conversations",
+    "activeConversationIds"
   ],
   "properties": {
     "apiVersion": {
       "const": "1"
     },
     "schemaVersion": {
-      "const": "1"
+      "const": "2"
     },
     "conversations": {
       "type": "array",
       "items": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://schemas.ai-companion-nova.dev/conversation/v1",
-        "title": "AI Companion Nova Conversation v1",
+        "$id": "https://schemas.ai-companion-nova.dev/conversation/v2",
+        "title": "AI Companion Nova Conversation v2",
         "type": "object",
         "additionalProperties": false,
         "required": [
@@ -29,6 +30,7 @@
           "schemaVersion",
           "id",
           "characterId",
+          "title",
           "messages",
           "createdAt",
           "updatedAt"
@@ -38,7 +40,7 @@
             "const": "1"
           },
           "schemaVersion": {
-            "const": "1"
+            "const": "2"
           },
           "id": {
             "type": "string",
@@ -48,6 +50,11 @@
           "characterId": {
             "type": "string",
             "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
           },
           "messages": {
             "type": "array",
@@ -94,6 +101,13 @@
             "minLength": 1
           }
         }
+      }
+    },
+    "activeConversationIds": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
       }
     }
   }

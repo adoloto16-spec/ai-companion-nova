@@ -207,13 +207,25 @@ fn remove_retrieval_character(app:tauri::AppHandle,character_id:String,state:tau
 
 #[cfg(feature="tauri-app")]
 #[tauri::command]
-fn get_conversation(app:tauri::AppHandle,character_id:String)->Result<Option<conversations::Conversation>,String>{conversations::load(&app,&character_id)}
+fn list_conversations(app:tauri::AppHandle,character_id:String)->Result<Vec<conversations::Conversation>,String>{conversations::list(&app,&character_id)}
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn get_conversation(app:tauri::AppHandle,character_id:String,conversation_id:String)->Result<Option<conversations::Conversation>,String>{conversations::get(&app,&character_id,&conversation_id)}
 #[cfg(feature="tauri-app")]
 #[tauri::command]
 fn save_conversation(app:tauri::AppHandle,conversation:conversations::Conversation)->Result<(),String>{conversations::save(&app,&conversation)}
 #[cfg(feature="tauri-app")]
 #[tauri::command]
-fn clear_conversation(app:tauri::AppHandle,character_id:String)->Result<(),String>{conversations::clear(&app,&character_id)}
+fn delete_conversation(app:tauri::AppHandle,character_id:String,conversation_id:String)->Result<(),String>{conversations::delete(&app,&character_id,&conversation_id)}
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn set_active_conversation(app:tauri::AppHandle,character_id:String,conversation_id:String)->Result<(),String>{conversations::set_active(&app,&character_id,&conversation_id)}
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn get_active_conversation(app:tauri::AppHandle,character_id:String)->Result<Option<conversations::Conversation>,String>{conversations::get_active(&app,&character_id)}
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn clear_conversation(app:tauri::AppHandle,character_id:String,conversation_id:String)->Result<(),String>{conversations::clear(&app,&character_id,&conversation_id)}
 #[cfg(feature="tauri-app")]
 #[tauri::command]
 fn get_model_profile(app:tauri::AppHandle,character_id:String)->Result<Option<model_profiles::ModelProfile>,String>{model_profiles::load(&app,&character_id)}
@@ -258,8 +270,12 @@ fn main(){
             upsert_retrieval_document,
             remove_retrieval_document,
             remove_retrieval_character,
+            list_conversations,
             get_conversation,
             save_conversation,
+            delete_conversation,
+            set_active_conversation,
+            get_active_conversation,
             clear_conversation,
             get_model_profile,
             save_model_profile,

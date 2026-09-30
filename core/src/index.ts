@@ -3,6 +3,7 @@ export * from "./audit";
 export * from "./events";
 export * from "./state";
 export * from "./chat-session";
+export * from "./conversation-manager";
 export * from "./character-manager";
 export * from "./module-manager";
 export * from "./security";
