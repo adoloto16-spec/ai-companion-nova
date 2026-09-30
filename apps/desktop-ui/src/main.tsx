@@ -1188,15 +1188,66 @@ function App(){
 
   const selectCharacter=React.useCallback(async(id:string)=>{
     const foundation=foundationRef.current;
-    if(!foundation)return;
+    if(!foundation||chatController?.getSnapshot().sending)return;
     const selected=await foundation.setActiveCharacter(id);
-    const controller=await controllerForCharacter(selected.id);
+    const loaded=await loadActiveConversation(selected.id);
     setActiveCharacter(selected);
-    setActiveModelProfile(controller.getModelProfile()??defaultModelProfile(selected.id));
-    setChatController(controller);
-    setCharacters(await foundation.listCharacters());
+    setActiveConversation(loaded.conversation);
+    setConversations(await foundation.listConversations(selected.id));
+    setActiveModelProfile(loaded.controller.getModelProfile()??defaultModelProfile(selected.id));
+    setChatController(loaded.controller);
     setView("chat");
-  },[controllerForCharacter]);
+  },[chatController,loadActiveConversation]);
+
+  const selectConversation=React.useCallback(async(id:string)=>{
+    const foundation=foundationRef.current;
+    const character=activeCharacter;
+    if(!foundation||!character||chatController?.getSnapshot().sending)return;
+    const conversation=await foundation.setActiveConversation(character.id,id);
+    const profile=activeModelProfile??await loadModelProfile(character.id);
+    const controller=controllerForConversation(conversation,profile);
+    setActiveConversation(conversation);
+    setConversations(await foundation.listConversations(character.id));
+    setChatController(controller);
+    setView("chat");
+  },[activeCharacter,activeModelProfile,chatController,controllerForConversation,loadModelProfile]);
+
+  const createConversation=React.useCallback(async()=>{
+    const foundation=foundationRef.current;
+    const character=activeCharacter;
+    if(!foundation||!character||chatController?.getSnapshot().sending)return;
+    const conversation=await foundation.createConversation(character.id);
+    const profile=activeModelProfile??await loadModelProfile(character.id);
+    const controller=controllerForConversation(conversation,profile);
+    setActiveConversation(conversation);
+    setConversations(await foundation.listConversations(character.id));
+    setChatController(controller);
+    setView("chat");
+  },[activeCharacter,activeModelProfile,chatController,controllerForConversation,loadModelProfile]);
+
+  const renameConversation=React.useCallback(async(conversation:Conversation)=>{
+    const foundation=foundationRef.current;
+    const character=activeCharacter;
+    if(!foundation||!character||chatController?.getSnapshot().sending)return;
+    const value=window.prompt("Conversation name",conversation.title);
+    if(value===null||!value.trim()||value.trim()===conversation.title)return;
+    const updated=await foundation.updateConversation(character.id,conversation.id,{title:value});
+    setConversations(await foundation.listConversations(character.id));
+    if(activeConversation?.id===updated.id)setActiveConversation(updated);
+  },[activeCharacter,activeConversation,chatController]);
+
+  const deleteConversation=React.useCallback(async(conversation:Conversation)=>{
+    const foundation=foundationRef.current;
+    const character=activeCharacter;
+    if(!foundation||!character||chatController?.getSnapshot().sending)return;
+    const replacement=await foundation.deleteConversation(character.id,conversation.id);
+    const profile=activeModelProfile??await loadModelProfile(character.id);
+    const controller=controllerForConversation(replacement,profile);
+    setActiveConversation(replacement);
+    setConversations(await foundation.listConversations(character.id));
+    setChatController(controller);
+    setActiveModelProfile(profile);
+  },[activeCharacter,activeModelProfile,chatController,controllerForConversation,loadModelProfile]);
 
   const createCharacter=React.useCallback(async(name:string)=>{
     const foundation=foundationRef.current;
@@ -1216,18 +1267,19 @@ function App(){
   const deleteCharacter=React.useCallback(async(id:string)=>{
     const foundation=foundationRef.current;
     if(!foundation)return;
+    if(chatController?.getSnapshot().sending)throw new Error("Stop the current response before changing Character.");
     const before=activeCharacter;
     await foundation.deleteCharacter(id);
     try{await modelProfileStore.delete(id)}catch(error){modelProfileLoadErrorRef.current=safeStartupError(error)}
     const nextActive=await foundation.getActiveCharacter();
+    const loaded=await loadActiveConversation(nextActive.id);
     setCharacters(await foundation.listCharacters());
     setActiveCharacter(nextActive);
-    if(before?.id===id||before?.id!==nextActive.id){
-      const controller=await controllerForCharacter(nextActive.id);
-      setActiveModelProfile(controller.getModelProfile()??defaultModelProfile(nextActive.id));
-      setChatController(controller);
-    }
-  },[activeCharacter,controllerForCharacter,modelProfileStore]);
+    setConversations(await foundation.listConversations(nextActive.id));
+    setActiveConversation(loaded.conversation);
+    setActiveModelProfile(loaded.controller.getModelProfile()??defaultModelProfile(nextActive.id));
+    if(before?.id===id||before?.id!==nextActive.id)setChatController(loaded.controller);
+  },[activeCharacter,chatController,loadActiveConversation,modelProfileStore]);
 
   const saveProviderPreset=React.useCallback(async(preset:ProviderPreset,activate:boolean)=>{
     const current=providerPresetStateRef.current;
