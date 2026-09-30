@@ -284,6 +284,36 @@ export interface Retriever{search(query:RetrievalQuery):Promise<RetrievalResult>
 export interface RetrievalIndexDocument{apiVersion:ApiVersion;schemaVersion:string;characterId:CharacterId;conversationId?:ConversationId;source:RetrievalSource;sourceId:string;title:string;content:string;tags:readonly string[];status?:string;type?:string;updatedAt:string}
 export interface RetrievalIndexWriter{upsert(document:RetrievalIndexDocument):Promise<void>;remove(characterId:CharacterId,source:RetrievalSource,sourceId:string):Promise<void>;removeCharacter(characterId:CharacterId):Promise<void>}
 
+export const MEMORY_EXTRACTION_API_VERSION:ApiVersion="1";
+export const MEMORY_EXTRACTION_SCHEMA_VERSION="1";
+export interface MemoryCandidate{
+  type:MemoryType;
+  content:string;
+  tags:readonly string[];
+  importance:number;
+  confidence:number;
+  source:MemorySource;
+  sourceReference:string|null;
+  mutationPolicy:MemoryMutationPolicy;
+  metadata?:Record<string,unknown>;
+}
+export interface MemoryExtractionRequest{
+  apiVersion:ApiVersion;
+  schemaVersion:string;
+  characterId:CharacterId;
+  conversationId:ConversationId;
+  userMessage:ChatMessage;
+  assistantMessage:ChatMessage;
+  contextMessages:readonly ChatMessage[];
+}
+export interface MemoryExtractionResult{
+  apiVersion:ApiVersion;
+  schemaVersion:string;
+  characterId:CharacterId;
+  conversationId:ConversationId;
+  memories:readonly MemoryCandidate[];
+}
+
 export interface MemoryBroker{
   get(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>;
   search(query:MemorySearchQuery):Promise<readonly MemoryItem[]>;
