@@ -1,5 +1,5 @@
 import type {
-  AssembledContext,ChatErrorCode,ChatGenerationOptions,ChatMessage,ChatRequest,ChatResponse,ChatStreamEvent,
+  AssembledContext,ChatErrorCode,ChatGenerationOptions,ChatMessage,ChatRequest,ChatResponse,ChatStreamEvent,MemoryExtractionRequest,
   ChatStreamHandlers,ChatStreamOptions,ChatUsage,CharacterId,ContextBuildRequest,ContextBudget,ModelProfile,Unsubscribe
 } from "../../contracts/src/index";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION} from "../../contracts/src/index";
@@ -113,10 +113,14 @@ export class ConversationSession{
 export interface ChatContextBuilderBoundary{
   buildContext(request:ContextBuildRequest):Promise<AssembledContext>;
 }
+export interface ChatSessionMemoryExtractionBoundary{
+  onCompletedTurn(input:{request:MemoryExtractionRequest;providerPresetId?:string}):Promise<void>;
+}
 export interface ChatSessionControllerOptions{
   requestIdFactory?:()=>string;
   contextBuilder?:ChatContextBuilderBoundary;
   contextBudget?:ContextBudget;
+  memoryExtraction?:ChatSessionMemoryExtractionBoundary;
 }
 const DEFAULT_CHAT_CONTEXT_BUDGET:ContextBudget={
   availableContextTokens:4096,
@@ -142,6 +146,7 @@ export class ChatSessionController{
   private readonly requestIdFactory:()=>string;
   private readonly contextBuilder?:ChatContextBuilderBoundary;
   private readonly contextBudget:ContextBudget;
+  private readonly memoryExtraction?:ChatSessionMemoryExtractionBoundary;
   private modelProfile?:ModelProfile;
   private sending=false;
   private status:ChatSessionStatus="idle";
@@ -158,6 +163,7 @@ export class ChatSessionController{
     this.requestIdFactory=options.requestIdFactory??defaultRequestId;
     this.contextBuilder=options.contextBuilder;
     this.contextBudget=options.contextBudget??DEFAULT_CHAT_CONTEXT_BUDGET;
+    this.memoryExtraction=options.memoryExtraction;
     const messages=session.getMessages();
     const lastAssistant=[...messages].reverse().find(message=>message.role==="assistant");
     this.status=lastAssistant
@@ -279,7 +285,8 @@ export class ChatSessionController{
     userMessage:ChatMessage,
     assistantMessage?:ChatMessage
   ):Promise<ChatActionResult>{
-    let contextMessages=this.session.getMessages();
+    const rawConversationMessages=this.session.getMessages();
+    let contextMessages=rawConversationMessages;
     if(assistantMessage?.id&&active.mode!=="continue"){
       contextMessages=contextMessages.filter(message=>message.id!==assistantMessage.id);
     }
@@ -382,6 +389,28 @@ export class ChatSessionController{
       this.status="completed";
       this.error=undefined;
       this.errorCode=undefined;
+      this.notify();
+
+      if(this.memoryExtraction){
+        const extractionMessages=rawConversationMessages
+          .filter(message=>message.id!==userMessage.id&&message.id!==assistantMessage?.id)
+          .filter(message=>message.role==="user"||message.role==="assistant")
+          .slice(-8);
+        const extractionRequest:MemoryExtractionRequest={
+          requestId:active.requestId,
+          apiVersion:"1",
+          schemaVersion:"1",
+          model:request.model,
+          characterId:this.session.characterId,
+          conversationId:this.session.conversationId,
+          userMessage:cloneMessage(userMessage),
+          assistantMessage:cloneMessage(canonicalMessage),
+          contextMessages:extractionMessages
+        };
+        const providerPresetId=this.modelProfile?.providerPresetId??this.runtime.getActiveProviderPresetId?.();
+        void this.memoryExtraction.onCompletedTurn({request:extractionRequest,providerPresetId}).catch(()=>{});
+      }
+
       this.notify();
 
       const canonicalResponse:ChatResponse={
