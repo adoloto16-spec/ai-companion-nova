@@ -298,6 +298,8 @@ export interface MemoryCandidate{
   metadata?:Record<string,unknown>;
 }
 export interface MemoryExtractionRequest{
+  requestId:string;
+  model:string;
   apiVersion:ApiVersion;
   schemaVersion:string;
   characterId:CharacterId;
@@ -307,9 +309,11 @@ export interface MemoryExtractionRequest{
   contextMessages:readonly ChatMessage[];
 }
 export interface MemoryExtractionResult{
+  requestId:string;
   apiVersion:ApiVersion;
   schemaVersion:string;
   characterId:CharacterId;
+  model?:string;
   conversationId:ConversationId;
   memories:readonly MemoryCandidate[];
 }
