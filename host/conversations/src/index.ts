@@ -159,8 +159,10 @@ export class InMemoryConversationStore implements ConversationStore{
     return first;
   }
 
-  async clear(characterId:CharacterId,conversationId:ConversationId):Promise<void>{
-    const current=await this.get(characterId,conversationId);
+  async load(characterId:CharacterId):Promise<Conversation|undefined>{return this.getActive(characterId)}
+
+  async clear(characterId:CharacterId,conversationId?:ConversationId):Promise<void>{
+    const current=conversationId?await this.get(characterId,conversationId):await this.getActive(characterId);
     if(!current)return;
     const now=new Date().toISOString();
     await this.save({...current,messages:[],updatedAt:now});
@@ -199,8 +201,12 @@ export class IpcConversationStore implements ConversationStore{
     return normalizeOptionalConversation(value);
   }
 
-  async clear(characterId:CharacterId,conversationId:ConversationId):Promise<void>{
-    await this.invoke(CONVERSATION_COMMANDS.clear,{characterId,conversationId});
+  async load(characterId:CharacterId):Promise<Conversation|undefined>{return this.getActive(characterId)}
+
+  async clear(characterId:CharacterId,conversationId?:ConversationId):Promise<void>{
+    const resolved=conversationId??(await this.getActive(characterId))?.id;
+    if(!resolved)return;
+    await this.invoke(CONVERSATION_COMMANDS.clear,{characterId,conversationId:resolved});
   }
 }
 
