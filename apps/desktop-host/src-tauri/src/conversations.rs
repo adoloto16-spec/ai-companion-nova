@@ -204,6 +204,10 @@ fn load_state_from_path(path:&Path)->Result<Option<ConversationStoreState>,Strin
     match decode_v2(&bytes){
         Ok(state)=>Ok(Some(state)),
         Err(reason)=>{
+            let backup=invalid_backup_path(path);
+            if backup.exists(){
+                return Ok(None);
+            }
             quarantine_invalid_storage(path)?;
             let _=reason;
             Ok(None)
@@ -224,7 +228,8 @@ fn load_state(app:&tauri::AppHandle)->Result<Option<ConversationStoreState>,Stri
             Ok(Some(state))
         },
         Err(_reason)=>{
-            quarantine_invalid_storage(&legacy_path)?;
+            let backup=invalid_backup_path(&legacy_path);
+            if !backup.exists(){quarantine_invalid_storage(&legacy_path)?;}
             Ok(None)
         }
     }
