@@ -1418,10 +1418,15 @@ function App(){
           <strong>Character runtime initialization failed.</strong>
           <div>{startupError}</div>
         </section>
-      :view==="chat"&&activeCharacter&&chatController
+      :view==="chat"&&activeCharacter&&chatController&&activeConversation
       ?<ChatView controller={chatController} runtime={foundationRef.current!} character={activeCharacter}
+          conversations={conversations} activeConversation={activeConversation}
           onPersist={()=>persistConversation(chatController!)}
-          onClear={()=>clearConversation(activeCharacter.id,chatController!)}/>
+          onClear={()=>clearConversation(chatController!)}
+          onSelectConversation={selectConversation}
+          onCreateConversation={createConversation}
+          onRenameConversation={renameConversation}
+          onDeleteConversation={deleteConversation}/>
       :view==="characters"&&activeCharacter
         ?<CharactersView characters={characters} activeCharacter={activeCharacter}
           onSelect={selectCharacter} onCreate={createCharacter} onRename={renameCharacter} onDelete={deleteCharacter}/>
