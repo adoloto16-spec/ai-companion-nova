@@ -127,7 +127,7 @@ fn tokenize_query(q:&str)->Vec<String>{
     if !cur.is_empty(){out.push(cur)}
     out.into_iter().take(64).collect()
 }
-fn fts_quote(v:&str)->String{format!(""{}"",v.replace('"',""""))}
+fn fts_quote(v:&str)->String{format!("\"{}\"",v.replace('"',"\"\""))}
 fn build_match_query(q:&str)->Option<String>{
     let t=tokenize_query(q);if t.is_empty(){return None}
     let mut parts=Vec::new();
@@ -220,7 +220,7 @@ fn search_inner(conn:&Connection,q:&RetrievalQuery)->Result<RetrievalResult,Stri
         if matched_content.contains("[[MATCH]]"){matches.push(RetrievalMatch{field:"content".into(),text:matched_content})}
         if tags_h.contains("[[MATCH]]"){matches.push(RetrievalMatch{field:"tags".into(),text:tags_h})}
         let matched_text=matches.first().map(|x|x.text.clone()).unwrap_or_else(||title.clone());
-        out.push(RetrievalCandidate{source,source_id,character_id:row_char,conversation_id,score,matched_text,matches,metadata:RetrievalMetadata{title:(!title.is_empty()).then_some(title),status,memory_type,updated_at}});
+        out.push(RetrievalCandidate{source,source_id,character_id:row_char,conversation_id,score,matched_text,matches,metadata:RetrievalMetadata{title:(!title.is_empty()).then_some(title),status,memory_type:mem_type,updated_at}});
         if out.len()>=limit{break}
     }
     Ok(RetrievalResult{api_version:API_VERSION.into(),schema_version:SCHEMA_VERSION.into(),character_id:char_id,query:q.query.clone(),candidates:out,degraded,error})
@@ -304,7 +304,7 @@ mod tests{
   }
   fn conn()->Connection{let c=Connection::open_in_memory().unwrap();initialize_schema(&c).unwrap();c}
   #[test]fn injection_safe(){let q=build_match_query("Berlin OR sqlite").unwrap();assert!(!q.contains(" OR sqlite"));assert!(q.contains(""Berlin""));assert!(q.contains(""sqlite""))}
-  #[test]fn phrase_query_contains_phrase(){assert!(build_match_query("Berlin Munich").unwrap().contains(""Berlin Munich""))}
+  #[test]fn phrase_query_contains_phrase(){assert!(build_match_query("Berlin Munich").unwrap().contains("\"Berlin Munich\""))}
   #[test]fn fts_search_is_character_and_conversation_scoped(){
     let mut c=conn();
     let docs=[
