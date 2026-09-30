@@ -1,8 +1,9 @@
 import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider} from "../../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import type {HealthStatus} from "../../../contracts/src/index";
+import type {Conversation,ConversationCreateInput,ConversationId,ConversationStore,ConversationUpdateInput} from "../../../contracts/src/index";
 import {
-  AiRuntime,CharacterManager,CoreBookManager,MemoryBrokerImpl,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,
+  AiRuntime,CharacterManager,ConversationManager,CoreBookManager,MemoryBrokerImpl,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,
   InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,
   DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
   InMemoryActorIdentityResolver,createMemoryConfig
@@ -17,6 +18,7 @@ import {
 } from "../../../providers/chat/openai-compatible/src/index";
 import {objectSchema} from "../../../core/src/tools";
 import {InMemoryCredentialStore} from "../../../host/credentials/src/index";
+import {InMemoryConversationStore} from "../../../host/conversations/src/index";
 import {InMemoryCoreBookStore} from "../../../host/core-book/src/index";
 import {InMemoryMemoryStore} from "../../../host/memory/src/index";
 import type {CoreBookCreateInput,CoreBookUpdateInput} from "../../../core/src/core-book-manager";
@@ -35,6 +37,7 @@ export interface FoundationRuntimeOptions{
   characterStore?:CharacterStore;
   coreBookStore?:CoreBookStore;
   memoryStore?:MemoryStore;
+  conversationStore?:ConversationStore;
   httpClient?:HttpClient;
   openAICompatible?:OpenAICompatibleRuntimeConfig;
   contextEngine?:ContextEngine;
@@ -67,6 +70,14 @@ export interface FoundationRuntime{
   deleteCharacter(id:CharacterId):Promise<void>;
   getActiveCharacter():Promise<Character>;
   setActiveCharacter(id:CharacterId):Promise<Character>;
+  createConversation(characterId:CharacterId,input?:ConversationCreateInput):Promise<Conversation>;
+  listConversations(characterId:CharacterId):Promise<readonly Conversation[]>;
+  getConversation(characterId:CharacterId,conversationId:ConversationId):Promise<Conversation|undefined>;
+  updateConversation(characterId:CharacterId,conversationId:ConversationId,input:ConversationUpdateInput):Promise<Conversation>;
+  deleteConversation(characterId:CharacterId,conversationId:ConversationId):Promise<Conversation>;
+  setActiveConversation(characterId:CharacterId,conversationId:ConversationId):Promise<Conversation>;
+  getActiveConversation(characterId:CharacterId):Promise<Conversation>;
+  clearConversation(characterId:CharacterId,conversationId:ConversationId):Promise<Conversation>;
   listCoreBookEntries(characterId:CharacterId):Promise<readonly CoreBookEntry[]>;
   getCoreBookEntry(characterId:CharacterId,entryId:CoreBookEntryId):Promise<CoreBookEntry|undefined>;
   createCoreBookEntry(characterId:CharacterId,input:CoreBookCreateInput):Promise<CoreBookEntry>;
@@ -96,6 +107,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const coreBookStore=options.coreBookStore??new InMemoryCoreBookStore();
   const coreBookManager=new CoreBookManager(coreBookStore,{events,clock:{now:()=>new Date().toISOString()},characterExists:async characterId=>Boolean(await characterManager.getCharacter(characterId))});
   const memoryStore=options.memoryStore??new InMemoryMemoryStore();
+  const conversationStore=options.conversationStore??new InMemoryConversationStore();
+  const conversationManager=new ConversationManager(conversationStore,{characterExists:async characterId=>Boolean(await characterManager.getCharacter(characterId)),events,clock:{now:()=>new Date().toISOString()}});
   const credentialStore=options.credentialStore??options.openAICompatible?.credentialStore??new InMemoryCredentialStore();
   let providerPresetConfigurations=new Map((options.providerPresetConfigurations??[]).map(item=>[item.presetId,item.configuration]));
   let activeProviderPresetId=options.activeProviderPresetId??options.providerPresetConfigurations?.[0]?.presetId;
@@ -252,6 +265,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   return {
     async start(){
       await characterManager.initialize();
+      await conversationManager.getActiveConversation(await characterManager.getActiveCharacter().then(character=>character.id));
       retrievalIndexer?.start();
       if(options.retriever){
         try{await options.retriever.rebuildAll();retrievalDegraded=false}
@@ -323,11 +337,27 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     setProviderPresetConfigurations:(configurations,activePresetId)=>{providerPresetConfigurations=new Map(configurations.map(item=>[item.presetId,item.configuration])); activeProviderPresetId=activePresetId??configurations[0]?.presetId;},
     listCharacters:()=>characterManager.listCharacters(),
     getCharacter:id=>characterManager.getCharacter(id),
-    createCharacter:input=>characterManager.createCharacter(input),
+    createCharacter:async input=>{
+      const character=await characterManager.createCharacter(input);
+      await conversationManager.getActiveConversation(character.id);
+      return character;
+    },
     updateCharacter:(id,input)=>characterManager.updateCharacter(id,input),
     deleteCharacter:id=>characterManager.deleteCharacter(id),
     getActiveCharacter:()=>characterManager.getActiveCharacter(),
-    setActiveCharacter:id=>characterManager.setActiveCharacter(id),
+    setActiveCharacter:async id=>{
+      const character=await characterManager.setActiveCharacter(id);
+      await conversationManager.getActiveConversation(character.id);
+      return character;
+    },
+    createConversation:(characterId,input)=>conversationManager.createConversation(characterId,input),
+    listConversations:characterId=>conversationManager.listConversations(characterId),
+    getConversation:(characterId,conversationId)=>conversationManager.getConversation(characterId,conversationId),
+    updateConversation:(characterId,conversationId,input)=>conversationManager.updateConversation(characterId,conversationId,input),
+    deleteConversation:(characterId,conversationId)=>conversationManager.deleteConversation(characterId,conversationId),
+    setActiveConversation:(characterId,conversationId)=>conversationManager.setActiveConversation(characterId,conversationId),
+    getActiveConversation:characterId=>conversationManager.getActiveConversation(characterId),
+    clearConversation:(characterId,conversationId)=>conversationManager.clearConversation(characterId,conversationId),
     listCoreBookEntries:characterId=>coreBookManager.listCoreBookEntries(characterId),
     getCoreBookEntry:(characterId,entryId)=>coreBookManager.getCoreBookEntry(characterId,entryId),
     createCoreBookEntry:(characterId,input)=>coreBookManager.createCoreBookEntry(characterId,input),
