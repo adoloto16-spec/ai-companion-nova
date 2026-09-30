@@ -54,7 +54,7 @@ pub struct ConversationStoreState{
     pub active_conversation_ids:HashMap<String,String>,
 }
 
-#[derive(Debug,Deserialize)]
+#[derive(Debug,Deserialize,Clone)]
 #[serde(deny_unknown_fields)]
 struct LegacyConversation{
     #[serde(rename="apiVersion")]
