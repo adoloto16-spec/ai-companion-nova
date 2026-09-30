@@ -1,4 +1,4 @@
-import {StandardContractValidator,type MemoryCandidate,type MemoryExtractionRequest,type MemoryExtractionResult,type MemoryItem,type MemorySearchQuery} from "../../contracts/src";
+import {StandardContractValidator,STANDARD_SCHEMAS,type MemoryCandidate,type MemoryExtractionRequest,type MemoryExtractionResult,type MemoryItem,type MemorySearchQuery} from "../../contracts/src";
 
 function ok(value:unknown,label:string){if(!value)throw new Error(label)}
 function notOk(value:unknown,label:string){if(value)throw new Error(label)}
@@ -30,11 +30,11 @@ const query:MemorySearchQuery={
   characterId:"character.nova",conversationId:"conversation.nova.a",query:"aviation",status:"active",limit:20
 };
 
-ok(validator.validate(memory,(await import("../../contracts/src")).STANDARD_SCHEMAS["memory-item"]!).valid,"MemoryItem v2 accepts required conversation scope");
-ok(validator.validate(candidate,(await import("../../contracts/src")).STANDARD_SCHEMAS["memory-candidate"]!).valid,"MemoryCandidate contract validates");
-ok(validator.validate(extractionRequest,(await import("../../contracts/src")).STANDARD_SCHEMAS["memory-extraction-request"]!).valid,"MemoryExtractionRequest validates");
-ok(validator.validate(extractionResult,(await import("../../contracts/src")).STANDARD_SCHEMAS["memory-extraction-result"]!).valid,"MemoryExtractionResult validates");
-ok(validator.validate(query,(await import("../../contracts/src")).STANDARD_SCHEMAS["memory-search-query"]!).valid,"MemorySearchQuery requires conversation scope");
+ok(validator.validate(memory,STANDARD_SCHEMAS["memory-item"]!).valid,"MemoryItem v2 accepts required conversation scope");
+ok(validator.validate(candidate,STANDARD_SCHEMAS["memory-candidate"]!).valid,"MemoryCandidate contract validates");
+ok(validator.validate(extractionRequest,STANDARD_SCHEMAS["memory-extraction-request"]!).valid,"MemoryExtractionRequest validates");
+ok(validator.validate(extractionResult,STANDARD_SCHEMAS["memory-extraction-result"]!).valid,"MemoryExtractionResult validates");
+ok(validator.validate(query,STANDARD_SCHEMAS["memory-search-query"]!).valid,"MemorySearchQuery requires conversation scope");
 
 const invalidMemory={...memory,conversationId:""} as MemoryItem;
 notOk(validator.validate(invalidMemory,(await import("../../contracts/src")).STANDARD_SCHEMAS["memory-item"]!).valid,"empty conversationId is rejected");
