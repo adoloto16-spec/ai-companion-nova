@@ -37,7 +37,88 @@
       "type": "array",
       "maxItems": 8,
       "items": {
-        "$ref": "https://schemas.ai-companion-nova.dev/memory-candidate/v1"
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://schemas.ai-companion-nova.dev/memory-candidate/v1",
+        "title": "AI Companion Nova Memory Candidate v1",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "content",
+          "tags",
+          "importance",
+          "confidence",
+          "source",
+          "sourceReference",
+          "mutationPolicy"
+        ],
+        "properties": {
+          "type": {
+            "enum": [
+              "fact",
+              "preference",
+              "relationship",
+              "event",
+              "experience",
+              "goal",
+              "instruction",
+              "observation"
+            ]
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "tags": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          },
+          "importance": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "confidence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "source": {
+            "enum": [
+              "user",
+              "conversation",
+              "file",
+              "tool",
+              "model",
+              "system"
+            ]
+          },
+          "sourceReference": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          },
+          "mutationPolicy": {
+            "enum": [
+              "locked",
+              "suggest",
+              "auto"
+            ]
+          },
+          "metadata": {
+            "type": "object",
+            "maxProperties": 32,
+            "additionalProperties": true
+          }
+        }
       }
     },
     "requestId": {
