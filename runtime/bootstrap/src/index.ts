@@ -265,7 +265,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   return {
     async start(){
       await characterManager.initialize();
-      await conversationManager.getActiveConversation(await characterManager.getActiveCharacter().then(character=>character.id));
+      try{await conversationManager.getActiveConversation(await characterManager.getActiveCharacter().then(character=>character.id));}
+      catch(error){diagnosticsStore.recordError("conversation-storage","LOAD_FAILED",error instanceof Error?error.message:String(error));}
       retrievalIndexer?.start();
       if(options.retriever){
         try{await options.retriever.rebuildAll();retrievalDegraded=false}
