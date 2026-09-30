@@ -100,9 +100,8 @@ async function main(){
   const scopedB=await broker.create("character.a",convB,{id:"memory.scope.b",type:"fact",content:"Only in B",source:"user"},user);
   equal((await broker.search({characterId:"character.a",conversationId:convA,query:"Only"})).map(item=>item.id),["memory.scope.a"],"conversation A cannot see conversation B memory");
   equal((await broker.search({characterId:"character.a",conversationId:convB,query:"Only"})).map(item=>item.id),["memory.scope.b"],"conversation B cannot see conversation A memory");
-  let crossConversation=false;
-  try{await broker.get("character.a",convA,scopedB.id);}catch{crossConversation=true;}
-  ok(crossConversation,"cross-conversation get is rejected");
+  const crossConversation=await broker.get("character.a",convA,scopedB.id);
+  equal(crossConversation,undefined,"cross-conversation get is isolated");
   let invalid=false;
   try{await broker.create("character.a",convA,{id:"invalid",type:"fact",content:"x",source:"conversation",sourceReference:"",mutationPolicy:"locked"},user);}catch{invalid=true}
   ok(invalid,"conversation provenance requires sourceReference");
