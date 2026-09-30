@@ -6,6 +6,7 @@
   "additionalProperties": false,
   "required": [
     "requestId",
+    "model",
     "apiVersion",
     "schemaVersion",
     "characterId",
@@ -148,6 +149,11 @@
       }
     },
     "requestId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "model": {
       "type": "string",
       "minLength": 1,
       "maxLength": 200
