@@ -85,9 +85,11 @@ async function main(){
   equal(deleted.id,aviation.id,"deleting active/last selected conversation returns another active conversation");
   equal((await runtime.listConversations(nova.id)).some(item=>item.id===story.id),false,"deleted conversation is gone");
 
-  const remaining=(await runtime.listConversations(nova.id)).filter(item=>item.id!==aviation.id);
-  for(const item of remaining)await runtime.deleteConversation(nova.id,item.id);
-  const finalDefault=await runtime.getActiveConversation(nova.id);
+  const afterStoryDelete=await runtime.listConversations(nova.id);
+  for(const item of afterStoryDelete.filter(item=>item.id!==aviation.id))await runtime.deleteConversation(nova.id,item.id);
+  await runtime.setActiveConversation(nova.id,aviation.id);
+  const finalDefaultAfterDelete=await runtime.deleteConversation(nova.id,aviation.id);
+  const finalDefault=finalDefaultAfterDelete;
   ok(finalDefault,"Character always retains an active conversation");
   equal(finalDefault.id,"conversation:"+nova.id+":default.v2","last deletion restores deterministic default");
 
