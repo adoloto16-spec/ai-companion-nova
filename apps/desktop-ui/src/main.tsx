@@ -103,12 +103,58 @@ function messageStreamStatus(message:{role?:string;metadata?:Record<string,unkno
   return message.role==="assistant"?"complete":undefined;
 }
 
-function ChatView({controller,runtime,character,onPersist,onClear}:{
+function ConversationSwitcher({conversations,activeConversationId,sending,onSelect,onCreate,onRename,onDelete}:{
+  conversations:readonly Conversation[];
+  activeConversationId:string;
+  sending:boolean;
+  onSelect:(id:string)=>Promise<void>;
+  onCreate:()=>Promise<void>;
+  onRename:(conversation:Conversation)=>Promise<void>;
+  onDelete:(conversation:Conversation)=>Promise<void>;
+}){
+  return <div className="conversation-switcher">
+    <div className="conversation-header">
+      <strong>Conversation</strong>
+      <button type="button" onClick={()=>void onCreate()} disabled={sending}>New Conversation</button>
+    </div>
+    <div className="conversation-list" role="listbox" aria-label="Conversations">
+      {conversations.map(conversation=>
+        <button
+          type="button"
+          key={conversation.id}
+          className={conversation.id===activeConversationId?"conversation-row active":"conversation-row"}
+          onClick={()=>void onSelect(conversation.id)}
+          disabled={sending}
+        >
+          <span className="conversation-title">{conversation.title}</span>
+          <span className="conversation-meta">{conversation.messages.length} messages</span>
+        </button>
+      )}
+    </div>
+    {conversations.length>0&&(()=>{
+      const active=conversations.find(conversation=>conversation.id===activeConversationId);
+      return active
+        ?<div className="conversation-actions">
+          <button type="button" onClick={()=>void onRename(active)} disabled={sending}>Rename</button>
+          <button type="button" onClick={()=>void onDelete(active)} disabled={sending}>Delete</button>
+        </div>
+        :null;
+    })()}
+  </div>;
+}
+
+function ChatView({controller,runtime,character,conversations,activeConversation,onPersist,onClear,onSelectConversation,onCreateConversation,onRenameConversation,onDeleteConversation}:{
   controller:ChatSessionController;
   runtime:FoundationRuntime;
   character:Character;
+  conversations:readonly Conversation[];
+  activeConversation:Conversation;
   onPersist:()=>Promise<void>;
   onClear:()=>Promise<void>;
+  onSelectConversation:(id:string)=>Promise<void>;
+  onCreateConversation:()=>Promise<void>;
+  onRenameConversation:(conversation:Conversation)=>Promise<void>;
+  onDeleteConversation:(conversation:Conversation)=>Promise<void>;
 }){
   const [snapshot,setSnapshot]=React.useState(()=>controller.getSnapshot());
   const [input,setInput]=React.useState("");
@@ -180,7 +226,7 @@ function ChatView({controller,runtime,character,onPersist,onClear}:{
     <div className="chat-toolbar">
       <div>
         <h2>Chat · {character.name}</h2>
-        <p className="chat-subtitle">Conversation is persistent and scoped to {character.name}.</p>
+        <p className="chat-subtitle">{activeConversation.title} · persistent and scoped to {character.name}.</p>
       </div>
       <div className="chat-toolbar-actions">
         {snapshot.status==="streaming"&&<button type="button" onClick={()=>void stop()}>Stop</button>}
@@ -190,6 +236,17 @@ function ChatView({controller,runtime,character,onPersist,onClear}:{
         <button type="button" onClick={()=>void clear()} disabled={snapshot.sending||snapshot.messages.length===0}>Clear</button>
       </div>
     </div>
+
+    <ConversationSwitcher
+      conversations={conversations}
+      activeConversationId={activeConversation.id}
+      sending={snapshot.sending}
+      onSelect={onSelectConversation}
+      onCreate={onCreateConversation}
+      onRename={onRenameConversation}
+      onDelete={onDeleteConversation}
+    />
+
     <div className="message-list" aria-live="polite">
       {snapshot.messages.length===0&&<div className="empty-chat">Write a message to start the conversation.</div>}
       {snapshot.messages.map((message,index)=>{
