@@ -74,12 +74,21 @@ function validateState(state:ConversationStoreState):void{
 function compareConversations(a:Conversation,b:Conversation):number{
   return b.updatedAt.localeCompare(a.updatedAt)||b.createdAt.localeCompare(a.createdAt)||a.id.localeCompare(b.id);
 }
-function normalizeList(value:unknown):readonly Conversation[]{
+function normalizeList(value:unknown,characterId:CharacterId):readonly Conversation[]{
   if(!Array.isArray(value))throw new Error("Conversation list response must be an array.");
-  return value.map(item=>cloneConversation(item as Conversation));
+  const scope=requireCharacterId(characterId);
+  return value.map(item=>{
+    const conversation=cloneConversation(item as Conversation);
+    if(conversation.characterId!==scope)throw new Error("Conversation character scope mismatch.");
+    return conversation;
+  });
 }
-function normalizeOptionalConversation(value:unknown):Conversation|undefined{
-  return value===null||value===undefined?undefined:cloneConversation(value as Conversation);
+function normalizeOptionalConversation(value:unknown,characterId:CharacterId):Conversation|undefined{
+  if(value===null||value===undefined)return undefined;
+  const scope=requireCharacterId(characterId);
+  const conversation=cloneConversation(value as Conversation);
+  if(conversation.characterId!==scope)throw new Error("Conversation character scope mismatch.");
+  return conversation;
 }
 
 export class InMemoryConversationStore implements ConversationStore{
@@ -176,12 +185,12 @@ export class IpcConversationStore implements ConversationStore{
 
   async list(characterId:CharacterId):Promise<readonly Conversation[]>{
     const value=await this.invoke(CONVERSATION_COMMANDS.list,{characterId});
-    return normalizeList(value);
+    return normalizeList(value,characterId);
   }
 
   async get(characterId:CharacterId,conversationId:ConversationId):Promise<Conversation|undefined>{
     const value=await this.invoke(CONVERSATION_COMMANDS.get,{characterId,conversationId});
-    return normalizeOptionalConversation(value);
+    return normalizeOptionalConversation(value,characterId);
   }
 
   async save(conversation:Conversation):Promise<void>{
