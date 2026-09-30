@@ -60,7 +60,7 @@ async function main(){
       importance:100,confidence:100,source:"user",mutationPolicy:"locked"
     });
     await runtime.archiveMemory(nova.id,novaConversation.id,archivedMemory.id);
-    const supersededMemory=await runtime.createMemory(nova.id,{
+    const supersededMemory=await runtime.createMemory(nova.id,novaConversation.id,{
       id:"memory.context.superseded",type:"fact",content:"Old Berlin note.",tags:["berlin"],
       importance:100,confidence:100,source:"user",mutationPolicy:"locked"
     });
@@ -95,7 +95,7 @@ async function main(){
     equal(context.messages.find(message=>message.content==="Nova likes tea.")?.role,"user","memory remains data-role");
     ok(!context.includedCandidates.some(candidate=>candidate.content.includes("GM owns")),"GM Core Book is isolated");
     equal(context.characterId,nova.id,"runtime context remains character scoped");
-    equal(context.conversationId,"conversation-nova","conversation identity preserved");
+    equal(context.conversationId,novaConversation.id,"conversation identity preserved");
     equal(context.messages.find(message=>message.content==="Nova prefers tea.")?.metadata?.contextSource,"core_book","assembled Core Book provenance");
     equal(context.estimatedTokens<=context.budget.availableContextTokens,true,"runtime context honors budget");
 
