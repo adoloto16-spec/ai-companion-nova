@@ -19,7 +19,6 @@ export interface MemoryExtractionDiagnostics{
 
 export interface MemoryExtractionServiceOptions{
   validator?:SchemaValidator;
-  clock?:()=>string;
   diagnostics?:MemoryExtractionDiagnostics;
   memoryBroker:MemoryBroker;
   authority:MemoryMutationAuthority;
@@ -36,7 +35,6 @@ const MAX_CONTEXT_MESSAGES=8;
 const MAX_EXTRACTED_CANDIDATES=8;
 const MAX_MEMORY_KEY_LENGTH=120;
 
-function now():string{return new Date().toISOString();}
 function cloneMessage(message:ChatMessage):ChatMessage{
   return {...message,...(message.metadata?{metadata:{...message.metadata}}:{})};
 }
@@ -131,13 +129,11 @@ function findStableMatch(candidate:MemoryCreateInput,existing:readonly MemoryIte
 
 export class MemoryExtractionService{
   private readonly validator:SchemaValidator;
-  private readonly clock:()=>string;
   private readonly diagnostics?:MemoryExtractionDiagnostics;
   private readonly processed=new Set<string>();
 
   constructor(private readonly options:MemoryExtractionServiceOptions){
     this.validator=options.validator??new StandardContractValidator();
-    this.clock=options.clock??now;
     this.diagnostics=options.diagnostics;
   }
 
