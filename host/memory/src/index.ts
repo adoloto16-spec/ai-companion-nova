@@ -27,6 +27,8 @@ export interface LegacyMemoryItemV1{
   status:MemoryStatus;
   metadata:Record<string,unknown>;
 }
+type MutableMemoryStoreState=Omit<MemoryStoreState,"items">&{items:MemoryItem[]};
+
 export interface LegacyMemoryStoreStateV1{
   apiVersion:"1";
   schemaVersion:"1";
@@ -57,11 +59,12 @@ export class InMemoryMemoryStore implements MemoryStore{
     const state=this.states.get(characterId);
     if(!state)return undefined;
     if(state.schemaVersion==="1"){
-      const migrated=migrateLegacyState(state,migrationConversationId??defaultConversationId(characterId));
+      const legacy=state as LegacyMemoryStoreStateV1;
+      const migrated=migrateLegacyState(legacy,migrationConversationId??defaultConversationId(characterId));
       this.states.set(characterId,migrated);
       return cloneState(migrated);
     }
-    return cloneState(state);
+    return cloneState(state as MemoryStoreState);
   }
 
   async save(state:MemoryStoreState):Promise<void>{
@@ -73,7 +76,7 @@ export class InMemoryMemoryStore implements MemoryStore{
 
   async supersede(characterId:CharacterId,conversationId:ConversationId,previousMemoryId:string,replacement:MemoryItem):Promise<MemoryItem>{
     const current=await this.load(characterId,conversationId);
-    const state=current??{apiVersion:MEMORY_API_VERSION,schemaVersion:MEMORY_SCHEMA_VERSION,characterId,items:[]};
+    const state:MutableMemoryStoreState=current?{...current,items:[...current.items.map(cloneItem)]}:{apiVersion:MEMORY_API_VERSION,schemaVersion:MEMORY_SCHEMA_VERSION,characterId,items:[]};
     if(replacement.characterId!==characterId||replacement.conversationId!==conversationId)throw new Error("Memory storage scope mismatch.");
     const index=state.items.findIndex(item=>item.id===previousMemoryId&&item.conversationId===conversationId);
     if(index<0)throw new Error("Memory item was not found.");
