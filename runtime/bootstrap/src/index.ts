@@ -135,7 +135,6 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   };
   const memoryExtraction=new MemoryExtractionService({
     validator:contractValidator,
-    clock:()=>new Date().toISOString(),
     diagnostics:diagnosticsStore,
     memoryBroker,
     authority:automaticMemoryAuthority
