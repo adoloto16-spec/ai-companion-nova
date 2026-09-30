@@ -16,7 +16,8 @@ async function main(){
   await runtime.start();
   try{
     const character=await runtime.getActiveCharacter();
-    await runtime.createMemory(character.id,{
+    const conversation=await runtime.getActiveConversation(character.id);
+    await runtime.createMemory(character.id,conversation.id,{
       id:"memory.chat.1",
       type:"preference",
       content:"Nova likes jasmine tea.",
@@ -28,7 +29,7 @@ async function main(){
     });
 
     let captured:ChatRequest|undefined;
-    const session=new ConversationSession("chat-context-e2e",character.id);
+    const session=new ConversationSession(conversation.id,character.id);
     const controller=new ChatSessionController(session,{
       async chat(request:ChatRequest){
         captured=request;

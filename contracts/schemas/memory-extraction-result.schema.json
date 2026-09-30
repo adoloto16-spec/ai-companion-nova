@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/memory-extraction-result/v1",
+  "title": "AI Companion Nova Memory Extraction Result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "requestId",
+    "apiVersion",
+    "schemaVersion",
+    "characterId",
+    "conversationId",
+    "memories"
+  ],
+  "properties": {
+    "apiVersion": {
+      "enum": [
+        "1"
+      ]
+    },
+    "schemaVersion": {
+      "enum": [
+        "1"
+      ]
+    },
+    "characterId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "conversationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "memories": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://schemas.ai-companion-nova.dev/memory-candidate/v1",
+        "title": "AI Companion Nova Memory Candidate v1",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "content",
+          "tags",
+          "importance",
+          "confidence",
+          "source",
+          "sourceReference",
+          "mutationPolicy"
+        ],
+        "properties": {
+          "type": {
+            "enum": [
+              "fact",
+              "preference",
+              "relationship",
+              "event",
+              "experience",
+              "goal",
+              "instruction",
+              "observation"
+            ]
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "tags": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          },
+          "importance": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "confidence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "source": {
+            "enum": [
+              "user",
+              "conversation",
+              "file",
+              "tool",
+              "model",
+              "system"
+            ]
+          },
+          "sourceReference": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          },
+          "mutationPolicy": {
+            "enum": [
+              "locked",
+              "suggest",
+              "auto"
+            ]
+          },
+          "metadata": {
+            "type": "object",
+            "maxProperties": 32,
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    "requestId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    }
+  }
+}

@@ -157,6 +157,27 @@ async function main(){
   equal(streamingSession.getMessages()[1]?.content,"Hello","streaming assembles final assistant content");
   equal(streamingSession.getMessages()[1]?.metadata?.streamStatus,"complete","completed assistant state");
 
+  let completedExtractions=0;
+  let completedExtractionRequest:import("../../contracts/src").MemoryExtractionRequest|undefined;
+  const extractionController=new ChatSessionController(
+    new ConversationSession("extraction-conversation","character.extraction"),
+    streamingRuntime,
+    {
+      requestIdFactory:()=> "extraction-turn-1",
+      memoryExtraction:{
+        async onCompletedTurn({request}){completedExtractions++;completedExtractionRequest=request;}
+      }
+    }
+  );
+  const extractionResult=await extractionController.submit("remember this","fake-streaming-chat");
+  equal(extractionResult.status,"sent","completed chat remains successful with automatic extraction hook");
+  equal(completedExtractions,1,"automatic extraction runs once after completed turn");
+  equal(completedExtractionRequest?.requestId,"extraction-turn-1","extraction uses stable turn identity");
+  equal(completedExtractionRequest?.conversationId,"extraction-conversation","extraction keeps conversation scope");
+  equal(completedExtractionRequest?.assistantMessage.content,"Hello","extraction receives final assistant content");
+
+
+
   let contextBuilds=0;
   const contextRuntime={
     async chat(request:ChatRequest):Promise<ChatResponse>{return responseFor(request,"fallback")},
@@ -196,7 +217,11 @@ async function main(){
       throw abortError();
     }
   };
-  const stopController=new ChatSessionController(new ConversationSession("stop-conversation","character.stop"),stopRuntime,{requestIdFactory:()=> "stop-1"});
+  let stoppedExtractions=0;
+  const stopController=new ChatSessionController(new ConversationSession("stop-conversation","character.stop"),stopRuntime,{
+    requestIdFactory:()=> "stop-1",
+    memoryExtraction:{async onCompletedTurn(){stoppedExtractions++;}}
+  });
   const stopPromise=stopController.submit("stop me","fake-streaming-chat");
   while(!stopController.getSnapshot().messages.some(message=>message.content==="partial ")){await Promise.resolve();}
   const stopped=await stopController.stop();
@@ -206,6 +231,7 @@ async function main(){
   equal(stopController.getSnapshot().status,"interrupted","Stop status is interrupted");
   equal(stopController.getSnapshot().messages.at(-1)?.content,"partial ","Stop preserves partial assistant text");
   equal(stopController.getSnapshot().messages.at(-1)?.metadata?.streamStatus,"interrupted","Stop marks assistant interrupted");
+  equal(stoppedExtractions,0,"interrupted stream never triggers automatic memory extraction");
   await stopPromise;
 
   let continueCalls=0;
@@ -273,13 +299,19 @@ async function main(){
     }
   };
   const retrySession=new ConversationSession("retry-conversation","character.retry");
-  const retryController=new ChatSessionController(retrySession,retryRuntime,{requestIdFactory:(()=>{let n=0;return ()=>"retry-"+(++n)})()});
+  let retryExtractions=0;
+  const retryController=new ChatSessionController(retrySession,retryRuntime,{
+    requestIdFactory:(()=>{let n=0;return ()=>"retry-"+(++n)})(),
+    memoryExtraction:{async onCompletedTurn(){retryExtractions++;}}
+  });
   const failedRetry=await retryController.submit("please retry","fake-streaming-chat");
   equal(failedRetry.status,"error","provider failure enters error state");
   equal(retrySession.getMessages().filter(message=>message.role==="user").length,1,"failed request keeps one user message");
   equal(retrySession.getMessages().filter(message=>message.role==="assistant").length,0,"provider error without partial keeps no assistant history");
+  equal(retryExtractions,0,"failed request does not trigger automatic memory extraction");
   const retried=await retryController.retry("fake-streaming-chat");
   equal(retried.status,"sent","Retry succeeds");
+  equal(retryExtractions,1,"successful Retry triggers exactly one automatic extraction");
   equal(retrySession.getMessages().filter(message=>message.role==="user").length,1,"Retry does not duplicate user message");
   equal(retrySession.getMessages().filter(message=>message.role==="assistant").length,1,"Retry creates one assistant response");
 
