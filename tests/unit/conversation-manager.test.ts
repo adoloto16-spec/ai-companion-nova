@@ -28,6 +28,7 @@ async function main(){
   equal(renamed.title,"A renamed","update changes title");
   equal(renamed.messages[0]?.content,"only A","update changes messages");
 
+  const gmDefault=await manager.getActiveConversation("character.gm");
   const gm=await manager.createConversation("character.gm",{title:"GM"});
   let scopeRejected=false;
   try{await manager.getConversation("character.nova",gm.id)}catch(error){scopeRejected=String(error).includes("scope mismatch")||String(error).includes("not found")}
@@ -46,6 +47,7 @@ async function main(){
   equal((await manager.getActiveConversation("character.nova")).id,a.id,"deleting inactive conversation preserves active conversation");
   const only=await manager.listConversations("character.gm");
   equal(only.length,2,"GM keeps its own default plus created conversation");
+  equal(only.some(item=>item.id===gmDefault.id),true,"GM default remains independent");
 
   await manager.deleteConversation("character.nova",a.id);
   equal((await manager.getActiveConversation("character.nova")).id,main.id,"deleting active selects remaining default");
