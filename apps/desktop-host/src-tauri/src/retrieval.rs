@@ -303,7 +303,7 @@ mod tests{
     RetrievalQuery{api_version:API_VERSION.into(),schema_version:SCHEMA_VERSION.into(),character_id:character.into(),conversation_id,query:text.into(),sources,limit:Some(limit),filters}
   }
   fn conn()->Connection{let c=Connection::open_in_memory().unwrap();initialize_schema(&c).unwrap();c}
-  #[test]fn injection_safe(){let q=build_match_query("Berlin OR sqlite").unwrap();assert!(!q.contains(" OR sqlite"));assert!(q.contains(""Berlin""));assert!(q.contains(""sqlite""))}
+  #[test]fn injection_safe(){let q=build_match_query("Berlin OR sqlite").unwrap();assert!(!q.contains(" OR sqlite"));assert!(q.contains("\"Berlin\""));assert!(q.contains("\"sqlite\""))}
   #[test]fn phrase_query_contains_phrase(){assert!(build_match_query("Berlin Munich").unwrap().contains("\"Berlin Munich\""))}
   #[test]fn fts_search_is_character_and_conversation_scoped(){
     let mut c=conn();
@@ -311,7 +311,7 @@ mod tests{
       doc("a",RetrievalSource::CoreBook,"a-title","Berlin","Berlin is a city",&["city"],"enabled",None),
       doc_with_conversation("a","conversation.a","a-memory","I remember Berlin from a trip","event"),
       doc("b",RetrievalSource::CoreBook,"b-title","Berlin","other character",&["city"],"enabled",None),
-      doc_with_conversation("a","conversation.a","a-tag","A travel preference",&["preference"])
+      doc_with_conversation("a","conversation.a","a-tag","A travel preference","preference")
     ];
     rebuild(&mut c,None,&docs).unwrap();
     let result=search_inner(&c,&query("a","Berlin",Some(vec![RetrievalSource::Memory]),10,None)).unwrap();
