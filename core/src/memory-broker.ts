@@ -21,6 +21,7 @@ export interface MemoryBrokerDependencies{
   clock?:Clock;
   source?:string;
   characterExists?:(characterId:CharacterId)=>Promise<boolean>;
+  conversationExists?:(characterId:CharacterId,conversationId:ConversationId)=>Promise<boolean>;
 }
 
 function defaultClock():Clock{return {now:()=>new Date().toISOString()}}
@@ -166,11 +167,13 @@ export class MemoryBrokerImpl implements MemoryBroker{
   private readonly clock:Clock;
   private readonly source:string;
   private readonly characterExists?: (characterId:CharacterId)=>Promise<boolean>;
+  private readonly conversationExists?: (characterId:CharacterId,conversationId:ConversationId)=>Promise<boolean>;
 
   constructor(private readonly deps:MemoryBrokerDependencies){
     this.clock=deps.clock??defaultClock();
     this.source=deps.source??"memory-broker";
     this.characterExists=deps.characterExists;
+    this.conversationExists=deps.conversationExists;
   }
 
   async get(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>{
@@ -324,7 +327,9 @@ export class MemoryBrokerImpl implements MemoryBroker{
 
   private async ensureScope(characterId:CharacterId,conversationId:ConversationId):Promise<{characterId:CharacterId;conversationId:ConversationId}>{
     const character=await this.ensureCharacter(characterId);
-    return {characterId:character,conversationId:requireConversationId(conversationId)};
+    const conversation=requireConversationId(conversationId);
+    if(this.conversationExists&&!(await this.conversationExists(character,conversation)))throw new Error("Conversation was not found or is outside the Character scope.");
+    return {characterId:character,conversationId:conversation};
   }
   private async ensureCharacter(characterId:CharacterId):Promise<string>{
     const scope=requireCharacterId(characterId);
