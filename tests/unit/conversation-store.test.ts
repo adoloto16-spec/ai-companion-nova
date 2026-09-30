@@ -21,6 +21,13 @@ async function main(){
   equal(validator.validate({...nova,characterId:""} as never,STANDARD_SCHEMAS["conversation"]!).valid,false,"conversation schema rejects empty character scope");
   equal(validator.validate({...nova,schemaVersion:"1"} as never,STANDARD_SCHEMAS["conversation"]!).valid,false,"conversation v1 object is no longer accepted as v2");
 
+  const stateForSchema={
+    apiVersion:"1",schemaVersion:"2",
+    conversations:[nova],
+    activeConversationIds:{[nova.characterId]:nova.id}
+  };
+  equal(validator.validate(stateForSchema,STANDARD_SCHEMAS["conversation-store-state"]!).valid,true,"conversation store state schema accepts active mapping");
+  equal(validator.validate({...stateForSchema,activeConversationIds:{[nova.characterId]:"foreign"}} as never,STANDARD_SCHEMAS["conversation-store-state"]!).valid,true,"schema keeps cross-reference validation at persistence boundary");
   const store=new InMemoryConversationStore();
   equal((await store.list(nova.characterId)).length,0,"fresh store has no conversations");
   await store.save(nova);
