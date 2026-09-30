@@ -5,6 +5,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "requestId",
     "apiVersion",
     "schemaVersion",
     "characterId",
@@ -46,6 +47,11 @@
       "items": {
         "$ref": "https://schemas.ai-companion-nova.dev/chat-message/v1"
       }
+    },
+    "requestId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
     }
   }
 }
