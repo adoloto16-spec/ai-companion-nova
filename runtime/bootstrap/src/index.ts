@@ -3,7 +3,7 @@ import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import type {HealthStatus} from "../../../contracts/src/index";
 import type {Conversation,ConversationCreateInput,ConversationId,ConversationStore,ConversationUpdateInput} from "../../../contracts/src/index";
 import {
-  AiRuntime,CharacterManager,ConversationManager,CoreBookManager,MemoryBrokerImpl,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,
+  AiRuntime,CharacterManager,ConversationManager,CoreBookManager,MemoryBrokerImpl,MemoryExtractionService,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,
   InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,
   DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
   InMemoryActorIdentityResolver,createMemoryConfig
@@ -63,6 +63,7 @@ export interface FoundationRuntime{
   applyProviderConfiguration(configuration:ProviderConfiguration|undefined):Promise<void>;
   testConfiguredProvider():Promise<import("../../../contracts/src/index").ProviderConnectionTestResult>;
   setProviderPresetConfigurations(configurations:readonly {presetId:string;configuration:ProviderConfiguration}[],activePresetId?:string):void;
+  extractCompletedTurn(request:import("../../../contracts/src/index").MemoryExtractionRequest,providerPresetId?:string):Promise<import("../../../core/src/index").MemoryExtractionApplyResult>;
   listCharacters():Promise<readonly Character[]>;
   getCharacter(id:CharacterId):Promise<Character|undefined>;
   createCharacter(input:import("../../../core/src/index").CharacterCreateInput):Promise<Character>;
@@ -125,6 +126,21 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     characterExists:async characterId=>Boolean(await characterManager.getCharacter(characterId)),
     conversationExists:async(characterId,conversationId)=>Boolean(await conversationManager.getConversation(characterId,conversationId))
   });
+  const automaticMemoryAuthority:MemoryMutationAuthority={
+    actorId:"automatic-memory-extractor",
+    actorType:"system",
+    trusted:true,
+    capabilities:["memory.create","memory.write.auto"],
+    moduleId:"memory-extraction"
+  };
+  const memoryExtraction=new MemoryExtractionService({
+    validator:contractValidator,
+    clock:()=>new Date().toISOString(),
+    diagnostics:diagnosticsStore,
+    memoryBroker,
+    authority:automaticMemoryAuthority
+  });
+
   const userMemoryAuthority:MemoryMutationAuthority={
     actorId:"local-user",
     actorType:"user",
@@ -235,6 +251,21 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   });
 
   let runtimeStatus:RuntimeDiagnostics["runtimeStatus"]="starting";
+  const chatForPreset=async(request:ChatRequest,providerPresetId?:string):Promise<ChatResponse>=>{
+    if(providerPresetId){
+      const configuration=providerPresetConfigurations.get(providerPresetId);
+      const effectiveConfiguration=configuration?{...configuration,model:request.model}:undefined;
+      const scopedProviders=new ProviderRegistry();
+      if(effectiveConfiguration){
+        const configured=buildProviderForPreset(effectiveConfiguration,credentialStore,options.httpClient);
+        if(configured)scopedProviders.register(configured,["chat"]);
+      }
+      const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
+      return scopedRuntime.generate({...request,providerId:"openai-compatible"});
+    }
+    return aiRuntime.generate(request.providerId?request:{...request,providerId:activeProviderId(providerConfiguration)});
+  };
+
   const snapshot=async():Promise<RuntimeDiagnostics>=>{
     const moduleHealth=await moduleManager.health().catch(()=>({}));
     const modules=moduleManager.list().map(item=>({
@@ -307,6 +338,9 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
         return scopedRuntime.generate({...request,providerId:"openai-compatible"});
       }
       return aiRuntime.generate(request.providerId?request:{...request,providerId:activeProviderId(providerConfiguration)});
+    },
+    extractCompletedTurn:async(request,providerPresetId)=>{
+      return memoryExtraction.extractAndApply(request,{chat:chatRequest=>chatForPreset(chatRequest,providerPresetId)});
     },
     aiRuntimeHealth:()=>aiRuntime.health(),
     getProviderConfiguration:()=>providerConfiguration,
