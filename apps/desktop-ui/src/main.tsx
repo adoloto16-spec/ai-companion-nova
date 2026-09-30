@@ -13,6 +13,7 @@ import {IpcProviderConfigurationStore,loadProviderConfigurationSafely} from "../
 import {IpcCharacterStore} from "../../../host/characters/src/index";
 import {IpcCoreBookStore,InMemoryCoreBookStore} from "../../../host/core-book/src/index";
 import {IpcMemoryStore,InMemoryMemoryStore} from "../../../host/memory/src/index";
+import {IpcConversationStore,InMemoryConversationStore} from "../../../host/conversations/src/index";
 import {IpcModelProfileStore,InMemoryModelProfileStore} from "../../../host/model-profiles/src/index";
 import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
@@ -881,7 +882,7 @@ function App(){
   const characterStore=React.useMemo(()=>isTauriRuntime()?new IpcCharacterStore(invoke):new InMemoryCharacterStore(),[]);
   const coreBookStore=React.useMemo(()=>isTauriRuntime()?new IpcCoreBookStore(invoke):new InMemoryCoreBookStore(),[]);
   const memoryStore=React.useMemo(()=>isTauriRuntime()?new IpcMemoryStore(invoke):new InMemoryMemoryStore(),[]);
-  const conversationStore=React.useMemo(()=>isTauriRuntime()?new (require("../../../host/conversations/src/index").IpcConversationStore)(invoke):new (require("../../../host/conversations/src/index").InMemoryConversationStore)(),[]);
+  const conversationStore=React.useMemo(()=>isTauriRuntime()?new IpcConversationStore(invoke):new InMemoryConversationStore(),[]);
   const modelProfileStore=React.useMemo(()=>isTauriRuntime()?new IpcModelProfileStore(invoke):new InMemoryModelProfileStore(),[]);
   const credentialProfileStore=React.useMemo(()=>isTauriRuntime()?new IpcCredentialProfileStore(invoke):new InMemoryCredentialProfileStore(),[]);
   const providerPresetStore=React.useMemo(()=>isTauriRuntime()?new IpcProviderPresetStore(invoke):new InMemoryProviderPresetStore(),[]);
