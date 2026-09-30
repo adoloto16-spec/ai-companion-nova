@@ -38,7 +38,7 @@ function cloneMetadata(metadata:Record<string,unknown>):Record<string,unknown>{r
 function cloneItem(item:MemoryItem):MemoryItem{
   return {...item,tags:[...item.tags],metadata:cloneMetadata(item.metadata)};
 }
-type MutableMemoryStoreState={apiVersion:"1";schemaVersion:"2";characterId:CharacterId;items:MemoryItem[]};
+type MutableMemoryStoreState={apiVersion:"1";schemaVersion:string;characterId:CharacterId;items:MemoryItem[]};
 function cloneState(state:MemoryStoreState):MutableMemoryStoreState{
   return {apiVersion:state.apiVersion,schemaVersion:state.schemaVersion,characterId:state.characterId,items:state.items.map(cloneItem)};
 }
