@@ -36,16 +36,115 @@
       "maxLength": 200
     },
     "userMessage": {
-      "$ref": "https://schemas.ai-companion-nova.dev/chat-message/v1"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "content"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "role": {
+          "enum": [
+            "system",
+            "user",
+            "assistant",
+            "tool"
+          ]
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 32768
+        },
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
     },
     "assistantMessage": {
-      "$ref": "https://schemas.ai-companion-nova.dev/chat-message/v1"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "content"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "role": {
+          "enum": [
+            "system",
+            "user",
+            "assistant",
+            "tool"
+          ]
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 32768
+        },
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
     },
     "contextMessages": {
       "type": "array",
       "maxItems": 24,
       "items": {
-        "$ref": "https://schemas.ai-companion-nova.dev/chat-message/v1"
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "role",
+          "content"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "role": {
+            "enum": [
+              "system",
+              "user",
+              "assistant",
+              "tool"
+            ]
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 32768
+          },
+          "toolCallId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
       }
     },
     "requestId": {
