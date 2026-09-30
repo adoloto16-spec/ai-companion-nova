@@ -42,7 +42,7 @@ export interface CoreBookCandidateReader {
 
 export interface MemoryCandidateReader {
   search(query:MemorySearchQuery):Promise<readonly MemoryItem[]>;
-  get?(characterId:CharacterId,memoryId:string):Promise<MemoryItem|undefined>;
+  get?(characterId:CharacterId,conversationId:string,memoryId:string):Promise<MemoryItem|undefined>;
 }
 
 const DEFAULT_MEMORY_CANDIDATE_LIMIT=8;
