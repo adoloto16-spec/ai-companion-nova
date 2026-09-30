@@ -335,13 +335,11 @@ export class MemoryBrokerImpl implements MemoryBroker{
   private async loadState(characterId:string,conversationId:string):Promise<MutableMemoryStoreState>{
     const stored=await this.deps.store.load(characterId,conversationId);
     if(!stored){
-      const empty:MutableMemoryStoreState={apiVersion:MEMORY_API_VERSION,schemaVersion:MEMORY_SCHEMA_VERSION,characterId,items:[]};
-      return empty;
+      return {apiVersion:MEMORY_API_VERSION,schemaVersion:MEMORY_SCHEMA_VERSION,characterId,items:[]};
     }
     validateWholeState(stored,characterId,this.deps.validator);
     const state=cloneState(stored);
-    validateStateForConversation(state,characterId,conversationId,this.deps.validator);
-    return state;
+    return {...state,items:state.items.filter(item=>item.conversationId===conversationId)};
   }
   private async loadWholeState(characterId:string,conversationId:string):Promise<MutableMemoryStoreState>{
     const stored=await this.deps.store.load(characterId,conversationId);
