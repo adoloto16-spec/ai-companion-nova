@@ -15,6 +15,7 @@ import {
   type HttpClient,
   type HttpClientRequest,
   type HttpClientResponse,
+  type HttpClientStreamResponse,
   OpenAICompatibleChatProvider,
   OpenAICompatibleProviderError
 } from "../../providers/chat/openai-compatible/src";
@@ -41,6 +42,7 @@ class FakeCredentialStore implements CredentialStore{
 
 class FakeHttpClient implements HttpClient{
   requests:HttpClientRequest[]=[];
+  lastStreamSignal?:AbortSignal;
   next:HttpClientResponse|Error|(()=>Promise<HttpClientResponse>)={
     status:200,
     body:JSON.stringify({
@@ -50,11 +52,33 @@ class FakeHttpClient implements HttpClient{
       usage:{prompt_tokens:3,completion_tokens:5,total_tokens:8}
     })
   };
+  streamNext:HttpClientStreamResponse|Error|(()=>Promise<HttpClientStreamResponse>)={
+    status:200,
+    headers:{"content-type":"text/event-stream"},
+    body:streamChunks((()=>{
+      const first="data: "+JSON.stringify({id:"chunk-1",model:"openai-compatible-test-model",choices:[{delta:{content:"hello "},finish_reason:null}]});
+      const second="data: "+JSON.stringify({choices:[{delta:{content:"from stream"},finish_reason:"stop"}]});
+      return [first.slice(0,18),first.slice(18)+"\r\n", "\r\n"+second.slice(0,12),second.slice(12)+"\n\n", "data: [DONE]\n\n"];
+    })())
+  };
   async request(request:HttpClientRequest):Promise<HttpClientResponse>{
     this.requests.push(request);
     if(this.next instanceof Error)throw this.next;
     if(typeof this.next==="function")return this.next();
     return this.next;
+  }
+  async stream(request:HttpClientRequest):Promise<HttpClientStreamResponse>{
+    this.requests.push(request);
+    this.lastStreamSignal=request.signal;
+    if(this.streamNext instanceof Error)throw this.streamNext;
+    if(typeof this.streamNext==="function")return this.streamNext();
+    return this.streamNext;
+  }
+}
+async function* streamChunks(parts:readonly string[]):AsyncIterable<string>{
+  for(const part of parts){
+    await Promise.resolve();
+    yield part;
   }
 }
 
@@ -98,7 +122,7 @@ async function metadataAndCapabilitiesTest(){
   equal(metadata.kind,"chat","provider metadata kind");
   equal(metadata.version,"1.0.0","provider metadata version");
   const capabilities=p.capabilities();
-  equal(capabilities.streaming,false,"streaming capability");
+  equal(capabilities.streaming,true,"streaming capability");
   equal(capabilities.toolCalling,false,"tool calling capability");
   equal(capabilities.structuredOutput,false,"structured output capability");
   equal(capabilities.reasoning,false,"reasoning capability");
@@ -295,6 +319,82 @@ async function secretSafetyTest(){
   }
 }
 
+async function streamingTest(){
+  const http=new FakeHttpClient();
+  const providerInstance=provider(http);
+  const events:import("../../contracts/src").ChatStreamEvent[]=[];
+  const response=await providerInstance.stream(request(),{onEvent:event=>{events.push(event);}});
+  equal(events.filter(event=>event.type==="delta").map(event=>event.type==="delta"?event.text:"").join("|"),"hello |from stream","SSE deltas are emitted incrementally");
+  equal(events.filter(event=>event.type==="completed").length,1,"SSE emits one completion");
+  equal(events.find(event=>event.type==="completed"&&event.type==="completed")?.finishReason,"stop","SSE finish reason");
+  equal(response.providerId,OPENAI_COMPATIBLE_PROVIDER_ID,"stream response provider");
+  equal(http.requests.length,1,"stream uses one POST");
+  equal(http.requests[0]!.method,"POST","stream request method");
+  equal(http.requests[0]!.url,"https://provider.example.test/v1/chat/completions","stream endpoint");
+  equal(http.requests[0]!.headers.Accept,"text/event-stream","SSE accept header");
+  const body=http.requests[0]!.body;
+  if(body===undefined)throw new Error("stream request body missing");
+  equal((JSON.parse(body) as {stream:boolean}).stream,true,"stream request body sets stream=true");
+}
+
+async function streamingUsageTest(){
+  const http=new FakeHttpClient();
+  http.streamNext={
+    status:200,
+    headers:{"content-type":"text/event-stream"},
+    body:streamChunks([
+      "data: "+JSON.stringify({choices:[{delta:{content:"answer"},finish_reason:"stop"}],usage:{prompt_tokens:7,completion_tokens:4,total_tokens:11}})+"\n\n",
+      "data: [DONE]\n\n"
+    ])
+  };
+  const events:import("../../contracts/src").ChatStreamEvent[]=[];
+  const response=await provider(http).stream(request(),{onEvent:event=>{events.push(event);}});
+  const usageEvent=events.find(event=>event.type==="usage");
+  equal(usageEvent?.type==="usage"?usageEvent.usage.totalTokens:undefined,11,"stream usage event");
+  equal(response.usage?.totalTokens,11,"stream response usage");
+}
+
+async function malformedStreamingEventTest(){
+  const http=new FakeHttpClient();
+  http.streamNext={status:200,headers:{"content-type":"text/event-stream"},body:streamChunks(["data: not-json\n\n"])};
+  await throwsAsync(
+    ()=>provider(http).stream(request(),{onEvent:()=>{}}),
+    error=>error instanceof OpenAICompatibleProviderError&&error.chatError.code==="INVALID_RESPONSE",
+    "malformed SSE JSON"
+  );
+}
+
+async function streamingAbortTest(){
+  const http=new FakeHttpClient();
+  const signalController=new AbortController();
+  let httpSignal:AbortSignal|undefined;
+  http.streamNext=async()=>({
+    status:200,
+    headers:{"content-type":"text/event-stream"},
+    body:{
+      async *[Symbol.asyncIterator](){
+            while(true){
+          if(httpSignal?.aborted)throw new Error("aborted by fake transport");
+          await new Promise(resolve=>setTimeout(resolve,5));
+          if(httpSignal?.aborted)throw new Error("aborted by fake transport");
+          yield "data: "+JSON.stringify({choices:[{delta:{content:"x"}}]})+"\n\n";
+        }
+      }
+    }
+  });
+  const pending=provider(http).stream(request(),{onEvent:()=>{}},{signal:signalController.signal});
+  for(let attempt=0;attempt<20&&http.lastStreamSignal===undefined;attempt++)await new Promise(resolve=>setTimeout(resolve,1));
+  httpSignal=http.lastStreamSignal;
+  setTimeout(()=>signalController.abort(),15);
+  await throwsAsync(
+    ()=>pending,
+    error=>error instanceof Error&&error.name==="AbortError",
+    "caller abort propagates as AbortError"
+  );
+  if(!httpSignal)throw new Error("provider must pass an AbortSignal to HTTP streaming transport");
+  equal(httpSignal.aborted,true,"caller abort is linked to HTTP stream");
+}
+
 async function modelDiscoveryTest(){
   const http=new FakeHttpClient();
   http.next={status:200,body:JSON.stringify({data:[
@@ -402,6 +502,10 @@ void (async()=>{
     ["Timeout and connection",timeoutAndConnectionTest],
     ["Credential and unsupported inputs",credentialAndUnsupportedTest],
     ["Secret safety",secretSafetyTest],
+    ["Streaming",streamingTest],
+    ["Streaming usage",streamingUsageTest],
+    ["Malformed streaming event",malformedStreamingEventTest],
+    ["Streaming abort",streamingAbortTest],
     ["Model discovery",modelDiscoveryTest],
     ["AiRuntime integration",runtimeIntegrationTest],
     ["Health and model listing",providerHealthAndModelsTest],

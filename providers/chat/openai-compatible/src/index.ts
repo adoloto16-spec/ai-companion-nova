@@ -1,9 +1,13 @@
 import type {
   ChatError,
+  ChatFinishReason,
   ChatMessage,
   ChatProvider,
   ChatRequest,
   ChatResponse,
+  ChatStreamDone,
+  ChatStreamHandlers,
+  ChatStreamOptions,
   ChatUsage,
   CredentialReference,
   CredentialStore,
@@ -27,9 +31,14 @@ export interface HttpClientResponse{
   status:number;
   body:string;
 }
-
+export interface HttpClientStreamResponse{
+  status:number;
+  body:AsyncIterable<string>;
+  headers?:Readonly<Record<string,string>>;
+}
 export interface HttpClient{
   request(request:HttpClientRequest):Promise<HttpClientResponse>;
+  stream?(request:HttpClientRequest):Promise<HttpClientStreamResponse>;
 }
 
 export class FetchHttpClient implements HttpClient{
@@ -41,6 +50,39 @@ export class FetchHttpClient implements HttpClient{
       signal:request.signal
     });
     return {status:response.status,body:await response.text()};
+  }
+
+  async stream(request:HttpClientRequest):Promise<HttpClientStreamResponse>{
+    const response=await fetch(request.url,{
+      method:request.method,
+      headers:request.headers,
+      ...(request.body===undefined?{}:{body:request.body}),
+      signal:request.signal
+    });
+    const body=response.body;
+    if(!body)throw new Error("Streaming response body is unavailable.");
+    const reader=body.getReader();
+    const headers=Object.fromEntries(response.headers.entries());
+    const iterable:AsyncIterable<string>={
+      async *[Symbol.asyncIterator](){
+        const decoder=new TextDecoder();
+        try{
+          while(true){
+            const next=await reader.read();
+            if(next.done)break;
+            if(next.value){
+              const text=decoder.decode(next.value,{stream:true});
+              if(text)yield text;
+            }
+          }
+          const tail=decoder.decode();
+          if(tail)yield tail;
+        }finally{
+          reader.releaseLock();
+        }
+      }
+    };
+    return {status:response.status,headers,body:iterable};
   }
 }
 
@@ -79,6 +121,12 @@ export function validateOpenAICompatibleProviderConfig(config:OpenAICompatiblePr
   return errors;
 }
 
+function createAbortError():Error{
+  const error=new Error("The operation was aborted.");
+  error.name="AbortError";
+  return error;
+}
+
 function safeConfigError(message:string,request?:ChatRequest):OpenAICompatibleProviderError{
   return new OpenAICompatibleProviderError({
     apiVersion:"1",
@@ -114,13 +162,13 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       kind:"chat" as const,
       displayName:"OpenAI-Compatible Chat Provider",
       version:"1.0.0",
-      description:"Synchronous OpenAI-compatible Chat Completions adapter."
+      description:"OpenAI-compatible Chat Completions adapter with synchronous and SSE streaming paths."
     };
   }
 
   capabilities():ProviderCapabilities{
     return {
-      streaming:false,
+      streaming:true,
       toolCalling:false,
       structuredOutput:false,
       reasoning:false
@@ -163,16 +211,292 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     }
   }
 
+  async stream(request:ChatRequest,handlers:ChatStreamHandlers,options:ChatStreamOptions={}):Promise<ChatResponse>{
+    this.ensureConfig(request);
+    if(!request.model.trim()){
+      throw this.failure({code:"INVALID_REQUEST",message:"Requested model is not configured for this provider.",request,retryable:false,details:{category:"configuration"}});
+    }
+    if(request.generation?.responseFormat?.type==="json"){
+      throw this.failure({
+        code:"UNSUPPORTED",
+        message:"Structured output is not supported by this provider.",
+        request,
+        retryable:false,
+        details:{category:"capability"}
+      });
+    }
+
+    const messages=this.mapMessages(request.context.messages,request);
+    const secret=await this.resolveCredential(request);
+    const body=JSON.stringify(this.mapRequest(request,messages,true));
+    const started=Date.now();
+    const controller=new AbortController();
+    let timedOut=false;
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    const callerSignal=options.signal;
+    const callerAbort=()=>controller.abort();
+    if(callerSignal){
+      if(callerSignal.aborted)throw createAbortError();
+      callerSignal.addEventListener("abort",callerAbort,{once:true});
+    }
+    timer=setTimeout(()=>{timedOut=true;controller.abort();},this.timeoutMs());
+
+    try{
+      if(!this.httpClient.stream)throw this.failure({
+        code:"UNSUPPORTED",
+        message:"Streaming is not supported by this HTTP transport.",
+        request,
+        retryable:false,
+        details:{category:"transport"}
+      });
+
+      const response=await this.httpClient.stream({
+        url:this.chatCompletionsUrl(),
+        method:"POST",
+        headers:{
+          Accept:"text/event-stream",
+          "Content-Type":"application/json",
+          ...(secret?{Authorization:"Bearer "+secret}:{}),
+        },
+        body,
+        signal:controller.signal
+      });
+
+      const durationMs=Date.now()-started;
+      if(response.status<200||response.status>=300)throw this.httpFailure(response.status,request,durationMs);
+
+      let buffer="";
+      let finishReason:ChatResponse["finishReason"]="unknown";
+      let model=request.model;
+      let usage:ChatUsage|undefined;
+      let completed=false;
+
+      const emitCompleted=async()=>{
+        if(completed)return;
+        completed=true;
+        const event:ChatStreamDone={
+          apiVersion:"1",
+          schemaVersion:"1",
+          requestId:request.requestId,
+          conversationId:request.context.conversationId,
+          providerId:this.id,
+          model,
+          type:"completed",
+          finishReason,
+          ...(usage?{usage}: {})
+        };
+        await handlers.onEvent(event);
+      };
+
+      const processEvent=async(data:string)=>{
+        const trimmed=data.trim();
+        if(!trimmed)return;
+        if(trimmed==="[DONE]"){
+          finishReason=finishReason==="unknown"?"stop":finishReason;
+          await emitCompleted();
+          return;
+        }
+
+        let payload:unknown;
+        try{payload=JSON.parse(trimmed);}catch{
+          throw this.failure({
+            code:"INVALID_RESPONSE",
+            message:"OpenAI-compatible provider returned malformed streaming JSON.",
+            request,
+            retryable:false,
+            details:{category:"malformed_stream_event",durationMs:Date.now()-started}
+          });
+        }
+        if(!payload||typeof payload!=="object"||Array.isArray(payload)){
+          throw this.failure({
+            code:"INVALID_RESPONSE",
+            message:"OpenAI-compatible provider returned an invalid streaming event.",
+            request,
+            retryable:false,
+            details:{category:"malformed_stream_event",durationMs:Date.now()-started}
+          });
+        }
+
+        const record=payload as Record<string,unknown>;
+        if(typeof record.model==="string"&&record.model.trim())model=record.model;
+        if(record.usage!==undefined&&record.usage!==null){
+          usage=this.mapUsage(record.usage,request,Date.now()-started);
+          if(usage)await handlers.onEvent({
+            apiVersion:"1",
+            schemaVersion:"1",
+            requestId:request.requestId,
+            conversationId:request.context.conversationId,
+            providerId:this.id,
+            model,
+            type:"usage",
+            usage
+          });
+        }
+
+        const choices=record.choices;
+        if(!Array.isArray(choices)||choices.length===0)return;
+        const first=choices[0];
+        if(!first||typeof first!=="object"||Array.isArray(first)){
+          throw this.failure({
+            code:"INVALID_RESPONSE",
+            message:"OpenAI-compatible provider returned an invalid streaming choice.",
+            request,
+            retryable:false,
+            details:{category:"malformed_stream_choice",durationMs:Date.now()-started}
+          });
+        }
+        const choice=first as Record<string,unknown>;
+        if(typeof choice.finish_reason==="string")finishReason=this.mapFinishReason(choice.finish_reason);
+
+        const delta=choice.delta;
+        if(delta&&typeof delta==="object"&&!Array.isArray(delta)){
+          const content=(delta as Record<string,unknown>).content;
+          if(content!==undefined&&typeof content!=="string"){
+            throw this.failure({
+              code:"INVALID_RESPONSE",
+              message:"OpenAI-compatible provider returned non-text streaming content.",
+              request,
+              retryable:false,
+              details:{category:"malformed_stream_delta",durationMs:Date.now()-started}
+            });
+          }
+          if(typeof content==="string"&&content.length>0){
+            await handlers.onEvent({
+              apiVersion:"1",
+              schemaVersion:"1",
+              requestId:request.requestId,
+              conversationId:request.context.conversationId,
+              providerId:this.id,
+              model,
+              type:"delta",
+              text:content
+            });
+          }
+        }
+      };
+
+      const iterator=response.body[Symbol.asyncIterator]();
+      let resolveAbort:(value:never)=>void=()=>{};
+      let rejectAbort:(reason:unknown)=>void=()=>{};
+      const abortPromise=new Promise<never>((_,reject)=>{
+        rejectAbort=reject;
+        resolveAbort=()=>{};
+      });
+      const abortListener=()=>{
+        rejectAbort(createAbortError());
+      };
+      const listenSignal=controller.signal;
+      if(listenSignal.aborted)throw createAbortError();
+      listenSignal.addEventListener("abort",abortListener,{once:true});
+
+      try{
+        while(true){
+          let next:IteratorResult<string>;
+          try{
+            next=await Promise.race([iterator.next(),abortPromise]);
+          }catch(error){
+            if(callerSignal?.aborted)throw createAbortError();
+            if(timedOut)throw this.failure({
+              code:"PROVIDER_ERROR",
+              message:"OpenAI-compatible provider streaming request timed out.",
+              request,
+              retryable:true,
+              details:{category:"timeout",durationMs:this.timeoutMs()}
+            });
+            throw error;
+          }
+          if(next.done)break;
+          buffer+=next.value;
+          while(true){
+            const match=/\r\n\r\n|\n\n|\r\r/.exec(buffer);
+            if(!match||match.index===undefined)break;
+            const eventText=buffer.slice(0,match.index);
+            buffer=buffer.slice(match.index+match[0].length);
+            const dataLines=eventText
+              .split(/\r\n|\n|\r/)
+              .filter(line=>line.startsWith("data:"))
+              .map(line=>line.slice(5).startsWith(" ")?line.slice(6):line.slice(5));
+            if(dataLines.length>0){
+              await processEvent(dataLines.join("\n"));
+              if(completed){buffer="";break;}
+            }
+          }
+          if(completed)break;
+        }
+
+        if(buffer.trim()&&!completed){
+          const dataLines=buffer
+            .split(/\r\n|\n|\r/)
+            .filter(line=>line.startsWith("data:"))
+            .map(line=>line.slice(5).startsWith(" ")?line.slice(6):line.slice(5));
+          if(dataLines.length>0)await processEvent(dataLines.join("\n"));
+        }
+
+        if(!completed){
+          if(finishReason==="unknown"){
+            throw this.failure({
+              code:"INVALID_RESPONSE",
+              message:"OpenAI-compatible provider stream ended without a completion event.",
+              request,
+              retryable:true,
+              details:{category:"incomplete_stream",durationMs:Date.now()-started}
+            });
+          }
+          await emitCompleted();
+        }
+
+        return {
+          apiVersion:request.apiVersion,
+          schemaVersion:request.schemaVersion,
+          requestId:request.requestId,
+          conversationId:request.context.conversationId,
+          providerId:this.id,
+          model,
+          message:{id:request.requestId+":assistant",role:"assistant",content:""},
+          finishReason,
+          ...(usage?{usage}: {}),
+          metadata:{streaming:true,durationMs:Date.now()-started}
+        };
+      }finally{
+        listenSignal.removeEventListener("abort",abortListener);
+      }
+    }catch(error){
+      if(callerSignal?.aborted)throw createAbortError();
+      if(timedOut){
+        throw this.failure({
+          code:"PROVIDER_ERROR",
+          message:"OpenAI-compatible provider streaming request timed out.",
+          request,
+          retryable:true,
+          details:{category:"timeout",durationMs:this.timeoutMs()}
+        });
+      }
+      if(error instanceof OpenAICompatibleProviderError)throw error;
+      const durationMs=Date.now()-started;
+      throw this.failure({
+        code:"PROVIDER_UNAVAILABLE",
+        message:"OpenAI-compatible provider streaming request could not be completed.",
+        request,
+        retryable:true,
+        details:{category:"network",durationMs}
+      });
+    }finally{
+      if(timer)clearTimeout(timer);
+      callerSignal?.removeEventListener("abort",callerAbort);
+      controller.abort();
+    }
+  }
+
   async health():Promise<HealthStatus>{
     const configError=this.configError();
-    if(configError)return {status:"unavailable",message:configError.message,capabilities:["chat"]};
-    if(!this.config.credential)return {status:"unavailable",message:"Chat provider credential is not configured.",capabilities:["chat"]};
+    if(configError)return {status:"unavailable",message:configError.message,capabilities:["chat","streaming"]};
+    if(!this.config.credential)return {status:"unavailable",message:"Chat provider credential is not configured.",capabilities:["chat","streaming"]};
     try{
       const secret=await this.credentialStore.getSecret(this.config.credential);
-      if(!secret)return {status:"unavailable",message:"Chat provider credential is not configured.",capabilities:["chat"]};
-      return {status:"healthy",capabilities:["chat"]};
+      if(!secret)return {status:"unavailable",message:"Chat provider credential is not configured.",capabilities:["chat","streaming"]};
+      return {status:"healthy",capabilities:["chat","streaming"]};
     }catch{
-      return {status:"unavailable",message:"Chat provider credential is unavailable.",capabilities:["chat"]};
+      return {status:"unavailable",message:"Chat provider credential is unavailable.",capabilities:["chat","streaming"]};
     }
   }
 
@@ -292,19 +616,19 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     });
   }
 
-  private mapRequest(request:ChatRequest,messages:readonly OpenAIChatMessage[]){
+  private mapRequest(request:ChatRequest,messages:readonly OpenAIChatMessage[],stream=false){
     const generation=request.generation;
     const payload:{
       model:string;
       messages:OpenAIChatMessage[];
-      stream:false;
+      stream:boolean;
       temperature?:number;
       max_tokens?:number;
       top_p?:number;
     }={
       model:request.model,
       messages:[...messages],
-      stream:false
+      stream
     };
     if(generation?.temperature!==undefined)payload.temperature=generation.temperature;
     if(generation?.maxTokens!==undefined)payload.max_tokens=generation.maxTokens;

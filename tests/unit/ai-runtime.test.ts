@@ -1,5 +1,5 @@
 import {AiRuntime,AiRuntimeError,InMemoryDiagnosticsStore,InMemoryEventBus,ProviderRegistry,createChatContext} from "../../core/src";
-import {FakeChatProvider} from "../../providers/mock/src";
+import {FakeChatProvider,FakeStreamingChatProvider} from "../../providers/mock/src";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,ChatRequest} from "../../contracts/src";
 
 function ok(value:unknown,label:string){if(!value)throw new Error(label);}
@@ -47,6 +47,42 @@ async function main(){
   let normalized=false;
   try{await invalidRuntime.generate(makeRequest());}catch(error){normalized=error instanceof AiRuntimeError&&error.code==="INVALID_RESPONSE";}
   ok(normalized,"provider response validation");
+  const streamingRegistry=new ProviderRegistry();
+  streamingRegistry.register(new FakeStreamingChatProvider(["delta-1","delta-2","delta-3"]),["chat"]);
+  const streamingRuntime=new AiRuntime(streamingRegistry);
+  const streamEvents:import("../../contracts/src").ChatStreamEvent[]=[];
+  const streamedResponse=await streamingRuntime.stream(makeRequest(),{onEvent:event=>{streamEvents.push(event);}});
+  equal(streamEvents.filter(event=>event.type==="delta").map(event=>event.type==="delta"?event.text:"").join("|"),"delta-1|delta-2|delta-3","stream deltas reach the runtime consumer");
+  equal(streamEvents.some(event=>event.type==="completed"),true,"stream completion event reaches the runtime consumer");
+  equal(streamedResponse.message.content,"delta-1delta-2delta-3","AiRuntime assembles streaming deltas");
+  equal(streamedResponse.finishReason,"stop","stream finish reason");
+
+  const fallbackRegistry=new ProviderRegistry();
+  fallbackRegistry.register(new FakeChatProvider(),["chat"]);
+  const fallbackRuntime=new AiRuntime(fallbackRegistry);
+  const fallbackEvents:import("../../contracts/src").ChatStreamEvent[]=[];
+  const fallbackResponse=await fallbackRuntime.stream(makeRequest(),{onEvent:event=>{fallbackEvents.push(event);}});
+  equal(fallbackResponse.message.content,"fake response","non-streaming provider uses chat fallback");
+  equal(fallbackEvents.filter(event=>event.type==="delta").length,1,"fallback emits one canonical delta");
+  equal(fallbackEvents.filter(event=>event.type==="completed").length,1,"fallback emits one canonical completed event");
+
+  let lifecycleStarted=0,lifecycleReceived=0;
+  const lifecycleEvents=new InMemoryEventBus(new InMemoryDiagnosticsStore());
+  lifecycleEvents.subscribe("ChatRequestStarted",()=>{lifecycleStarted++;});
+  lifecycleEvents.subscribe("ChatResponseReceived",()=>{lifecycleReceived++;});
+  const lifecycleRuntime=new AiRuntime(fallbackRegistry,{events:lifecycleEvents});
+  await lifecycleRuntime.stream(makeRequest("fake.chat"),{onEvent:()=>{}});
+  equal(lifecycleStarted,1,"stream fallback emits one request-start lifecycle event");
+  equal(lifecycleReceived,1,"stream fallback emits one response-received lifecycle event");
+
+  const abortController=new AbortController();
+  abortController.abort();
+  let aborted=false;
+  try{
+    await streamingRuntime.stream(makeRequest(),{onEvent:()=>{}},{signal:abortController.signal});
+  }catch(error){aborted=error instanceof Error&&error.name==="AbortError";}
+  ok(aborted,"AiRuntime propagates caller abort without provider-error normalization");
+
   console.log("PASS AI Runtime unit tests");
 }
 void main().catch(error=>{console.error(error);process.exitCode=1;});

@@ -97,6 +97,12 @@ function resultLabel(result:ProviderConnectionTestResult):string{
   }
 }
 
+function messageStreamStatus(message:{role?:string;metadata?:Record<string,unknown>}):"complete"|"interrupted"|"streaming"|undefined{
+  const value=message.metadata?.streamStatus;
+  if(value==="complete"||value==="interrupted"||value==="streaming")return value;
+  return message.role==="assistant"?"complete":undefined;
+}
+
 function ChatView({controller,runtime,character,onPersist,onClear}:{
   controller:ChatSessionController;
   runtime:FoundationRuntime;
@@ -110,17 +116,46 @@ function ChatView({controller,runtime,character,onPersist,onClear}:{
   const bottomRef=React.useRef<HTMLDivElement|null>(null);
 
   React.useEffect(()=>controller.subscribe(setSnapshot),[controller]);
-  React.useEffect(()=>{bottomRef.current?.scrollIntoView({block:"end"})},[snapshot.messages.length,snapshot.sending]);
+  React.useEffect(()=>{
+    bottomRef.current?.scrollIntoView({block:"end"});
+  },[snapshot.messages.map(message=>message.content).join("\u0000"),snapshot.status]);
+
+  const persistAfterAction=React.useCallback(async(result:{status:string})=>{
+    if(result.status==="rejected")return;
+    try{await onPersist();}
+    catch(error){setPersistenceError(error instanceof Error?error.message:"Conversation could not be saved.");}
+  },[onPersist]);
 
   const send=React.useCallback(async()=>{
     setPersistenceError("");
     const result=await controller.submit(input,runtime.getActiveChatModel());
     if(result.status!=="rejected")setInput("");
-    if(result.status==="sent"){
-      try{await onPersist();}
-      catch(error){setPersistenceError(error instanceof Error?error.message:"Conversation could not be saved.");}
-    }
-  },[controller,input,runtime,onPersist]);
+    await persistAfterAction(result);
+  },[controller,input,runtime,persistAfterAction]);
+
+  const stop=React.useCallback(async()=>{
+    setPersistenceError("");
+    const result=await controller.stop();
+    await persistAfterAction(result);
+  },[controller,persistAfterAction]);
+
+  const continueGeneration=React.useCallback(async()=>{
+    setPersistenceError("");
+    const result=await controller.continue(runtime.getActiveChatModel());
+    await persistAfterAction(result);
+  },[controller,runtime,persistAfterAction]);
+
+  const regenerate=React.useCallback(async()=>{
+    setPersistenceError("");
+    const result=await controller.regenerate(runtime.getActiveChatModel());
+    await persistAfterAction(result);
+  },[controller,runtime,persistAfterAction]);
+
+  const retry=React.useCallback(async()=>{
+    setPersistenceError("");
+    const result=await controller.retry(runtime.getActiveChatModel());
+    await persistAfterAction(result);
+  },[controller,runtime,persistAfterAction]);
 
   const clear=React.useCallback(async()=>{
     setPersistenceError("");
@@ -135,25 +170,41 @@ function ChatView({controller,runtime,character,onPersist,onClear}:{
     }
   };
 
+  const lastAssistant=[...snapshot.messages].reverse().find(message=>message.role==="assistant");
+  const lastAssistantStatus=lastAssistant?messageStreamStatus(lastAssistant):undefined;
+  const showContinue=snapshot.status==="interrupted"&&lastAssistantStatus==="interrupted"&&!snapshot.sending;
+  const showRegenerate=(snapshot.status==="completed"||snapshot.status==="interrupted")&&(lastAssistantStatus==="complete"||lastAssistantStatus==="interrupted")&&!snapshot.sending;
+  const showRetry=snapshot.status==="error"&&!snapshot.sending;
+
   return <section className="chat-panel">
     <div className="chat-toolbar">
-      <div><h2>Chat · {character.name}</h2><p className="chat-subtitle">Conversation is persistent and scoped to {character.name}.</p></div>
-      <button onClick={()=>void clear()} disabled={snapshot.sending||snapshot.messages.length===0}>Clear</button>
+      <div>
+        <h2>Chat · {character.name}</h2>
+        <p className="chat-subtitle">Conversation is persistent and scoped to {character.name}.</p>
+      </div>
+      <div className="chat-toolbar-actions">
+        {snapshot.status==="streaming"&&<button type="button" onClick={()=>void stop()}>Stop</button>}
+        {showContinue&&<button type="button" onClick={()=>void continueGeneration()}>Continue</button>}
+        {showRegenerate&&<button type="button" onClick={()=>void regenerate()}>Regenerate</button>}
+        {showRetry&&<button type="button" onClick={()=>void retry()}>Retry</button>}
+        <button type="button" onClick={()=>void clear()} disabled={snapshot.sending||snapshot.messages.length===0}>Clear</button>
+      </div>
     </div>
     <div className="message-list" aria-live="polite">
       {snapshot.messages.length===0&&<div className="empty-chat">Write a message to start the conversation.</div>}
-      {snapshot.messages.map((message,index)=>
-        <article className={"chat-message "+message.role} key={message.id??"message-"+index}>
+      {snapshot.messages.map((message,index)=>{
+        const state=messageStreamStatus(message);
+        return <article className={"chat-message "+message.role} key={message.id??"message-"+index}>
           <div className="message-author">{message.role==="user"?"You":character.name}</div>
           <div className="message-content">{message.content}</div>
-        </article>
-      )}
-      {snapshot.sending&&<article className="chat-message assistant pending"><div className="message-author">{character.name}</div><div className="message-content">Thinking…</div></article>}
+          {state==="interrupted"&&<div className="message-status">Interrupted</div>}
+        </article>;
+      })}
       <div ref={bottomRef}/>
     </div>
     <form className="chat-composer" onSubmit={event=>{event.preventDefault();if(!snapshot.sending)void send()}}>
       <textarea value={input} onChange={event=>setInput(event.target.value)} onKeyDown={onKeyDown} placeholder="Write a message…" aria-label="Chat message" disabled={snapshot.sending} rows={2}/>
-      <button type="submit" disabled={snapshot.sending||input.trim().length===0}>{snapshot.sending?"Sending…":"Send"}</button>
+      <button type="submit" disabled={snapshot.sending||input.trim().length===0}>{snapshot.sending?"Streaming…":"Send"}</button>
     </form>
     <p className="chat-hint">Enter to send · Shift+Enter for a new line</p>
     {snapshot.error&&<div className="chat-error" role="alert">{snapshot.error}</div>}
@@ -849,6 +900,11 @@ function App(){
         const foundation=foundationRef.current;
         if(!foundation)return Promise.reject(new Error("Chat runtime is not available."));
         return foundation.chat(request,providerPresetId);
+      },
+      stream:(request,handlers,options,providerPresetId)=>{
+        const foundation=foundationRef.current;
+        if(!foundation)return Promise.reject(new Error("Chat runtime is not available."));
+        return foundation.stream(request,handlers,options,providerPresetId);
       },
       getChatModel:providerId=>{
         const foundation=foundationRef.current;
