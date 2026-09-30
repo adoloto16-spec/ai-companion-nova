@@ -38,6 +38,20 @@ function createExtractor(){
 async function main(){
   {
     const {broker,extractor}=createExtractor();
+    const result=await extractor.extractAndApply(request("multi-1"),{
+      chat:async()=>responseFor("multi-1",JSON.stringify({memories:[
+        {type:"preference",content:"The user prefers aviation examples.",tags:["aviation"],importance:80,confidence:95,source:"conversation",sourceReference:"conversation.nova.a",mutationPolicy:"auto"},
+        {type:"fact",content:"The user is working on an aviation project.",tags:["project"],importance:70,confidence:90,source:"conversation",sourceReference:"conversation.nova.a",mutationPolicy:"auto"},
+        {type:"relationship",content:"Nova is the user's AI companion.",tags:["relationship"],importance:60,confidence:95,source:"conversation",sourceReference:"conversation.nova.a",mutationPolicy:"auto"},
+        {type:"event",content:"The user recently discussed an aviation trip.",tags:["event"],importance:50,confidence:80,source:"conversation",sourceReference:"conversation.nova.a",mutationPolicy:"auto"}
+      ]}))
+    });
+    equal(result.createdMemoryIds.length,4,"multiple extraction candidate types are persisted");
+    equal((await broker.search({characterId:"character.nova",conversationId:"conversation.nova.a",query:""})).length,4,"multiple candidates remain scoped to the same conversation");
+  }
+
+  {
+    const {broker,extractor}=createExtractor();
     let seen:ChatRequest|undefined;
     const result=await extractor.extractAndApply(request("extract-1"),{
       chat:async chatRequest=>{
