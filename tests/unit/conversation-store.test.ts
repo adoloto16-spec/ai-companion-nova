@@ -1,4 +1,4 @@
-import {InMemoryConversationStore} from "../../host/conversations/src";
+import {InMemoryConversationStore,IpcConversationStore} from "../../host/conversations/src";
 import {StandardContractValidator,STANDARD_SCHEMAS} from "../../contracts/src";
 import type {Conversation} from "../../contracts/src";
 
@@ -6,7 +6,7 @@ function equal(actual:unknown,expected:unknown,label:string){if(JSON.stringify(a
 function ok(value:unknown,label:string){if(!value)throw new Error(label)}
 
 const nova:Conversation={
-  apiVersion:"1",schemaVersion:"1",id:"conversation:character.nova.default.v1:default.v1",characterId:"character.nova.default.v1",
+  apiVersion:"1",schemaVersion:"2",id:"conversation:character.nova.default.v1:default.v2",characterId:"character.nova.default.v1",title:"Main",
   messages:[
     {id:"u1",role:"user",content:"hello Nova"},
     {id:"a1",role:"assistant",content:"hello from Nova"}
@@ -16,33 +16,57 @@ const nova:Conversation={
 
 async function main(){
   const validator=new StandardContractValidator();
-  equal(validator.validate(nova,STANDARD_SCHEMAS["conversation"]!).valid,true,"conversation schema accepts canonical state");
+  equal(validator.validate(nova,STANDARD_SCHEMAS["conversation"]!).valid,true,"conversation v2 schema accepts canonical state");
+  equal(validator.validate({...nova,title:""} as never,STANDARD_SCHEMAS["conversation"]!).valid,false,"conversation schema rejects empty title");
   equal(validator.validate({...nova,characterId:""} as never,STANDARD_SCHEMAS["conversation"]!).valid,false,"conversation schema rejects empty character scope");
-  equal(validator.validate({...nova,messages:[{role:"invalid",content:"x"}]} as never,STANDARD_SCHEMAS["conversation"]!).valid,false,"conversation schema rejects invalid message role");
+  equal(validator.validate({...nova,schemaVersion:"1"} as never,STANDARD_SCHEMAS["conversation"]!).valid,false,"conversation v1 object is no longer accepted as v2");
 
   const store=new InMemoryConversationStore();
-  equal(await store.load(nova.characterId),undefined,"fresh store has no conversation");
+  equal((await store.list(nova.characterId)).length,0,"fresh store has no conversations");
   await store.save(nova);
-  const loaded=await store.load(nova.characterId);
-  ok(loaded,"saved conversation reloads");
-  equal(loaded?.id,nova.id,"conversation id remains stable");
-  equal(loaded?.characterId,nova.characterId,"conversation character scope is stable");
-  equal(loaded?.messages.map(message=>message.content).join("|"),"hello Nova|hello from Nova","messages round-trip");
+  const createdB:Conversation={...nova,id:"conversation:character.nova.default.v1:b",title:"Aviation",messages:[{id:"u2",role:"user",content:"aviation"}],updatedAt:"2026-09-28T11:00:00.000Z"};
+  await store.save(createdB);
 
-  equal((await store.load(nova.characterId))?.messages[0]?.content,"hello Nova","store isolates caller message mutation");
+  equal((await store.list(nova.characterId)).length,2,"store supports multiple conversations for one Character");
+  equal((await store.get(nova.characterId,nova.id))?.title,"Main","get finds conversation by scoped id");
+  equal((await store.get(nova.characterId,createdB.id))?.messages[0]?.content,"aviation","second conversation remains separate");
+  equal((await store.getActive(nova.characterId))?.id,nova.id,"first saved conversation becomes active by default");
+  await store.setActive(nova.characterId,createdB.id);
+  equal((await store.getActive(nova.characterId))?.id,createdB.id,"active conversation can switch");
+  await store.save({...createdB,title:"Aviation Stories",updatedAt:"2026-09-28T11:30:00.000Z"});
+  equal((await store.get(nova.characterId,createdB.id))?.title,"Aviation Stories","update round-trips title");
+  equal((await store.get(nova.characterId,createdB.id))?.messages[0]?.content,"aviation","update does not cross-contaminate messages");
 
-  await store.save({
-    ...nova,
-    id:"conversation:character.gm.default.v1:default.v1",
-    characterId:"character.gm.default.v1",
-    messages:[{id:"gm1",role:"user",content:"hello GM"}]
-  });
-  equal((await store.load("character.nova.default.v1"))?.messages[0]?.content,"hello Nova","Nova remains isolated from GM");
-  equal((await store.load("character.gm.default.v1"))?.messages[0]?.content,"hello GM","GM has separate conversation");
+  let foreignRejected=false;
+  try{await store.get("character.gm.default.v1",createdB.id)}catch(error){foreignRejected=String(error).includes("scope mismatch");}
+  ok(foreignRejected,"cross-character get is rejected");
 
-  await store.clear("character.gm.default.v1");
-  equal(await store.load("character.gm.default.v1"),undefined,"clear removes only requested Character conversation");
-  ok(await store.load("character.nova.default.v1"),"clear does not remove Nova conversation");
-  console.log("PASS conversation store unit tests");
+  await store.delete(nova.characterId,createdB.id);
+  equal((await store.list(nova.characterId)).length,1,"delete removes only selected conversation");
+  equal((await store.getActive(nova.characterId))?.id,nova.id,"delete switches active to remaining conversation");
+
+  await store.delete(nova.characterId,nova.id);
+  const replacement=await store.getActive(nova.characterId);
+  ok(replacement,"deleting the last conversation creates deterministic default");
+  equal(replacement?.id,"conversation:character.nova.default.v1:default.v2","default conversation id is deterministic");
+  equal(replacement?.title,"Main","default conversation title");
+  equal(replacement?.messages.length,0,"default conversation starts empty");
+
+  const calls:Array<{command:string;args?:Record<string,unknown>}>=[];
+  const ipc=new IpcConversationStore(async(command,args)=>{calls.push({command,args});switch(command){
+    case "list_conversations":return [nova];
+    case "get_conversation":return nova;
+    case "get_active_conversation":return nova;
+    default:return null;
+  }});
+  await ipc.list(nova.characterId);
+  await ipc.get(nova.characterId,nova.id);
+  await ipc.getActive(nova.characterId);
+  await ipc.setActive(nova.characterId,nova.id);
+  await ipc.delete(nova.characterId,nova.id);
+  await ipc.clear(nova.characterId,nova.id);
+  equal(calls.map(call=>call.command).join("|"),"list_conversations|get_conversation|get_active_conversation|set_active_conversation|delete_conversation|clear_conversation","IPC conversation command mapping");
+
+  console.log("PASS conversation store v2 unit tests");
 }
 void main().catch(error=>{console.error(error);process.exitCode=1});
