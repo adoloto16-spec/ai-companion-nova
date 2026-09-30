@@ -82,6 +82,20 @@ async function main(){
   equal(filtered.length,1,"search applies type and tag filters");
   equal(filtered[0]?.id,"memory.a.2","search applies deterministic limit");
 
+  const legacyStore=new InMemoryMemoryStore();
+  legacyStore.seedLegacyState({
+    apiVersion:"1",schemaVersion:"1",characterId:"character.a",
+    items:[{
+      id:"legacy.memory",characterId:"character.a",type:"fact",content:"Legacy memory",tags:["legacy"],importance:70,confidence:80,
+      createdAt:"2026-09-25T12:00:00.000Z",updatedAt:"2026-09-25T12:00:00.000Z",validFrom:null,validUntil:null,
+      source:"user",sourceReference:null,mutationPolicy:"locked",status:"active",metadata:{}
+    }]
+  });
+  const migrated=await legacyStore.load("character.a",convB);
+  equal(migrated?.schemaVersion,"2","legacy memory storage migrates to v2");
+  equal(migrated?.items[0]?.conversationId,convB,"legacy memory is assigned the requested active conversation");
+  equal(migrated?.items.length,1,"legacy migration does not duplicate memory");
+
   const scopedA=await broker.create("character.a",convA,{id:"memory.scope.a",type:"fact",content:"Only in A",source:"user"},user);
   const scopedB=await broker.create("character.a",convB,{id:"memory.scope.b",type:"fact",content:"Only in B",source:"user"},user);
   equal((await broker.search({characterId:"character.a",conversationId:convA,query:"Only"})).map(item=>item.id),["memory.scope.a"],"conversation A cannot see conversation B memory");
