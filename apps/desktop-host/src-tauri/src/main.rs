@@ -164,8 +164,8 @@ fn save_core_book_entries(app:tauri::AppHandle,state:core_book::CoreBookStoreSta
 
 #[cfg(feature="tauri-app")]
 #[tauri::command]
-fn get_memory_state(app:tauri::AppHandle,character_id:String,state:tauri::State<'_,memory::MemoryWriteLock>)->Result<Option<memory::MemoryStoreState>,String>{
-    memory::load(&app,&character_id,&state)
+fn get_memory_state(app:tauri::AppHandle,character_id:String,migration_conversation_id:Option<String>,state:tauri::State<'_,memory::MemoryWriteLock>)->Result<Option<memory::MemoryStoreState>,String>{
+    memory::load(&app,&character_id,migration_conversation_id.as_deref(),&state)
 }
 
 #[cfg(feature="tauri-app")]
@@ -179,11 +179,12 @@ fn save_memory_state(app:tauri::AppHandle,state_value:memory::MemoryStoreState,s
 fn supersede_memory(
     app:tauri::AppHandle,
     character_id:String,
+    conversation_id:String,
     previous_memory_id:String,
     replacement:memory::MemoryItem,
     state:tauri::State<'_,memory::MemoryWriteLock>,
 )->Result<memory::MemoryItem,String>{
-    memory::supersede(&app,&character_id,&previous_memory_id,replacement,&state)
+    memory::supersede(&app,&character_id,&conversation_id,&previous_memory_id,replacement,&state)
 }
 
 #[cfg(feature="tauri-app")]
