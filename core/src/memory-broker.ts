@@ -276,6 +276,7 @@ export class MemoryBrokerImpl implements MemoryBroker{
     const replacement:MemoryItem={
       id:requireMemoryId(input.id??idFactory()),
       characterId:scope,
+      conversationId:conversation,
       type:input.type,
       content:requireContent(input.content),
       tags:requireTags(input.tags??[]),
