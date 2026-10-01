@@ -42,7 +42,7 @@ export interface CoreBookCandidateReader {
 
 export interface MemoryCandidateReader {
   search(query:MemorySearchQuery):Promise<readonly MemoryItem[]>;
-  get?(characterId:CharacterId,memoryId:string):Promise<MemoryItem|undefined>;
+  get?(characterId:CharacterId,conversationId:string,memoryId:string):Promise<MemoryItem|undefined>;
 }
 
 const DEFAULT_MEMORY_CANDIDATE_LIMIT=8;
@@ -71,6 +71,7 @@ export class MemoryCandidateSource implements ContextCandidateSource {
           apiVersion:CONTEXT_API_VERSION,
           schemaVersion:CONTEXT_SCHEMA_VERSION,
           characterId:request.characterId,
+          conversationId:request.conversationId,
           query,
           sources:["memory"],
           limit:this.maxResults,
@@ -78,8 +79,8 @@ export class MemoryCandidateSource implements ContextCandidateSource {
         });
       }catch{return []}
       const canonical=await Promise.all(retrieval.candidates
-        .filter(candidate=>candidate.source==="memory"&&candidate.characterId===request.characterId)
-        .map(candidate=>this.reader.get?.(request.characterId,candidate.sourceId)));
+        .filter(candidate=>candidate.source==="memory"&&candidate.characterId===request.characterId&&candidate.conversationId===request.conversationId)
+        .map(candidate=>this.reader.get?.(request.characterId,request.conversationId,candidate.sourceId)));
       results=canonical.filter((item):item is MemoryItem=>Boolean(item));
     }else{
       try{results=await this.reader.search({characterId:request.characterId,query,status:"active",limit:this.maxResults});}
@@ -87,7 +88,7 @@ export class MemoryCandidateSource implements ContextCandidateSource {
     }
 
     return results
-      .filter(item=>item.characterId===request.characterId && item.status==="active")
+      .filter(item=>item.characterId===request.characterId && item.conversationId===request.conversationId && item.status==="active")
       .map((item,index)=>{
         const relevance=Math.max(10,100-index*10);
         const retentionPriority=item.importance;
