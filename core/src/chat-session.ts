@@ -121,6 +121,7 @@ export interface ChatSessionControllerOptions{
   contextBuilder?:ChatContextBuilderBoundary;
   contextBudget?:ContextBudget;
   contextBudgetProvider?:()=>ContextBudget;
+  recentConversationMessagesProvider?:()=>number;
   memoryExtractor?:ChatCompletedTurnMemoryBoundary;
   memoryExtractionEnabled?:()=>boolean;
   traceStore?:ChatTraceStore;
@@ -151,6 +152,7 @@ export class ChatSessionController{
   private readonly contextBuilder?:ChatContextBuilderBoundary;
   private readonly contextBudget:ContextBudget;
   private readonly contextBudgetProvider?:()=>ContextBudget;
+  private readonly recentConversationMessagesProvider?:()=>number;
   private readonly memoryExtractor?:ChatCompletedTurnMemoryBoundary;
   private readonly memoryExtractionEnabled?:()=>boolean;
   private readonly traceStore?:ChatTraceStore;
@@ -171,6 +173,7 @@ export class ChatSessionController{
     this.contextBuilder=options.contextBuilder;
     this.contextBudget=options.contextBudget??DEFAULT_CHAT_CONTEXT_BUDGET;
     this.contextBudgetProvider=options.contextBudgetProvider;
+    this.recentConversationMessagesProvider=options.recentConversationMessagesProvider;
     this.memoryExtractor=options.memoryExtractor;
     this.memoryExtractionEnabled=options.memoryExtractionEnabled;
     this.traceStore=options.traceStore;
@@ -477,7 +480,7 @@ export class ChatSessionController{
           ...(providerPresetId?{providerPresetId}:{}),
           userMessage:cloneMessage(userMessage),
           assistantMessage:cloneMessage(canonicalMessage),
-          contextMessages:contextMessages.filter(message=>message.metadata?.contextSource===undefined||message.metadata?.contextSource==="conversation").slice(-8).map(cloneMessage)
+          contextMessages:contextMessages.filter(message=>message.metadata?.contextSource===undefined||message.metadata?.contextSource==="conversation").slice(-(this.recentConversationMessagesProvider?.()??8)).map(cloneMessage)
         };
         void Promise.resolve(this.memoryExtractor.extract(extractionRequest)).catch(()=>undefined);
       }
