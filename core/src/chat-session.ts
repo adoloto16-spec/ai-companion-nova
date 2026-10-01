@@ -1,6 +1,6 @@
 import type {
   AssembledContext,ChatErrorCode,ChatGenerationOptions,ChatMessage,ChatRequest,ChatResponse,ChatStreamEvent,
-  ChatStreamHandlers,ChatStreamOptions,ChatUsage,CharacterId,ContextBuildRequest,ContextBudget,ModelProfile,Unsubscribe
+  ChatStreamHandlers,ChatStreamOptions,ChatUsage,CharacterId,ContextBuildRequest,ContextBudget,MemoryExtractionRequest,ModelProfile,Unsubscribe
 } from "../../contracts/src/index";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION} from "../../contracts/src/index";
 
@@ -113,10 +113,14 @@ export class ConversationSession{
 export interface ChatContextBuilderBoundary{
   buildContext(request:ContextBuildRequest):Promise<AssembledContext>;
 }
+export interface ChatCompletedTurnMemoryBoundary{
+  extract(request:MemoryExtractionRequest):Promise<unknown>;
+}
 export interface ChatSessionControllerOptions{
   requestIdFactory?:()=>string;
   contextBuilder?:ChatContextBuilderBoundary;
   contextBudget?:ContextBudget;
+  memoryExtractor?:ChatCompletedTurnMemoryBoundary;
 }
 const DEFAULT_CHAT_CONTEXT_BUDGET:ContextBudget={
   availableContextTokens:4096,
@@ -142,6 +146,7 @@ export class ChatSessionController{
   private readonly requestIdFactory:()=>string;
   private readonly contextBuilder?:ChatContextBuilderBoundary;
   private readonly contextBudget:ContextBudget;
+  private readonly memoryExtractor?:ChatCompletedTurnMemoryBoundary;
   private modelProfile?:ModelProfile;
   private sending=false;
   private status:ChatSessionStatus="idle";
@@ -158,6 +163,7 @@ export class ChatSessionController{
     this.requestIdFactory=options.requestIdFactory??defaultRequestId;
     this.contextBuilder=options.contextBuilder;
     this.contextBudget=options.contextBudget??DEFAULT_CHAT_CONTEXT_BUDGET;
+    this.memoryExtractor=options.memoryExtractor;
     const messages=session.getMessages();
     const lastAssistant=[...messages].reverse().find(message=>message.role==="assistant");
     this.status=lastAssistant
@@ -385,6 +391,30 @@ export class ChatSessionController{
       this.notify();
 
       const canonicalResponse:ChatResponse={
+        ...response,
+        finishReason:canonicalFinishReason,
+        message:canonicalMessage,
+        ...(canonicalUsage?{usage:canonicalUsage}:{})
+      };
+      if(this.memoryExtractor){
+        const providerPresetId=this.modelProfile?.providerPresetId??this.runtime.getActiveProviderPresetId?.();
+        const extractionRequest:MemoryExtractionRequest={
+          apiVersion:"1",
+          schemaVersion:"1",
+          characterId:this.session.characterId,
+          conversationId:this.session.conversationId,
+          turnId:active.requestId,
+          model:canonicalResponse.model,
+          providerId:canonicalResponse.providerId,
+          ...(providerPresetId?{providerPresetId}:{}),
+          userMessage:cloneMessage(userMessage),
+          assistantMessage:cloneMessage(canonicalMessage),
+          contextMessages:contextMessages.filter(message=>message.metadata?.contextSource===undefined||message.metadata?.contextSource==="conversation").slice(-8).map(cloneMessage)
+        };
+        void Promise.resolve(this.memoryExtractor.extract(extractionRequest)).catch(()=>undefined);
+      }
+
+      return {status:"sent",response:canonicalResponse};
         ...response,
         finishReason:canonicalFinishReason,
         message:canonicalMessage,
