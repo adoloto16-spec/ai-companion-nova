@@ -2,7 +2,7 @@ import React from "react";
 import {createRoot} from "react-dom/client";
 import {invoke} from "@tauri-apps/api/core";
 import {
-  ChatSessionController,ConversationSession,type Character,type FoundationRuntime,InMemoryCharacterStore,type RuntimeDiagnostics,
+  ChatSessionController,ConversationSession,type Character,type FoundationRuntime,InMemoryCharacterStore,type RuntimeDiagnostics,InMemoryChatTraceStore,
   type CoreBookActivation,type CoreBookEntry
 } from "../../../core/src/index";
 import {startFoundationRuntime,testProviderConfiguration,testProviderPresetConfiguration,validateProviderConfiguration,listProviderModels} from "../../../runtime/bootstrap/src/index";
@@ -15,11 +15,12 @@ import {IpcCoreBookStore,InMemoryCoreBookStore} from "../../../host/core-book/sr
 import {IpcMemoryStore,InMemoryMemoryStore} from "../../../host/memory/src/index";
 import {IpcConversationStore,InMemoryConversationStore} from "../../../host/conversations/src/index";
 import {IpcModelProfileStore,InMemoryModelProfileStore} from "../../../host/model-profiles/src/index";
+import {IpcSettingsStore,InMemorySettingsStore} from "../../../host/settings/src/index";
 import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
   PROVIDER_CONFIGURATION_API_VERSION,PROVIDER_CONFIGURATION_SCHEMA_VERSION,
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
-  type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState,
+  type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type DiagnosticsLogLevel, defaultAppSettings, validateAppSettings,
   type ProviderPreset, type ProviderPresetStoreState, type ModelInfo
 } from "../../../contracts/src/index";
 import "./styles.css";
@@ -158,10 +159,12 @@ function ChatView({controller,runtime,character,conversations,activeConversation
 }){
   const [snapshot,setSnapshot]=React.useState(()=>controller.getSnapshot());
   const [input,setInput]=React.useState("");
+  const [editingId,setEditingId]=React.useState<string|undefined>();
+  const [editingText,setEditingText]=React.useState("");
   const [persistenceError,setPersistenceError]=React.useState("");
   const bottomRef=React.useRef<HTMLDivElement|null>(null);
 
-  React.useEffect(()=>controller.subscribe(setSnapshot),[controller]);
+  React.useEffect(()=>{setSnapshot(controller.getSnapshot());return controller.subscribe(setSnapshot)},[controller]);
   React.useEffect(()=>{
     bottomRef.current?.scrollIntoView({block:"end"});
   },[snapshot.messages.map(message=>message.content).join("\u0000"),snapshot.status]);
@@ -208,6 +211,23 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     try{await onClear();}
     catch(error){setPersistenceError(error instanceof Error?error.message:"Conversation could not be cleared.");}
   },[onClear]);
+  const editMessage=React.useCallback(async(id:string)=>{
+    setPersistenceError("");
+    try{
+      controller.editMessage(id,editingText);
+      await onPersist();
+      setEditingId(undefined);setEditingText("");
+    }catch(error){setPersistenceError(error instanceof Error?error.message:"Message could not be edited.");}
+  },[controller,editingText,onPersist]);
+
+  const deleteMessage=React.useCallback(async(id:string)=>{
+    if(!window.confirm("Delete this message?"))return;
+    setPersistenceError("");
+    try{controller.deleteMessage(id);await onPersist();}
+    catch(error){setPersistenceError(error instanceof Error?error.message:"Message could not be deleted.");}
+  },[controller,onPersist]);
+
+
 
   const onKeyDown=(event:React.KeyboardEvent<HTMLTextAreaElement>)=>{
     if(event.key==="Enter"&&!event.shiftKey){
@@ -251,10 +271,25 @@ function ChatView({controller,runtime,character,conversations,activeConversation
       {snapshot.messages.length===0&&<div className="empty-chat">Write a message to start the conversation.</div>}
       {snapshot.messages.map((message,index)=>{
         const state=messageStreamStatus(message);
+        const editable=message.role==="user"||message.role==="assistant";
+        const isEditing=editingId===message.id;
         return <article className={"chat-message "+message.role} key={message.id??"message-"+index}>
           <div className="message-author">{message.role==="user"?"You":character.name}</div>
-          <div className="message-content">{message.content}</div>
+          {isEditing
+            ?<div className="message-edit">
+              <textarea value={editingText} onChange={event=>setEditingText(event.target.value)} rows={4} aria-label="Edit message"/>
+              <div className="actions">
+                <button type="button" onClick={()=>void editMessage(message.id!,)} disabled={!editingText.trim()}>Save</button>
+                <button type="button" onClick={()=>{setEditingId(undefined);setEditingText("")}}>Cancel</button>
+              </div>
+            </div>
+            :<div className="message-content">{message.content}</div>}
           {state==="interrupted"&&<div className="message-status">Interrupted</div>}
+          {editable&&!snapshot.sending&&!isEditing&&message.id&&
+            <div className="message-actions">
+              <button type="button" onClick={()=>{setEditingId(message.id);setEditingText(message.content)}}>Edit</button>
+              <button type="button" onClick={()=>void deleteMessage(message.id!)}>Delete</button>
+            </div>}
         </article>;
       })}
       <div ref={bottomRef}/>
@@ -913,7 +948,7 @@ function credentialSavedEntries(
 }
 
 function App(){
-  const [view,setView]=React.useState<"chat"|"characters"|"core-book"|"model-profile"|"settings">("chat");
+  const [view,setView]=React.useState<"chat"|"characters"|"core-book"|"model-profile"|"provider-presets"|"settings"|"diagnostics">("chat");
   const [runtime,setRuntime]=React.useState<RuntimeDiagnostics>(preview);
   const [host,setHost]=React.useState<HostDiagnostics>({status:"starting",runtime:"unknown",capabilities:[]});
   const [configuration,setConfiguration]=React.useState<ProviderConfiguration>(defaultConfiguration());
@@ -943,10 +978,14 @@ function App(){
   const modelProfileStore=React.useMemo(()=>isTauriRuntime()?new IpcModelProfileStore(invoke):new InMemoryModelProfileStore(),[]);
   const credentialProfileStore=React.useMemo(()=>isTauriRuntime()?new IpcCredentialProfileStore(invoke):new InMemoryCredentialProfileStore(),[]);
   const providerPresetStore=React.useMemo(()=>isTauriRuntime()?new IpcProviderPresetStore(invoke):new InMemoryProviderPresetStore(),[]);
+  const settingsValidator=React.useMemo(()=>new StandardContractValidator(),[]);
+  const settingsStore=React.useMemo(()=>isTauriRuntime()?new IpcSettingsStore(invoke,settingsValidator):new InMemorySettingsStore(settingsValidator),[settingsValidator]);
   const [credentialProfiles,setCredentialProfiles]=React.useState<readonly CredentialProfile[]>([]);
   const [credentialSavedMap,setCredentialSavedMap]=React.useState<Record<string,boolean>>({});
   const [providerPresets,setProviderPresets]=React.useState<readonly ProviderPreset[]>([]);
   const [activePresetId,setActivePresetId]=React.useState<string|null>(null);
+  const [appSettings,setAppSettings]=React.useState<AppSettings>(()=>defaultAppSettings());
+  const [settingsLoadMessage,setSettingsLoadMessage]=React.useState("");
   const credentialProfileStateRef=React.useRef<CredentialProfileStoreState>(emptyCredentialProfileState());
   const providerPresetStateRef=React.useRef<ProviderPresetStoreState>(emptyProviderPresetState());
   const retriever=React.useMemo(()=>isTauriRuntime()?new IpcFullTextRetriever(invoke):undefined,[]);
@@ -986,12 +1025,26 @@ function App(){
           return foundation.buildContext(request);
         }
       },
+      contextBudgetProvider:()=>{
+        const foundation=foundationRef.current;
+        const settings=foundation?.getSettings()??defaultAppSettings();
+        return {
+          availableContextTokens:settings.context.availableContextTokens,
+          reservedOutputTokens:settings.context.reservedOutputTokens,
+          systemOverheadTokens:0,
+          safetyMarginTokens:settings.context.safetyMarginTokens
+        };
+      },
       memoryExtractor:{
         extract:request=>{
           const foundation=foundationRef.current;
           return foundation?foundation.extractMemory(request):Promise.resolve([]);
         }
-      }
+      },
+      memoryExtractionEnabled:()=>{
+        return foundationRef.current?.getSettings().chat.automaticLongTermMemory??true;
+      },
+      traceStore:foundationRef.current?.getChatTraceStore()
     }
   ),[]);
 
@@ -1050,16 +1103,20 @@ function App(){
     const foundation=foundationRef.current;
     if(!foundation)throw new Error("Conversation runtime is not available.");
     const snapshot=controller.getSnapshot();
-    await foundation.clearConversation(snapshot.characterId,snapshot.conversationId);
-    const active=await foundation.getActiveConversation(snapshot.characterId);
-    const profile=await loadModelProfile(snapshot.characterId);
-    const nextController=controllerForConversation(active,profile);
-    setActiveConversation(active);
-    setConversations(await foundation.listConversations(snapshot.characterId));
-    setActiveModelProfile(profile);
-    setChatController(nextController);
-    conversationLoadErrorRef.current=undefined;
-  },[controllerForConversation,loadModelProfile]);
+    controller.clear();
+    setActiveConversation(current=>current?{...current,messages:[]}:current);
+    setChatController(controller);
+    try{
+      await foundation.clearConversation(snapshot.characterId,snapshot.conversationId);
+      const active=await foundation.getActiveConversation(snapshot.characterId);
+      setActiveConversation(active);
+      setConversations(await foundation.listConversations(snapshot.characterId));
+      conversationLoadErrorRef.current=undefined;
+    }catch(error){
+      await persistConversation(controller);
+      throw error;
+    }
+  },[controllerForConversation,loadModelProfile,persistConversation]);
 
   const syncCharacters=React.useCallback(async(runtimeInstance:FoundationRuntime)=>{
     const list=await runtimeInstance.listCharacters();
@@ -1122,6 +1179,7 @@ function App(){
     const next=await startFoundationRuntime({
       providerConfiguration:config,credentialStore,characterStore,coreBookStore,memoryStore,retriever,retrievalIndexWriter:retriever,
       providerPresetConfigurations:materializePresetConfigurations(presetState.presets,credentialState.profiles),
+      settingsStore,
       activeProviderPresetId:presetState.activePresetId??undefined
     });
     foundationRef.current=next;
@@ -1177,6 +1235,8 @@ function App(){
         }else setCredentialSaved(false);
         if(loaded.error)setSettingsMessage("Legacy provider configuration could not be loaded: "+loaded.error);
         await refreshRuntime(activeConfiguration,loaded.error,presetState,credentialState);
+        const loadedSettings=foundationRef.current?.getSettings()??defaultAppSettings();
+        setAppSettings(loadedSettings);
         if(!active)return;
         const hostSnapshot=await loadHost();if(active)setHost(hostSnapshot);
         const sync=async()=>{
@@ -1209,14 +1269,27 @@ function App(){
     const foundation=foundationRef.current;
     const character=activeCharacter;
     if(!foundation||!character||chatController?.getSnapshot().sending)return;
-    const conversation=await foundation.setActiveConversation(character.id,id);
+    const previousConversation=activeConversation;
+    const local=conversations.find(item=>item.id===id);
     const profile=activeModelProfile??await loadModelProfile(character.id);
-    const controller=controllerForConversation(conversation,profile);
-    setActiveConversation(conversation);
-    setConversations(await foundation.listConversations(character.id));
-    setChatController(controller);
-    setView("chat");
-  },[activeCharacter,activeModelProfile,chatController,controllerForConversation,loadModelProfile]);
+    if(local){
+      const optimistic=controllerForConversation(local,profile);
+      setActiveConversation(local);setChatController(optimistic);setView("chat");
+    }
+    try{
+      const conversation=await foundation.setActiveConversation(character.id,id);
+      const controller=controllerForConversation(conversation,profile);
+      setActiveConversation(conversation);
+      setConversations(await foundation.listConversations(character.id));
+      setChatController(controller);
+    }catch(error){
+      if(previousConversation){
+        setActiveConversation(previousConversation);
+        setChatController(controllerForConversation(previousConversation,profile));
+      }
+      throw error;
+    }
+  },[activeCharacter,activeConversation,activeModelProfile,chatController,controllerForConversation,conversations,loadModelProfile]);
 
   const createConversation=React.useCallback(async()=>{
     const foundation=foundationRef.current;
