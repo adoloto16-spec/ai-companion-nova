@@ -15,19 +15,19 @@ async function main(){
     const nova=await runtime.getActiveCharacter();
     const gm=await runtime.createCharacter({name:"GM"});
     const created=await runtime.createMemory(nova.id,{
-      id:"runtime.memory.1",type:"experience",content:"Nova met the user at the lake.",tags:["lake","meeting"],
+      id:"runtime.memory.1",conversationId:novaConversation.id,type:"experience",content:"Nova met the user at the lake.",tags:["lake","meeting"],
       importance:80,confidence:70,source:"conversation",sourceReference:"conversation/message-42",mutationPolicy:"locked"
     });
-    const gmMemory=await runtime.createMemory(gm.id,{id:"runtime.memory.2",type:"goal",content:"GM tracks separate goals.",source:"user",mutationPolicy:"suggest"});
-    equal((await runtime.searchMemory({characterId:nova.id,query:"lake"}))[0]?.id,created.id,"runtime search returns scoped memory");
-    equal(await runtime.getMemory(gm.id,created.id),undefined,"runtime enforces character scope");
-    await runtime.updateMemory(gm.id,gmMemory.id,{content:"GM tracks a separate goal."});
-    const replacement=await runtime.supersedeMemory(nova.id,created.id,{
-      id:"runtime.memory.3",type:"experience",content:"Nova met the user in Munich.",tags:["meeting","munich"],
+    const gmMemory=await runtime.createMemory(gm.id,{id:"runtime.memory.2",conversationId:gmConversation.id,type:"goal",content:"GM tracks separate goals.",source:"user",mutationPolicy:"suggest"});
+    equal((await runtime.searchMemory({characterId:nova.id,conversationId:novaConversation.id,query:"lake"}))[0]?.id,created.id,"runtime search returns scoped memory");
+    equal(await runtime.getMemory(gm.id,gmConversation.id,created.id),undefined,"runtime enforces character scope");
+    await runtime.updateMemory(gm.id,gmConversation.id,gmMemory.id,{content:"GM tracks a separate goal."});
+    const replacement=await runtime.supersedeMemory(nova.id,novaConversation.id,created.id,{
+      id:"runtime.memory.3",conversationId:novaConversation.id,type:"experience",content:"Nova met the user in Munich.",tags:["meeting","munich"],
       importance:85,confidence:90,source:"user",mutationPolicy:"locked"
     });
     equal(replacement.status,"active","runtime supersede returns active replacement");
-    equal((await runtime.getMemory(nova.id,created.id))?.status,"superseded","runtime retains historical memory");
+    equal((await runtime.getMemory(nova.id,novaConversation.id,created.id))?.status,"superseded","runtime retains historical memory");
     const reloaded=await createFoundationRuntime({characterStore,memoryStore});
     await reloaded.start();
     try{
