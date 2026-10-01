@@ -17,7 +17,7 @@ import type {
 } from "../../contracts/src/index";
 import {
   CONTEXT_API_VERSION,
-  CONTEXT_SCHEMA_VERSION
+  CONTEXT_SCHEMA_VERSION,DEFAULT_APP_SETTINGS
 } from "../../contracts/src/index";
 
 export interface TokenEstimator {
@@ -45,7 +45,7 @@ export interface MemoryCandidateReader {
   get?(characterId:CharacterId,conversationId:string,memoryId:string):Promise<MemoryItem|undefined>;
 }
 
-const DEFAULT_MEMORY_CANDIDATE_LIMIT=8;
+const DEFAULT_MEMORY_CANDIDATE_LIMIT=DEFAULT_APP_SETTINGS.memory.candidateLimit;
 type DynamicNumber=number|(()=>number);
 
 export class MemoryCandidateSource implements ContextCandidateSource {
@@ -124,7 +124,7 @@ export class MemoryCandidateSource implements ContextCandidateSource {
   }
 }
 
-const RECENT_CONVERSATION_MESSAGES=8;
+const RECENT_CONVERSATION_MESSAGES=DEFAULT_APP_SETTINGS.context.recentConversationMessages;
 
 function cloneMetadata(metadata?:Record<string,unknown>):Record<string,unknown>|undefined {
   return metadata===undefined?undefined:{...metadata};
