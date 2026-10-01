@@ -26,7 +26,7 @@ export class InMemoryMemoryStore implements MemoryStore{
   }
   async supersede(characterId:CharacterId,conversationId:ConversationId,previousMemoryId:string,replacement:MemoryItem):Promise<MemoryItem>{
     const current=this.states.get(characterId);
-    const state={apiVersion:current?.apiVersion??"1",schemaVersion:current?.schemaVersion??"1",characterId,items:current?current.items.map(cloneItem):[]};
+    const state={apiVersion:current?.apiVersion??"1",schemaVersion:current?.schemaVersion??"2",characterId,items:current?current.items.map(cloneItem):[]};
     if(state.characterId!==characterId||replacement.characterId!==characterId||replacement.conversationId!==conversationId)throw new Error("Memory storage scope mismatch.");
     const index=state.items.findIndex(item=>item.id===previousMemoryId);
     if(index<0)throw new Error("Memory item was not found.");
@@ -50,7 +50,7 @@ export class IpcMemoryStore implements MemoryStore{
   async save(state:MemoryStoreState):Promise<void>{
     await this.invoke(MEMORY_COMMANDS.save,{state:cloneState(state)});
   }
-  async supersede(characterId:CharacterId,previousMemoryId:string,replacement:MemoryItem):Promise<MemoryItem>{
+  async supersede(characterId:CharacterId,conversationId:ConversationId,previousMemoryId:string,replacement:MemoryItem):Promise<MemoryItem>{
     const value=await this.invoke(MEMORY_COMMANDS.supersede,{characterId,conversationId,previousMemoryId,replacement:cloneItem(replacement)});
     return value as MemoryItem;
   }
