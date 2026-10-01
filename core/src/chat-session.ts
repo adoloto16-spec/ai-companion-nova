@@ -376,6 +376,7 @@ export class ChatSessionController{
       let streamedUsage:ChatUsage|undefined;
       let finishReason:ChatResponse["finishReason"]="unknown";
       let response:ChatResponse|undefined;
+      const providerStartedAt=Date.now();
 
       const onEvent=async(event:ChatStreamEvent)=>{
         if(active.stopRequested||this.activeRun?.id!==active.id)return;
@@ -460,7 +461,8 @@ export class ChatSessionController{
           providerId:canonicalResponse.providerId,
           model:canonicalResponse.model,
           finishReason:canonicalResponse.finishReason,
-          ...(canonicalResponse.usage?{usage:canonicalResponse.usage}: {})
+          usage:canonicalResponse.usage,
+          durationMs:Date.now()-providerStartedAt
         }
       });
       if(this.memoryExtractor&&(this.memoryExtractionEnabled?.()??true)){this.modelProfile?.providerPresetId??this.runtime.getActiveProviderPresetId?.();
