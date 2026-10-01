@@ -468,7 +468,7 @@ export class ChatSessionController{
           durationMs:Date.now()-providerStartedAt
         }
       });
-      if(this.memoryExtractor&&(this.memoryExtractionEnabled?.()??true)){this.modelProfile?.providerPresetId??this.runtime.getActiveProviderPresetId?.();
+      if(this.memoryExtractor&&(this.memoryExtractionEnabled?.()??true)){const providerPresetId=this.modelProfile?.providerPresetId??this.runtime.getActiveProviderPresetId?.();
         const extractionRequest:MemoryExtractionRequest={
           apiVersion:"1",
           schemaVersion:"1",
