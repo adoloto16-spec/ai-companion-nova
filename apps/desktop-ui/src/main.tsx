@@ -316,7 +316,6 @@ function CharactersView({characters,activeCharacter,onSelect,onCreate,onRename,o
   const [renameName,setRenameName]=React.useState(activeCharacter.name);
   const [busy,setBusy]=React.useState(false);
   const [message,setMessage]=React.useState("");
-  const [showRaw,setShowRaw]=React.useState(false);
   React.useEffect(()=>setRenameName(activeCharacter.name),[activeCharacter.id,activeCharacter.name]);
 
   const run=async(action:()=>Promise<void>,success:string)=>{
