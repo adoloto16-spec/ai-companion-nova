@@ -2054,6 +2054,11 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             "minLength": 1
           }
         }
+      },
+      "conversationId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
       }
     }
   },
@@ -2128,6 +2133,11 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       "updatedAt": {
         "type": "string",
         "minLength": 1
+      },
+      "conversationId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
       }
     }
   },
@@ -2229,6 +2239,11 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             "maxItems": 32
           }
         }
+      },
+      "conversationId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
       }
     }
   },
