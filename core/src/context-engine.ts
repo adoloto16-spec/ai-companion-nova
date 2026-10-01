@@ -46,19 +46,22 @@ export interface MemoryCandidateReader {
 }
 
 const DEFAULT_MEMORY_CANDIDATE_LIMIT=8;
+type DynamicNumber=number|(()=>number);
 
 export class MemoryCandidateSource implements ContextCandidateSource {
   readonly source:ContextSource="memory";
   constructor(
     private readonly reader:MemoryCandidateReader,
     private readonly estimator:TokenEstimator=new DeterministicApproxTokenEstimator(),
-    private readonly maxResults:number=DEFAULT_MEMORY_CANDIDATE_LIMIT,
+    private readonly maxResults:DynamicNumber=DEFAULT_MEMORY_CANDIDATE_LIMIT,
     private readonly retriever?:Retriever
   ){
     if(!Number.isInteger(maxResults)||maxResults<1)throw new Error("maxResults must be a positive integer.");
   }
 
   async collect(request:ContextBuildRequest):Promise<readonly ContextCandidate[]> {
+    const maxResults=typeof this.maxResults==="function"?this.maxResults():this.maxResults;
+    if(!Number.isInteger(maxResults)||maxResults<1)throw new Error("memory candidate limit must be a positive integer.");
     const latestUserMessage=[...request.messages].reverse().find(message=>message.role==="user");
     const query=latestUserMessage?.content.trim();
     if(!query)return [];
@@ -74,7 +77,7 @@ export class MemoryCandidateSource implements ContextCandidateSource {
           conversationId:request.conversationId,
           query,
           sources:["memory"],
-          limit:this.maxResults,
+          limit:maxResults,
           filters:{status:"active"}
         });
       }catch{return []}
@@ -83,7 +86,7 @@ export class MemoryCandidateSource implements ContextCandidateSource {
         .map(candidate=>this.reader.get?.(request.characterId,request.conversationId,candidate.sourceId)));
       results=canonical.filter((item):item is MemoryItem=>Boolean(item));
     }else{
-      try{results=await this.reader.search({characterId:request.characterId,conversationId:request.conversationId,query,status:"active",limit:this.maxResults});}
+      try{results=await this.reader.search({characterId:request.characterId,conversationId:request.conversationId,query,status:"active",limit:maxResults});}
       catch{return []}
     }
 
@@ -171,16 +174,18 @@ export class ConversationCandidateSource implements ContextCandidateSource {
   readonly source:ContextSource="conversation";
   constructor(
     private readonly estimator:TokenEstimator=new DeterministicApproxTokenEstimator(),
-    private readonly recentMessageCount:number=RECENT_CONVERSATION_MESSAGES
+    private readonly recentMessageCount:DynamicNumber=RECENT_CONVERSATION_MESSAGES
   ){
     if(!Number.isInteger(recentMessageCount)||recentMessageCount<1)throw new Error("recentMessageCount must be a positive integer.");
   }
 
   async collect(request:ContextBuildRequest):Promise<readonly ContextCandidate[]> {
+    const recentMessageCount=typeof this.recentMessageCount==="function"?this.recentMessageCount():this.recentMessageCount;
+    if(!Number.isInteger(recentMessageCount)||recentMessageCount<1)throw new Error("recent message count must be a positive integer.");
     const nonSystemIndexes=request.messages
       .map((message,index)=>message.role==="system"?-1:index)
       .filter(index=>index>=0);
-    const recentStart=Math.max(0,nonSystemIndexes.length-this.recentMessageCount);
+    const recentStart=Math.max(0,nonSystemIndexes.length-recentMessageCount);
     const recentIndexes=new Set(nonSystemIndexes.slice(recentStart));
     return request.messages.map((message,index)=>{
       const recent=recentIndexes.has(index);
@@ -335,9 +340,9 @@ export class CoreBookCandidateSource implements ContextCandidateSource {
 
 export interface ContextEngineOptions {
   tokenEstimator?:TokenEstimator;
-  recentMessageCount?:number;
+  recentMessageCount?:DynamicNumber;
   memoryBroker?:Pick<MemoryBroker,"search"|"get">;
-  memoryCandidateLimit?:number;
+  memoryCandidateLimit?:DynamicNumber;
   retriever?:Retriever;
 }
 
