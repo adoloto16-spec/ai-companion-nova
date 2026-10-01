@@ -1,6 +1,6 @@
 import type {
   AssembledContext,ChatErrorCode,ChatGenerationOptions,ChatMessage,ChatRequest,ChatResponse,ChatStreamEvent,
-  ChatStreamHandlers,ChatStreamOptions,ChatUsage,CharacterId,ContextBuildRequest,ContextBudget,MemoryExtractionRequest,ModelProfile,Unsubscribe
+  ChatStreamHandlers,ChatStreamOptions,ChatUsage,CharacterId,ChatTraceStore,ContextBuildRequest,ContextBudget,MemoryExtractionRequest,ModelProfile,Unsubscribe
 } from "../../contracts/src/index";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,DEFAULT_APP_SETTINGS} from "../../contracts/src/index";
 
@@ -120,7 +120,10 @@ export interface ChatSessionControllerOptions{
   requestIdFactory?:()=>string;
   contextBuilder?:ChatContextBuilderBoundary;
   contextBudget?:ContextBudget;
+  contextBudgetProvider?:()=>ContextBudget;
   memoryExtractor?:ChatCompletedTurnMemoryBoundary;
+  memoryExtractionEnabled?:()=>boolean;
+  traceStore?:ChatTraceStore;
 }
 const DEFAULT_CHAT_CONTEXT_BUDGET:ContextBudget={
   availableContextTokens:DEFAULT_APP_SETTINGS.context.availableContextTokens,
@@ -132,6 +135,7 @@ const DEFAULT_CHAT_CONTEXT_BUDGET:ContextBudget={
 type RunMode="submit"|"continue"|"regenerate"|"retry";
 interface ActiveRun{
   id:number;
+  startedAt:number;
   mode:RunMode;
   requestId:string;
   assistantId:string;
@@ -146,7 +150,10 @@ export class ChatSessionController{
   private readonly requestIdFactory:()=>string;
   private readonly contextBuilder?:ChatContextBuilderBoundary;
   private readonly contextBudget:ContextBudget;
+  private readonly contextBudgetProvider?:()=>ContextBudget;
   private readonly memoryExtractor?:ChatCompletedTurnMemoryBoundary;
+  private readonly memoryExtractionEnabled?:()=>boolean;
+  private readonly traceStore?:ChatTraceStore;
   private modelProfile?:ModelProfile;
   private sending=false;
   private status:ChatSessionStatus="idle";
@@ -163,7 +170,10 @@ export class ChatSessionController{
     this.requestIdFactory=options.requestIdFactory??defaultRequestId;
     this.contextBuilder=options.contextBuilder;
     this.contextBudget=options.contextBudget??DEFAULT_CHAT_CONTEXT_BUDGET;
+    this.contextBudgetProvider=options.contextBudgetProvider;
     this.memoryExtractor=options.memoryExtractor;
+    this.memoryExtractionEnabled=options.memoryExtractionEnabled;
+    this.traceStore=options.traceStore;
     const messages=session.getMessages();
     const lastAssistant=[...messages].reverse().find(message=>message.role==="assistant");
     this.status=lastAssistant
@@ -198,6 +208,29 @@ export class ChatSessionController{
     this.error=undefined;
     this.errorCode=undefined;
     this.status="idle";
+    this.notify();
+  }
+
+  editMessage(id:string,content:string):void{
+    if(this.sending)throw new Error("Cannot edit a message while a response is streaming.");
+    const text=content.trim();
+    if(!text)throw new Error("Message content must not be empty.");
+    const current=this.session.getMessages().find(message=>message.id===id);
+    if(!current)throw new Error("Conversation message was not found.");
+    this.session.replaceMessage(id,{...cloneMessage(current),content});
+    this.recomputeStatus();
+    this.error=undefined;
+    this.errorCode=undefined;
+    this.notify();
+  }
+
+  deleteMessage(id:string):void{
+    if(this.sending)throw new Error("Cannot delete a message while a response is streaming.");
+    if(!this.session.getMessages().some(message=>message.id===id))throw new Error("Conversation message was not found.");
+    this.session.removeMessage(id);
+    this.recomputeStatus();
+    this.error=undefined;
+    this.errorCode=undefined;
     this.notify();
   }
 
@@ -242,6 +275,14 @@ export class ChatSessionController{
     return this.startRun("retry",this.requestIdFactory(),model,user,assistant&&assistant.id?assistant:undefined);
   }
 
+  private recomputeStatus():void{
+    const messages=this.session.getMessages();
+    const assistant=[...messages].reverse().find(message=>message.role==="assistant");
+    this.status=assistant
+      ?streamStatus(assistant)==="interrupted"?"interrupted":"completed"
+      :"idle";
+  }
+
   private lastTurn():{assistant?:ChatMessage;user?:ChatMessage}{
     const messages=this.session.getMessages();
     const assistant=[...messages].reverse().find(message=>message.role==="assistant");
@@ -260,6 +301,7 @@ export class ChatSessionController{
   ):Promise<ChatActionResult>{
     const active:ActiveRun={
       id:++this.runSequence,
+      startedAt:Date.now(),
       mode,
       requestId,
       assistantId:assistantMessage?.id??requestId+":assistant",
@@ -274,6 +316,13 @@ export class ChatSessionController{
     this.error=undefined;
     this.errorCode=undefined;
     this.notify();
+    this.traceStore?.start({
+      turnId:active.requestId,
+      requestId:active.requestId,
+      characterId:this.session.characterId,
+      conversationId:this.session.conversationId,
+      timestamp:new Date().toISOString()
+    });
     const promise=this.run(active,model,userMessage,assistantMessage);
     active.promise=promise;
     return promise;
@@ -292,19 +341,27 @@ export class ChatSessionController{
 
     try{
       if(this.contextBuilder){
+        const budget=this.contextBudgetProvider?.()??this.contextBudget;
         const assembled=await this.contextBuilder.buildContext({
           apiVersion:"1",
           schemaVersion:"1",
           characterId:this.session.characterId,
           conversationId:this.session.conversationId,
           messages:contextMessages,
-          budget:this.contextBudget
+          budget
         });
+        this.traceStore?.update(active.requestId,{contextBuild:{
+          budget:assembled.budget,
+          estimatedTokens:assembled.estimatedTokens,
+          includedCandidates:assembled.includedCandidates,
+          omittedCandidates:assembled.omittedCandidates
+        }});
         contextMessages=assembled.messages;
       }
       if(active.stopRequested)return this.markInterrupted(active,assistantMessage);
 
       const request=await this.buildRequest(active.requestId,model,contextMessages);
+      this.traceStore?.update(active.requestId,{finalRequest:request});
       const currentAssistant=assistantMessage?cloneMessage(assistantMessage):{id:active.assistantId,role:"assistant" as const,content:""};
       const generationAssistant=(active.mode==="regenerate"||active.mode==="retry")
         ?{...currentAssistant,content:""}
@@ -396,8 +453,17 @@ export class ChatSessionController{
         message:canonicalMessage,
         ...(canonicalUsage?{usage:canonicalUsage}:{})
       };
-      if(this.memoryExtractor){
-        const providerPresetId=this.modelProfile?.providerPresetId??this.runtime.getActiveProviderPresetId?.();
+      this.traceStore?.update(active.requestId,{
+        status:"completed",
+        durationMs:Date.now()-active.startedAt,
+        providerResponse:{
+          providerId:canonicalResponse.providerId,
+          model:canonicalResponse.model,
+          finishReason:canonicalResponse.finishReason,
+          ...(canonicalResponse.usage?{usage:canonicalResponse.usage}: {})
+        }
+      });
+      if(this.memoryExtractor&&(this.memoryExtractionEnabled?.()??true)){this.modelProfile?.providerPresetId??this.runtime.getActiveProviderPresetId?.();
         const extractionRequest:MemoryExtractionRequest={
           apiVersion:"1",
           schemaVersion:"1",
@@ -417,6 +483,7 @@ export class ChatSessionController{
       return {status:"sent",response:canonicalResponse};
     }catch(error){
       if(active.stopRequested||isAbortError(error)){
+        this.traceStore?.update(active.requestId,{status:"interrupted",durationMs:Date.now()-active.startedAt});
         return this.markInterrupted(active,this.session.getMessages().find(message=>message.id===active.assistantId));
       }
       const normalized=userMessageForError(error);
@@ -431,6 +498,11 @@ export class ChatSessionController{
       this.status="error";
       this.error=normalized.message;
       this.errorCode=normalized.code;
+      this.traceStore?.update(active.requestId,{
+        status:"failed",
+        durationMs:Date.now()-active.startedAt,
+        error:{code:normalized.code,message:normalized.message}
+      });
       this.notify();
       return {status:"error",...normalized};
     }finally{
