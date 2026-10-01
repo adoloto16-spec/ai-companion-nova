@@ -9,6 +9,7 @@ export interface MemoryExtractionChatRuntime{
 export interface MemoryExtractionServiceOptions{
   validator?:SchemaValidator;
   diagnostics?:DiagnosticsStore;
+  traceStore?:import("../../contracts/src/index").ChatTraceStore;
   source?:string;
 }
 
@@ -65,11 +66,13 @@ function cloneMessage(message:ChatMessage):ChatMessage{
 export class MemoryExtractionService{
   private readonly validator:SchemaValidator;
   private readonly diagnostics?:DiagnosticsStore;
+  private readonly traceStore?:import("../../contracts/src/index").ChatTraceStore;
   private readonly source:string;
   private readonly inFlight=new Set<string>();
   constructor(private readonly runtime:MemoryExtractionChatRuntime,private readonly broker:MemoryBroker,options:MemoryExtractionServiceOptions={}){
     this.validator=options.validator??new StandardContractValidator();
     this.diagnostics=options.diagnostics;
+    this.traceStore=options.traceStore;
     this.source=options.source??"memory-extraction";
   }
 
@@ -80,24 +83,33 @@ export class MemoryExtractionService{
     const key=request.characterId+"\0"+request.conversationId+"\0"+request.turnId;
     if(this.inFlight.has(key))return [];
     this.inFlight.add(key);
+    this.traceStore?.update(request.turnId,{memoryExtraction:{started:true,candidates:[],accepted:[],rejected:[],duplicate:[],superseded:[],created:[]}});
     try{
       let active=await this.broker.search({characterId:request.characterId,conversationId:request.conversationId,query:"",status:"active",limit:100});
       if(active.some(item=>item.metadata?.turnId===request.turnId))return [];
 
       const result=await this.extract(request);
       if(!result)return [];
+      this.traceStore?.update(request.turnId,{memoryExtraction:{candidates:[...result.memories],accepted:[],rejected:[],duplicate:[],superseded:[],created:[]}});
 
       const created:MemoryItem[]=[];
       for(const candidate of result.memories){
-        if(!this.safeCandidate(candidate,request.conversationId))continue;
+        if(!this.safeCandidate(candidate,request.conversationId)){
+          this.traceStore?.update(request.turnId,{memoryExtraction:{rejected:[...((this.traceStore?.recent(500).find(item=>item.turnId===request.turnId)?.memoryExtraction?.rejected)??[]),{candidate,reason:"candidate failed source, scope, mutation policy, score, or secret validation"}]}});
+          continue;
+        }
         const keyContent=normalizedContentKey(candidate.content);
-        if(active.some(item=>normalizedContentKey(item.content)===keyContent))continue;
+        if(active.some(item=>normalizedContentKey(item.content)===keyContent)){
+          this.traceStore?.update(request.turnId,{memoryExtraction:{duplicate:[...((this.traceStore?.recent(500).find(item=>item.turnId===request.turnId)?.memoryExtraction?.duplicate)??[]),candidate]}});
+          continue;
+        }
 
         const replacementTarget=active.find(item=>sameSubjectShape(candidate,item));
         if(replacementTarget){
           try{
             const replacement=await this.broker.supersede(request.characterId,request.conversationId,replacementTarget.id,this.toCreateInput(candidate,request),this.authority());
             created.push(replacement);
+            this.traceStore?.update(request.turnId,{memoryExtraction:{accepted:[...((this.traceStore?.recent(500).find(item=>item.turnId===request.turnId)?.memoryExtraction?.accepted)??[]),candidate],superseded:[...((this.traceStore?.recent(500).find(item=>item.turnId===request.turnId)?.memoryExtraction?.superseded)??[]),{candidate,memoryId:replacement.id}],created:[...((this.traceStore?.recent(500).find(item=>item.turnId===request.turnId)?.memoryExtraction?.created)??[]),{candidate,memoryId:replacement.id}]}});
             active=[...active.filter(item=>item.id!==replacementTarget.id),replacement];
           }catch{
             this.recordFailure("PERSISTENCE_SKIPPED","Memory replacement was not authorized or could not be persisted.");
@@ -107,6 +119,7 @@ export class MemoryExtractionService{
         try{
           const item=await this.broker.create(request.characterId,this.toCreateInput(candidate,request),this.authority());
           created.push(item);
+          this.traceStore?.update(request.turnId,{memoryExtraction:{accepted:[...((this.traceStore?.recent(500).find(item=>item.turnId===request.turnId)?.memoryExtraction?.accepted)??[]),candidate],created:[...((this.traceStore?.recent(500).find(item=>item.turnId===request.turnId)?.memoryExtraction?.created)??[]),{candidate,memoryId:item.id}]}});
           active=[...active,item];
         }catch{
           this.recordFailure("PERSISTENCE_SKIPPED","Memory candidate could not be persisted.");
@@ -114,6 +127,7 @@ export class MemoryExtractionService{
       }
       return created;
     }catch{
+      this.traceStore?.update(request.turnId,{memoryExtraction:{failed:"Automatic memory extraction failed; chat remains successful."}});
       this.recordFailure("EXTRACTION_FAILED","Automatic memory extraction failed; chat remains successful.");
       return [];
     }finally{
@@ -143,11 +157,11 @@ export class MemoryExtractionService{
     };
     let response:ChatResponse;
     try{response=await this.runtime.chat(chatRequest,request.providerPresetId);}
-    catch{this.recordFailure("PROVIDER_FAILURE","Memory extraction provider call failed.");return undefined;}
+    catch{this.traceStore?.update(request.turnId,{memoryExtraction:{failed:"Provider call failed."}});this.recordFailure("PROVIDER_FAILURE","Memory extraction provider call failed.");return undefined;}
     let parsed:unknown;
-    try{parsed=JSON.parse(response.message.content)}catch{this.recordFailure("MALFORMED_RESULT","Memory extraction returned malformed JSON.");return undefined;}
+    try{parsed=JSON.parse(response.message.content)}catch{this.traceStore?.update(request.turnId,{memoryExtraction:{failed:"Malformed provider JSON."}});this.recordFailure("MALFORMED_RESULT","Memory extraction returned malformed JSON.");return undefined;}
     const validation=this.validator.validate(parsed,STANDARD_SCHEMAS["memory-extraction-result"]!);
-    if(!validation.valid){this.recordFailure("MALFORMED_RESULT","Memory extraction result failed schema validation.");return undefined;}
+    if(!validation.valid){this.traceStore?.update(request.turnId,{memoryExtraction:{failed:"Provider result failed extraction schema validation."}});this.recordFailure("MALFORMED_RESULT","Memory extraction result failed schema validation.");return undefined;}
     return parsed as MemoryExtractionResult;
   }
 
