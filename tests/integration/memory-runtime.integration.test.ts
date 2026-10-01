@@ -13,7 +13,9 @@ async function main(){
   await runtime.start();
   try{
     const nova=await runtime.getActiveCharacter();
+    const novaConversation=await runtime.getActiveConversation(nova.id);
     const gm=await runtime.createCharacter({name:"GM"});
+    const gmConversation=await runtime.getActiveConversation(gm.id);
     const created=await runtime.createMemory(nova.id,{
       id:"runtime.memory.1",conversationId:novaConversation.id,type:"experience",content:"Nova met the user at the lake.",tags:["lake","meeting"],
       importance:80,confidence:70,source:"conversation",sourceReference:"conversation/message-42",mutationPolicy:"locked"
