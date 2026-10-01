@@ -106,6 +106,8 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const legacyRecent=typeof root.recentMessages==="number"?root.recentMessages:undefined;
   const legacyMemory=typeof root.memoryCandidateLimit==="number"?root.memoryCandidateLimit:undefined;
   const legacyLog=typeof root.diagnosticsLevel==="string"?root.diagnosticsLevel:undefined;
+  const logLevelValue=(typeof diagnostics.logLevel==="string"?diagnostics.logLevel:legacyLog)??defaults.diagnostics.logLevel;
+  if(!["off","errors","normal","verbose","debug"].includes(logLevelValue))throw new Error("Unsupported diagnostics log level.");
   const next:AppSettings={
     apiVersion:"1",schemaVersion:"1",
     chat:{automaticLongTermMemory:typeof chat.automaticLongTermMemory==="boolean"?chat.automaticLongTermMemory:defaults.chat.automaticLongTermMemory},
@@ -120,7 +122,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
     },
     retrieval:{candidateLimit:typeof (root.retrieval as any)?.candidateLimit==="number"?(root.retrieval as any).candidateLimit:defaults.retrieval.candidateLimit},
     diagnostics:{
-      logLevel:(typeof diagnostics.logLevel==="string"?diagnostics.logLevel:legacyLog) as DiagnosticsLogLevel??defaults.diagnostics.logLevel,
+      logLevel:logLevelValue as DiagnosticsLogLevel,
       keepRecentEntries:typeof diagnostics.keepRecentEntries==="number"?diagnostics.keepRecentEntries:defaults.diagnostics.keepRecentEntries
     },
     ui:{showDiagnosticsInChat:typeof ui.showDiagnosticsInChat==="boolean"?ui.showDiagnosticsInChat:defaults.ui.showDiagnosticsInChat}
