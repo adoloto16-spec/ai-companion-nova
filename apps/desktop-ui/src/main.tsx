@@ -279,7 +279,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
             ?<div className="message-edit">
               <textarea value={editingText} onChange={event=>setEditingText(event.target.value)} rows={4} aria-label="Edit message"/>
               <div className="actions">
-                <button type="button" onClick={()=>void editMessage(message.id!,)} disabled={!editingText.trim()}>Save</button>
+                <button type="button" onClick={()=>void editMessage(message.id!)} disabled={!editingText.trim()}>Save</button>
                 <button type="button" onClick={()=>{setEditingId(undefined);setEditingText("")}}>Cancel</button>
               </div>
             </div>
@@ -1278,6 +1278,7 @@ function App(){
           safetyMarginTokens:settings.context.safetyMarginTokens
         };
       },
+      recentConversationMessagesProvider:()=>foundationRef.current?.getSettings().context.recentConversationMessages??defaultAppSettings().context.recentConversationMessages,
       memoryExtractor:{
         extract:request=>{
           const foundation=foundationRef.current;
@@ -1728,7 +1729,7 @@ function App(){
         <button className={view==="model-profile"?"nav-button active":"nav-button"} onClick={()=>setView("model-profile")}>Model Profile</button>
         <button className={view==="provider-presets"?"nav-button active":"nav-button"} onClick={()=>setView("provider-presets")}>Provider Presets</button>
         <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Settings</button>
-        <button className={view==="diagnostics"?"nav-button active":"nav-button"} onClick={()=>setView("diagnostics")}>Diagnostics</button>
+        {appSettings.ui.showDiagnosticsInChat&&<button className={view==="diagnostics"?"nav-button active":"nav-button"} onClick={()=>setView("diagnostics")}>Diagnostics</button>}
       </nav>
     </header>
     {view==="model-profile"&&activeCharacter&&activeModelProfile
