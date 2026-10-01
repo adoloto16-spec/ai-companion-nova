@@ -1,4 +1,4 @@
-import {ChatSessionController,ConversationSession} from "../../core/src";
+import {ChatSessionController,ConversationSession,InMemoryChatTraceStore} from "../../core/src";
 import type {AssembledContext,ChatRequest,ChatResponse,ContextBuildRequest} from "../../contracts/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(actual!==expected)throw new Error(label+" expected "+String(expected)+" got "+String(actual))}
@@ -311,6 +311,56 @@ async function main(){
   equal((await raceStop).status,"interrupted","stop/chunk race is interrupted");
   await racePromise;
   equal(raceController.getSnapshot().messages.at(-1)?.content,"before-stop","late chunk after Stop is ignored");
+
+  const editSession=new ConversationSession("edit-conversation","character.edit");
+  editSession.addMessage({id:"user-1",role:"user",content:"original user"});
+  editSession.addMessage({id:"assistant-1",role:"assistant",content:"original assistant",metadata:{streamStatus:"complete",finishReason:"stop"}});
+  const editController=new ChatSessionController(editSession,{async chat(request:ChatRequest):Promise<ChatResponse>{return responseFor(request,"unused")}});
+  editController.editMessage("user-1","edited user");
+  equal(editSession.getMessages()[0]?.content,"edited user","edit user message changes only selected message");
+  equal(editSession.getMessages()[0]?.metadata,undefined,"user edit does not invent streaming metadata");
+  editController.editMessage("assistant-1","edited assistant");
+  equal(editSession.getMessages()[1]?.content,"edited assistant","edit assistant message preserves identity");
+  equal(editSession.getMessages()[1]?.metadata?.streamStatus,"complete","assistant edit preserves streaming metadata");
+  editController.deleteMessage("user-1");
+  equal(editSession.getMessages().length,1,"delete removes exactly one message");
+  equal(editSession.getMessages()[0]?.id,"assistant-1","delete preserves other messages");
+  let editBusy=false;
+  const editBusyController=new ChatSessionController(new ConversationSession("busy-edit","character.edit"),{async chat(request:ChatRequest):Promise<ChatResponse>{return responseFor(request,"unused")}});
+  const editRunPromise=editBusyController.submit("busy","fake");
+  try{editBusyController.editMessage("busy-edit-missing","x")}catch{editBusy=true}
+  equal(editBusy,true,"editing nonexistent message is rejected");
+  await editRunPromise;
+
+  const traceStore=new InMemoryChatTraceStore();
+  const tracedController=new ChatSessionController(new ConversationSession("trace-conversation","character.trace"),{
+    async chat(request:ChatRequest):Promise<ChatResponse>{return responseFor(request,"trace response")}
+  },{
+    requestIdFactory:()=> "trace-1",
+    traceStore
+  });
+  const traced=await tracedController.submit("trace request","fake");
+  equal(traced.status,"sent","traced chat succeeds");
+  const trace=traceStore.recent()[0];
+  ok(Boolean(trace),"completed turn produces one trace");
+  equal(trace?.turnId,"trace-1","trace uses stable request id");
+  equal(trace?.finalRequest?.context.messages[0]?.content,"trace request","trace contains actual submitted user message");
+  equal(trace?.providerResponse?.providerId,"fake.chat","trace contains provider response metadata");
+
+  let capturedBudget:ContextBuildRequest["budget"]|undefined;
+  const dynamicBudgetController=new ChatSessionController(new ConversationSession("budget-conversation","character.budget"),{
+    async chat(request:ChatRequest):Promise<ChatResponse>{return responseFor(request,"budget response")}
+  },{
+    contextBudgetProvider:()=>({availableContextTokens:777,reservedOutputTokens:111,systemOverheadTokens:0,safetyMarginTokens:22}),
+    contextBuilder:{async buildContext(request:ContextBuildRequest):Promise<AssembledContext>{
+      capturedBudget=request.budget;
+      return {apiVersion:"1",schemaVersion:"1",characterId:request.characterId,conversationId:request.conversationId,messages:request.messages,includedCandidates:[],omittedCandidates:[],budget:request.budget,estimatedTokens:0};
+    }}
+  });
+  equal((await dynamicBudgetController.submit("budget","fake")).status,"sent","dynamic budget chat succeeds");
+  equal(capturedBudget?.availableContextTokens,777,"controller uses configurable context size");
+  equal(capturedBudget?.reservedOutputTokens,111,"controller uses configurable reserved output");
+  equal(capturedBudget?.safetyMarginTokens,22,"controller uses configurable safety margin");
 
   console.log("PASS Chat session streaming actions: stream/stop/continue/regenerate/retry/race");
   console.log("PASS Chat session/controller unit tests");
