@@ -10,8 +10,8 @@ async function main(){
   const events=new InMemoryEventBus();
   const characters=new Set(["character.a"]);
   const conversations=new Set(["conversation.a"]);
-  const coreBook=new CoreBookManager(new InMemoryCoreBookStore(),{events,characterExists:async id=>characters.has(id),conversationExists:async (_characterId,conversationId)=>conversations.has(conversationId)});
-  const memory=new MemoryBrokerImpl({store:new InMemoryMemoryStore(),validator:new StandardContractValidator(),audit:new InMemoryAuditService(),events,characterExists:async id=>characters.has(id)});
+  const coreBook=new CoreBookManager(new InMemoryCoreBookStore(),{events,characterExists:async id=>characters.has(id)});
+  const memory=new MemoryBrokerImpl({store:new InMemoryMemoryStore(),validator:new StandardContractValidator(),audit:new InMemoryAuditService(),events,characterExists:async id=>characters.has(id),conversationExists:async (_characterId,conversationId)=>conversations.has(conversationId)});
   const upserts:unknown[]=[];const removals:Array<{characterId:string;source:string;sourceId:string;conversationId?:string}>=[];const writer={upsert:async(document:unknown)=>{upserts.push(document)},remove:async(characterId:string,source:string,sourceId:string,conversationId?:string)=>{removals.push({characterId,source,sourceId,conversationId})},removeCharacter:async(characterId:string)=>{removals.push({characterId,source:"*",sourceId:"*"})}};
   const indexer=new RetrievalEventIndexer({events,coreBook,memory,writer});indexer.start();
   const user={actorId:"user",actorType:"user" as const,trusted:true,capabilities:[]};
