@@ -985,6 +985,12 @@ function App(){
           if(!foundation)return Promise.reject(new Error("Chat context runtime is not available."));
           return foundation.buildContext(request);
         }
+      },
+      memoryExtractor:{
+        extract:request=>{
+          const foundation=foundationRef.current;
+          return foundation?foundation.extractMemory(request):Promise.resolve([]);
+        }
       }
     }
   ),[]);
