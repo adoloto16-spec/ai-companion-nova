@@ -28,7 +28,8 @@
     "host/retrieval",
     "host/model-profiles",
     "host/credential-profiles",
-    "host/provider-presets"
+    "host/provider-presets",
+    "host/settings"
   ],
   "engines": {
     "node": ">=20"
