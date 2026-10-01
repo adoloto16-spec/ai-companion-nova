@@ -129,3 +129,8 @@ export function migrateAppSettings(value:unknown):AppSettings{
   if(errors.length>0)throw new Error("Invalid AppSettings: "+errors.join(" "));
   return next;
 }
+
+export interface AppSettingsStore{
+  load():Promise<AppSettings|undefined>;
+  save(settings:AppSettings):Promise<void>;
+}
