@@ -31,8 +31,10 @@ async function main(){
   traces.update("b",{status:"interrupted"});
   traces.start({turnId:"c",requestId:"c",characterId:"character.a",conversationId:"conversation.a",timestamp:"2026-10-01T00:00:02.000Z"});
   traces.update("c",{status:"completed"});
+  traces.start({turnId:"d",requestId:"d",characterId:"character.a",conversationId:"conversation.a",timestamp:"2026-10-01T00:00:03.000Z"});
+  traces.update("d",{status:"completed"});
 
-  equal(traces.recent().length,2,"trace retention is bounded");
+  equal(traces.recent().length,3,"trace retention is bounded");
   const latest=traces.recent()[0];
   ok(Boolean(latest),"latest trace exists");
 
