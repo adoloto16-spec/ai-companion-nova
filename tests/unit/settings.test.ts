@@ -47,7 +47,7 @@ async function main(){
   const traces=new InMemoryChatTraceStore();
   traces.configure("normal",10);
   traces.start({turnId:"turn-1",requestId:"turn-1",characterId:"character.a",conversationId:"conversation.a",timestamp:"2026-10-01T00:00:00.000Z"});
-  traces.update("turn-1",{status:"completed",contextBuild:{budget:defaultAppSettings().context,estimatedTokens:12,includedCandidates:[],omittedCandidates:[]},finalRequest:{apiVersion:"1",schemaVersion:"1",requestId:"turn-1",model:"fake",context:{conversationId:"conversation.a",messages:[{role:"user",content:"apiKey: super-secret"}]}}});
+  traces.update("turn-1",{status:"completed",contextBuild:{budget:{...defaultAppSettings().context,systemOverheadTokens:0},estimatedTokens:12,includedCandidates:[],omittedCandidates:[]},finalRequest:{apiVersion:"1",schemaVersion:"1",requestId:"turn-1",model:"fake",context:{conversationId:"conversation.a",messages:[{role:"user",content:"apiKey: super-secret"}]}}});
   const trace=traces.recent()[0]!;
   equal(trace.status,"completed","trace stores terminal state");
   ok(!JSON.stringify(trace).includes("super-secret"),"trace redacts sensitive message strings");
