@@ -1,6 +1,8 @@
 #[cfg(feature="tauri-app")]
 mod config;
 #[cfg(feature="tauri-app")]
+mod settings;
+#[cfg(feature="tauri-app")]
 mod characters;
 #[cfg(feature="tauri-app")]
 mod core_book;
@@ -42,6 +44,7 @@ fn get_host_diagnostics()->HostDiagnostics{
             "credential-store",
             "provider-configuration",
             "provider-presets",
+            "settings-storage",
             "credential-profiles",
             "character-storage",
             "core-book-storage",
@@ -95,6 +98,14 @@ fn delete_credential(reference:CredentialReference)->Result<(),String>{
 fn credential_exists(reference:CredentialReference)->Result<bool,String>{
     WindowsCredentialStore.exists(&reference)
 }
+
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn get_app_settings(app:tauri::AppHandle)->Result<Option<settings::AppSettings>,String>{settings::load(&app)}
+
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn save_app_settings(app:tauri::AppHandle,settings:settings::AppSettings)->Result<(),String>{settings::save(&app,&settings)}
 
 #[cfg(feature="tauri-app")]
 #[tauri::command]
@@ -258,6 +269,8 @@ fn main(){
             get_provider_configuration,
             save_provider_configuration,
             delete_provider_configuration,
+            get_app_settings,
+            save_app_settings,
             get_characters,
             save_characters,
             get_core_book_entries,
