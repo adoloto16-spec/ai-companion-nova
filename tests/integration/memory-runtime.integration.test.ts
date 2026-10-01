@@ -33,8 +33,8 @@ async function main(){
     const reloaded=await createFoundationRuntime({characterStore,memoryStore});
     await reloaded.start();
     try{
-      equal((await reloaded.getMemory(nova.id,replacement.id))?.content,"Nova met the user in Munich.","memory survives runtime restart");
-      equal((await reloaded.searchMemory({characterId:gm.id,query:"goal"})).length,1,"other character memory survives restart");
+      equal((await reloaded.getMemory(nova.id,novaConversation.id,replacement.id))?.content,"Nova met the user in Munich.","memory survives runtime restart");
+      equal((await reloaded.searchMemory({characterId:gm.id,conversationId:gmConversation.id,query:"goal"})).length,1,"other character memory survives restart");
     }finally{await reloaded.stop()}
   }finally{await runtime.stop()}
   ok(new InMemoryAuditService(),"audit architecture remains reusable");
