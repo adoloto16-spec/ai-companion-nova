@@ -264,7 +264,9 @@ fn compare_conversations(a:&Conversation,b:&Conversation)->std::cmp::Ordering{
     b.updated_at.cmp(&a.updated_at).then_with(||b.created_at.cmp(&a.created_at)).then_with(||a.id.cmp(&b.id))
 }
 
-pub fn default_conversation_id(character_id:&str)->String{format!("conversation:{character_id}:default.v2")}\n\nfn default_conversation(character_id:&str)->Conversation{
+pub fn default_conversation_id(character_id:&str)->String{format!("conversation:{character_id}:default.v2")}
+
+fn default_conversation(character_id:&str)->Conversation{
     let now=chrono_free_now();
     Conversation{
         api_version:API_VERSION.to_string(),
