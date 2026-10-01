@@ -177,7 +177,7 @@ export class MemoryBrokerImpl implements MemoryBroker{
     const conversation=await this.ensureConversation(scope,query.conversationId);
     const queryResult=this.deps.validator.validate(query,STANDARD_SCHEMAS["memory-search-query"]!);
     if(!queryResult.valid)throw new Error("Memory search query failed schema validation: "+queryResult.errors.join("; "));
-    if(query.query.length>MAX_QUERY_LENGTH)throw new Error("Memory search query exceeds the v1 input limit.");
+    if(query.query.length>MAX_QUERY_LENGTH)throw new Error("Memory search query exceeds the v2 input limit.");
     const limit=Math.min(query.limit??50,MAX_LIMIT);
     const states=await this.loadState(scope);
     const types=new Set<MemoryType>(query.types??[]);
