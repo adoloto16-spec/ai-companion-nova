@@ -24,6 +24,7 @@ import {InMemoryMemoryStore} from "../../../host/memory/src/index";
 import type {CoreBookCreateInput,CoreBookUpdateInput} from "../../../core/src/core-book-manager";
 import {activeProviderId,buildConfiguredProvider,buildProviderForDiscovery,buildProviderForPreset,testProviderConfiguration} from "./provider-configuration";
 import {RetrievalEventIndexer} from "../../../core/src/retrieval-indexer";
+import {MemoryExtractionService} from "../../../core/src/memory-extraction";
 
 export interface OpenAICompatibleRuntimeConfig{
   config:OpenAICompatibleProviderConfig;
