@@ -15,7 +15,7 @@ async function main(){
   equal(diagnostics.recentErrors().map(error=>error.code),["THREE","TWO"],"diagnostic retention is bounded");
 
   const traces=new InMemoryChatTraceStore();
-  traces.configure("normal",2);
+  traces.configure("normal",3);
   traces.start({turnId:"a",requestId:"a",characterId:"character.a",conversationId:"conversation.a",timestamp:"2026-10-01T00:00:00.000Z"});
   traces.update("a",{status:"completed",finalRequest:{
     apiVersion:"1",schemaVersion:"1",requestId:"a",model:"fake",
