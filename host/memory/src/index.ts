@@ -30,7 +30,8 @@ export class InMemoryMemoryStore implements MemoryStore{
     if(state.characterId!==characterId||replacement.characterId!==characterId||replacement.conversationId!==conversationId)throw new Error("Memory storage scope mismatch.");
     const index=state.items.findIndex(item=>item.id===previousMemoryId);
     if(index<0)throw new Error("Memory item was not found.");
-    if(state.items[index]!.status!=="active")throw new Error("Only active memory items can be superseded.");\n    if(state.items[index]!.conversationId!==conversationId)throw new Error("Memory storage conversation scope mismatch.");
+    if(state.items[index]!.status!=="active")throw new Error("Only active memory items can be superseded.");
+    if(state.items[index]!.conversationId!==conversationId)throw new Error("Memory storage conversation scope mismatch.");
     if(state.items.some(item=>item.id===replacement.id))throw new Error("Memory id already exists.");
     const now=replacement.updatedAt;
     state.items[index]={...state.items[index]!,status:"superseded",updatedAt:now,metadata:{...state.items[index]!.metadata}};
