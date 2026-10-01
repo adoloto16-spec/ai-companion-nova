@@ -100,22 +100,22 @@ async function main(){
   let memorySearchCalls=0;
   const memoryItems:MemoryItem[]=[
     {
-      id:"memory-low",characterId:"character.a",type:"fact",content:"low value memory",tags:["tea"],importance:0,confidence:0,
+      id:"memory-low",characterId:"character.a",conversationId:"conversation.a",type:"fact",content:"low value memory",tags:["tea"],importance:0,confidence:0,
       createdAt:"2026-09-26T12:00:00.000Z",updatedAt:"2026-09-26T12:00:00.000Z",
       validFrom:null,validUntil:null,source:"user",sourceReference:null,mutationPolicy:"locked",status:"active",metadata:{}
     },
     {
-      id:"memory-high",characterId:"character.a",type:"preference",content:"high value memory",tags:["tea"],importance:100,confidence:100,
+      id:"memory-high",characterId:"character.a",conversationId:"conversation.a",type:"preference",content:"high value memory",tags:["tea"],importance:100,confidence:100,
       createdAt:"2026-09-26T12:00:00.000Z",updatedAt:"2026-09-26T12:00:00.000Z",
       validFrom:null,validUntil:null,source:"user",sourceReference:null,mutationPolicy:"locked",status:"active",metadata:{}
     },
     {
-      id:"memory-archived",characterId:"character.a",type:"fact",content:"archived memory",tags:["tea"],importance:100,confidence:100,
+      id:"memory-archived",characterId:"character.a",conversationId:"conversation.a",type:"fact",content:"archived memory",tags:["tea"],importance:100,confidence:100,
       createdAt:"2026-09-26T12:00:00.000Z",updatedAt:"2026-09-26T12:00:00.000Z",
       validFrom:null,validUntil:null,source:"user",sourceReference:null,mutationPolicy:"locked",status:"archived",metadata:{}
     },
     {
-      id:"memory-other-character",characterId:"character.b",type:"fact",content:"other character memory",tags:["tea"],importance:100,confidence:100,
+      id:"memory-other-character",characterId:"character.b",conversationId:"conversation.b",type:"fact",content:"other character memory",tags:["tea"],importance:100,confidence:100,
       createdAt:"2026-09-26T12:00:00.000Z",updatedAt:"2026-09-26T12:00:00.000Z",
       validFrom:null,validUntil:null,source:"user",sourceReference:null,mutationPolicy:"locked",status:"active",metadata:{}
     }
@@ -125,6 +125,7 @@ async function main(){
       memorySearchCalls+=1;
       capturedMemoryQuery=query.query;
       equal(query.characterId,"character.a","memory query is character scoped");
+      equal(query.conversationId,"conversation.a","memory query is conversation scoped");
       equal(query.status,"active","automatic memory context searches active status only");
       equal(query.limit,8,"memory source uses one bounded deterministic search");
       return memoryItems;
