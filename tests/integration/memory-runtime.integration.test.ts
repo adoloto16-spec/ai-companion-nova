@@ -2,6 +2,7 @@ import {InMemoryAuditService} from "../../core/src";
 import {InMemoryMemoryStore} from "../../host/memory/src";
 import {createFoundationRuntime} from "../../runtime/bootstrap/src";
 import {InMemoryCharacterStore} from "../../host/characters/src";
+import {InMemoryConversationStore} from "../../host/conversations/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error(label+" expected "+String(expected)+" got "+String(actual))}
 function ok(value:unknown,label:string){if(!value)throw new Error(label)}
@@ -9,7 +10,8 @@ function ok(value:unknown,label:string){if(!value)throw new Error(label)}
 async function main(){
   const characterStore=new InMemoryCharacterStore();
   const memoryStore=new InMemoryMemoryStore();
-  const runtime=await createFoundationRuntime({characterStore,memoryStore});
+  const conversationStore=new InMemoryConversationStore();
+  const runtime=await createFoundationRuntime({characterStore,memoryStore,conversationStore});
   await runtime.start();
   try{
     const nova=await runtime.getActiveCharacter();
@@ -30,7 +32,7 @@ async function main(){
     });
     equal(replacement.status,"active","runtime supersede returns active replacement");
     equal((await runtime.getMemory(nova.id,novaConversation.id,created.id))?.status,"superseded","runtime retains historical memory");
-    const reloaded=await createFoundationRuntime({characterStore,memoryStore});
+    const reloaded=await createFoundationRuntime({characterStore,memoryStore,conversationStore});
     await reloaded.start();
     try{
       equal((await reloaded.getMemory(nova.id,novaConversation.id,replacement.id))?.content,"Nova met the user in Munich.","memory survives runtime restart");
