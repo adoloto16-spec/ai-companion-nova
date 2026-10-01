@@ -195,7 +195,9 @@ export interface CoreBookStore{
 }
 export type MemoryItemId=string;
 export const MEMORY_API_VERSION:ApiVersion="1";
-export const MEMORY_SCHEMA_VERSION="1";
+export const MEMORY_SCHEMA_VERSION="2";
+export const MEMORY_EXTRACTION_API_VERSION:ApiVersion="1";
+export const MEMORY_EXTRACTION_SCHEMA_VERSION="1";
 export type MemoryType="fact"|"preference"|"relationship"|"event"|"experience"|"goal"|"instruction"|"observation";
 export type MemoryStatus="active"|"superseded"|"archived";
 export type MemorySource="user"|"conversation"|"file"|"tool"|"model"|"system";
@@ -203,6 +205,7 @@ export type MemoryMutationPolicy="locked"|"suggest"|"auto";
 export interface MemoryItem{
   id:MemoryItemId;
   characterId:CharacterId;
+  conversationId:ConversationId;
   type:MemoryType;
   content:string;
   tags:readonly string[];
@@ -220,6 +223,7 @@ export interface MemoryItem{
 }
 export interface MemoryCreateInput{
   id?:MemoryItemId;
+  conversationId:ConversationId;
   type:MemoryType;
   content:string;
   tags?:readonly string[];
@@ -234,6 +238,7 @@ export interface MemoryCreateInput{
 }
 export interface MemorySearchQuery{
   characterId:CharacterId;
+  conversationId:ConversationId;
   query:string;
   types?:readonly MemoryType[];
   tags?:readonly string[];
@@ -268,28 +273,53 @@ export interface MemoryStoreState{
 export interface MemoryStore{
   load(characterId:CharacterId):Promise<MemoryStoreState|undefined>;
   save(state:MemoryStoreState):Promise<void>;
-  supersede(characterId:CharacterId,previousMemoryId:MemoryItemId,replacement:MemoryItem):Promise<MemoryItem>;
+  supersede(characterId:CharacterId,conversationId:ConversationId,previousMemoryId:MemoryItemId,replacement:MemoryItem):Promise<MemoryItem>;
 }
 export const RETRIEVAL_API_VERSION:ApiVersion="1";
 export const RETRIEVAL_SCHEMA_VERSION="1";
 export type RetrievalSource="core_book"|"memory";
 export interface RetrievalMatch{field:"title"|"content"|"tags";text:string}
 export interface RetrievalFilters{status?:string;type?:string;tags?:readonly string[]}
-export interface RetrievalQuery{apiVersion:ApiVersion;schemaVersion:string;characterId:CharacterId;query:string;sources?:readonly RetrievalSource[];limit?:number;filters?:RetrievalFilters}
-export interface RetrievalCandidate{source:RetrievalSource;sourceId:string;characterId:CharacterId;score:number;matchedText:string;matches:readonly RetrievalMatch[];metadata?:{title?:string;status?:string;type?:string;updatedAt:string}}
+export interface RetrievalQuery{apiVersion:ApiVersion;schemaVersion:string;characterId:CharacterId;conversationId?:ConversationId;query:string;sources?:readonly RetrievalSource[];limit?:number;filters?:RetrievalFilters}
+export interface RetrievalCandidate{source:RetrievalSource;sourceId:string;characterId:CharacterId;conversationId?:ConversationId;score:number;matchedText:string;matches:readonly RetrievalMatch[];metadata?:{title?:string;status?:string;type?:string;updatedAt:string}}
 export interface RetrievalResult{apiVersion:ApiVersion;schemaVersion:string;characterId:CharacterId;query:string;candidates:readonly RetrievalCandidate[];degraded:boolean;error?:string}
 export interface Retriever{search(query:RetrievalQuery):Promise<RetrievalResult>;rebuild(characterId:CharacterId):Promise<void>;rebuildAll():Promise<void>}
-export interface RetrievalIndexDocument{apiVersion:ApiVersion;schemaVersion:string;characterId:CharacterId;source:RetrievalSource;sourceId:string;title:string;content:string;tags:readonly string[];status?:string;type?:string;updatedAt:string}
-export interface RetrievalIndexWriter{upsert(document:RetrievalIndexDocument):Promise<void>;remove(characterId:CharacterId,source:RetrievalSource,sourceId:string):Promise<void>;removeCharacter(characterId:CharacterId):Promise<void>}
+export interface RetrievalIndexDocument{apiVersion:ApiVersion;schemaVersion:string;characterId:CharacterId;conversationId?:ConversationId;source:RetrievalSource;sourceId:string;title:string;content:string;tags:readonly string[];status?:string;type?:string;updatedAt:string}
+export interface RetrievalIndexWriter{upsert(document:RetrievalIndexDocument):Promise<void>;remove(characterId:CharacterId,source:RetrievalSource,sourceId:string,conversationId?:ConversationId):Promise<void>;removeCharacter(characterId:CharacterId):Promise<void>}
 
 export interface MemoryBroker{
-  get(characterId:CharacterId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>;
+  get(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>;
   search(query:MemorySearchQuery):Promise<readonly MemoryItem[]>;
   create(characterId:CharacterId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
-  update(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryUpdateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
-  supersede(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
-  archive(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  update(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryUpdateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  supersede(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  archive(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>;
 }
+export interface MemoryExtractionRequest{
+  apiVersion:ApiVersion;
+  schemaVersion:string;
+  characterId:CharacterId;
+  conversationId:ConversationId;
+  turnId:string;
+  model:string;
+  providerId?:string;
+  providerPresetId?:string;
+  userMessage:ChatMessage;
+  assistantMessage:ChatMessage;
+  contextMessages:readonly ChatMessage[];
+}
+export interface MemoryCandidate{
+  type:MemoryType;
+  content:string;
+  tags:readonly string[];
+  importance:number;
+  confidence:number;
+  source:MemorySource;
+  sourceReference:string;
+  mutationPolicy:MemoryMutationPolicy;
+}
+export interface MemoryExtractionResult{memories:readonly MemoryCandidate[];}
+
 export const CONTEXT_API_VERSION:ApiVersion="1";
 export const CONTEXT_SCHEMA_VERSION="1";
 
@@ -368,10 +398,10 @@ export interface EventPayloadMap{
   CoreBookEntryUpdated:{characterId:string;entryId:string};
   CoreBookEntryDeleted:{characterId:string;entryId:string};
   CoreBookEntryEnabledChanged:{characterId:string;entryId:string;enabled:boolean};
-  MemoryCreated:{characterId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
-  MemoryUpdated:{characterId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
-  MemorySuperseded:{characterId:string;memoryId:string;previousMemoryId:string;status:MemoryStatus;updatedAt:string};
-  MemoryArchived:{characterId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
+  MemoryCreated:{characterId:string;conversationId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
+  MemoryUpdated:{characterId:string;conversationId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
+  MemorySuperseded:{characterId:string;conversationId:string;memoryId:string;previousMemoryId:string;status:MemoryStatus;updatedAt:string};
+  MemoryArchived:{characterId:string;conversationId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
   ChatResponseReceived:{requestId:string;conversationId:string;providerId:string;model:string;finishReason:ChatFinishReason};
   ConversationCreated:{characterId:string;conversationId:string};
   ConversationUpdated:{characterId:string;conversationId:string};
@@ -475,6 +505,9 @@ export const CONTRACT_VERSIONS={
   memoryItem:{apiVersion:MEMORY_API_VERSION,schemaVersion:MEMORY_SCHEMA_VERSION},
   memorySearchQuery:{apiVersion:MEMORY_API_VERSION,schemaVersion:MEMORY_SCHEMA_VERSION},
   memoryStoreState:{apiVersion:MEMORY_API_VERSION,schemaVersion:MEMORY_SCHEMA_VERSION},
+  memoryCandidate:{apiVersion:MEMORY_EXTRACTION_API_VERSION,schemaVersion:MEMORY_EXTRACTION_SCHEMA_VERSION},
+  memoryExtractionRequest:{apiVersion:MEMORY_EXTRACTION_API_VERSION,schemaVersion:MEMORY_EXTRACTION_SCHEMA_VERSION},
+  memoryExtractionResult:{apiVersion:MEMORY_EXTRACTION_API_VERSION,schemaVersion:MEMORY_EXTRACTION_SCHEMA_VERSION},
   contextSource:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
   contextZone:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
   contextBudget:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},

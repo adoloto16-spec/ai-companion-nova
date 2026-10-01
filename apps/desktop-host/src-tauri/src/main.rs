@@ -179,11 +179,12 @@ fn save_memory_state(app:tauri::AppHandle,state_value:memory::MemoryStoreState,s
 fn supersede_memory(
     app:tauri::AppHandle,
     character_id:String,
+    conversation_id:String,
     previous_memory_id:String,
     replacement:memory::MemoryItem,
     state:tauri::State<'_,memory::MemoryWriteLock>,
 )->Result<memory::MemoryItem,String>{
-    memory::supersede(&app,&character_id,&previous_memory_id,replacement,&state)
+    memory::supersede(&app,&character_id,&conversation_id,&previous_memory_id,replacement,&state)
 }
 
 #[cfg(feature="tauri-app")]
@@ -200,7 +201,7 @@ fn rebuild_all_retrieval_index(app:tauri::AppHandle,retrieval_state:tauri::State
 fn upsert_retrieval_document(app:tauri::AppHandle,document:retrieval::RetrievalIndexDocument,state:tauri::State<'_,retrieval::RetrievalIndexLock>)->Result<(),String>{retrieval::upsert(&app,&document,&state)}
 #[cfg(feature="tauri-app")]
 #[tauri::command]
-fn remove_retrieval_document(app:tauri::AppHandle,character_id:String,source:retrieval::RetrievalSource,source_id:String,state:tauri::State<'_,retrieval::RetrievalIndexLock>)->Result<(),String>{retrieval::remove(&app,&character_id,&source,&source_id,&state)}
+fn remove_retrieval_document(app:tauri::AppHandle,character_id:String,source:retrieval::RetrievalSource,source_id:String,conversation_id:Option<String>,state:tauri::State<'_,retrieval::RetrievalIndexLock>)->Result<(),String>{retrieval::remove(&app,&character_id,&source,&source_id,conversation_id.as_deref(),&state)}
 #[cfg(feature="tauri-app")]
 #[tauri::command]
 fn remove_retrieval_character(app:tauri::AppHandle,character_id:String,state:tauri::State<'_,retrieval::RetrievalIndexLock>)->Result<(),String>{retrieval::remove_character(&app,&character_id,&state)}

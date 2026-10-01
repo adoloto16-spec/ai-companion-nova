@@ -16,4 +16,5 @@ export * from "./core-book-manager";
 export * from "./context-engine";
 
 export * from "./memory-broker";
+export * from "./memory-extraction";
 export * from "./retrieval-indexer";

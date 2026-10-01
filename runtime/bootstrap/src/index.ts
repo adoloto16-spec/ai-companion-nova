@@ -24,6 +24,7 @@ import {InMemoryMemoryStore} from "../../../host/memory/src/index";
 import type {CoreBookCreateInput,CoreBookUpdateInput} from "../../../core/src/core-book-manager";
 import {activeProviderId,buildConfiguredProvider,buildProviderForDiscovery,buildProviderForPreset,testProviderConfiguration} from "./provider-configuration";
 import {RetrievalEventIndexer} from "../../../core/src/retrieval-indexer";
+import {MemoryExtractionService} from "../../../core/src/memory-extraction";
 
 export interface OpenAICompatibleRuntimeConfig{
   config:OpenAICompatibleProviderConfig;
@@ -85,12 +86,13 @@ export interface FoundationRuntime{
   deleteCoreBookEntry(characterId:CharacterId,entryId:CoreBookEntryId):Promise<void>;
   setCoreBookEntryEnabled(characterId:CharacterId,entryId:CoreBookEntryId,enabled:boolean):Promise<CoreBookEntry>;
   buildContext(request:ContextBuildRequest):Promise<AssembledContext>;
-  getMemory(characterId:CharacterId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>;
+  extractMemory(request:import("../../../contracts/src/index").MemoryExtractionRequest):Promise<readonly MemoryItem[]>;
+  getMemory(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>;
   searchMemory(query:MemorySearchQuery):Promise<readonly MemoryItem[]>;
   createMemory(characterId:CharacterId,input:MemoryCreateInput):Promise<MemoryItem>;
-  updateMemory(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryUpdateInput):Promise<MemoryItem>;
-  supersedeMemory(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryCreateInput):Promise<MemoryItem>;
-  archiveMemory(characterId:CharacterId,memoryId:MemoryItemId):Promise<MemoryItem>;
+  updateMemory(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryUpdateInput):Promise<MemoryItem>;
+  supersedeMemory(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryCreateInput):Promise<MemoryItem>;
+  archiveMemory(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId):Promise<MemoryItem>;
   searchRetrieval(query:RetrievalQuery):Promise<RetrievalResult>;
   rebuildRetrieval(characterId:CharacterId):Promise<void>;
   rebuildAllRetrieval():Promise<void>;
@@ -122,7 +124,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     audit,
     events,
     clock:{now:()=>new Date().toISOString()},
-    characterExists:async characterId=>Boolean(await characterManager.getCharacter(characterId))
+    characterExists:async characterId=>Boolean(await characterManager.getCharacter(characterId)),
+    conversationExists:async (characterId,conversationId)=>Boolean(await conversationManager.getConversation(characterId,conversationId))
   });
   const userMemoryAuthority:MemoryMutationAuthority={
     actorId:"local-user",
@@ -169,6 +172,23 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   providers.register(new FakeVisionProvider(),["vision"]);
 
   const aiRuntime=new AiRuntime(providers,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
+  const extractionChatRuntime={
+    chat:async (request:ChatRequest,providerPresetId?:string):Promise<ChatResponse>=>{
+      if(providerPresetId){
+        const configuration=providerPresetConfigurations.get(providerPresetId);
+        const effectiveConfiguration=configuration?{...configuration,model:request.model}:undefined;
+        const scopedProviders=new ProviderRegistry();
+        if(effectiveConfiguration){
+          const configured=buildProviderForPreset(effectiveConfiguration,credentialStore,options.httpClient);
+          if(configured)scopedProviders.register(configured,["chat"]);
+        }
+        const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
+        return scopedRuntime.generate({...request,providerId:"openai-compatible"});
+      }
+      return aiRuntime.generate(request.providerId?request:{...request,providerId:activeProviderId(providerConfiguration)});
+    }
+  };
+  const memoryExtractionService=new MemoryExtractionService(extractionChatRuntime,memoryBroker,{validator:contractValidator,diagnostics:diagnosticsStore});
 
   const moduleCapabilities:Record<string,readonly string[]>={
     "character.fake":["character.expression","character.speech"],
@@ -366,12 +386,13 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     deleteCoreBookEntry:(characterId,entryId)=>coreBookManager.deleteCoreBookEntry(characterId,entryId),
     setCoreBookEntryEnabled:(characterId,entryId,enabled)=>coreBookManager.setCoreBookEntryEnabled(characterId,entryId,enabled),
     buildContext:request=>contextEngine.build(request),
-    getMemory:(characterId,memoryId)=>memoryBroker.get(characterId,memoryId),
+    extractMemory:request=>memoryExtractionService.process(request),
+    getMemory:(characterId,conversationId,memoryId)=>memoryBroker.get(characterId,conversationId,memoryId),
     searchMemory:query=>memoryBroker.search(query),
     createMemory:(characterId,input)=>memoryBroker.create(characterId,input,userMemoryAuthority),
-    updateMemory:(characterId,memoryId,input)=>memoryBroker.update(characterId,memoryId,input,userMemoryAuthority),
-    supersedeMemory:(characterId,memoryId,input)=>memoryBroker.supersede(characterId,memoryId,input,userMemoryAuthority),
-    archiveMemory:(characterId,memoryId)=>memoryBroker.archive(characterId,memoryId,userMemoryAuthority),
+    updateMemory:(characterId,conversationId,memoryId,input)=>memoryBroker.update(characterId,conversationId,memoryId,input,userMemoryAuthority),
+    supersedeMemory:(characterId,conversationId,memoryId,input)=>memoryBroker.supersede(characterId,conversationId,memoryId,input,userMemoryAuthority),
+    archiveMemory:(characterId,conversationId,memoryId)=>memoryBroker.archive(characterId,conversationId,memoryId,userMemoryAuthority),
     searchRetrieval:query=>{if(!options.retriever)throw new Error("Retrieval runtime is not configured.");return options.retriever.search(query);},
     rebuildRetrieval:characterId=>{if(!options.retriever)throw new Error("Retrieval runtime is not configured.");return options.retriever.rebuild(characterId);},
     rebuildAllRetrieval:()=>{if(!options.retriever)throw new Error("Retrieval runtime is not configured.");return options.retriever.rebuildAll();},

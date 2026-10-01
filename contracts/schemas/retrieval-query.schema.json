@@ -73,6 +73,11 @@
           "maxItems": 32
         }
       }
+    },
+    "conversationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
     }
   }
 }
