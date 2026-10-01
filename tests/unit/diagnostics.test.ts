@@ -22,6 +22,11 @@ async function main(){
     context:{conversationId:"conversation.a",messages:[{role:"user",content:"apiKey: top-secret"}]},
     metadata:{authorization:"Bearer abcdefghijklmnop"}
   }});
+  const storedA=traces.recent(10).find(trace=>trace.turnId==="a");
+  ok(Boolean(storedA),"first trace exists before retention rolls over");
+  ok(!JSON.stringify(storedA).includes("top-secret"),"trace strips API keys");
+  equal(storedA?.finalRequest?.metadata?.authorization,"[REDACTED]","trace strips authorization metadata");
+
   traces.start({turnId:"b",requestId:"b",characterId:"character.a",conversationId:"conversation.a",timestamp:"2026-10-01T00:00:01.000Z"});
   traces.update("b",{status:"interrupted"});
   traces.start({turnId:"c",requestId:"c",characterId:"character.a",conversationId:"conversation.a",timestamp:"2026-10-01T00:00:02.000Z"});
@@ -30,9 +35,6 @@ async function main(){
   equal(traces.recent().length,2,"trace retention is bounded");
   const latest=traces.recent()[0];
   ok(Boolean(latest),"latest trace exists");
-  const storedA=traces.recent(10).find(trace=>trace.turnId==="a");
-  ok(!JSON.stringify(storedA).includes("top-secret"),"trace strips API keys");
-  equal(storedA?.finalRequest?.metadata?.authorization,"[REDACTED]","trace strips authorization metadata");
 
   traces.configure("errors",10);
   const errors=traces.recent(10);
