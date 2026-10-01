@@ -2,7 +2,7 @@ import React from "react";
 import {createRoot} from "react-dom/client";
 import {invoke} from "@tauri-apps/api/core";
 import {
-  ChatSessionController,ConversationSession,type Character,type FoundationRuntime,InMemoryCharacterStore,type RuntimeDiagnostics,InMemoryChatTraceStore,
+  ChatSessionController,ConversationSession,type Character,type FoundationRuntime,InMemoryCharacterStore,type RuntimeDiagnostics,
   type CoreBookActivation,type CoreBookEntry
 } from "../../../core/src/index";
 import {startFoundationRuntime,testProviderConfiguration,testProviderPresetConfiguration,validateProviderConfiguration,listProviderModels} from "../../../runtime/bootstrap/src/index";
@@ -20,7 +20,7 @@ import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
   PROVIDER_CONFIGURATION_API_VERSION,PROVIDER_CONFIGURATION_SCHEMA_VERSION,
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
-  type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type DiagnosticsLogLevel, defaultAppSettings, validateAppSettings,
+  type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, defaultAppSettings, validateAppSettings,
   type ProviderPreset, type ProviderPresetStoreState, type ModelInfo
 } from "../../../contracts/src/index";
 import "./styles.css";
@@ -866,6 +866,223 @@ function ModelProfileView({
       <div className="row"><span>Registered chat providers</span><span>{runtime.providers.filter(provider=>provider.roles.includes("chat")).length}</span></div>
     </section>
   </section>;
+}
+
+
+function AppSettingsView({
+  settings,onChange,onSave,onReset,saving,message
+}:{
+  settings:AppSettings;
+  onChange:(settings:AppSettings)=>void;
+  onSave:()=>Promise<void>;
+  onReset:()=>Promise<void>;
+  saving:boolean;
+  message:string;
+}){
+  const setNumber=(section:"context"|"memory"|"retrieval"|"diagnostics",key:string,value:number)=>{
+    onChange({
+      ...settings,
+      [section]:{...(settings[section] as Record<string,unknown>),[key]:value}
+    } as AppSettings);
+  };
+  const defaults=defaultAppSettings();
+  return <div className="settings-grid">
+    <section>
+      <div className="section-header"><div><h2>Settings</h2><p className="chat-subtitle">Runtime behavior settings. Security limits remain fixed in code.</p></div>
+        <button type="button" onClick={()=>void onReset()} disabled={saving}>Reset to Defaults</button>
+      </div>
+      <h3>Context</h3>
+      <label>Context size
+        <input type="number" min={256} max={32768} value={settings.context.availableContextTokens}
+          onChange={event=>setNumber("context","availableContextTokens",Number(event.target.value))} disabled={saving}/>
+        <small>Default: {defaults.context.availableContextTokens}</small>
+      </label>
+      <label>Reserved response tokens
+        <input type="number" min={0} max={16384} value={settings.context.reservedOutputTokens}
+          onChange={event=>setNumber("context","reservedOutputTokens",Number(event.target.value))} disabled={saving}/>
+        <small>Default: {defaults.context.reservedOutputTokens}</small>
+      </label>
+      <label>Safety margin
+        <input type="number" min={0} max={4096} value={settings.context.safetyMarginTokens}
+          onChange={event=>setNumber("context","safetyMarginTokens",Number(event.target.value))} disabled={saving}/>
+        <small>Default: {defaults.context.safetyMarginTokens}</small>
+      </label>
+      <label>Recent messages
+        <input type="number" min={1} max={100} value={settings.context.recentConversationMessages}
+          onChange={event=>setNumber("context","recentConversationMessages",Number(event.target.value))} disabled={saving}/>
+        <small>Default: {defaults.context.recentConversationMessages}</small>
+      </label>
+      <p className="hint">These values change Context Engine inputs without changing its deterministic selection algorithm.</p>
+    </section>
+
+    <section>
+      <h3>Memory</h3>
+      <label className="checkbox">Automatic long-term memory extraction
+        <input type="checkbox" checked={settings.chat.automaticLongTermMemory}
+          onChange={event=>onChange({...settings,chat:{...settings.chat,automaticLongTermMemory:event.target.checked}})} disabled={saving}/>
+      </label>
+      <label>Memory items
+        <input type="number" min={1} max={100} value={settings.memory.candidateLimit}
+          onChange={event=>setNumber("memory","candidateLimit",Number(event.target.value))} disabled={saving}/>
+        <small>Default: {defaults.memory.candidateLimit}</small>
+      </label>
+      <label>Retrieval candidates
+        <input type="number" min={1} max={100} value={settings.retrieval.candidateLimit}
+          onChange={event=>setNumber("retrieval","candidateLimit",Number(event.target.value))} disabled={saving}/>
+        <small>Default: {defaults.retrieval.candidateLimit}</small>
+      </label>
+      <p className="hint">Memory storage, character/conversation isolation, deduplication, and extraction safety rules are not configurable here.</p>
+    </section>
+
+    <section>
+      <h3>Diagnostics</h3>
+      <label>Log level
+        <select value={settings.diagnostics.logLevel as DiagnosticsLogLevel}
+          onChange={event=>onChange({...settings,diagnostics:{...settings.diagnostics,logLevel:event.target.value as DiagnosticsLogLevel}})} disabled={saving}>
+          <option value="off">Off</option>
+          <option value="errors">Errors</option>
+          <option value="normal">Normal</option>
+          <option value="verbose">Verbose</option>
+          <option value="debug">Debug</option>
+        </select>
+        <small>Default: {defaults.diagnostics.logLevel}</small>
+      </label>
+      <label>Recent diagnostic entries
+        <input type="number" min={1} max={500} value={settings.diagnostics.keepRecentEntries}
+          onChange={event=>setNumber("diagnostics","keepRecentEntries",Number(event.target.value))} disabled={saving}/>
+        <small>Default: {defaults.diagnostics.keepRecentEntries}</small>
+      </label>
+      <p className="hint">Logs are redacted for credentials, Authorization/Bearer tokens, passwords, API keys, and secrets.</p>
+    </section>
+
+    <section>
+      <h3>UI</h3>
+      <label className="checkbox">Show diagnostics in the application
+        <input type="checkbox" checked={settings.ui.showDiagnosticsInChat}
+          onChange={event=>onChange({...settings,ui:{...settings.ui,showDiagnosticsInChat:event.target.checked}})} disabled={saving}/>
+      </label>
+      <p className="hint">Model, temperature, topP, and maxTokens remain in Model Profile and are intentionally not duplicated here.</p>
+      <div className="actions">
+        <button type="button" onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save Settings"}</button>
+      </div>
+      {message&&<div className="notice" role="status">{message}</div>}
+    </section>
+  </div>;
+}
+
+function TraceCandidate({candidate}:{candidate:any}){
+  return <div className="diagnostic-candidate">
+    <div className="diagnostic-candidate-header">
+      <strong>{candidate.source}</strong>
+      <span>{candidate.zone}</span>
+      <span>score {candidate.selectionScore}</span>
+    </div>
+    <div className="diagnostic-candidate-content">{candidate.content}</div>
+    <div className="diagnostic-candidate-meta">
+      relevance {candidate.relevance} · retention {candidate.retentionPriority} · recency {candidate.recency} · tokens {candidate.estimatedTokens}
+    </div>
+    <div className="diagnostic-reason">{candidate.reason}</div>
+  </div>;
+}
+
+function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:AppSettings}){
+  const [traces,setTraces]=React.useState<readonly ChatTurnTrace[]>([]);
+  const [selectedId,setSelectedId]=React.useState<string|undefined>();
+  const [message,setMessage]=React.useState("");
+
+  const refresh=React.useCallback(()=>{
+    try{
+      const next=runtime.listChatTraces(50);
+      setTraces(next);
+      setSelectedId(current=>current&&next.some(trace=>trace.turnId===current)?current:next[0]?.turnId);
+      setMessage("");
+    }catch(error){setMessage(error instanceof Error?error.message:"Diagnostics could not be loaded.")}
+  },[runtime]);
+
+  React.useEffect(()=>{
+    refresh();
+    const timer=setInterval(refresh,750);
+    return ()=>clearInterval(timer);
+  },[refresh]);
+
+  const selected=traces.find(trace=>trace.turnId===selectedId);
+
+  return <div className="settings-grid">
+    <section>
+      <div className="section-header">
+        <div><h2>Diagnostics</h2><p className="chat-subtitle">Technical turn traces only; no model chain-of-thought is recorded.</p></div>
+        <button type="button" onClick={()=>{runtime.clearChatTraces();refresh()}}>Clear Logs</button>
+      </div>
+      <div className="status-grid">
+        <span>Log level</span><strong>{settings.diagnostics.logLevel}</strong>
+        <span>Retained</span><strong>{traces.length}</strong>
+      </div>
+      {traces.length===0
+        ?<div>No chat traces yet.</div>
+        :traces.map(trace=>
+          <button type="button" className={trace.turnId===selectedId?"diagnostic-trace-row active":"diagnostic-trace-row"} key={trace.turnId} onClick={()=>setSelectedId(trace.turnId)}>
+            <span>{trace.status}</span><span>{trace.requestId}</span><small>{trace.conversationId}</small>
+          </button>
+        )}
+      {message&&<div className="error">{message}</div>}
+    </section>
+
+    {selected&&<section>
+      <h2>Turn</h2>
+      <div className="status-grid">
+        <span>Request</span><strong>{selected.requestId}</strong>
+        <span>Character</span><strong>{selected.characterId}</strong>
+        <span>Conversation</span><strong>{selected.conversationId}</strong>
+        <span>Status</span><strong>{selected.status}</strong>
+        <span>Timestamp</span><strong>{selected.timestamp}</strong>
+        <span>Duration</span><strong>{selected.durationMs===undefined?"—":selected.durationMs+" ms"}</strong>
+      </div>
+
+      {selected.contextBuild&&<div className="diagnostic-block">
+        <h3>Context Build</h3>
+        <p>Context size {selected.contextBuild.budget.availableContextTokens} · Reserved {selected.contextBuild.budget.reservedOutputTokens} · Safety margin {selected.contextBuild.budget.safetyMarginTokens} · Estimated {selected.contextBuild.estimatedTokens} tokens</p>
+        <h4>Included</h4>
+        {selected.contextBuild.includedCandidates.length===0?<div>None</div>:selected.contextBuild.includedCandidates.map(candidate=><TraceCandidate key={candidate.id} candidate={candidate}/>)}
+        <h4>Omitted</h4>
+        {selected.contextBuild.omittedCandidates.length===0?<div>None</div>:selected.contextBuild.omittedCandidates.map(candidate=><TraceCandidate key={candidate.id} candidate={candidate}/>)}
+      </div>}
+
+      {selected.finalRequest&&<div className="diagnostic-block">
+        <h3>Final Request</h3>
+        <div className="status-grid">
+          <span>Provider</span><strong>{selected.finalRequest.providerId??"default"}</strong>
+          <span>Model</span><strong>{selected.finalRequest.model}</strong>
+          <span>Generation</span><strong>{JSON.stringify(selected.finalRequest.generation??{})}</strong>
+        </div>
+        <pre className="diagnostic-json">{JSON.stringify(selected.finalRequest.context.messages,null,2)}</pre>
+      </div>}
+
+      {selected.providerResponse&&<div className="diagnostic-block">
+        <h3>Provider Response</h3>
+        <div className="status-grid">
+          <span>Provider</span><strong>{selected.providerResponse.providerId}</strong>
+          <span>Model</span><strong>{selected.providerResponse.model}</strong>
+          <span>Finish</span><strong>{selected.providerResponse.finishReason}</strong>
+          <span>Usage</span><strong>{JSON.stringify(selected.providerResponse.usage??{})}</strong>
+          <span>Duration</span><strong>{selected.providerResponse.durationMs===undefined?"—":selected.providerResponse.durationMs+" ms"}</strong>
+        </div>
+      </div>}
+
+      {selected.memoryExtraction&&<div className="diagnostic-block">
+        <h3>Automatic Memory Extraction</h3>
+        <p>Started: {selected.memoryExtraction.started?"yes":"no"}</p>
+        <h4>Candidates</h4>{selected.memoryExtraction.candidates.length===0?<div>None</div>:selected.memoryExtraction.candidates.map((candidate,index)=><TraceCandidate key={candidate.content+index} candidate={candidate}/>)}
+        <h4>Accepted</h4>{selected.memoryExtraction.accepted.length===0?<div>None</div>:selected.memoryExtraction.accepted.map((candidate,index)=><TraceCandidate key={candidate.content+index} candidate={candidate}/>)}
+        <h4>Rejected</h4>{selected.memoryExtraction.rejected.length===0?<div>None</div>:selected.memoryExtraction.rejected.map((item,index)=><div className="diagnostic-candidate" key={item.candidate.content+index}><div className="diagnostic-reason">{item.reason}</div><TraceCandidate candidate={item.candidate}/></div>)}
+        <h4>Duplicates</h4>{selected.memoryExtraction.duplicate.length===0?<div>None</div>:selected.memoryExtraction.duplicate.map((candidate,index)=><TraceCandidate key={candidate.content+index} candidate={candidate}/>)}
+        <h4>Superseded</h4>{selected.memoryExtraction.superseded.length===0?<div>None</div>:selected.memoryExtraction.superseded.map(item=><div className="row" key={item.memoryId}><span>{item.candidate.content}</span><span>{item.memoryId}</span></div>)}
+        <h4>Created</h4>{selected.memoryExtraction.created.length===0?<div>None</div>:selected.memoryExtraction.created.map(item=><div className="row" key={item.memoryId}><span>{item.candidate.content}</span><span>{item.memoryId}</span></div>)}
+        {selected.memoryExtraction.failed&&<div className="error">{selected.memoryExtraction.failed}</div>}
+      </div>}
+
+      {selected.error&&<div className="error">{selected.error.code}: {selected.error.message}</div>}
+    </section>}
+  </div>;
 }
 
 function SettingsView({
