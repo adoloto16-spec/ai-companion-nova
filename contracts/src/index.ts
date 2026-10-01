@@ -447,7 +447,7 @@ export interface ChatTurnTrace{
     failed?:string;
   };
 }
-export type ChatTurnTracePatch=Partial<Omit<ChatTurnTrace,"turnId"|"requestId"|"characterId"|"conversationId"|"timestamp">>&{
+export type ChatTurnTracePatch=Partial<Omit<ChatTurnTrace,"turnId"|"requestId"|"characterId"|"conversationId"|"timestamp"|"memoryExtraction">>&{
   contextBuild?:ChatTurnTrace["contextBuild"];
   memoryExtraction?:Partial<NonNullable<ChatTurnTrace["memoryExtraction"]>>;
 };
