@@ -20,7 +20,7 @@ import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
   PROVIDER_CONFIGURATION_API_VERSION,PROVIDER_CONFIGURATION_SCHEMA_VERSION,
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
-  type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, defaultAppSettings, validateAppSettings,
+  type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, defaultAppSettings, validateAppSettings, StandardContractValidator,
   type ProviderPreset, type ProviderPresetStoreState, type ModelInfo
 } from "../../../contracts/src/index";
 import "./styles.css";
@@ -1420,7 +1420,7 @@ function App(){
     credentialProfileStateRef.current=credentialState;
     await foundationRef.current?.stop();
     const next=await startFoundationRuntime({
-      providerConfiguration:config,credentialStore,characterStore,coreBookStore,memoryStore,retriever,retrievalIndexWriter:retriever,
+      providerConfiguration:config,credentialStore,characterStore,coreBookStore,memoryStore,conversationStore,retriever,retrievalIndexWriter:retriever,
       providerPresetConfigurations:materializePresetConfigurations(presetState.presets,credentialState.profiles),
       settingsStore,
       activeProviderPresetId:presetState.activePresetId??undefined
