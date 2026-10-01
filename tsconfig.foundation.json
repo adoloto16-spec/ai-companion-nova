@@ -24,6 +24,7 @@
     "host/model-profiles/src/**/*.ts",
     "host/credential-profiles/src/**/*.ts",
     "host/provider-presets/src/**/*.ts",
+    "host/settings/src/**/*.ts",
     "host/retrieval/src/**/*.ts"
   ],
   "exclude": [
