@@ -47,7 +47,13 @@ function requireCharacterId(value:string):string{
   if(result.length>200)throw new Error("Character id must not exceed 200 characters.");
   return result;
 }
-function requireConversationId(value:string):string{\n  const result=value.trim();\n  if(!result)throw new Error("Conversation id must not be empty.");\n  if(result.length>200)throw new Error("Conversation id must not exceed 200 characters.");\n  return result;\n}\nfunction requireMemoryId(value:string):string{
+function requireConversationId(value:string):string{
+  const result=value.trim();
+  if(!result)throw new Error("Conversation id must not be empty.");
+  if(result.length>200)throw new Error("Conversation id must not exceed 200 characters.");
+  return result;
+}
+function requireMemoryId(value:string):string{
   const result=value.trim();
   if(!result)throw new Error("Memory id must not be empty.");
   if(result.length>200)throw new Error("Memory id must not exceed 200 characters.");
@@ -283,7 +289,8 @@ export class MemoryBrokerImpl implements MemoryBroker{
       status:"active",
       metadata:requireMetadata(input.metadata??previous.metadata)
     };
-    if(replacement.conversationId!==conversation)throw new Error("Replacement memory conversation scope mismatch.");\n    validateItemShape(replacement,scope,conversation,this.deps.validator);
+    if(replacement.conversationId!==conversation)throw new Error("Replacement memory conversation scope mismatch.");
+    validateItemShape(replacement,scope,conversation,this.deps.validator);
     if(replacement.id===previous.id)throw new Error("Superseding memory must use a new memory id.");
     creationAllowed(replacement,authority);
     const updatedPrevious={...previous,status:"superseded" as const,updatedAt:now};
