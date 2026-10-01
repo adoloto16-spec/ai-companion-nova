@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/memory-extraction-result/v1",
+  "title": "AI Companion Nova Memory Extraction Result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "memories"
+  ],
+  "properties": {
+    "memories": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "$ref": "https://schemas.ai-companion-nova.dev/memory-candidate/v1"
+      }
+    }
+  }
+}
