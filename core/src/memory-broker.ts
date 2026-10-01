@@ -93,8 +93,9 @@ function validateProvenance(source:MemoryItem["source"],sourceReference:string|n
   if(["conversation","file","tool","model"].includes(source)&&(!sourceReference||sourceReference.trim().length===0))throw new Error("Memory sourceReference is required for "+source+" provenance.");
   if(sourceReference!==null&&sourceReference.length>MAX_SOURCE_REFERENCE_LENGTH)throw new Error("Memory sourceReference exceeds the v1 input limit.");
 }
-function validateItemShape(item:MemoryItem,characterId:string,validator:SchemaValidator):void{
+function validateItemShape(item:MemoryItem,characterId:string,conversationId:string|undefined,validator:SchemaValidator):void{
   if(item.characterId!==characterId)throw new Error("Memory item character scope mismatch.");
+  if(conversationId!==undefined&&item.conversationId!==conversationId)throw new Error("Memory item conversation scope mismatch.");
   const result=validator.validate(item,STANDARD_SCHEMAS["memory-item"]!);
   if(!result.valid)throw new Error("Memory item failed schema validation: "+result.errors.join("; "));
   requireMemoryId(item.id);
@@ -155,15 +156,18 @@ export class MemoryBrokerImpl implements MemoryBroker{
     this.characterExists=deps.characterExists;
   }
 
-  async get(characterId:CharacterId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>{
+  async get(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>{
     const scope=await this.ensureCharacter(characterId);
+    const conversation=requireConversationId(conversationId);
     const state=await this.loadState(scope);
     const item=state.items.find(candidate=>candidate.id===requireMemoryId(memoryId));
+    if(item&&item.conversationId!==conversation)throw new Error("Memory item conversation scope mismatch.");
     return item?cloneItem(item):undefined;
   }
 
   async search(query:MemorySearchQuery):Promise<readonly MemoryItem[]>{
     const scope=await this.ensureCharacter(query.characterId);
+    const conversation=requireConversationId(query.conversationId);
     const queryResult=this.deps.validator.validate(query,STANDARD_SCHEMAS["memory-search-query"]!);
     if(!queryResult.valid)throw new Error("Memory search query failed schema validation: "+queryResult.errors.join("; "));
     if(query.query.length>MAX_QUERY_LENGTH)throw new Error("Memory search query exceeds the v1 input limit.");
@@ -173,6 +177,7 @@ export class MemoryBrokerImpl implements MemoryBroker{
     const requiredTags=(query.tags??[]).map(tag=>tag.toLocaleLowerCase());
     const status=query.status??"active";
     const results=states.items
+      .filter(item=>item.conversationId===conversation)
       .filter(item=>item.status===status)
       .filter(item=>types.size===0||types.has(item.type))
       .filter(item=>requiredTags.every(tag=>item.tags.some(itemTag=>itemTag.toLocaleLowerCase()===tag)))
@@ -189,6 +194,7 @@ export class MemoryBrokerImpl implements MemoryBroker{
     const item:MemoryItem={
       id:requireMemoryId(input.id??idFactory()),
       characterId:scope,
+      conversationId:requireConversationId(input.conversationId),
       type:input.type,
       content:requireContent(input.content),
       tags:requireTags(input.tags??[]),
@@ -215,14 +221,16 @@ export class MemoryBrokerImpl implements MemoryBroker{
     return cloneItem(item);
   }
 
-  async update(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryUpdateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>{
+  async update(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryUpdateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>{
     const scope=await this.ensureCharacter(characterId);
+    const conversation=requireConversationId(conversationId);
     const state=await this.loadState(scope);
     const id=requireMemoryId(memoryId);
     const index=state.items.findIndex(candidate=>candidate.id===id);
     if(index<0)throw new Error("Memory item was not found.");
     const current=state.items[index]!;
     if(current.status!=="active")throw new Error("Only active memory items can be updated.");
+    if(current.conversationId!==conversation)throw new Error("Memory item conversation scope mismatch.");
     actorAllowed(current,authority);
     const next:MemoryItem={
       ...current,
@@ -246,13 +254,15 @@ export class MemoryBrokerImpl implements MemoryBroker{
     return cloneItem(next);
   }
 
-  async supersede(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>{
+  async supersede(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>{
     const scope=await this.ensureCharacter(characterId);
+    const conversation=requireConversationId(conversationId);
     const state=await this.loadState(scope);
     const previousId=requireMemoryId(memoryId);
     const previous=state.items.find(item=>item.id===previousId);
     if(!previous)throw new Error("Memory item was not found.");
     if(previous.status!=="active")throw new Error("Only active memory items can be superseded.");
+    if(previous.conversationId!==conversation)throw new Error("Memory item conversation scope mismatch.");
     actorAllowed(previous,authority);
     const now=this.clock.now();
     const replacement:MemoryItem={
@@ -284,14 +294,16 @@ export class MemoryBrokerImpl implements MemoryBroker{
     return cloneItem(replacement);
   }
 
-  async archive(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>{
+  async archive(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>{
     const scope=await this.ensureCharacter(characterId);
+    const conversation=requireConversationId(conversationId);
     const state=await this.loadState(scope);
     const id=requireMemoryId(memoryId);
     const index=state.items.findIndex(candidate=>candidate.id===id);
     if(index<0)throw new Error("Memory item was not found.");
     const current=state.items[index]!;
     if(current.status!=="active")throw new Error("Only active memory items can be archived.");
+    if(current.conversationId!==conversation)throw new Error("Memory item conversation scope mismatch.");
     actorAllowed(current,authority);
     const archived:MemoryItem={...current,status:"archived",updatedAt:this.clock.now(),metadata:cloneMetadata(current.metadata)};
     validateItemShape(archived,scope,conversation,this.deps.validator);
