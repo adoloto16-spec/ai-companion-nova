@@ -14,36 +14,36 @@ export interface MemoryExtractionServiceOptions{
 
 const EXTRACTION_SYSTEM_PROMPT=[
   "You are a conservative long-term memory extractor for an AI companion.",
-  "Return JSON only with this shape: {\\\"memories\\\":[...]}." ,
+  "Return JSON only with this shape: {\\"memories\\":[...]}." ,
   "Keep only durable, user-grounded information that is useful after this conversation ends.",
   "Prefer explicit user preferences, stable facts, relationships, meaningful events or experiences, goals, and durable instructions.",
   "Do not store casual chatter, transient details, speculation, assistant-generated claims, prompt text, credentials, secrets, or transcript fragments.",
   "Return an empty memories array when nothing is clearly worth retaining.",
-  "Each candidate must use source \\\"conversation\\\", mutationPolicy \\\"auto\\\", and the provided conversation id as sourceReference.",
+  "Each candidate must use source \\"conversation\\", mutationPolicy \\"auto\\", and the provided conversation id as sourceReference.",
   "Scores are integers from 0 to 100.",
   "Never infer a fact solely from the assistant response."
-].join("\\n");
+].join("\n");
 
 const SECRET_PATTERNS=[
-  /authorization\\s*:\\s*bearer\\s+\\S+/i,
-  /\\bbearer\\s+[A-Za-z0-9._-]{16,}\\b/i,
-  /\\bsk-[A-Za-z0-9_-]{16,}\\b/,
-  /api[_ -]?key\\s*[:=]\\s*\\S+/i,
-  /password\\s*[:=]\\s*\\S+/i,
-  /secret\\s*[:=]\\s*\\S+/i
+  /authorization\s*:\s*bearer\s+\S+/i,
+  /\bbearer\s+[A-Za-z0-9._-]{16,}\b/i,
+  /\bsk-[A-Za-z0-9_-]{16,}\b/,
+  /api[_ -]?key\s*[:=]\s*\S+/i,
+  /password\s*[:=]\s*\S+/i,
+  /secret\s*[:=]\s*\S+/i
 ];
 function safeText(value:string):string{
   return value
-    .replace(/authorization\\s*:\\s*bearer\\s+\\S+/gi,"Authorization: Bearer [REDACTED]")
-    .replace(/\\bbearer\\s+[A-Za-z0-9._-]{16,}\\b/gi,"Bearer [REDACTED]")
-    .replace(/\\bsk-[A-Za-z0-9_-]{16,}\\b/g,"[REDACTED]")
-    .replace(/api[_ -]?key\\s*[:=]\\s*\\S+/gi,"api-key=[REDACTED]")
-    .replace(/password\\s*[:=]\\s*\\S+/gi,"password=[REDACTED]")
-    .replace(/secret\\s*[:=]\\s*\\S+/gi,"secret=[REDACTED]");
+    .replace(/authorization\s*:\s*bearer\s+\S+/gi,"Authorization: Bearer [REDACTED]")
+    .replace(/\bbearer\s+[A-Za-z0-9._-]{16,}\b/gi,"Bearer [REDACTED]")
+    .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/g,"[REDACTED]")
+    .replace(/api[_ -]?key\s*[:=]\s*\S+/gi,"api-key=[REDACTED]")
+    .replace(/password\s*[:=]\s*\S+/gi,"password=[REDACTED]")
+    .replace(/secret\s*[:=]\s*\S+/gi,"secret=[REDACTED]");
 }
 function containsSecret(value:string):boolean{return SECRET_PATTERNS.some(pattern=>pattern.test(value));}
 function normalizedContentKey(value:string):string{
-  return value.normalize("NFKC").toLocaleLowerCase().replace(/[^\\p{L}\\p{N}]+/gu," ").trim().replace(/\\s+/g," ");
+  return value.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu," ").trim().replace(/\s+/g," ");
 }
 function tokens(value:string):string[]{return normalizedContentKey(value).split(" ").filter(Boolean);}
 function sharedTag(candidate:MemoryCandidate,item:MemoryItem):boolean{
@@ -77,7 +77,7 @@ export class MemoryExtractionService{
     const requestWithVersions={...request,apiVersion:MEMORY_EXTRACTION_API_VERSION,schemaVersion:MEMORY_EXTRACTION_SCHEMA_VERSION};
     const requestValidation=this.validator.validate(requestWithVersions,STANDARD_SCHEMAS["memory-extraction-request"]!);
     if(!requestValidation.valid){this.recordFailure("INVALID_REQUEST","Memory extraction request was rejected by contract validation.");return [];}
-    const key=request.characterId+"\\0"+request.conversationId+"\\0"+request.turnId;
+    const key=request.characterId+"\0"+request.conversationId+"\0"+request.turnId;
     if(this.inFlight.has(key))return [];
     this.inFlight.add(key);
     try{
