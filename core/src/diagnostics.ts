@@ -130,7 +130,7 @@ export class InMemoryChatTraceStore implements ChatTraceStore{
           duplicate:(memoryPatch.duplicate??current.memoryExtraction?.duplicate??[]).map(cloneCandidate),
           superseded:memoryPatch.superseded??current.memoryExtraction?.superseded??[],
           created:memoryPatch.created??current.memoryExtraction?.created??[],
-          ...(memoryPatch.failed!==undefined?{failed:redactDiagnosticText(memoryPatch.failed)}:{current.memoryExtraction?.failed!==undefined?{failed:current.memoryExtraction.failed}: {}})
+          ...(memoryPatch.failed!==undefined?{failed:redactDiagnosticText(memoryPatch.failed)}:current.memoryExtraction?.failed!==undefined?{failed:current.memoryExtraction.failed}:{})
         }
       }:current.memoryExtraction?{memoryExtraction:current.memoryExtraction}:{})
     };
