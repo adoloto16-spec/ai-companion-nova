@@ -2,7 +2,7 @@ import type {
   AssembledContext,ChatErrorCode,ChatGenerationOptions,ChatMessage,ChatRequest,ChatResponse,ChatStreamEvent,
   ChatStreamHandlers,ChatStreamOptions,ChatUsage,CharacterId,ContextBuildRequest,ContextBudget,MemoryExtractionRequest,ModelProfile,Unsubscribe
 } from "../../contracts/src/index";
-import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION} from "../../contracts/src/index";
+import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,DEFAULT_APP_SETTINGS} from "../../contracts/src/index";
 
 export interface ChatRuntimeBoundary{
   chat(request:ChatRequest,providerPresetId?:string):Promise<ChatResponse>;
@@ -123,10 +123,10 @@ export interface ChatSessionControllerOptions{
   memoryExtractor?:ChatCompletedTurnMemoryBoundary;
 }
 const DEFAULT_CHAT_CONTEXT_BUDGET:ContextBudget={
-  availableContextTokens:4096,
-  reservedOutputTokens:1024,
+  availableContextTokens:DEFAULT_APP_SETTINGS.context.availableContextTokens,
+  reservedOutputTokens:DEFAULT_APP_SETTINGS.context.reservedOutputTokens,
   systemOverheadTokens:0,
-  safetyMarginTokens:128
+  safetyMarginTokens:DEFAULT_APP_SETTINGS.context.safetyMarginTokens
 };
 
 type RunMode="submit"|"continue"|"regenerate"|"retry";
