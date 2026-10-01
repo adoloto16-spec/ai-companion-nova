@@ -93,14 +93,21 @@ export class MemoryExtractionService{
       this.traceStore?.update(request.turnId,{memoryExtraction:{candidates:[...result.memories],accepted:[],rejected:[],duplicate:[],superseded:[],created:[]}});
 
       const created:MemoryItem[]=[];
+      const accepted:MemoryCandidate[]=[];
+      const rejected:{candidate:MemoryCandidate;reason:string}[]=[];
+      const duplicate:MemoryCandidate[]=[];
+      const superseded:{candidate:MemoryCandidate;memoryId:string}[]=[];
+      const createdTrace:{candidate:MemoryCandidate;memoryId:string}[]=[];
       for(const candidate of result.memories){
         if(!this.safeCandidate(candidate,request.conversationId)){
-          this.traceStore?.update(request.turnId,{memoryExtraction:{rejected:[...((this.traceStore?.recent(500).find(item=>item.turnId===request.turnId)?.memoryExtraction?.rejected)??[]),{candidate,reason:"candidate failed source, scope, mutation policy, score, or secret validation"}]}});
+          rejected.push({candidate,reason:"candidate failed source, scope, mutation policy, score, or secret validation"});
+          this.traceStore?.update(request.turnId,{memoryExtraction:{candidates:[...result.memories],accepted:[...accepted],rejected:[...rejected],duplicate:[...duplicate],superseded:[...superseded],created:[...createdTrace]}});
           continue;
         }
         const keyContent=normalizedContentKey(candidate.content);
         if(active.some(item=>normalizedContentKey(item.content)===keyContent)){
-          this.traceStore?.update(request.turnId,{memoryExtraction:{duplicate:[...((this.traceStore?.recent(500).find(item=>item.turnId===request.turnId)?.memoryExtraction?.duplicate)??[]),candidate]}});
+          duplicate.push(candidate);
+          this.traceStore?.update(request.turnId,{memoryExtraction:{candidates:[...result.memories],accepted:[...accepted],rejected:[...rejected],duplicate:[...duplicate],superseded:[...superseded],created:[...createdTrace]}});
           continue;
         }
 
@@ -109,21 +116,26 @@ export class MemoryExtractionService{
           try{
             const replacement=await this.broker.supersede(request.characterId,request.conversationId,replacementTarget.id,this.toCreateInput(candidate,request),this.authority());
             created.push(replacement);
-            this.traceStore?.update(request.turnId,{memoryExtraction:{accepted:[...((this.traceStore?.recent(500).find(item=>item.turnId===request.turnId)?.memoryExtraction?.accepted)??[]),candidate],superseded:[...((this.traceStore?.recent(500).find(item=>item.turnId===request.turnId)?.memoryExtraction?.superseded)??[]),{candidate,memoryId:replacement.id}],created:[...((this.traceStore?.recent(500).find(item=>item.turnId===request.turnId)?.memoryExtraction?.created)??[]),{candidate,memoryId:replacement.id}]}});
+            accepted.push(candidate);
+            superseded.push({candidate,memoryId:replacement.id});
+            createdTrace.push({candidate,memoryId:replacement.id});
             active=[...active.filter(item=>item.id!==replacementTarget.id),replacement];
           }catch{
             this.recordFailure("PERSISTENCE_SKIPPED","Memory replacement was not authorized or could not be persisted.");
           }
+          this.traceStore?.update(request.turnId,{memoryExtraction:{candidates:[...result.memories],accepted:[...accepted],rejected:[...rejected],duplicate:[...duplicate],superseded:[...superseded],created:[...createdTrace]}});
           continue;
         }
         try{
           const item=await this.broker.create(request.characterId,this.toCreateInput(candidate,request),this.authority());
           created.push(item);
-          this.traceStore?.update(request.turnId,{memoryExtraction:{accepted:[...((this.traceStore?.recent(500).find(item=>item.turnId===request.turnId)?.memoryExtraction?.accepted)??[]),candidate],created:[...((this.traceStore?.recent(500).find(item=>item.turnId===request.turnId)?.memoryExtraction?.created)??[]),{candidate,memoryId:item.id}]}});
+          accepted.push(candidate);
+          createdTrace.push({candidate,memoryId:item.id});
           active=[...active,item];
         }catch{
           this.recordFailure("PERSISTENCE_SKIPPED","Memory candidate could not be persisted.");
         }
+        this.traceStore?.update(request.turnId,{memoryExtraction:{candidates:[...result.memories],accepted:[...accepted],rejected:[...rejected],duplicate:[...duplicate],superseded:[...superseded],created:[...createdTrace]}});
       }
       return created;
     }catch{
