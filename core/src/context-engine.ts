@@ -83,7 +83,7 @@ export class MemoryCandidateSource implements ContextCandidateSource {
         .map(candidate=>this.reader.get?.(request.characterId,request.conversationId,candidate.sourceId)));
       results=canonical.filter((item):item is MemoryItem=>Boolean(item));
     }else{
-      try{results=await this.reader.search({characterId:request.characterId,query,status:"active",limit:this.maxResults});}
+      try{results=await this.reader.search({characterId:request.characterId,conversationId:request.conversationId,query,status:"active",limit:this.maxResults});}
       catch{return []}
     }
 
