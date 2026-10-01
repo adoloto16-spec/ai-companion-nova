@@ -47,6 +47,8 @@
     "allow-delete-conversation",
     "allow-set-active-conversation",
     "allow-get-active-conversation",
-    "allow-clear-conversation"
+    "allow-clear-conversation",
+    "allow-get-app-settings",
+    "allow-save-app-settings"
   ]
 }
