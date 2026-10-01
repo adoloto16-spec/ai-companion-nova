@@ -1,5 +1,5 @@
 import type {
-  AuditService,CharacterId,Clock,EventBus,EventPayloadMap,MemoryBroker,MemoryCreateInput,MemoryItem,MemoryItemId,MemoryMutationAuthority,
+  AuditService,CharacterId,Clock,ConversationId,EventBus,EventPayloadMap,MemoryBroker,MemoryCreateInput,MemoryItem,MemoryItemId,MemoryMutationAuthority,
   MemoryMutationPolicy,MemorySearchQuery,MemoryStore,MemoryStoreState,MemoryStatus,MemoryType,MemoryUpdateInput,SchemaValidator
 } from "../../contracts/src/index";
 import {MEMORY_API_VERSION,MEMORY_SCHEMA_VERSION,STANDARD_SCHEMAS,createEvent} from "../../contracts/src/index";
@@ -47,7 +47,7 @@ function requireCharacterId(value:string):string{
   if(result.length>200)throw new Error("Character id must not exceed 200 characters.");
   return result;
 }
-function requireMemoryId(value:string):string{
+function requireConversationId(value:string):string{\n  const result=value.trim();\n  if(!result)throw new Error("Conversation id must not be empty.");\n  if(result.length>200)throw new Error("Conversation id must not exceed 200 characters.");\n  return result;\n}\nfunction requireMemoryId(value:string):string{
   const result=value.trim();
   if(!result)throw new Error("Memory id must not be empty.");
   if(result.length>200)throw new Error("Memory id must not exceed 200 characters.");
@@ -115,7 +115,7 @@ function validateState(state:MemoryStoreState,characterId:string,validator:Schem
   if(state.characterId!==characterId)throw new Error("Memory storage character scope mismatch.");
   const ids=new Set<string>();
   for(const item of state.items){
-    validateItemShape(item,characterId,validator);
+    validateItemShape(item,characterId,undefined,validator);
     if(ids.has(item.id))throw new Error("Memory storage contains duplicate item ids.");
     ids.add(item.id);
   }
@@ -204,14 +204,14 @@ export class MemoryBrokerImpl implements MemoryBroker{
       status:"active",
       metadata:requireMetadata(input.metadata??{})
     };
-    validateItemShape(item,scope,this.deps.validator);
+    validateItemShape(item,scope,item.conversationId,this.deps.validator);
     creationAllowed(item,authority);
     const state=await this.loadState(scope);
     if(state.items.some(candidate=>candidate.id===item.id))throw new Error("Memory id already exists.");
     state.items.push(item);
     await this.persist(scope,state);
     await this.audit("create",scope,item.id,authority,"success");
-    await this.publish("MemoryCreated",{characterId:scope,memoryId:item.id,status:item.status,updatedAt:item.updatedAt});
+    await this.publish("MemoryCreated",{characterId:scope,conversationId:item.conversationId,memoryId:item.id,status:item.status,updatedAt:item.updatedAt});
     return cloneItem(item);
   }
 
@@ -238,11 +238,11 @@ export class MemoryBrokerImpl implements MemoryBroker{
       metadata:input.metadata===undefined?cloneMetadata(current.metadata):requireMetadata(input.metadata),
       updatedAt:this.clock.now()
     };
-    validateItemShape(next,scope,this.deps.validator);
+    validateItemShape(next,scope,conversation,this.deps.validator);
     state.items[index]=next;
     await this.persist(scope,state);
     await this.audit("update",scope,id,authority,"success");
-    await this.publish("MemoryUpdated",{characterId:scope,memoryId:id,status:next.status,updatedAt:next.updatedAt});
+    await this.publish("MemoryUpdated",{characterId:scope,conversationId:conversation,memoryId:id,status:next.status,updatedAt:next.updatedAt});
     return cloneItem(next);
   }
 
@@ -273,14 +273,14 @@ export class MemoryBrokerImpl implements MemoryBroker{
       status:"active",
       metadata:requireMetadata(input.metadata??previous.metadata)
     };
-    validateItemShape(replacement,scope,this.deps.validator);
+    if(replacement.conversationId!==conversation)throw new Error("Replacement memory conversation scope mismatch.");\n    validateItemShape(replacement,scope,conversation,this.deps.validator);
     if(replacement.id===previous.id)throw new Error("Superseding memory must use a new memory id.");
     creationAllowed(replacement,authority);
     const updatedPrevious={...previous,status:"superseded" as const,updatedAt:now};
-    validateItemShape(updatedPrevious,scope,this.deps.validator);
-    await this.deps.store.supersede(scope,previous.id,replacement);
+    validateItemShape(updatedPrevious,scope,conversation,this.deps.validator);
+    await this.deps.store.supersede(scope,conversation,previous.id,replacement);
     await this.audit("supersede",scope,replacement.id,authority,"success");
-    await this.publish("MemorySuperseded",{characterId:scope,memoryId:replacement.id,previousMemoryId:previous.id,status:replacement.status,updatedAt:replacement.updatedAt});
+    await this.publish("MemorySuperseded",{characterId:scope,conversationId:conversation,memoryId:replacement.id,previousMemoryId:previous.id,status:replacement.status,updatedAt:replacement.updatedAt});
     return cloneItem(replacement);
   }
 
@@ -294,11 +294,11 @@ export class MemoryBrokerImpl implements MemoryBroker{
     if(current.status!=="active")throw new Error("Only active memory items can be archived.");
     actorAllowed(current,authority);
     const archived:MemoryItem={...current,status:"archived",updatedAt:this.clock.now(),metadata:cloneMetadata(current.metadata)};
-    validateItemShape(archived,scope,this.deps.validator);
+    validateItemShape(archived,scope,conversation,this.deps.validator);
     state.items[index]=archived;
     await this.persist(scope,state);
     await this.audit("archive",scope,id,authority,"success");
-    await this.publish("MemoryArchived",{characterId:scope,memoryId:id,status:archived.status,updatedAt:archived.updatedAt});
+    await this.publish("MemoryArchived",{characterId:scope,conversationId:conversation,memoryId:id,status:archived.status,updatedAt:archived.updatedAt});
     return cloneItem(archived);
   }
 
