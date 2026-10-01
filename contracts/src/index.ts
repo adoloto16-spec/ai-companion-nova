@@ -205,6 +205,7 @@ export type MemoryMutationPolicy="locked"|"suggest"|"auto";
 export interface MemoryItem{
   id:MemoryItemId;
   characterId:CharacterId;
+  conversationId:ConversationId;
   type:MemoryType;
   content:string;
   tags:readonly string[];
@@ -222,6 +223,7 @@ export interface MemoryItem{
 }
 export interface MemoryCreateInput{
   id?:MemoryItemId;
+  conversationId:ConversationId;
   type:MemoryType;
   content:string;
   tags?:readonly string[];
@@ -236,6 +238,7 @@ export interface MemoryCreateInput{
 }
 export interface MemorySearchQuery{
   characterId:CharacterId;
+  conversationId:ConversationId;
   query:string;
   types?:readonly MemoryType[];
   tags?:readonly string[];
@@ -270,7 +273,7 @@ export interface MemoryStoreState{
 export interface MemoryStore{
   load(characterId:CharacterId):Promise<MemoryStoreState|undefined>;
   save(state:MemoryStoreState):Promise<void>;
-  supersede(characterId:CharacterId,previousMemoryId:MemoryItemId,replacement:MemoryItem):Promise<MemoryItem>;
+  supersede(characterId:CharacterId,conversationId:ConversationId,previousMemoryId:MemoryItemId,replacement:MemoryItem):Promise<MemoryItem>;
 }
 export const RETRIEVAL_API_VERSION:ApiVersion="1";
 export const RETRIEVAL_SCHEMA_VERSION="1";
@@ -285,12 +288,12 @@ export interface RetrievalIndexDocument{apiVersion:ApiVersion;schemaVersion:stri
 export interface RetrievalIndexWriter{upsert(document:RetrievalIndexDocument):Promise<void>;remove(characterId:CharacterId,source:RetrievalSource,sourceId:string,conversationId?:ConversationId):Promise<void>;removeCharacter(characterId:CharacterId):Promise<void>}
 
 export interface MemoryBroker{
-  get(characterId:CharacterId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>;
+  get(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>;
   search(query:MemorySearchQuery):Promise<readonly MemoryItem[]>;
   create(characterId:CharacterId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
-  update(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryUpdateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
-  supersede(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
-  archive(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  update(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryUpdateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  supersede(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  archive(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>;
 }
 export interface MemoryExtractionRequest{
   apiVersion:ApiVersion;
