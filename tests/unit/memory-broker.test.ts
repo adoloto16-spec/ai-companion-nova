@@ -16,10 +16,12 @@ async function main(){
   for(const type of ["MemoryCreated","MemoryUpdated","MemorySuperseded","MemoryArchived"]){
     events.subscribe(type,event=>{observed.push(event.type);});
   }
-  const characters=new Set(["character.a","character.b"]);\n  const conversations=new Map([["character.a",new Set(["conversation.a"])],["character.b",new Set(["conversation.b"])] ]);
+  const characters=new Set(["character.a","character.b"]);
+  const conversations=new Map([["character.a",new Set(["conversation.a"])],["character.b",new Set(["conversation.b"])] ]);
   const broker=new MemoryBrokerImpl({
     store,validator:new StandardContractValidator(),audit,events,clock,
-    characterExists:async id=>characters.has(id)
+    characterExists:async id=>characters.has(id),
+    conversationExists:async (characterId,conversationId)=>conversations.get(characterId)?.has(conversationId)??false
   });
   const user={actorId:"test-user",actorType:"user" as const,trusted:true,capabilities:[]};
 
