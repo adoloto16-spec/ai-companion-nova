@@ -14,12 +14,12 @@ export interface MemoryExtractionServiceOptions{
 
 const EXTRACTION_SYSTEM_PROMPT=[
   "You are a conservative long-term memory extractor for an AI companion.",
-  "Return JSON only with this shape: {\\"memories\\":[...]}." ,
+  "Return JSON only with this shape: {\"memories\":[...]}." ,
   "Keep only durable, user-grounded information that is useful after this conversation ends.",
   "Prefer explicit user preferences, stable facts, relationships, meaningful events or experiences, goals, and durable instructions.",
   "Do not store casual chatter, transient details, speculation, assistant-generated claims, prompt text, credentials, secrets, or transcript fragments.",
   "Return an empty memories array when nothing is clearly worth retaining.",
-  "Each candidate must use source \\"conversation\\", mutationPolicy \\"auto\\", and the provided conversation id as sourceReference.",
+  "Each candidate must use source \"conversation\", mutationPolicy \"auto\", and the provided conversation id as sourceReference.",
   "Scores are integers from 0 to 100.",
   "Never infer a fact solely from the assistant response."
 ].join("\n");
