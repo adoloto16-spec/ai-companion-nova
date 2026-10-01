@@ -316,6 +316,7 @@ function CharactersView({characters,activeCharacter,onSelect,onCreate,onRename,o
   const [renameName,setRenameName]=React.useState(activeCharacter.name);
   const [busy,setBusy]=React.useState(false);
   const [message,setMessage]=React.useState("");
+  const [showRaw,setShowRaw]=React.useState(false);
   React.useEffect(()=>setRenameName(activeCharacter.name),[activeCharacter.id,activeCharacter.name]);
 
   const run=async(action:()=>Promise<void>,success:string)=>{
@@ -1107,6 +1108,10 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
       </div>}
 
       {selected.error&&<div className="error">{selected.error.code}: {selected.error.message}</div>}
+      <div className="diagnostic-block">
+        <button type="button" onClick={()=>setShowRaw(current=>!current)}>{showRaw?"Hide raw trace":"Show raw trace"}</button>
+        {showRaw&&<pre className="diagnostic-json">{JSON.stringify(selected,null,2)}</pre>}
+      </div>
     </section>}
   </div>;
 }
@@ -1740,8 +1745,8 @@ function App(){
           onCreateCredential={createCredentialProfile} onDeleteCredential={deleteCredentialProfile} onRefreshModels={refreshPresetModels} onTestPreset={testPreset}/>
       :view==="settings"
       ?<AppSettingsView settings={appSettings} onChange={setAppSettings} onSave={saveAppSettings} onReset={resetAppSettings} saving={saving} message={settingsLoadMessage}/>
-      :view==="diagnostics"
-      ?<DiagnosticsView runtime={foundationRef.current!} settings={appSettings}/>
+      :view==="diagnostics"&&foundationRef.current
+      ?<DiagnosticsView runtime={foundationRef.current} settings={appSettings}/>
       :startupStatus==="error"
         ?<section className="loading-panel" role="alert">
           <strong>Character runtime initialization failed.</strong>
