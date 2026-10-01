@@ -56,7 +56,7 @@ export class MemoryCandidateSource implements ContextCandidateSource {
     private readonly maxResults:DynamicNumber=DEFAULT_MEMORY_CANDIDATE_LIMIT,
     private readonly retriever?:Retriever
   ){
-    if(!Number.isInteger(maxResults)||maxResults<1)throw new Error("maxResults must be a positive integer.");
+    if(typeof maxResults==="number"&&(!Number.isInteger(maxResults)||maxResults<1))throw new Error("maxResults must be a positive integer.");
   }
 
   async collect(request:ContextBuildRequest):Promise<readonly ContextCandidate[]> {
@@ -176,7 +176,7 @@ export class ConversationCandidateSource implements ContextCandidateSource {
     private readonly estimator:TokenEstimator=new DeterministicApproxTokenEstimator(),
     private readonly recentMessageCount:DynamicNumber=RECENT_CONVERSATION_MESSAGES
   ){
-    if(!Number.isInteger(recentMessageCount)||recentMessageCount<1)throw new Error("recentMessageCount must be a positive integer.");
+    if(typeof recentMessageCount==="number"&&(!Number.isInteger(recentMessageCount)||recentMessageCount<1))throw new Error("recentMessageCount must be a positive integer.");
   }
 
   async collect(request:ContextBuildRequest):Promise<readonly ContextCandidate[]> {
@@ -359,9 +359,12 @@ export class DeterministicContextEngine implements ContextEngineContract {
   ){
     if(sources.length===0)throw new Error("Context Engine requires at least one candidate source.");
     this.sources=sources;
-    if(options.recentMessageCount!==undefined && options.recentMessageCount<1)throw new Error("recentMessageCount must be positive.");
-    if(options.memoryCandidateLimit!==undefined && options.memoryCandidateLimit<1)throw new Error("memoryCandidateLimit must be positive.");
-    if(options.retrievalCandidateLimit!==undefined && options.retrievalCandidateLimit<1)throw new Error("retrievalCandidateLimit must be positive.");
+    const recentMessageCount=typeof options.recentMessageCount==="number"?options.recentMessageCount:undefined;
+    const memoryCandidateLimit=typeof options.memoryCandidateLimit==="number"?options.memoryCandidateLimit:undefined;
+    const retrievalCandidateLimit=typeof options.retrievalCandidateLimit==="number"?options.retrievalCandidateLimit:undefined;
+    if(recentMessageCount!==undefined&&recentMessageCount<1)throw new Error("recentMessageCount must be positive.");
+    if(memoryCandidateLimit!==undefined&&memoryCandidateLimit<1)throw new Error("memoryCandidateLimit must be positive.");
+    if(retrievalCandidateLimit!==undefined&&retrievalCandidateLimit<1)throw new Error("retrievalCandidateLimit must be positive.");
   }
 
   async build(request:ContextBuildRequest):Promise<AssembledContext> {
