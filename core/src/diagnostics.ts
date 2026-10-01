@@ -80,7 +80,7 @@ export class InMemoryDiagnosticsStore implements DiagnosticsStore{
     if(this.errors.length>this.maxEntries)this.errors.splice(0,this.errors.length-this.maxEntries);
   }
   recentErrors(limit=Math.min(20,this.maxEntries)):readonly ErrorDiagnostic[]{
-    return this.errors.slice(-Math.max(1,limit)).reverse().map(item=>cloneTrace(item as any) as ErrorDiagnostic);
+    return this.errors.slice(-Math.max(1,limit)).reverse().map(item=>sanitizeRecord(item) as unknown as ErrorDiagnostic);
   }
 }
 
