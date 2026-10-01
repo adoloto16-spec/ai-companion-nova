@@ -139,7 +139,7 @@ export class MemoryExtractionService{
         {role:"system",content:EXTRACTION_SYSTEM_PROMPT},
         {role:"user",content:safeText(JSON.stringify(payload))}
       ]},
-      generation:{responseFormat:{type:"json"}}
+      generation:{responseFormat:{type:"json",schema:STANDARD_SCHEMAS["memory-extraction-result"] as Record<string,unknown>}}
     };
     let response:ChatResponse;
     try{response=await this.runtime.chat(chatRequest,request.providerPresetId);}
