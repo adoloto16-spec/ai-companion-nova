@@ -447,9 +447,14 @@ export interface ChatTurnTrace{
     failed?:string;
   };
 }
+export type ChatTurnTracePatch=Partial<Omit<ChatTurnTrace,"turnId"|"requestId"|"characterId"|"conversationId"|"timestamp">>&{
+  contextBuild?:ChatTurnTrace["contextBuild"];
+  memoryExtraction?:Partial<NonNullable<ChatTurnTrace["memoryExtraction"]>>;
+};
+
 export interface ChatTraceStore{
   start(trace:Pick<ChatTurnTrace,"turnId"|"requestId"|"characterId"|"conversationId"|"timestamp">):void;
-  update(turnId:string,patch:Partial<Omit<ChatTurnTrace,"turnId"|"requestId"|"characterId"|"conversationId"|"timestamp">>):void;
+  update(turnId:string,patch:ChatTurnTracePatch):void;
   recent(limit?:number):readonly ChatTurnTrace[];
   clear():void;
   configure(level:DiagnosticsLogLevel,maxEntries:number):void;
