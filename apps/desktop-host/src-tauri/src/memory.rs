@@ -289,3 +289,41 @@ pub fn supersede(app:&tauri::AppHandle,character_id:&str,conversation_id:&str,pr
     save_unlocked(app,&state)?;
     Ok(replacement)
 }
+
+#[cfg(test)]
+mod tests{
+    use super::*;
+
+    #[test]
+    fn legacy_migration_is_lossless_and_scoped(){
+        let legacy=LegacyMemoryStoreState{
+            api_version:API_VERSION.to_string(),
+            schema_version:LEGACY_SCHEMA_VERSION.to_string(),
+            character_id:"character.a".to_string(),
+            items:vec![
+                LegacyMemoryItem{
+                    id:"m1".to_string(),character_id:"character.a".to_string(),memory_type:MemoryType::Preference,
+                    content:"User prefers aviation examples.".to_string(),tags:vec!["aviation".to_string()],importance:80,confidence:95,
+                    created_at:"2026-09-28T00:00:00.000Z".to_string(),updated_at:"2026-09-28T00:00:00.000Z".to_string(),
+                    valid_from:None,valid_until:None,source:MemorySource::Conversation,source_reference:Some("conversation.a".to_string()),
+                    mutation_policy:MutationPolicy::Auto,status:MemoryStatus::Active,metadata:Map::new()
+                },
+                LegacyMemoryItem{
+                    id:"m2".to_string(),character_id:"character.a".to_string(),memory_type:MemoryType::Fact,
+                    content:"User moved to Nuremberg.".to_string(),tags:vec!["location".to_string()],importance:90,confidence:90,
+                    created_at:"2026-09-29T00:00:00.000Z".to_string(),updated_at:"2026-09-29T00:00:00.000Z".to_string(),
+                    valid_from:None,valid_until:None,source:MemorySource::Conversation,source_reference:Some("conversation.a".to_string()),
+                    mutation_policy:MutationPolicy::Auto,status:MemoryStatus::Active,metadata:Map::new()
+                }
+            ]
+        };
+        validate_legacy(&legacy,"character.a").expect("legacy state should validate");
+        let migrated=legacy_to_v2(legacy,"conversation:character.a:default.v2");
+        assert_eq!(migrated.schema_version,SCHEMA_VERSION);
+        assert_eq!(migrated.character_id,"character.a");
+        assert_eq!(migrated.items.len(),2);
+        assert!(migrated.items.iter().all(|item|item.character_id=="character.a"&&item.conversation_id=="conversation:character.a:default.v2"));
+        assert_eq!(migrated.items[0].content,"User prefers aviation examples.");
+        assert_eq!(migrated.items[1].content,"User moved to Nuremberg.");
+    }
+}
