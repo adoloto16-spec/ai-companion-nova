@@ -5,6 +5,7 @@ export const FOUNDATION_SCHEMA_VERSION="1";
 export const CHAT_API_VERSION:ApiVersion="1";
 export const CHAT_SCHEMA_VERSION="1";
 export * from "./chat-stream";
+export * from "./settings";
 
 export type ModuleType="service"|"adapter"|"worker"|"ui";
 export type ModuleRuntime="typescript"|"rust";
@@ -410,6 +411,48 @@ export interface EventPayloadMap{
 
   ChatRequestFailed:{requestId:string;conversationId?:string;providerId?:string;code:ChatError["code"]};
 }
+export interface ChatTurnTrace{
+  turnId:string;
+  requestId:string;
+  characterId:CharacterId;
+  conversationId:ConversationId;
+  timestamp:string;
+  durationMs?:number;
+  status:"started"|"completed"|"failed"|"interrupted";
+  contextBuild?:{
+    budget:ContextBudget;
+    estimatedTokens:number;
+    includedCandidates:readonly ContextCandidate[];
+    omittedCandidates:readonly ContextCandidate[];
+  };
+  finalRequest?:ChatRequest;
+  providerResponse?:{
+    providerId:string;
+    model:string;
+    finishReason:ChatFinishReason;
+    usage?:ChatUsage;
+    durationMs?:number;
+  };
+  error?:{code:string;message:string};
+  memoryExtraction?:{
+    started:boolean;
+    candidates:readonly MemoryCandidate[];
+    accepted:readonly MemoryCandidate[];
+    rejected:readonly {candidate:MemoryCandidate;reason:string}[];
+    duplicate:readonly MemoryCandidate[];
+    superseded:readonly {candidate:MemoryCandidate;memoryId:string}[];
+    created:readonly {candidate:MemoryCandidate;memoryId:string}[];
+    failed?:string;
+  };
+}
+export interface ChatTraceStore{
+  start(trace:Pick<ChatTurnTrace,"turnId"|"requestId"|"characterId"|"conversationId"|"timestamp">):void;
+  update(turnId:string,patch:Partial<Omit<ChatTurnTrace,"turnId"|"requestId"|"characterId"|"conversationId"|"timestamp">>):void;
+  recent(limit?:number):readonly ChatTurnTrace[];
+  clear():void;
+  configure(level:DiagnosticsLogLevel,maxEntries:number):void;
+}
+
 export interface ErrorDiagnostic{timestamp:string;source:string;code:string;message:string;metadata?:Record<string,unknown>}
 export interface DiagnosticsStore{recordError(source:string,code:string,message:string,metadata?:Record<string,unknown>):void;recentErrors(limit?:number):readonly ErrorDiagnostic[]}
 export function createEvent<K extends keyof EventPayloadMap>(type:K,payload:EventPayloadMap[K],source:string,clock:()=>string,id=source+":"+type+":"+Date.now()):Event<EventPayloadMap[K]>{return{id,type,timestamp:clock(),source,schemaVersion:FOUNDATION_SCHEMA_VERSION,payload}}
