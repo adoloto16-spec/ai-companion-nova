@@ -195,5 +195,5 @@ mod tests{
         let mut settings=default_settings();settings.context.available_context_tokens=MAX_CONTEXT_TOKENS+1;
         assert!(validate(&settings).is_err());
     }
-    #[test]fn preserves_canonical_round_trip(){let settings=default_settings();let encoded=serde_json::to_vec(&settings).expect("encode");let (restored,migrated)=migrate(serde_json::from_slice(&encoded).expect("json"));assert!(!migrated);assert_eq!(restored.context.available_context_tokens,settings.context.available_context_tokens);}
+    #[test]fn preserves_canonical_round_trip(){let settings=default_settings();let encoded=serde_json::to_vec(&settings).expect("encode");let (restored,migrated)=migrate(serde_json::from_slice(&encoded).expect("json")).expect("canonical settings should round-trip");assert!(!migrated);assert_eq!(restored.context.available_context_tokens,settings.context.available_context_tokens);}
 }
