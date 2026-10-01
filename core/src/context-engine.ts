@@ -224,7 +224,8 @@ export class CoreBookCandidateSource implements ContextCandidateSource {
   constructor(
     private readonly reader:CoreBookCandidateReader,
     private readonly estimator:TokenEstimator=new DeterministicApproxTokenEstimator(),
-    private readonly retriever?:Retriever
+    private readonly retriever?:Retriever,
+    private readonly retrievalCandidateLimit:DynamicNumber=32
   ){}
 
   async collect(request:ContextBuildRequest):Promise<readonly ContextCandidate[]> {
@@ -235,7 +236,9 @@ export class CoreBookCandidateSource implements ContextCandidateSource {
     const query=latestUser?.content.trim();
     if(this.retriever&&query){
       try{
-        const result=await this.retriever.search({apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION,characterId:request.characterId,query,sources:["core_book"],limit:32,filters:{status:"enabled"}});
+        const retrievalCandidateLimit=typeof this.retrievalCandidateLimit==="function"?this.retrievalCandidateLimit():this.retrievalCandidateLimit;
+        if(!Number.isInteger(retrievalCandidateLimit)||retrievalCandidateLimit<1)throw new Error("retrieval candidate limit must be a positive integer.");
+        const result=await this.retriever.search({apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION,characterId:request.characterId,query,sources:["core_book"],limit:retrievalCandidateLimit,filters:{status:"enabled"}});
         if(!result.degraded)retrievalIds=new Set(result.candidates.filter(candidate=>candidate.source==="core_book"&&candidate.characterId===request.characterId).map(candidate=>candidate.sourceId));
       }catch{
         retrievalIds=undefined;
@@ -343,6 +346,7 @@ export interface ContextEngineOptions {
   recentMessageCount?:DynamicNumber;
   memoryBroker?:Pick<MemoryBroker,"search"|"get">;
   memoryCandidateLimit?:DynamicNumber;
+  retrievalCandidateLimit?:DynamicNumber;
   retriever?:Retriever;
 }
 
@@ -357,6 +361,7 @@ export class DeterministicContextEngine implements ContextEngineContract {
     this.sources=sources;
     if(options.recentMessageCount!==undefined && options.recentMessageCount<1)throw new Error("recentMessageCount must be positive.");
     if(options.memoryCandidateLimit!==undefined && options.memoryCandidateLimit<1)throw new Error("memoryCandidateLimit must be positive.");
+    if(options.retrievalCandidateLimit!==undefined && options.retrievalCandidateLimit<1)throw new Error("retrievalCandidateLimit must be positive.");
   }
 
   async build(request:ContextBuildRequest):Promise<AssembledContext> {
@@ -453,7 +458,7 @@ export function createDeterministicContextEngine(
   const estimator=options.tokenEstimator??new DeterministicApproxTokenEstimator();
   const sources:ContextCandidateSource[]=[
     new ConversationCandidateSource(estimator,options.recentMessageCount??RECENT_CONVERSATION_MESSAGES),
-    new CoreBookCandidateSource(coreBookReader,estimator,options.retriever)
+    new CoreBookCandidateSource(coreBookReader,estimator,options.retriever,options.retrievalCandidateLimit??32)
   ];
   if(options.memoryBroker){
     sources.push(new MemoryCandidateSource(
