@@ -1,3 +1,4 @@
+import {APP_SETTINGS_API_VERSION,APP_SETTINGS_SCHEMA_VERSION} from "./settings";
 import type {DiagnosticsLogLevel} from "./settings";
 import type {ChatStreamHandlers,ChatStreamOptions} from "./chat-stream";
 export type ApiVersion = "1";
