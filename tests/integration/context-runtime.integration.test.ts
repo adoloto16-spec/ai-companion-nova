@@ -22,7 +22,7 @@ async function main(){
       const source=query.sources?.[0]??"memory";
       const ids=source==="core_book"?(coreBookIndexId?[coreBookIndexId]:[]):[...memoryIndexIds];
       const candidates:RetrievalCandidate[]=(query.query.toLowerCase().includes("tea")||query.query.toLowerCase().includes("munich"))
-        ? ids.map(sourceId=>({source,sourceId,characterId:query.characterId,score:1,matchedText:"tea",matches:[{field:"content",text:"tea"}],metadata:{updatedAt:"2026-09-26T12:00:00.000Z"}}))
+        ? ids.map(sourceId=>({source,sourceId,characterId:query.characterId,conversationId:source==="memory"?query.conversationId:undefined,score:1,matchedText:"tea",matches:[{field:"content",text:"tea"}],metadata:{updatedAt:"2026-09-26T12:00:00.000Z"}}))
         : [];
       return {apiVersion:"1",schemaVersion:"1",characterId:query.characterId,query:query.query,candidates,degraded:false};
     },
@@ -83,6 +83,7 @@ async function main(){
     ok(retrievalQueries.some(query=>query.sources?.[0]==="memory"&&query.characterId===nova.id),"Context Engine queries Memory through Retriever boundary");
     ok(retrievalQueries.some(query=>query.sources?.[0]==="core_book"&&query.characterId===nova.id),"Context Engine queries Core Book through Retriever boundary");
     ok(retrievalQueries.every(query=>query.characterId===nova.id),"Retriever queries remain character scoped");
+    equal(retrievalQueries.find(query=>query.sources?.[0]==="memory")?.conversationId,novaConversation.id,"Memory retrieval query preserves conversation scope");
     ok(context.includedCandidates.some(candidate=>candidate.referenceId===novaEntry.id),"Nova Core Book selected through runtime boundary");
     ok(context.includedCandidates.some(candidate=>candidate.referenceId===novaMemory.id),"Nova Dynamic Memory selected through existing MemoryBroker boundary");
     ok(!context.includedCandidates.some(candidate=>candidate.referenceId===gmMemory.id),"GM Dynamic Memory is isolated from Nova context");
