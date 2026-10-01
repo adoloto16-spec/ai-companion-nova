@@ -415,12 +415,6 @@ export class ChatSessionController{
       }
 
       return {status:"sent",response:canonicalResponse};
-        ...response,
-        finishReason:canonicalFinishReason,
-        message:canonicalMessage,
-        ...(canonicalUsage?{usage:canonicalUsage}:{})
-      };
-      return {status:"sent",response:canonicalResponse};
     }catch(error){
       if(active.stopRequested||isAbortError(error)){
         return this.markInterrupted(active,this.session.getMessages().find(message=>message.id===active.assistantId));
