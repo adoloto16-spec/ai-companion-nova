@@ -34,7 +34,7 @@ export class RetrievalEventIndexer{
   }
   private async refreshMemory(characterId:string,conversationId:string,memoryId:string):Promise<void>{
     const item=await this.options.memory.get(characterId,conversationId,memoryId);
-    if(!item||item.status!=="active"){await this.remove(characterId,"memory",memoryId);return}
+    if(!item||item.status!=="active"){await this.remove(characterId,"memory",memoryId,conversationId);return}
     await this.options.writer.upsert(memoryDocument(item));
   }
   private async remove(characterId:string,source:RetrievalSource,sourceId:string,conversationId?:string):Promise<void>{await this.options.writer.remove(characterId,source,sourceId,conversationId)}
