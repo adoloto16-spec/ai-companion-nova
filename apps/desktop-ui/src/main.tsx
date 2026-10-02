@@ -3,7 +3,7 @@ import {createRoot} from "react-dom/client";
 import {invoke} from "@tauri-apps/api/core";
 import {ChatSessionController,ConversationSession,InMemoryCharacterStore} from "../../../core/src/index";
 
-import {startFoundationRuntime,testProviderConfiguration,testProviderPresetConfiguration,validateProviderConfiguration,listProviderModels} from "../../../runtime/bootstrap/src/index";
+import {startFoundationRuntime,testProviderPresetConfiguration,listProviderModels} from "../../../runtime/bootstrap/src/index";
 import type {FoundationRuntime} from "../../../runtime/bootstrap/src/index";
 import {IpcCredentialStore,InMemoryCredentialStore} from "../../../host/credentials/src/index";
 import {IpcCredentialProfileStore,InMemoryCredentialProfileStore,emptyCredentialProfileState} from "../../../host/credential-profiles/src/index";
@@ -17,7 +17,6 @@ import {IpcModelProfileStore,InMemoryModelProfileStore} from "../../../host/mode
 import {IpcSettingsStore,InMemorySettingsStore} from "../../../host/settings/src/index";
 import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
-  PROVIDER_CONFIGURATION_API_VERSION,PROVIDER_CONFIGURATION_SCHEMA_VERSION,
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
   type Character, type CoreBookActivation, type CoreBookEntry,
@@ -26,19 +25,9 @@ import {
 } from "../../../contracts/src/index";
 import "./styles.css";
 
-type HostDiagnostics={status:string;runtime:string;capabilities:string[]};
-const credentialReference={id:"provider.openai-compatible.default",kind:"api-key",provider:"openai-compatible"} as const;
-const defaultConfiguration=():ProviderConfiguration=>({
-  apiVersion:PROVIDER_CONFIGURATION_API_VERSION,schemaVersion:PROVIDER_CONFIGURATION_SCHEMA_VERSION,
-  providerId:"openai-compatible",enabled:false,baseUrl:"https://api.openai.com/v1",model:"",
-  credentialReference,timeoutMs:30000
-});
 const preview:RuntimeDiagnostics={schemaVersion:"1",timestamp:new Date().toISOString(),runtimeStatus:"stopped",coreStatus:"stopped",modules:[],providers:[],recentErrors:[],capabilities:[]};
 
-async function loadHost():Promise<HostDiagnostics>{
-  try{return await invoke<HostDiagnostics>("get_host_diagnostics")}
-  catch{return {status:"browser-preview",runtime:"host-unavailable",capabilities:[]}}
-}
+
 async function publishAndReadRuntimeDiagnostics(snapshot:RuntimeDiagnostics):Promise<RuntimeDiagnostics>{
   try{
     await invoke("set_runtime_diagnostics",{diagnostics:snapshot});
@@ -1091,62 +1080,6 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
   </div>;
 }
 
-function SettingsView({
-  runtime,host,configuration,setConfiguration,credentialSaved,apiKey,setApiKey,settingsMessage,saving,testing,onSave,onTest,onRemoveCredential
-}:{
-  runtime:RuntimeDiagnostics;host:HostDiagnostics;configuration:ProviderConfiguration;setConfiguration:React.Dispatch<React.SetStateAction<ProviderConfiguration>>;
-  credentialSaved:boolean;apiKey:string;setApiKey:React.Dispatch<React.SetStateAction<string>>;settingsMessage:string;saving:boolean;testing:boolean;
-  onSave:()=>Promise<void>;onTest:()=>Promise<void>;onRemoveCredential:()=>Promise<void>;
-}){
-  return <div className="settings-grid">
-    <section>
-      <h2>Provider settings</h2>
-      <label>Provider type
-        <select value={configuration.providerId} onChange={e=>setConfiguration(c=>({...c,providerId:e.target.value}))}><option value="openai-compatible">OpenAI-compatible</option></select>
-      </label>
-      <label className="checkbox">Enabled
-        <input type="checkbox" checked={configuration.enabled} onChange={e=>setConfiguration(c=>({...c,enabled:e.target.checked}))}/>
-      </label>
-      <label>Base URL
-        <input value={configuration.baseUrl} onChange={e=>setConfiguration(c=>({...c,baseUrl:e.target.value}))} placeholder="https://host.example/v1"/>
-      </label>
-      <label>Model
-        <input value={configuration.model} onChange={e=>setConfiguration(c=>({...c,model:e.target.value}))} placeholder="model-id"/>
-      </label>
-      <label>Timeout (ms)
-        <input type="number" min="1" value={configuration.timeoutMs??30000} onChange={e=>setConfiguration(c=>({...c,timeoutMs:Number(e.target.value)}))}/>
-      </label>
-      <label>API key
-        <input type="password" autoComplete="off" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder={credentialSaved?"Saved credential":"Enter API key"}/>
-      </label>
-      <div className="actions">
-        <button onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save"}</button>
-        <button onClick={()=>void onTest()} disabled={testing||!credentialSaved||!configuration.enabled}>{testing?"Testing…":"Test provider"}</button>
-        <button onClick={()=>void onRemoveCredential()} disabled={!credentialSaved}>Remove stored credential</button>
-      </div>
-      {credentialSaved&&<small>Saved credential</small>}
-      {settingsMessage&&<div className="notice" role="status">{settingsMessage}</div>}
-      <p className="hint">The saved API key is never loaded back into the settings UI.</p>
-    </section>
-    <section>
-      <h2>Runtime</h2>
-      <div className="status-grid"><span>Runtime</span><strong>{runtime.runtimeStatus}</strong><span>Core</span><strong>{runtime.coreStatus}</strong><span>Host IPC</span><strong>{host.status} · {host.runtime}</strong></div>
-    </section>
-    <section>
-      <h2>Providers</h2>
-      {runtime.providers.length===0?<div>No providers in current runtime.</div>:runtime.providers.map(p=>
-        <div className="row" key={p.id}><span>{p.id}</span><span>{p.health?.status??"unknown"}</span></div>
-      )}
-    </section>
-    <section>
-      <h2>Recent errors</h2>
-      {runtime.recentErrors.length===0?<div>None</div>:runtime.recentErrors.map((error,index)=>
-        <div className="error" key={error.timestamp+error.code+index}><code>{error.code}</code> · {error.message}</div>
-      )}
-    </section>
-  </div>;
-}
-
 class ViewErrorBoundary extends React.Component<{
   view:string;
   onError:(error:Error,info:React.ErrorInfo)=>void;
@@ -1175,6 +1108,48 @@ class ViewErrorBoundary extends React.Component<{
   }
 }
 
+function SettingsContainerView({
+  appSettings,onAppSettingsChange,settingsLoadMessage,settingsSaving,onSaveSettings,onResetSettings,
+  runtime,providerPresets,activePresetId,credentialProfiles,credentialSavedMap,
+  onSavePreset,onActivatePreset,onDeletePreset,onCreateCredential,onDeleteCredential,onRefreshModels,onTestPreset,onError
+}:{
+  appSettings:AppSettings;
+  onAppSettingsChange:(settings:AppSettings)=>void;
+  settingsLoadMessage:string;
+  settingsSaving:boolean;
+  onSaveSettings:()=>Promise<void>;
+  onResetSettings:()=>Promise<void>;
+  runtime:RuntimeDiagnostics;
+  providerPresets:readonly ProviderPreset[];
+  activePresetId:string|null;
+  credentialProfiles:readonly CredentialProfile[];
+  credentialSavedMap:Record<string,boolean>;
+  onSavePreset:(preset:ProviderPreset,activate:boolean)=>Promise<void>;
+  onActivatePreset:(id:string)=>Promise<void>;
+  onDeletePreset:(id:string)=>Promise<void>;
+  onCreateCredential:(label:string,secret:string)=>Promise<CredentialProfile>;
+  onDeleteCredential:(id:string)=>Promise<void>;
+  onRefreshModels:(preset:ProviderPreset)=>Promise<readonly ModelInfo[]>;
+  onTestPreset:(preset:ProviderPreset)=>Promise<ProviderConnectionTestResult>;
+  onError:(error:Error,info:React.ErrorInfo)=>void;
+}){
+  const [tab,setTab]=React.useState<"general"|"provider-presets">("general");
+  return <section className="settings-container" aria-label="Settings">
+    <div className="settings-subnav" role="tablist" aria-label="Settings sections">
+      <button type="button" role="tab" aria-selected={tab==="general"} className={tab==="general"?"nav-button active":"nav-button"} onClick={()=>setTab("general")}>General</button>
+      <button type="button" role="tab" aria-selected={tab==="provider-presets"} className={tab==="provider-presets"?"nav-button active":"nav-button"} onClick={()=>setTab("provider-presets")}>Provider Presets</button>
+    </div>
+    {tab==="general"
+      ?<ViewErrorBoundary key="settings-general" view="settings-general" onError={onError}>
+        <AppSettingsView settings={appSettings} onChange={onAppSettingsChange} onSave={onSaveSettings} onReset={onResetSettings} saving={settingsSaving} message={settingsLoadMessage}/>
+      </ViewErrorBoundary>
+      :<ViewErrorBoundary key="settings-provider-presets" view="settings-provider-presets" onError={onError}>
+        <ProviderPresetsView presets={providerPresets} activePresetId={activePresetId} credentialProfiles={credentialProfiles} credentialSaved={credentialSavedMap}
+          runtime={runtime} onSavePreset={onSavePreset} onActivatePreset={onActivatePreset} onDeletePreset={onDeletePreset}
+          onCreateCredential={onCreateCredential} onDeleteCredential={onDeleteCredential} onRefreshModels={onRefreshModels} onTestPreset={onTestPreset}/>
+      </ViewErrorBoundary>}
+  </section>;
+}
 function isTauriRuntime():boolean{
   return typeof window!=="undefined" && Boolean((window as unknown as Record<string,unknown>).__TAURI_INTERNALS__);
 }
@@ -1199,15 +1174,9 @@ function credentialSavedEntries(
 }
 
 function App(){
-  const [view,setView]=React.useState<"chat"|"characters"|"core-book"|"model-profile"|"provider-presets"|"provider-settings"|"settings"|"diagnostics">("chat");
+  const [view,setView]=React.useState<"chat"|"characters"|"core-book"|"model-profile"|"settings"|"diagnostics">("chat");
   const [runtime,setRuntime]=React.useState<RuntimeDiagnostics>(preview);
-  const [host,setHost]=React.useState<HostDiagnostics>({status:"starting",runtime:"unknown",capabilities:[]});
-  const [configuration,setConfiguration]=React.useState<ProviderConfiguration>(defaultConfiguration());
-  const [credentialSaved,setCredentialSaved]=React.useState(false);
-  const [apiKey,setApiKey]=React.useState("");
-  const [settingsMessage,setSettingsMessage]=React.useState("");
   const [saving,setSaving]=React.useState(false);
-  const [testing,setTesting]=React.useState(false);
   const [startupStatus,setStartupStatus]=React.useState<"initializing"|"ready"|"error">("initializing");
   const [startupError,setStartupError]=React.useState("");
   const [characters,setCharacters]=React.useState<readonly Character[]>([]);
@@ -1392,10 +1361,7 @@ function App(){
     setConversations(await runtimeInstance.listConversations(active.id));
     setActiveConversation(loaded.conversation);
     setActiveModelProfile(loaded.profile);
-    setChatController(current=>{
-      const snapshot=current?.getSnapshot();
-      return snapshot?.characterId===active.id&&snapshot.conversationId===loaded.conversation.id?current:loaded.controller;
-    });
+    setChatController(loaded.controller);
   },[controllerForConversation,loadModelProfile]);
 
   const addConfigurationLoadError=React.useCallback((diagnostics:RuntimeDiagnostics):RuntimeDiagnostics=>{
@@ -1439,6 +1405,7 @@ function App(){
     providerConfigurationErrorRef.current=configurationLoadError;
     providerPresetStateRef.current=presetState;
     credentialProfileStateRef.current=credentialState;
+    setChatController(null);
     await foundationRef.current?.stop();
     const next=await startFoundationRuntime({
       providerConfiguration:config,credentialStore,characterStore,coreBookStore,memoryStore,conversationStore,retriever,retrievalIndexWriter:retriever,
@@ -1479,7 +1446,6 @@ function App(){
           presetState={...presetState,activePresetId:presetState.presets[0]!.id};
           await providerPresetStore.save(presetState);
         }
-        if(legacy)setConfiguration(legacy);
         const savedMap:Record<string,boolean>={};
         for(const profile of credentialState.profiles){
           try{savedMap[profile.id]=await credentialStore.exists(profile.credentialReference)}catch{savedMap[profile.id]=false;}
@@ -1493,16 +1459,10 @@ function App(){
         setActivePresetId(presetState.activePresetId);
         providerPresetStateRef.current=presetState;
         credentialProfileStateRef.current=credentialState;
-        if(legacy){
-          const legacyProfile=credentialState.profiles.find(profile=>profile.credentialReference.id===legacy.credentialReference?.id);
-          setCredentialSaved(Boolean(legacyProfile&&savedMap[legacyProfile.id]));
-        }else setCredentialSaved(false);
-        if(loaded.error)setSettingsMessage("Legacy provider configuration could not be loaded: "+loaded.error);
         await refreshRuntime(activeConfiguration,loaded.error,presetState,credentialState);
         const loadedSettings=foundationRef.current?.getSettings()??defaultAppSettings();
         setAppSettings(loadedSettings);
         if(!active)return;
-        const hostSnapshot=await loadHost();if(active)setHost(hostSnapshot);
         const sync=async()=>{
           const foundation=foundationRef.current;if(!foundation||!active)return;
           try{const snapshot=await foundation.diagnostics();const live=await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(snapshot));if(active)setRuntime(live)}
@@ -1718,53 +1678,6 @@ function App(){
     finally{setSaving(false);}
   },[]);
 
-  const save=async()=>{
-    setSettingsMessage("");
-    const validation=validateProviderConfiguration(configuration);
-    if(!validation.valid){setSettingsMessage(validation.errors.join(" "));return}
-    setSaving(true);
-    try{
-      if(apiKey.length>0)await credentialStore.setSecret(configuration.credentialReference!,apiKey);
-      const hasCredential=await credentialStore.exists(configuration.credentialReference!);
-      if(configuration.enabled&&!hasCredential){setSettingsMessage("Save an API credential before enabling the provider.");return}
-      await configurationStore.save(configuration);
-      setApiKey("");
-      setCredentialSaved(hasCredential);
-      await refreshRuntime(configuration);
-      setSettingsMessage("Provider configuration saved.");
-    }catch(error){
-      setSettingsMessage(error instanceof Error?error.message:"Provider configuration could not be saved.");
-    }finally{setSaving(false)}
-  };
-
-  const removeCredential=async()=>{
-    setSettingsMessage("");
-    try{
-      if(!configuration.credentialReference){setSettingsMessage("No credential reference is configured.");return}
-      await credentialStore.deleteSecret(configuration.credentialReference);
-      const disabled={...configuration,enabled:false};
-      await configurationStore.save(disabled);
-      setConfiguration(disabled);
-      setCredentialSaved(false);
-      setApiKey("");
-      await refreshRuntime(disabled);
-      setSettingsMessage("Stored credential removed and real provider disabled.");
-    }catch(error){
-      setSettingsMessage(error instanceof Error?error.message:"Credential removal failed.");
-    }
-  };
-
-  const test=async()=>{
-    setSettingsMessage("");
-    setTesting(true);
-    try{
-      const result=await testProviderConfiguration(configuration,credentialStore);
-      setSettingsMessage(resultLabel(result)+(result.message?" · "+result.message:""));
-    }catch(error){
-      setSettingsMessage(error instanceof Error?error.message:"Provider connection test failed.");
-    }finally{setTesting(false)}
-  };
-
   return <main className="app-shell">
     <header className="app-header">
       <div><h1>Nova</h1><p>AI Companion</p></div>
@@ -1773,8 +1686,6 @@ function App(){
         <button className={view==="characters"?"nav-button active":"nav-button"} onClick={()=>setView("characters")}>Characters</button>
         <button className={view==="core-book"?"nav-button active":"nav-button"} onClick={()=>setView("core-book")}>Core Book</button>
         <button className={view==="model-profile"?"nav-button active":"nav-button"} onClick={()=>setView("model-profile")}>Model Profile</button>
-        <button className={view==="provider-presets"?"nav-button active":"nav-button"} onClick={()=>setView("provider-presets")}>Provider Presets</button>
-        <button className={view==="provider-settings"?"nav-button active":"nav-button"} onClick={()=>setView("provider-settings")}>Provider Settings</button>
         <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Settings</button>
         {appSettings.ui.showDiagnosticsInChat&&<button className={view==="diagnostics"?"nav-button active":"nav-button"} onClick={()=>setView("diagnostics")}>Diagnostics</button>}
       </nav>
@@ -1782,16 +1693,27 @@ function App(){
     <ViewErrorBoundary key={view} view={view} onError={reportViewError}>
     {view==="model-profile"&&activeCharacter&&activeModelProfile
       ?<ModelProfileView profile={activeModelProfile} runtime={runtime} presets={providerPresets} activePresetId={activePresetId} onSave={saveModelProfile}/>
-      :view==="provider-presets"
-      ?<ProviderPresetsView presets={providerPresets} activePresetId={activePresetId} credentialProfiles={credentialProfiles} credentialSaved={credentialSavedMap}
-          runtime={runtime} onSavePreset={saveProviderPreset} onActivatePreset={activateProviderPreset} onDeletePreset={deleteProviderPreset}
-          onCreateCredential={createCredentialProfile} onDeleteCredential={deleteCredentialProfile} onRefreshModels={refreshPresetModels} onTestPreset={testPreset}/>
-      :view==="provider-settings"
-      ?<SettingsView runtime={runtime} host={host} configuration={configuration} setConfiguration={setConfiguration}
-          credentialSaved={credentialSaved} apiKey={apiKey} setApiKey={setApiKey} settingsMessage={settingsMessage}
-          saving={saving} testing={testing} onSave={save} onTest={test} onRemoveCredential={removeCredential}/>
       :view==="settings"
-      ?<AppSettingsView settings={appSettings} onChange={setAppSettings} onSave={saveAppSettings} onReset={resetAppSettings} saving={saving} message={settingsLoadMessage}/>
+      ?<SettingsContainerView
+          appSettings={appSettings}
+          onAppSettingsChange={setAppSettings}
+          settingsLoadMessage={settingsLoadMessage}
+          settingsSaving={saving}
+          onSaveSettings={saveAppSettings}
+          onResetSettings={resetAppSettings}
+          runtime={runtime}
+          providerPresets={providerPresets}
+          activePresetId={activePresetId}
+          credentialProfiles={credentialProfiles}
+          credentialSavedMap={credentialSavedMap}
+          onSavePreset={saveProviderPreset}
+          onActivatePreset={activateProviderPreset}
+          onDeletePreset={deleteProviderPreset}
+          onCreateCredential={createCredentialProfile}
+          onDeleteCredential={deleteCredentialProfile}
+          onRefreshModels={refreshPresetModels}
+          onTestPreset={testPreset}
+          onError={reportViewError}/>
       :view==="diagnostics"&&foundationRef.current
       ?<DiagnosticsView runtime={foundationRef.current} settings={appSettings}/>
       :startupStatus==="error"
