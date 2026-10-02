@@ -54,6 +54,7 @@ export interface FoundationRuntime{
   start():Promise<void>;
   stop():Promise<void>;
   diagnostics():Promise<RuntimeDiagnostics>;
+  recordDiagnosticError(source:string,code:string,message:string,metadata?:Record<string,unknown>):void;
   invoke(request:import("../../../contracts/src/index").ActionRequest):Promise<import("../../../contracts/src/index").ActionResult>;
   chat(request:ChatRequest,providerPresetId?:string):Promise<ChatResponse>;
   stream(request:ChatRequest,handlers:import("../../../contracts/src/index").ChatStreamHandlers,options?:import("../../../contracts/src/index").ChatStreamOptions,providerPresetId?:string):Promise<ChatResponse>;
@@ -311,6 +312,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     },
     async stop(){try{retrievalIndexer?.stop();await moduleManager.stopAll();}finally{runtimeStatus="stopped";}},
     diagnostics:snapshot,
+    recordDiagnosticError:(source,code,message,metadata)=>diagnosticsStore.recordError(source,code,message,metadata),
     invoke:request=>broker.execute({request,credential:characterCredential}),
     stream:async(request,handlers,streamOptions={},providerPresetId)=>{
       if(providerPresetId){
