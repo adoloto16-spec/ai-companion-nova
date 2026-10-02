@@ -1218,7 +1218,7 @@ function App(){
   const [activeConversation,setActiveConversation]=React.useState<Conversation|undefined>();
   const foundationRef=React.useRef<FoundationRuntime|undefined>(undefined);
   const providerConfigurationErrorRef=React.useRef<string|undefined>(undefined);
-  const conversationLoadErrorRef=React.useRef<string|undefined>();
+  const conversationLoadErrorRef=React.useRef<string|undefined>(undefined);
   const modelProfileLoadErrorRef=React.useRef<string|undefined>();
   const credentialStore=React.useMemo(()=>new IpcCredentialStore(invoke),[]);
   const configurationStore=React.useMemo(()=>new IpcProviderConfigurationStore(invoke),[]);
