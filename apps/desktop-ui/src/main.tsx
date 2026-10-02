@@ -678,32 +678,6 @@ function ProviderPresetsView({
     finally{setBusy(false)}
   };
 
-  const saveAppSettings=React.useCallback(async()=>{
-    const errors=validateAppSettings(appSettings);
-    if(errors.length){setSettingsLoadMessage(errors.join(" "));return;}
-    const foundation=foundationRef.current;
-    if(!foundation){setSettingsLoadMessage("Settings runtime is not available.");return;}
-    setSaving(true);setSettingsLoadMessage("");
-    try{
-      const next=await foundation.updateSettings(appSettings);
-      setAppSettings(next);
-      setSettingsLoadMessage("Settings saved.");
-    }catch(error){setSettingsLoadMessage(error instanceof Error?error.message:"Settings could not be saved.");}
-    finally{setSaving(false);}
-  },[appSettings]);
-
-  const resetAppSettings=React.useCallback(async()=>{
-    const foundation=foundationRef.current;
-    if(!foundation){setSettingsLoadMessage("Settings runtime is not available.");return;}
-    setSaving(true);setSettingsLoadMessage("");
-    try{
-      const next=await foundation.resetSettings();
-      setAppSettings(next);
-      setSettingsLoadMessage("Settings restored to defaults.");
-    }catch(error){setSettingsLoadMessage(error instanceof Error?error.message:"Settings could not be reset.");}
-    finally{setSaving(false);}
-  },[]);
-
   const test=async()=>{
     setBusy(true);setMessage("");
     try{
@@ -1171,6 +1145,34 @@ function SettingsView({
   </div>;
 }
 
+class ViewErrorBoundary extends React.Component<{
+  view:string;
+  onError:(error:Error,info:React.ErrorInfo)=>void;
+  children:React.ReactNode;
+},{hasError:boolean;message:string}>{
+  state={hasError:false,message:""};
+  static getDerivedStateFromError(error:Error):{hasError:boolean;message:string}{
+    return {hasError:true,message:safeErrorMessage(error,"Unknown view error")};
+  }
+  componentDidCatch(error:Error,info:React.ErrorInfo):void{
+    this.props.onError(error,info);
+  }
+  componentDidUpdate(previousProps:Readonly<{view:string}>):void{
+    if(previousProps.view!==this.props.view&&this.state.hasError)this.setState({hasError:false,message:""});
+  }
+  private retry=()=>this.setState({hasError:false,message:""});
+  render(){
+    if(this.state.hasError){
+      return <section className="loading-panel" role="alert">
+        <strong>This view failed to load.</strong>
+        <div>{this.state.message}</div>
+        <button type="button" onClick={this.retry}>Retry view</button>
+      </section>;
+    }
+    return this.props.children;
+  }
+}
+
 function isTauriRuntime():boolean{
   return typeof window!=="undefined" && Boolean((window as unknown as Record<string,unknown>).__TAURI_INTERNALS__);
 }
@@ -1195,7 +1197,7 @@ function credentialSavedEntries(
 }
 
 function App(){
-  const [view,setView]=React.useState<"chat"|"characters"|"core-book"|"model-profile"|"provider-presets"|"settings"|"diagnostics">("chat");
+  const [view,setView]=React.useState<"chat"|"characters"|"core-book"|"model-profile"|"provider-presets"|"provider-settings"|"settings"|"diagnostics">("chat");
   const [runtime,setRuntime]=React.useState<RuntimeDiagnostics>(preview);
   const [host,setHost]=React.useState<HostDiagnostics>({status:"starting",runtime:"unknown",capabilities:[]});
   const [configuration,setConfiguration]=React.useState<ProviderConfiguration>(defaultConfiguration());
@@ -1236,6 +1238,15 @@ function App(){
   const credentialProfileStateRef=React.useRef<CredentialProfileStoreState>(emptyCredentialProfileState());
   const providerPresetStateRef=React.useRef<ProviderPresetStoreState>(emptyProviderPresetState());
   const retriever=React.useMemo(()=>isTauriRuntime()?new IpcFullTextRetriever(invoke):undefined,[]);
+
+  const reportViewError=React.useCallback((error:Error,info:React.ErrorInfo)=>{
+    foundationRef.current?.recordDiagnosticError(
+      "ui-view",
+      "VIEW_RENDER_FAILED",
+      safeErrorMessage(error,"Unknown view error"),
+      {view,componentStack:info.componentStack??""}
+    );
+  },[view]);
 
   const controllerForSession=React.useCallback((session:ConversationSession)=>new ChatSessionController(
     session,
@@ -1676,6 +1687,32 @@ function App(){
     });
   },[modelProfileStore]);
 
+  const saveAppSettings=React.useCallback(async()=>{
+    const errors=validateAppSettings(appSettings);
+    if(errors.length){setSettingsLoadMessage(errors.join(" "));return;}
+    const foundation=foundationRef.current;
+    if(!foundation){setSettingsLoadMessage("Settings runtime is not available.");return;}
+    setSaving(true);setSettingsLoadMessage("");
+    try{
+      const next=await foundation.updateSettings(appSettings);
+      setAppSettings(next);
+      setSettingsLoadMessage("Settings saved.");
+    }catch(error){setSettingsLoadMessage(error instanceof Error?error.message:"Settings could not be saved.");}
+    finally{setSaving(false);}
+  },[appSettings]);
+
+  const resetAppSettings=React.useCallback(async()=>{
+    const foundation=foundationRef.current;
+    if(!foundation){setSettingsLoadMessage("Settings runtime is not available.");return;}
+    setSaving(true);setSettingsLoadMessage("");
+    try{
+      const next=await foundation.resetSettings();
+      setAppSettings(next);
+      setSettingsLoadMessage("Settings restored to defaults.");
+    }catch(error){setSettingsLoadMessage(error instanceof Error?error.message:"Settings could not be reset.");}
+    finally{setSaving(false);}
+  },[]);
+
   const save=async()=>{
     setSettingsMessage("");
     const validation=validateProviderConfiguration(configuration);
@@ -1732,16 +1769,22 @@ function App(){
         <button className={view==="core-book"?"nav-button active":"nav-button"} onClick={()=>setView("core-book")}>Core Book</button>
         <button className={view==="model-profile"?"nav-button active":"nav-button"} onClick={()=>setView("model-profile")}>Model Profile</button>
         <button className={view==="provider-presets"?"nav-button active":"nav-button"} onClick={()=>setView("provider-presets")}>Provider Presets</button>
+        <button className={view==="provider-settings"?"nav-button active":"nav-button"} onClick={()=>setView("provider-settings")}>Provider Settings</button>
         <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Settings</button>
         {appSettings.ui.showDiagnosticsInChat&&<button className={view==="diagnostics"?"nav-button active":"nav-button"} onClick={()=>setView("diagnostics")}>Diagnostics</button>}
       </nav>
     </header>
+    <ViewErrorBoundary key={view} view={view} onError={reportViewError}>
     {view==="model-profile"&&activeCharacter&&activeModelProfile
       ?<ModelProfileView profile={activeModelProfile} runtime={runtime} presets={providerPresets} activePresetId={activePresetId} onSave={saveModelProfile}/>
       :view==="provider-presets"
       ?<ProviderPresetsView presets={providerPresets} activePresetId={activePresetId} credentialProfiles={credentialProfiles} credentialSaved={credentialSavedMap}
           runtime={runtime} onSavePreset={saveProviderPreset} onActivatePreset={activateProviderPreset} onDeletePreset={deleteProviderPreset}
           onCreateCredential={createCredentialProfile} onDeleteCredential={deleteCredentialProfile} onRefreshModels={refreshPresetModels} onTestPreset={testPreset}/>
+      :view==="provider-settings"
+      ?<SettingsView runtime={runtime} host={host} configuration={configuration} setConfiguration={setConfiguration}
+          credentialSaved={credentialSaved} apiKey={apiKey} setApiKey={setApiKey} settingsMessage={settingsMessage}
+          saving={saving} testing={testing} onSave={save} onTest={test} onRemoveCredential={removeCredential}/>
       :view==="settings"
       ?<AppSettingsView settings={appSettings} onChange={setAppSettings} onSave={saveAppSettings} onReset={resetAppSettings} saving={saving} message={settingsLoadMessage}/>
       :view==="diagnostics"&&foundationRef.current
@@ -1766,6 +1809,7 @@ function App(){
         :view==="core-book"&&activeCharacter
           ?<CoreBookView runtime={foundationRef.current!} character={activeCharacter}/>
           :<section className="loading-panel">Initializing characters…</section>}
+    </ViewErrorBoundary>
   </main>;
 }
 
