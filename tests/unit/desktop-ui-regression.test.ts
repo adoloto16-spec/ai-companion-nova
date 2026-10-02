@@ -30,7 +30,7 @@ assert.match(source,/This view failed to load\./);
 assert.match(source,/onClick=\{this\.retry\}/);
 assert.match(source,/foundationRef\.current\?\.recordDiagnosticError/);
 
-assert.match(providerPresets,/presets\.length===0\?\?<div>No saved presets/);
+assert.match(providerPresets,/presets\.length===0\?<option value="">No saved presets<\\/option>/);
 assert.match(providerPresets,/Model discovery failed:/);
 assert.match(providerPresets,/Models refreshed\./);
 
