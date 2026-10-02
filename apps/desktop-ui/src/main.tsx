@@ -1,11 +1,10 @@
 import React from "react";
 import {createRoot} from "react-dom/client";
 import {invoke} from "@tauri-apps/api/core";
-import {
-  ChatSessionController,ConversationSession,type Character,type FoundationRuntime,InMemoryCharacterStore,type RuntimeDiagnostics,
-  type CoreBookActivation,type CoreBookEntry
-} from "../../../core/src/index";
+import {ChatSessionController,ConversationSession,InMemoryCharacterStore} from "../../../core/src/index";
+
 import {startFoundationRuntime,testProviderConfiguration,testProviderPresetConfiguration,validateProviderConfiguration,listProviderModels} from "../../../runtime/bootstrap/src/index";
+import type {FoundationRuntime} from "../../../runtime/bootstrap/src/index";
 import {IpcCredentialStore,InMemoryCredentialStore} from "../../../host/credentials/src/index";
 import {IpcCredentialProfileStore,InMemoryCredentialProfileStore,emptyCredentialProfileState} from "../../../host/credential-profiles/src/index";
 import {IpcProviderPresetStore,InMemoryProviderPresetStore,materializeProviderConfiguration,migrateProviderConfiguration,emptyProviderPresetState} from "../../../host/provider-presets/src/index";
@@ -20,7 +19,9 @@ import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
   PROVIDER_CONFIGURATION_API_VERSION,PROVIDER_CONFIGURATION_SCHEMA_VERSION,
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
-  type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, defaultAppSettings, validateAppSettings, StandardContractValidator,
+  type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
+  type Character, type CoreBookActivation, type CoreBookEntry,
+  defaultAppSettings, validateAppSettings, StandardContractValidator,
   type ProviderPreset, type ProviderPresetStoreState, type ModelInfo
 } from "../../../contracts/src/index";
 import "./styles.css";
@@ -989,6 +990,7 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
   const [traces,setTraces]=React.useState<readonly ChatTurnTrace[]>([]);
   const [selectedId,setSelectedId]=React.useState<string|undefined>();
   const [message,setMessage]=React.useState("");
+  const [showRaw,setShowRaw]=React.useState(false);
 
   const refresh=React.useCallback(()=>{
     try{
@@ -1214,8 +1216,8 @@ function App(){
   const [chatController,setChatController]=React.useState<ChatSessionController|null>(null);
   const [conversations,setConversations]=React.useState<readonly Conversation[]>([]);
   const [activeConversation,setActiveConversation]=React.useState<Conversation|undefined>();
-  const foundationRef=React.useRef<FoundationRuntime|undefined>();
-  const providerConfigurationErrorRef=React.useRef<string|undefined>();
+  const foundationRef=React.useRef<FoundationRuntime|undefined>(undefined);
+  const providerConfigurationErrorRef=React.useRef<string|undefined>(undefined);
   const conversationLoadErrorRef=React.useRef<string|undefined>();
   const modelProfileLoadErrorRef=React.useRef<string|undefined>();
   const credentialStore=React.useMemo(()=>new IpcCredentialStore(invoke),[]);
@@ -1390,7 +1392,10 @@ function App(){
     setConversations(await runtimeInstance.listConversations(active.id));
     setActiveConversation(loaded.conversation);
     setActiveModelProfile(loaded.profile);
-    setChatController(current=>current?.getSnapshot().characterId===active.id&&current.getSnapshot().conversationId===loaded.conversation.id?current:loaded.controller);
+    setChatController(current=>{
+      const snapshot=current?.getSnapshot();
+      return snapshot?.characterId===active.id&&snapshot.conversationId===loaded.conversation.id?current:loaded.controller;
+    });
   },[controllerForConversation,loadModelProfile]);
 
   const addConfigurationLoadError=React.useCallback((diagnostics:RuntimeDiagnostics):RuntimeDiagnostics=>{
