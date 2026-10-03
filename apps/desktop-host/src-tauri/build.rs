@@ -13,6 +13,8 @@ fn main() {
                     "get_provider_configuration",
                     "save_provider_configuration",
                     "delete_provider_configuration",
+                    "get_app_settings",
+                    "save_app_settings",
                     "get_characters",
                     "save_characters",
                     "get_core_book_entries",

@@ -40,7 +40,10 @@ jobs:
         with:
           node-version: 22
       - run: pnpm install --no-frozen-lockfile
-      - run: pnpm --dir apps/desktop-ui build
+      - name: React UI typecheck
+        run: pnpm --dir apps/desktop-ui typecheck
+      - name: React UI build
+        run: pnpm --dir apps/desktop-ui build
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-ui-dist
@@ -112,6 +115,9 @@ jobs:
 
       - name: Build Foundation
         run: pnpm build
+
+      - name: React UI typecheck
+        run: pnpm --dir apps/desktop-ui typecheck
 
       - name: Build React UI
         run: pnpm --dir apps/desktop-ui build

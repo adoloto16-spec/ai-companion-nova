@@ -1,12 +1,12 @@
 import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider} from "../../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
-import type {HealthStatus} from "../../../contracts/src/index";
+import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore} from "../../../contracts/src/index";
 import type {Conversation,ConversationCreateInput,ConversationId,ConversationStore,ConversationUpdateInput} from "../../../contracts/src/index";
 import {
   AiRuntime,CharacterManager,ConversationManager,CoreBookManager,MemoryBrokerImpl,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,
   InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,
   DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
-  InMemoryActorIdentityResolver,createMemoryConfig
+  InMemoryActorIdentityResolver,createMemoryConfig,SettingsManager,InMemoryChatTraceStore
 } from "../../../core/src/index";
 import {StandardContractValidator} from "../../../contracts/src/index";
 import {FakeBrowserModule,FakeCharacterModule,FakeMemoryModule} from "../../../modules/mock/src/index";
@@ -19,11 +19,13 @@ import {
 import {objectSchema} from "../../../core/src/tools";
 import {InMemoryCredentialStore} from "../../../host/credentials/src/index";
 import {InMemoryConversationStore} from "../../../host/conversations/src/index";
+import {InMemorySettingsStore} from "../../../host/settings/src/index";
 import {InMemoryCoreBookStore} from "../../../host/core-book/src/index";
 import {InMemoryMemoryStore} from "../../../host/memory/src/index";
 import type {CoreBookCreateInput,CoreBookUpdateInput} from "../../../core/src/core-book-manager";
 import {activeProviderId,buildConfiguredProvider,buildProviderForDiscovery,buildProviderForPreset,testProviderConfiguration} from "./provider-configuration";
 import {RetrievalEventIndexer} from "../../../core/src/retrieval-indexer";
+import {MemoryExtractionService} from "../../../core/src/memory-extraction";
 
 export interface OpenAICompatibleRuntimeConfig{
   config:OpenAICompatibleProviderConfig;
@@ -33,6 +35,7 @@ export interface OpenAICompatibleRuntimeConfig{
 
 export interface FoundationRuntimeOptions{
   providerConfiguration?:ProviderConfiguration;
+  settingsStore?:AppSettingsStore;
   credentialStore?:CredentialStore;
   characterStore?:CharacterStore;
   coreBookStore?:CoreBookStore;
@@ -51,6 +54,7 @@ export interface FoundationRuntime{
   start():Promise<void>;
   stop():Promise<void>;
   diagnostics():Promise<RuntimeDiagnostics>;
+  recordDiagnosticError(source:string,code:string,message:string,metadata?:Record<string,unknown>):void;
   invoke(request:import("../../../contracts/src/index").ActionRequest):Promise<import("../../../contracts/src/index").ActionResult>;
   chat(request:ChatRequest,providerPresetId?:string):Promise<ChatResponse>;
   stream(request:ChatRequest,handlers:import("../../../contracts/src/index").ChatStreamHandlers,options?:import("../../../contracts/src/index").ChatStreamOptions,providerPresetId?:string):Promise<ChatResponse>;
@@ -62,6 +66,12 @@ export interface FoundationRuntime{
   getActiveProviderPresetId():string|undefined;
   applyProviderConfiguration(configuration:ProviderConfiguration|undefined):Promise<void>;
   testConfiguredProvider():Promise<import("../../../contracts/src/index").ProviderConnectionTestResult>;
+  getSettings():AppSettings;
+  updateSettings(settings:AppSettings):Promise<AppSettings>;
+  resetSettings():Promise<AppSettings>;
+  getChatTraceStore():ChatTraceStore;
+  listChatTraces(limit?:number):readonly import("../../../contracts/src/index").ChatTurnTrace[];
+  clearChatTraces():void;
   setProviderPresetConfigurations(configurations:readonly {presetId:string;configuration:ProviderConfiguration}[],activePresetId?:string):void;
   listCharacters():Promise<readonly Character[]>;
   getCharacter(id:CharacterId):Promise<Character|undefined>;
@@ -85,19 +95,26 @@ export interface FoundationRuntime{
   deleteCoreBookEntry(characterId:CharacterId,entryId:CoreBookEntryId):Promise<void>;
   setCoreBookEntryEnabled(characterId:CharacterId,entryId:CoreBookEntryId,enabled:boolean):Promise<CoreBookEntry>;
   buildContext(request:ContextBuildRequest):Promise<AssembledContext>;
-  getMemory(characterId:CharacterId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>;
+  extractMemory(request:import("../../../contracts/src/index").MemoryExtractionRequest):Promise<readonly MemoryItem[]>;
+  getMemory(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>;
   searchMemory(query:MemorySearchQuery):Promise<readonly MemoryItem[]>;
   createMemory(characterId:CharacterId,input:MemoryCreateInput):Promise<MemoryItem>;
-  updateMemory(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryUpdateInput):Promise<MemoryItem>;
-  supersedeMemory(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryCreateInput):Promise<MemoryItem>;
-  archiveMemory(characterId:CharacterId,memoryId:MemoryItemId):Promise<MemoryItem>;
+  updateMemory(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryUpdateInput):Promise<MemoryItem>;
+  supersedeMemory(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryCreateInput):Promise<MemoryItem>;
+  archiveMemory(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId):Promise<MemoryItem>;
   searchRetrieval(query:RetrievalQuery):Promise<RetrievalResult>;
   rebuildRetrieval(characterId:CharacterId):Promise<void>;
   rebuildAllRetrieval():Promise<void>;
 }
 
 export async function createFoundationRuntime(options:FoundationRuntimeOptions={}):Promise<FoundationRuntime>{
-  const diagnosticsStore=new InMemoryDiagnosticsStore();
+  const contractValidator=new StandardContractValidator();
+  const settingsStore=options.settingsStore??new InMemorySettingsStore(contractValidator);
+  const settingsManager=new SettingsManager(settingsStore,contractValidator);
+  const appSettings=await settingsManager.initialize();
+  const diagnosticsStore=new InMemoryDiagnosticsStore(appSettings.diagnostics.keepRecentEntries);
+  const traceStore=new InMemoryChatTraceStore();
+  traceStore.configure(appSettings.diagnostics.logLevel,appSettings.diagnostics.keepRecentEntries);
   const logger={debug(){},info(){},warn(){},error(){}};
   const events=new InMemoryEventBus(diagnosticsStore,logger);
   const _state=new InMemoryStateStore(diagnosticsStore,logger);
@@ -113,7 +130,6 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   let providerPresetConfigurations=new Map((options.providerPresetConfigurations??[]).map(item=>[item.presetId,item.configuration]));
   let activeProviderPresetId=options.activeProviderPresetId??options.providerPresetConfigurations?.[0]?.presetId;
   let providerConfiguration=options.providerConfiguration;
-  const contractValidator=new StandardContractValidator();
   const audit=new InMemoryAuditService();
   let retrievalDegraded=false;
   const memoryBroker:MemoryBroker=new MemoryBrokerImpl({
@@ -122,7 +138,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     audit,
     events,
     clock:{now:()=>new Date().toISOString()},
-    characterExists:async characterId=>Boolean(await characterManager.getCharacter(characterId))
+    characterExists:async characterId=>Boolean(await characterManager.getCharacter(characterId)),
+    conversationExists:async (characterId,conversationId)=>Boolean(await conversationManager.getConversation(characterId,conversationId))
   });
   const userMemoryAuthority:MemoryMutationAuthority={
     actorId:"local-user",
@@ -132,7 +149,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   };
   const contextEngine=options.contextEngine??createDeterministicContextEngine(
     {listCoreBookEntries:characterId=>coreBookManager.listCoreBookEntries(characterId)},
-    {memoryBroker,retriever:options.retriever}
+    {memoryBroker,retriever:options.retriever,recentMessageCount:()=>settingsManager.get().context.recentConversationMessages,memoryCandidateLimit:()=>settingsManager.get().memory.candidateLimit,retrievalCandidateLimit:()=>settingsManager.get().retrieval.candidateLimit}
   );
   const retrievalIndexer=options.retrievalIndexWriter
     ? new RetrievalEventIndexer({events,coreBook:coreBookManager,memory:memoryBroker,writer:options.retrievalIndexWriter})
@@ -169,6 +186,23 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   providers.register(new FakeVisionProvider(),["vision"]);
 
   const aiRuntime=new AiRuntime(providers,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
+  const extractionChatRuntime={
+    chat:async (request:ChatRequest,providerPresetId?:string):Promise<ChatResponse>=>{
+      if(providerPresetId){
+        const configuration=providerPresetConfigurations.get(providerPresetId);
+        const effectiveConfiguration=configuration?{...configuration,model:request.model}:undefined;
+        const scopedProviders=new ProviderRegistry();
+        if(effectiveConfiguration){
+          const configured=buildProviderForPreset(effectiveConfiguration,credentialStore,options.httpClient);
+          if(configured)scopedProviders.register(configured,["chat"]);
+        }
+        const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
+        return scopedRuntime.generate({...request,providerId:"openai-compatible"});
+      }
+      return aiRuntime.generate(request.providerId?request:{...request,providerId:activeProviderId(providerConfiguration)});
+    }
+  };
+  const memoryExtractionService=new MemoryExtractionService(extractionChatRuntime,memoryBroker,{validator:contractValidator,diagnostics:diagnosticsStore,traceStore});
 
   const moduleCapabilities:Record<string,readonly string[]>={
     "character.fake":["character.expression","character.speech"],
@@ -278,6 +312,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     },
     async stop(){try{retrievalIndexer?.stop();await moduleManager.stopAll();}finally{runtimeStatus="stopped";}},
     diagnostics:snapshot,
+    recordDiagnosticError:(source,code,message,metadata)=>diagnosticsStore.recordError(source,code,message,metadata),
     invoke:request=>broker.execute({request,credential:characterCredential}),
     stream:async(request,handlers,streamOptions={},providerPresetId)=>{
       if(providerPresetId){
@@ -335,6 +370,22 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       }
     },
     applyProviderConfiguration:async(configuration)=>{await applyProvider(configuration);},
+    getSettings:()=>settingsManager.get(),
+    updateSettings:async(settings)=>{
+      const next=await settingsManager.set(settings);
+      diagnosticsStore.setMaxEntries(next.diagnostics.keepRecentEntries);
+      traceStore.configure(next.diagnostics.logLevel,next.diagnostics.keepRecentEntries);
+      return next;
+    },
+    resetSettings:async()=>{
+      const next=await settingsManager.reset();
+      diagnosticsStore.setMaxEntries(next.diagnostics.keepRecentEntries);
+      traceStore.configure(next.diagnostics.logLevel,next.diagnostics.keepRecentEntries);
+      return next;
+    },
+    getChatTraceStore:()=>traceStore,
+    listChatTraces:limit=>traceStore.recent(limit),
+    clearChatTraces:()=>traceStore.clear(),
     setProviderPresetConfigurations:(configurations,activePresetId)=>{providerPresetConfigurations=new Map(configurations.map(item=>[item.presetId,item.configuration])); activeProviderPresetId=activePresetId??configurations[0]?.presetId;},
     listCharacters:()=>characterManager.listCharacters(),
     getCharacter:id=>characterManager.getCharacter(id),
@@ -366,13 +417,14 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     deleteCoreBookEntry:(characterId,entryId)=>coreBookManager.deleteCoreBookEntry(characterId,entryId),
     setCoreBookEntryEnabled:(characterId,entryId,enabled)=>coreBookManager.setCoreBookEntryEnabled(characterId,entryId,enabled),
     buildContext:request=>contextEngine.build(request),
-    getMemory:(characterId,memoryId)=>memoryBroker.get(characterId,memoryId),
+    extractMemory:request=>memoryExtractionService.process(request),
+    getMemory:(characterId,conversationId,memoryId)=>memoryBroker.get(characterId,conversationId,memoryId),
     searchMemory:query=>memoryBroker.search(query),
     createMemory:(characterId,input)=>memoryBroker.create(characterId,input,userMemoryAuthority),
-    updateMemory:(characterId,memoryId,input)=>memoryBroker.update(characterId,memoryId,input,userMemoryAuthority),
-    supersedeMemory:(characterId,memoryId,input)=>memoryBroker.supersede(characterId,memoryId,input,userMemoryAuthority),
-    archiveMemory:(characterId,memoryId)=>memoryBroker.archive(characterId,memoryId,userMemoryAuthority),
-    searchRetrieval:query=>{if(!options.retriever)throw new Error("Retrieval runtime is not configured.");return options.retriever.search(query);},
+    updateMemory:(characterId,conversationId,memoryId,input)=>memoryBroker.update(characterId,conversationId,memoryId,input,userMemoryAuthority),
+    supersedeMemory:(characterId,conversationId,memoryId,input)=>memoryBroker.supersede(characterId,conversationId,memoryId,input,userMemoryAuthority),
+    archiveMemory:(characterId,conversationId,memoryId)=>memoryBroker.archive(characterId,conversationId,memoryId,userMemoryAuthority),
+    searchRetrieval:query=>{if(!options.retriever)throw new Error("Retrieval runtime is not configured.");const effective={...query,limit:query.limit??settingsManager.get().retrieval.candidateLimit};return options.retriever.search(effective);},
     rebuildRetrieval:characterId=>{if(!options.retriever)throw new Error("Retrieval runtime is not configured.");return options.retriever.rebuild(characterId);},
     rebuildAllRetrieval:()=>{if(!options.retriever)throw new Error("Retrieval runtime is not configured.");return options.retriever.rebuildAll();},
     testConfiguredProvider:async()=>{

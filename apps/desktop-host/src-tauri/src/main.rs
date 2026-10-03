@@ -1,6 +1,8 @@
 #[cfg(feature="tauri-app")]
 mod config;
 #[cfg(feature="tauri-app")]
+mod settings;
+#[cfg(feature="tauri-app")]
 mod characters;
 #[cfg(feature="tauri-app")]
 mod core_book;
@@ -42,6 +44,7 @@ fn get_host_diagnostics()->HostDiagnostics{
             "credential-store",
             "provider-configuration",
             "provider-presets",
+            "settings-storage",
             "credential-profiles",
             "character-storage",
             "core-book-storage",
@@ -95,6 +98,14 @@ fn delete_credential(reference:CredentialReference)->Result<(),String>{
 fn credential_exists(reference:CredentialReference)->Result<bool,String>{
     WindowsCredentialStore.exists(&reference)
 }
+
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn get_app_settings(app:tauri::AppHandle)->Result<Option<settings::AppSettings>,String>{settings::load(&app)}
+
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn save_app_settings(app:tauri::AppHandle,settings:settings::AppSettings)->Result<(),String>{settings::save(&app,&settings)}
 
 #[cfg(feature="tauri-app")]
 #[tauri::command]
@@ -179,11 +190,12 @@ fn save_memory_state(app:tauri::AppHandle,state_value:memory::MemoryStoreState,s
 fn supersede_memory(
     app:tauri::AppHandle,
     character_id:String,
+    conversation_id:String,
     previous_memory_id:String,
     replacement:memory::MemoryItem,
     state:tauri::State<'_,memory::MemoryWriteLock>,
 )->Result<memory::MemoryItem,String>{
-    memory::supersede(&app,&character_id,&previous_memory_id,replacement,&state)
+    memory::supersede(&app,&character_id,&conversation_id,&previous_memory_id,replacement,&state)
 }
 
 #[cfg(feature="tauri-app")]
@@ -200,7 +212,7 @@ fn rebuild_all_retrieval_index(app:tauri::AppHandle,retrieval_state:tauri::State
 fn upsert_retrieval_document(app:tauri::AppHandle,document:retrieval::RetrievalIndexDocument,state:tauri::State<'_,retrieval::RetrievalIndexLock>)->Result<(),String>{retrieval::upsert(&app,&document,&state)}
 #[cfg(feature="tauri-app")]
 #[tauri::command]
-fn remove_retrieval_document(app:tauri::AppHandle,character_id:String,source:retrieval::RetrievalSource,source_id:String,state:tauri::State<'_,retrieval::RetrievalIndexLock>)->Result<(),String>{retrieval::remove(&app,&character_id,&source,&source_id,&state)}
+fn remove_retrieval_document(app:tauri::AppHandle,character_id:String,source:retrieval::RetrievalSource,source_id:String,conversation_id:Option<String>,state:tauri::State<'_,retrieval::RetrievalIndexLock>)->Result<(),String>{retrieval::remove(&app,&character_id,&source,&source_id,conversation_id.as_deref(),&state)}
 #[cfg(feature="tauri-app")]
 #[tauri::command]
 fn remove_retrieval_character(app:tauri::AppHandle,character_id:String,state:tauri::State<'_,retrieval::RetrievalIndexLock>)->Result<(),String>{retrieval::remove_character(&app,&character_id,&state)}
@@ -257,6 +269,8 @@ fn main(){
             get_provider_configuration,
             save_provider_configuration,
             delete_provider_configuration,
+            get_app_settings,
+            save_app_settings,
             get_characters,
             save_characters,
             get_core_book_entries,

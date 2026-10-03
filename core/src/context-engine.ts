@@ -17,7 +17,7 @@ import type {
 } from "../../contracts/src/index";
 import {
   CONTEXT_API_VERSION,
-  CONTEXT_SCHEMA_VERSION
+  CONTEXT_SCHEMA_VERSION,DEFAULT_APP_SETTINGS
 } from "../../contracts/src/index";
 
 export interface TokenEstimator {
@@ -42,23 +42,26 @@ export interface CoreBookCandidateReader {
 
 export interface MemoryCandidateReader {
   search(query:MemorySearchQuery):Promise<readonly MemoryItem[]>;
-  get?(characterId:CharacterId,memoryId:string):Promise<MemoryItem|undefined>;
+  get?(characterId:CharacterId,conversationId:string,memoryId:string):Promise<MemoryItem|undefined>;
 }
 
-const DEFAULT_MEMORY_CANDIDATE_LIMIT=8;
+const DEFAULT_MEMORY_CANDIDATE_LIMIT=DEFAULT_APP_SETTINGS.memory.candidateLimit;
+type DynamicNumber=number|(()=>number);
 
 export class MemoryCandidateSource implements ContextCandidateSource {
   readonly source:ContextSource="memory";
   constructor(
     private readonly reader:MemoryCandidateReader,
     private readonly estimator:TokenEstimator=new DeterministicApproxTokenEstimator(),
-    private readonly maxResults:number=DEFAULT_MEMORY_CANDIDATE_LIMIT,
+    private readonly maxResults:DynamicNumber=DEFAULT_MEMORY_CANDIDATE_LIMIT,
     private readonly retriever?:Retriever
   ){
-    if(!Number.isInteger(maxResults)||maxResults<1)throw new Error("maxResults must be a positive integer.");
+    if(typeof maxResults==="number"&&(!Number.isInteger(maxResults)||maxResults<1))throw new Error("maxResults must be a positive integer.");
   }
 
   async collect(request:ContextBuildRequest):Promise<readonly ContextCandidate[]> {
+    const maxResults=typeof this.maxResults==="function"?this.maxResults():this.maxResults;
+    if(!Number.isInteger(maxResults)||maxResults<1)throw new Error("memory candidate limit must be a positive integer.");
     const latestUserMessage=[...request.messages].reverse().find(message=>message.role==="user");
     const query=latestUserMessage?.content.trim();
     if(!query)return [];
@@ -71,23 +74,24 @@ export class MemoryCandidateSource implements ContextCandidateSource {
           apiVersion:CONTEXT_API_VERSION,
           schemaVersion:CONTEXT_SCHEMA_VERSION,
           characterId:request.characterId,
+          conversationId:request.conversationId,
           query,
           sources:["memory"],
-          limit:this.maxResults,
+          limit:maxResults,
           filters:{status:"active"}
         });
       }catch{return []}
       const canonical=await Promise.all(retrieval.candidates
-        .filter(candidate=>candidate.source==="memory"&&candidate.characterId===request.characterId)
-        .map(candidate=>this.reader.get?.(request.characterId,candidate.sourceId)));
+        .filter(candidate=>candidate.source==="memory"&&candidate.characterId===request.characterId&&candidate.conversationId===request.conversationId)
+        .map(candidate=>this.reader.get?.(request.characterId,request.conversationId,candidate.sourceId)));
       results=canonical.filter((item):item is MemoryItem=>Boolean(item));
     }else{
-      try{results=await this.reader.search({characterId:request.characterId,query,status:"active",limit:this.maxResults});}
+      try{results=await this.reader.search({characterId:request.characterId,conversationId:request.conversationId,query,status:"active",limit:maxResults});}
       catch{return []}
     }
 
     return results
-      .filter(item=>item.characterId===request.characterId && item.status==="active")
+      .filter(item=>item.characterId===request.characterId && item.conversationId===request.conversationId && item.status==="active")
       .map((item,index)=>{
         const relevance=Math.max(10,100-index*10);
         const retentionPriority=item.importance;
@@ -120,7 +124,7 @@ export class MemoryCandidateSource implements ContextCandidateSource {
   }
 }
 
-const RECENT_CONVERSATION_MESSAGES=8;
+const RECENT_CONVERSATION_MESSAGES=DEFAULT_APP_SETTINGS.context.recentConversationMessages;
 
 function cloneMetadata(metadata?:Record<string,unknown>):Record<string,unknown>|undefined {
   return metadata===undefined?undefined:{...metadata};
@@ -170,16 +174,18 @@ export class ConversationCandidateSource implements ContextCandidateSource {
   readonly source:ContextSource="conversation";
   constructor(
     private readonly estimator:TokenEstimator=new DeterministicApproxTokenEstimator(),
-    private readonly recentMessageCount:number=RECENT_CONVERSATION_MESSAGES
+    private readonly recentMessageCount:DynamicNumber=RECENT_CONVERSATION_MESSAGES
   ){
-    if(!Number.isInteger(recentMessageCount)||recentMessageCount<1)throw new Error("recentMessageCount must be a positive integer.");
+    if(typeof recentMessageCount==="number"&&(!Number.isInteger(recentMessageCount)||recentMessageCount<1))throw new Error("recentMessageCount must be a positive integer.");
   }
 
   async collect(request:ContextBuildRequest):Promise<readonly ContextCandidate[]> {
+    const recentMessageCount=typeof this.recentMessageCount==="function"?this.recentMessageCount():this.recentMessageCount;
+    if(!Number.isInteger(recentMessageCount)||recentMessageCount<1)throw new Error("recent message count must be a positive integer.");
     const nonSystemIndexes=request.messages
       .map((message,index)=>message.role==="system"?-1:index)
       .filter(index=>index>=0);
-    const recentStart=Math.max(0,nonSystemIndexes.length-this.recentMessageCount);
+    const recentStart=Math.max(0,nonSystemIndexes.length-recentMessageCount);
     const recentIndexes=new Set(nonSystemIndexes.slice(recentStart));
     return request.messages.map((message,index)=>{
       const recent=recentIndexes.has(index);
@@ -218,7 +224,8 @@ export class CoreBookCandidateSource implements ContextCandidateSource {
   constructor(
     private readonly reader:CoreBookCandidateReader,
     private readonly estimator:TokenEstimator=new DeterministicApproxTokenEstimator(),
-    private readonly retriever?:Retriever
+    private readonly retriever?:Retriever,
+    private readonly retrievalCandidateLimit:DynamicNumber=32
   ){}
 
   async collect(request:ContextBuildRequest):Promise<readonly ContextCandidate[]> {
@@ -229,7 +236,9 @@ export class CoreBookCandidateSource implements ContextCandidateSource {
     const query=latestUser?.content.trim();
     if(this.retriever&&query){
       try{
-        const result=await this.retriever.search({apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION,characterId:request.characterId,query,sources:["core_book"],limit:32,filters:{status:"enabled"}});
+        const retrievalCandidateLimit=typeof this.retrievalCandidateLimit==="function"?this.retrievalCandidateLimit():this.retrievalCandidateLimit;
+        if(!Number.isInteger(retrievalCandidateLimit)||retrievalCandidateLimit<1)throw new Error("retrieval candidate limit must be a positive integer.");
+        const result=await this.retriever.search({apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION,characterId:request.characterId,query,sources:["core_book"],limit:retrievalCandidateLimit,filters:{status:"enabled"}});
         if(!result.degraded)retrievalIds=new Set(result.candidates.filter(candidate=>candidate.source==="core_book"&&candidate.characterId===request.characterId).map(candidate=>candidate.sourceId));
       }catch{
         retrievalIds=undefined;
@@ -334,9 +343,10 @@ export class CoreBookCandidateSource implements ContextCandidateSource {
 
 export interface ContextEngineOptions {
   tokenEstimator?:TokenEstimator;
-  recentMessageCount?:number;
+  recentMessageCount?:DynamicNumber;
   memoryBroker?:Pick<MemoryBroker,"search"|"get">;
-  memoryCandidateLimit?:number;
+  memoryCandidateLimit?:DynamicNumber;
+  retrievalCandidateLimit?:DynamicNumber;
   retriever?:Retriever;
 }
 
@@ -349,8 +359,12 @@ export class DeterministicContextEngine implements ContextEngineContract {
   ){
     if(sources.length===0)throw new Error("Context Engine requires at least one candidate source.");
     this.sources=sources;
-    if(options.recentMessageCount!==undefined && options.recentMessageCount<1)throw new Error("recentMessageCount must be positive.");
-    if(options.memoryCandidateLimit!==undefined && options.memoryCandidateLimit<1)throw new Error("memoryCandidateLimit must be positive.");
+    const recentMessageCount=typeof options.recentMessageCount==="number"?options.recentMessageCount:undefined;
+    const memoryCandidateLimit=typeof options.memoryCandidateLimit==="number"?options.memoryCandidateLimit:undefined;
+    const retrievalCandidateLimit=typeof options.retrievalCandidateLimit==="number"?options.retrievalCandidateLimit:undefined;
+    if(recentMessageCount!==undefined&&recentMessageCount<1)throw new Error("recentMessageCount must be positive.");
+    if(memoryCandidateLimit!==undefined&&memoryCandidateLimit<1)throw new Error("memoryCandidateLimit must be positive.");
+    if(retrievalCandidateLimit!==undefined&&retrievalCandidateLimit<1)throw new Error("retrievalCandidateLimit must be positive.");
   }
 
   async build(request:ContextBuildRequest):Promise<AssembledContext> {
@@ -447,7 +461,7 @@ export function createDeterministicContextEngine(
   const estimator=options.tokenEstimator??new DeterministicApproxTokenEstimator();
   const sources:ContextCandidateSource[]=[
     new ConversationCandidateSource(estimator,options.recentMessageCount??RECENT_CONVERSATION_MESSAGES),
-    new CoreBookCandidateSource(coreBookReader,estimator,options.retriever)
+    new CoreBookCandidateSource(coreBookReader,estimator,options.retriever,options.retrievalCandidateLimit??32)
   ];
   if(options.memoryBroker){
     sources.push(new MemoryCandidateSource(

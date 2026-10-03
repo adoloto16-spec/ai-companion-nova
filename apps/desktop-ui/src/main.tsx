@@ -1,11 +1,10 @@
 import React from "react";
 import {createRoot} from "react-dom/client";
 import {invoke} from "@tauri-apps/api/core";
-import {
-  ChatSessionController,ConversationSession,type Character,type FoundationRuntime,InMemoryCharacterStore,type RuntimeDiagnostics,
-  type CoreBookActivation,type CoreBookEntry
-} from "../../../core/src/index";
-import {startFoundationRuntime,testProviderConfiguration,testProviderPresetConfiguration,validateProviderConfiguration,listProviderModels} from "../../../runtime/bootstrap/src/index";
+import {ChatSessionController,ConversationSession,InMemoryCharacterStore} from "../../../core/src/index";
+
+import {startFoundationRuntime,testProviderPresetConfiguration,listProviderModels} from "../../../runtime/bootstrap/src/index";
+import type {FoundationRuntime} from "../../../runtime/bootstrap/src/index";
 import {IpcCredentialStore,InMemoryCredentialStore} from "../../../host/credentials/src/index";
 import {IpcCredentialProfileStore,InMemoryCredentialProfileStore,emptyCredentialProfileState} from "../../../host/credential-profiles/src/index";
 import {IpcProviderPresetStore,InMemoryProviderPresetStore,materializeProviderConfiguration,migrateProviderConfiguration,emptyProviderPresetState} from "../../../host/provider-presets/src/index";
@@ -15,28 +14,20 @@ import {IpcCoreBookStore,InMemoryCoreBookStore} from "../../../host/core-book/sr
 import {IpcMemoryStore,InMemoryMemoryStore} from "../../../host/memory/src/index";
 import {IpcConversationStore,InMemoryConversationStore} from "../../../host/conversations/src/index";
 import {IpcModelProfileStore,InMemoryModelProfileStore} from "../../../host/model-profiles/src/index";
+import {IpcSettingsStore,InMemorySettingsStore} from "../../../host/settings/src/index";
 import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
-  PROVIDER_CONFIGURATION_API_VERSION,PROVIDER_CONFIGURATION_SCHEMA_VERSION,
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
-  type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState,
+  type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
+  type Character, type CoreBookActivation, type CoreBookEntry,
+  defaultAppSettings, validateAppSettings, StandardContractValidator,
   type ProviderPreset, type ProviderPresetStoreState, type ModelInfo
 } from "../../../contracts/src/index";
 import "./styles.css";
 
-type HostDiagnostics={status:string;runtime:string;capabilities:string[]};
-const credentialReference={id:"provider.openai-compatible.default",kind:"api-key",provider:"openai-compatible"} as const;
-const defaultConfiguration=():ProviderConfiguration=>({
-  apiVersion:PROVIDER_CONFIGURATION_API_VERSION,schemaVersion:PROVIDER_CONFIGURATION_SCHEMA_VERSION,
-  providerId:"openai-compatible",enabled:false,baseUrl:"https://api.openai.com/v1",model:"",
-  credentialReference,timeoutMs:30000
-});
 const preview:RuntimeDiagnostics={schemaVersion:"1",timestamp:new Date().toISOString(),runtimeStatus:"stopped",coreStatus:"stopped",modules:[],providers:[],recentErrors:[],capabilities:[]};
 
-async function loadHost():Promise<HostDiagnostics>{
-  try{return await invoke<HostDiagnostics>("get_host_diagnostics")}
-  catch{return {status:"browser-preview",runtime:"host-unavailable",capabilities:[]}}
-}
+
 async function publishAndReadRuntimeDiagnostics(snapshot:RuntimeDiagnostics):Promise<RuntimeDiagnostics>{
   try{
     await invoke("set_runtime_diagnostics",{diagnostics:snapshot});
@@ -158,10 +149,12 @@ function ChatView({controller,runtime,character,conversations,activeConversation
 }){
   const [snapshot,setSnapshot]=React.useState(()=>controller.getSnapshot());
   const [input,setInput]=React.useState("");
+  const [editingId,setEditingId]=React.useState<string|undefined>();
+  const [editingText,setEditingText]=React.useState("");
   const [persistenceError,setPersistenceError]=React.useState("");
   const bottomRef=React.useRef<HTMLDivElement|null>(null);
 
-  React.useEffect(()=>controller.subscribe(setSnapshot),[controller]);
+  React.useEffect(()=>{setSnapshot(controller.getSnapshot());return controller.subscribe(setSnapshot)},[controller]);
   React.useEffect(()=>{
     bottomRef.current?.scrollIntoView({block:"end"});
   },[snapshot.messages.map(message=>message.content).join("\u0000"),snapshot.status]);
@@ -208,6 +201,23 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     try{await onClear();}
     catch(error){setPersistenceError(error instanceof Error?error.message:"Conversation could not be cleared.");}
   },[onClear]);
+  const editMessage=React.useCallback(async(id:string)=>{
+    setPersistenceError("");
+    try{
+      controller.editMessage(id,editingText);
+      await onPersist();
+      setEditingId(undefined);setEditingText("");
+    }catch(error){setPersistenceError(error instanceof Error?error.message:"Message could not be edited.");}
+  },[controller,editingText,onPersist]);
+
+  const deleteMessage=React.useCallback(async(id:string)=>{
+    if(!window.confirm("Delete this message?"))return;
+    setPersistenceError("");
+    try{controller.deleteMessage(id);await onPersist();}
+    catch(error){setPersistenceError(error instanceof Error?error.message:"Message could not be deleted.");}
+  },[controller,onPersist]);
+
+
 
   const onKeyDown=(event:React.KeyboardEvent<HTMLTextAreaElement>)=>{
     if(event.key==="Enter"&&!event.shiftKey){
@@ -251,10 +261,25 @@ function ChatView({controller,runtime,character,conversations,activeConversation
       {snapshot.messages.length===0&&<div className="empty-chat">Write a message to start the conversation.</div>}
       {snapshot.messages.map((message,index)=>{
         const state=messageStreamStatus(message);
+        const editable=message.role==="user"||message.role==="assistant";
+        const isEditing=editingId===message.id;
         return <article className={"chat-message "+message.role} key={message.id??"message-"+index}>
           <div className="message-author">{message.role==="user"?"You":character.name}</div>
-          <div className="message-content">{message.content}</div>
+          {isEditing
+            ?<div className="message-edit">
+              <textarea value={editingText} onChange={event=>setEditingText(event.target.value)} rows={4} aria-label="Edit message"/>
+              <div className="actions">
+                <button type="button" onClick={()=>void editMessage(message.id!)} disabled={!editingText.trim()}>Save</button>
+                <button type="button" onClick={()=>{setEditingId(undefined);setEditingText("")}}>Cancel</button>
+              </div>
+            </div>
+            :<div className="message-content">{message.content}</div>}
           {state==="interrupted"&&<div className="message-status">Interrupted</div>}
+          {editable&&!snapshot.sending&&!isEditing&&message.id&&
+            <div className="message-actions">
+              <button type="button" onClick={()=>{setEditingId(message.id);setEditingText(message.content)}}>Edit</button>
+              <button type="button" onClick={()=>void deleteMessage(message.id!)}>Delete</button>
+            </div>}
         </article>;
       })}
       <div ref={bottomRef}/>
@@ -833,62 +858,306 @@ function ModelProfileView({
   </section>;
 }
 
-function SettingsView({
-  runtime,host,configuration,setConfiguration,credentialSaved,apiKey,setApiKey,settingsMessage,saving,testing,onSave,onTest,onRemoveCredential
+
+function AppSettingsView({
+  settings,onChange,onSave,onReset,saving,message
 }:{
-  runtime:RuntimeDiagnostics;host:HostDiagnostics;configuration:ProviderConfiguration;setConfiguration:React.Dispatch<React.SetStateAction<ProviderConfiguration>>;
-  credentialSaved:boolean;apiKey:string;setApiKey:React.Dispatch<React.SetStateAction<string>>;settingsMessage:string;saving:boolean;testing:boolean;
-  onSave:()=>Promise<void>;onTest:()=>Promise<void>;onRemoveCredential:()=>Promise<void>;
+  settings:AppSettings;
+  onChange:(settings:AppSettings)=>void;
+  onSave:()=>Promise<void>;
+  onReset:()=>Promise<void>;
+  saving:boolean;
+  message:string;
 }){
+  const setNumber=(section:"context"|"memory"|"retrieval"|"diagnostics",key:string,value:number)=>{
+    onChange({
+      ...settings,
+      [section]:{...(settings[section] as Record<string,unknown>),[key]:value}
+    } as AppSettings);
+  };
+  const defaults=defaultAppSettings();
   return <div className="settings-grid">
     <section>
-      <h2>Provider settings</h2>
-      <label>Provider type
-        <select value={configuration.providerId} onChange={e=>setConfiguration(c=>({...c,providerId:e.target.value}))}><option value="openai-compatible">OpenAI-compatible</option></select>
-      </label>
-      <label className="checkbox">Enabled
-        <input type="checkbox" checked={configuration.enabled} onChange={e=>setConfiguration(c=>({...c,enabled:e.target.checked}))}/>
-      </label>
-      <label>Base URL
-        <input value={configuration.baseUrl} onChange={e=>setConfiguration(c=>({...c,baseUrl:e.target.value}))} placeholder="https://host.example/v1"/>
-      </label>
-      <label>Model
-        <input value={configuration.model} onChange={e=>setConfiguration(c=>({...c,model:e.target.value}))} placeholder="model-id"/>
-      </label>
-      <label>Timeout (ms)
-        <input type="number" min="1" value={configuration.timeoutMs??30000} onChange={e=>setConfiguration(c=>({...c,timeoutMs:Number(e.target.value)}))}/>
-      </label>
-      <label>API key
-        <input type="password" autoComplete="off" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder={credentialSaved?"Saved credential":"Enter API key"}/>
-      </label>
-      <div className="actions">
-        <button onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save"}</button>
-        <button onClick={()=>void onTest()} disabled={testing||!credentialSaved||!configuration.enabled}>{testing?"Testing…":"Test provider"}</button>
-        <button onClick={()=>void onRemoveCredential()} disabled={!credentialSaved}>Remove stored credential</button>
+      <div className="section-header"><div><h2>Settings</h2><p className="chat-subtitle">Runtime behavior settings. Security limits remain fixed in code.</p></div>
+        <button type="button" onClick={()=>void onReset()} disabled={saving}>Reset to Defaults</button>
       </div>
-      {credentialSaved&&<small>Saved credential</small>}
-      {settingsMessage&&<div className="notice" role="status">{settingsMessage}</div>}
-      <p className="hint">The saved API key is never loaded back into the settings UI.</p>
+      <h3>Context</h3>
+      <label>Context size
+        <input type="number" min={256} max={32768} value={settings.context.availableContextTokens}
+          onChange={event=>setNumber("context","availableContextTokens",Number(event.target.value))} disabled={saving}/>
+        <small>Default: {defaults.context.availableContextTokens}</small>
+      </label>
+      <label>Reserved response tokens
+        <input type="number" min={0} max={16384} value={settings.context.reservedOutputTokens}
+          onChange={event=>setNumber("context","reservedOutputTokens",Number(event.target.value))} disabled={saving}/>
+        <small>Default: {defaults.context.reservedOutputTokens}</small>
+      </label>
+      <label>Safety margin
+        <input type="number" min={0} max={4096} value={settings.context.safetyMarginTokens}
+          onChange={event=>setNumber("context","safetyMarginTokens",Number(event.target.value))} disabled={saving}/>
+        <small>Default: {defaults.context.safetyMarginTokens}</small>
+      </label>
+      <label>Recent messages
+        <input type="number" min={1} max={100} value={settings.context.recentConversationMessages}
+          onChange={event=>setNumber("context","recentConversationMessages",Number(event.target.value))} disabled={saving}/>
+        <small>Default: {defaults.context.recentConversationMessages}</small>
+      </label>
+      <p className="hint">These values change Context Engine inputs without changing its deterministic selection algorithm.</p>
     </section>
+
     <section>
-      <h2>Runtime</h2>
-      <div className="status-grid"><span>Runtime</span><strong>{runtime.runtimeStatus}</strong><span>Core</span><strong>{runtime.coreStatus}</strong><span>Host IPC</span><strong>{host.status} · {host.runtime}</strong></div>
+      <h3>Memory</h3>
+      <label className="checkbox">Automatic long-term memory extraction
+        <input type="checkbox" checked={settings.chat.automaticLongTermMemory}
+          onChange={event=>onChange({...settings,chat:{...settings.chat,automaticLongTermMemory:event.target.checked}})} disabled={saving}/>
+      </label>
+      <label>Memory items
+        <input type="number" min={1} max={100} value={settings.memory.candidateLimit}
+          onChange={event=>setNumber("memory","candidateLimit",Number(event.target.value))} disabled={saving}/>
+        <small>Default: {defaults.memory.candidateLimit}</small>
+      </label>
+      <label>Retrieval candidates
+        <input type="number" min={1} max={100} value={settings.retrieval.candidateLimit}
+          onChange={event=>setNumber("retrieval","candidateLimit",Number(event.target.value))} disabled={saving}/>
+        <small>Default: {defaults.retrieval.candidateLimit}</small>
+      </label>
+      <p className="hint">Memory storage, character/conversation isolation, deduplication, and extraction safety rules are not configurable here.</p>
     </section>
+
     <section>
-      <h2>Providers</h2>
-      {runtime.providers.length===0?<div>No providers in current runtime.</div>:runtime.providers.map(p=>
-        <div className="row" key={p.id}><span>{p.id}</span><span>{p.health?.status??"unknown"}</span></div>
-      )}
+      <h3>Diagnostics</h3>
+      <label>Log level
+        <select value={settings.diagnostics.logLevel as DiagnosticsLogLevel}
+          onChange={event=>onChange({...settings,diagnostics:{...settings.diagnostics,logLevel:event.target.value as DiagnosticsLogLevel}})} disabled={saving}>
+          <option value="off">Off</option>
+          <option value="errors">Errors</option>
+          <option value="normal">Normal</option>
+          <option value="verbose">Verbose</option>
+          <option value="debug">Debug</option>
+        </select>
+        <small>Default: {defaults.diagnostics.logLevel}</small>
+      </label>
+      <label>Recent diagnostic entries
+        <input type="number" min={1} max={500} value={settings.diagnostics.keepRecentEntries}
+          onChange={event=>setNumber("diagnostics","keepRecentEntries",Number(event.target.value))} disabled={saving}/>
+        <small>Default: {defaults.diagnostics.keepRecentEntries}</small>
+      </label>
+      <p className="hint">Logs are redacted for credentials, Authorization/Bearer tokens, passwords, API keys, and secrets.</p>
     </section>
+
     <section>
-      <h2>Recent errors</h2>
-      {runtime.recentErrors.length===0?<div>None</div>:runtime.recentErrors.map((error,index)=>
-        <div className="error" key={error.timestamp+error.code+index}><code>{error.code}</code> · {error.message}</div>
-      )}
+      <h3>UI</h3>
+      <label className="checkbox">Show diagnostics in the application
+        <input type="checkbox" checked={settings.ui.showDiagnosticsInChat}
+          onChange={event=>onChange({...settings,ui:{...settings.ui,showDiagnosticsInChat:event.target.checked}})} disabled={saving}/>
+      </label>
+      <p className="hint">Model, temperature, topP, and maxTokens remain in Model Profile and are intentionally not duplicated here.</p>
+      <div className="actions">
+        <button type="button" onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save Settings"}</button>
+      </div>
+      {message&&<div className="notice" role="status">{message}</div>}
     </section>
   </div>;
 }
 
+function TraceCandidate({candidate}:{candidate:any}){
+  return <div className="diagnostic-candidate">
+    <div className="diagnostic-candidate-header">
+      <strong>{candidate.source}</strong>
+      <span>{candidate.zone}</span>
+      <span>score {candidate.selectionScore}</span>
+    </div>
+    <div className="diagnostic-candidate-content">{candidate.content}</div>
+    <div className="diagnostic-candidate-meta">
+      relevance {candidate.relevance} · retention {candidate.retentionPriority} · recency {candidate.recency} · tokens {candidate.estimatedTokens}
+    </div>
+    <div className="diagnostic-reason">{candidate.reason}</div>
+  </div>;
+}
+
+function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:AppSettings}){
+  const [traces,setTraces]=React.useState<readonly ChatTurnTrace[]>([]);
+  const [selectedId,setSelectedId]=React.useState<string|undefined>();
+  const [message,setMessage]=React.useState("");
+  const [showRaw,setShowRaw]=React.useState(false);
+
+  const refresh=React.useCallback(()=>{
+    try{
+      const next=runtime.listChatTraces(50);
+      setTraces(next);
+      setSelectedId(current=>current&&next.some(trace=>trace.turnId===current)?current:next[0]?.turnId);
+      setMessage("");
+    }catch(error){setMessage(error instanceof Error?error.message:"Diagnostics could not be loaded.")}
+  },[runtime]);
+
+  React.useEffect(()=>{
+    refresh();
+    const timer=setInterval(refresh,750);
+    return ()=>clearInterval(timer);
+  },[refresh]);
+
+  const selected=traces.find(trace=>trace.turnId===selectedId);
+
+  return <div className="settings-grid">
+    <section>
+      <div className="section-header">
+        <div><h2>Diagnostics</h2><p className="chat-subtitle">Technical turn traces only; no model chain-of-thought is recorded.</p></div>
+        <button type="button" onClick={()=>{runtime.clearChatTraces();refresh()}}>Clear Logs</button>
+      </div>
+      <div className="status-grid">
+        <span>Log level</span><strong>{settings.diagnostics.logLevel}</strong>
+        <span>Retained</span><strong>{traces.length}</strong>
+      </div>
+      {traces.length===0
+        ?<div>No chat traces yet.</div>
+        :traces.map(trace=>
+          <button type="button" className={trace.turnId===selectedId?"diagnostic-trace-row active":"diagnostic-trace-row"} key={trace.turnId} onClick={()=>setSelectedId(trace.turnId)}>
+            <span>{trace.status}</span><span>{trace.requestId}</span><small>{trace.conversationId}</small>
+          </button>
+        )}
+      {message&&<div className="error">{message}</div>}
+    </section>
+
+    {selected&&<section>
+      <h2>Turn</h2>
+      <div className="status-grid">
+        <span>Request</span><strong>{selected.requestId}</strong>
+        <span>Character</span><strong>{selected.characterId}</strong>
+        <span>Conversation</span><strong>{selected.conversationId}</strong>
+        <span>Status</span><strong>{selected.status}</strong>
+        <span>Timestamp</span><strong>{selected.timestamp}</strong>
+        <span>Duration</span><strong>{selected.durationMs===undefined?"—":selected.durationMs+" ms"}</strong>
+      </div>
+
+      {selected.contextBuild&&<div className="diagnostic-block">
+        <h3>Context Build</h3>
+        <p>Context size {selected.contextBuild.budget.availableContextTokens} · Reserved {selected.contextBuild.budget.reservedOutputTokens} · Safety margin {selected.contextBuild.budget.safetyMarginTokens} · Estimated {selected.contextBuild.estimatedTokens} tokens</p>
+        <h4>Included</h4>
+        {selected.contextBuild.includedCandidates.length===0?<div>None</div>:selected.contextBuild.includedCandidates.map(candidate=><TraceCandidate key={candidate.id} candidate={candidate}/>)}
+        <h4>Omitted</h4>
+        {selected.contextBuild.omittedCandidates.length===0?<div>None</div>:selected.contextBuild.omittedCandidates.map(candidate=><TraceCandidate key={candidate.id} candidate={candidate}/>)}
+      </div>}
+
+      {selected.finalRequest&&<div className="diagnostic-block">
+        <h3>Final Request</h3>
+        <div className="status-grid">
+          <span>Provider</span><strong>{selected.finalRequest.providerId??"default"}</strong>
+          <span>Model</span><strong>{selected.finalRequest.model}</strong>
+          <span>Generation</span><strong>{JSON.stringify(selected.finalRequest.generation??{})}</strong>
+        </div>
+        <pre className="diagnostic-json">{JSON.stringify(selected.finalRequest.context.messages,null,2)}</pre>
+      </div>}
+
+      {selected.providerResponse&&<div className="diagnostic-block">
+        <h3>Provider Response</h3>
+        <div className="status-grid">
+          <span>Provider</span><strong>{selected.providerResponse.providerId}</strong>
+          <span>Model</span><strong>{selected.providerResponse.model}</strong>
+          <span>Finish</span><strong>{selected.providerResponse.finishReason}</strong>
+          <span>Usage</span><strong>{JSON.stringify(selected.providerResponse.usage??{})}</strong>
+          <span>Duration</span><strong>{selected.providerResponse.durationMs===undefined?"—":selected.providerResponse.durationMs+" ms"}</strong>
+        </div>
+      </div>}
+
+      {selected.memoryExtraction&&<div className="diagnostic-block">
+        <h3>Automatic Memory Extraction</h3>
+        <p>Started: {selected.memoryExtraction.started?"yes":"no"}</p>
+         <div className="status-grid">
+           <span>Status</span><strong>{selected.memoryExtraction.status??"—"}</strong>
+           <span>Provider</span><strong>{selected.memoryExtraction.providerId??"—"}</strong>
+           <span>Model</span><strong>{selected.memoryExtraction.model??"—"}</strong>
+           <span>Request</span><strong>{selected.memoryExtraction.requestId??"—"}</strong>
+           <span>Conversation</span><strong>{selected.memoryExtraction.conversationId??"—"}</strong>
+           <span>Context messages</span><strong>{selected.memoryExtraction.contextMessageCount===undefined?"—":selected.memoryExtraction.contextMessageCount}</strong>
+         </div>
+        <h4>Candidates</h4>{selected.memoryExtraction.candidates.length===0?<div>None</div>:selected.memoryExtraction.candidates.map((candidate,index)=><TraceCandidate key={candidate.content+index} candidate={candidate}/>)}
+        <h4>Accepted</h4>{selected.memoryExtraction.accepted.length===0?<div>None</div>:selected.memoryExtraction.accepted.map((candidate,index)=><TraceCandidate key={candidate.content+index} candidate={candidate}/>)}
+        <h4>Rejected</h4>{selected.memoryExtraction.rejected.length===0?<div>None</div>:selected.memoryExtraction.rejected.map((item,index)=><div className="diagnostic-candidate" key={item.candidate.content+index}><div className="diagnostic-reason">{item.reason}</div><TraceCandidate candidate={item.candidate}/></div>)}
+        <h4>Duplicates</h4>{selected.memoryExtraction.duplicate.length===0?<div>None</div>:selected.memoryExtraction.duplicate.map((candidate,index)=><TraceCandidate key={candidate.content+index} candidate={candidate}/>)}
+        <h4>Superseded</h4>{selected.memoryExtraction.superseded.length===0?<div>None</div>:selected.memoryExtraction.superseded.map(item=><div className="row" key={item.memoryId}><span>{item.candidate.content}</span><span>{item.memoryId}</span></div>)}
+        <h4>Created</h4>{selected.memoryExtraction.created.length===0?<div>None</div>:selected.memoryExtraction.created.map(item=><div className="row" key={item.memoryId}><span>{item.candidate.content}</span><span>{item.memoryId}</span></div>)}
+        {selected.memoryExtraction.failed&&<div className="error">{selected.memoryExtraction.failed}</div>}
+      </div>}
+
+      {selected.error&&<div className="error">{selected.error.code}: {selected.error.message}</div>}
+      <div className="diagnostic-block">
+        <button type="button" onClick={()=>setShowRaw(current=>!current)}>{showRaw?"Hide raw trace":"Show raw trace"}</button>
+        {showRaw&&<pre className="diagnostic-json">{JSON.stringify(selected,null,2)}</pre>}
+      </div>
+    </section>}
+  </div>;
+}
+
+class ViewErrorBoundary extends React.Component<{
+  view:string;
+  onError:(error:Error,info:React.ErrorInfo)=>void;
+  children:React.ReactNode;
+},{hasError:boolean;message:string}>{
+  state={hasError:false,message:""};
+  static getDerivedStateFromError(error:Error):{hasError:boolean;message:string}{
+    return {hasError:true,message:safeErrorMessage(error,"Unknown view error")};
+  }
+  componentDidCatch(error:Error,info:React.ErrorInfo):void{
+    this.props.onError(error,info);
+  }
+  componentDidUpdate(previousProps:Readonly<{view:string}>):void{
+    if(previousProps.view!==this.props.view&&this.state.hasError)this.setState({hasError:false,message:""});
+  }
+  private retry=()=>this.setState({hasError:false,message:""});
+  render(){
+    if(this.state.hasError){
+      return <section className="loading-panel" role="alert">
+        <strong>This view failed to load.</strong>
+        <div>{this.state.message}</div>
+        <button type="button" onClick={this.retry}>Retry view</button>
+      </section>;
+    }
+    return this.props.children;
+  }
+}
+
+function SettingsContainerView({
+  appSettings,onAppSettingsChange,settingsLoadMessage,settingsSaving,onSaveSettings,onResetSettings,
+  runtime,providerPresets,activePresetId,credentialProfiles,credentialSavedMap,
+  onSavePreset,onActivatePreset,onDeletePreset,onCreateCredential,onDeleteCredential,onRefreshModels,onTestPreset,onError
+}:{
+  appSettings:AppSettings;
+  onAppSettingsChange:(settings:AppSettings)=>void;
+  settingsLoadMessage:string;
+  settingsSaving:boolean;
+  onSaveSettings:()=>Promise<void>;
+  onResetSettings:()=>Promise<void>;
+  runtime:RuntimeDiagnostics;
+  providerPresets:readonly ProviderPreset[];
+  activePresetId:string|null;
+  credentialProfiles:readonly CredentialProfile[];
+  credentialSavedMap:Record<string,boolean>;
+  onSavePreset:(preset:ProviderPreset,activate:boolean)=>Promise<void>;
+  onActivatePreset:(id:string)=>Promise<void>;
+  onDeletePreset:(id:string)=>Promise<void>;
+  onCreateCredential:(label:string,secret:string)=>Promise<CredentialProfile>;
+  onDeleteCredential:(id:string)=>Promise<void>;
+  onRefreshModels:(preset:ProviderPreset)=>Promise<readonly ModelInfo[]>;
+  onTestPreset:(preset:ProviderPreset)=>Promise<ProviderConnectionTestResult>;
+  onError:(error:Error,info:React.ErrorInfo)=>void;
+}){
+  const [tab,setTab]=React.useState<"general"|"provider-presets">("general");
+  return <section className="settings-container" aria-label="Settings">
+    <div className="settings-subnav" role="tablist" aria-label="Settings sections">
+      <button type="button" role="tab" aria-selected={tab==="general"} className={tab==="general"?"nav-button active":"nav-button"} onClick={()=>setTab("general")}>General</button>
+      <button type="button" role="tab" aria-selected={tab==="provider-presets"} className={tab==="provider-presets"?"nav-button active":"nav-button"} onClick={()=>setTab("provider-presets")}>Provider Presets</button>
+    </div>
+    {tab==="general"
+      ?<ViewErrorBoundary key="settings-general" view="settings-general" onError={onError}>
+        <AppSettingsView settings={appSettings} onChange={onAppSettingsChange} onSave={onSaveSettings} onReset={onResetSettings} saving={settingsSaving} message={settingsLoadMessage}/>
+      </ViewErrorBoundary>
+      :<ViewErrorBoundary key="settings-provider-presets" view="settings-provider-presets" onError={onError}>
+        <ProviderPresetsView presets={providerPresets} activePresetId={activePresetId} credentialProfiles={credentialProfiles} credentialSaved={credentialSavedMap}
+          runtime={runtime} onSavePreset={onSavePreset} onActivatePreset={onActivatePreset} onDeletePreset={onDeletePreset}
+          onCreateCredential={onCreateCredential} onDeleteCredential={onDeleteCredential} onRefreshModels={onRefreshModels} onTestPreset={onTestPreset}/>
+      </ViewErrorBoundary>}
+  </section>;
+}
 function isTauriRuntime():boolean{
   return typeof window!=="undefined" && Boolean((window as unknown as Record<string,unknown>).__TAURI_INTERNALS__);
 }
@@ -913,15 +1182,9 @@ function credentialSavedEntries(
 }
 
 function App(){
-  const [view,setView]=React.useState<"chat"|"characters"|"core-book"|"model-profile"|"settings">("chat");
+  const [view,setView]=React.useState<"chat"|"characters"|"core-book"|"model-profile"|"settings"|"diagnostics">("chat");
   const [runtime,setRuntime]=React.useState<RuntimeDiagnostics>(preview);
-  const [host,setHost]=React.useState<HostDiagnostics>({status:"starting",runtime:"unknown",capabilities:[]});
-  const [configuration,setConfiguration]=React.useState<ProviderConfiguration>(defaultConfiguration());
-  const [credentialSaved,setCredentialSaved]=React.useState(false);
-  const [apiKey,setApiKey]=React.useState("");
-  const [settingsMessage,setSettingsMessage]=React.useState("");
   const [saving,setSaving]=React.useState(false);
-  const [testing,setTesting]=React.useState(false);
   const [startupStatus,setStartupStatus]=React.useState<"initializing"|"ready"|"error">("initializing");
   const [startupError,setStartupError]=React.useState("");
   const [characters,setCharacters]=React.useState<readonly Character[]>([]);
@@ -930,10 +1193,10 @@ function App(){
   const [chatController,setChatController]=React.useState<ChatSessionController|null>(null);
   const [conversations,setConversations]=React.useState<readonly Conversation[]>([]);
   const [activeConversation,setActiveConversation]=React.useState<Conversation|undefined>();
-  const foundationRef=React.useRef<FoundationRuntime|undefined>();
-  const providerConfigurationErrorRef=React.useRef<string|undefined>();
-  const conversationLoadErrorRef=React.useRef<string|undefined>();
-  const modelProfileLoadErrorRef=React.useRef<string|undefined>();
+  const foundationRef=React.useRef<FoundationRuntime|undefined>(undefined);
+  const providerConfigurationErrorRef=React.useRef<string|undefined>(undefined);
+  const conversationLoadErrorRef=React.useRef<string|undefined>(undefined);
+  const modelProfileLoadErrorRef=React.useRef<string|undefined>(undefined);
   const credentialStore=React.useMemo(()=>new IpcCredentialStore(invoke),[]);
   const configurationStore=React.useMemo(()=>new IpcProviderConfigurationStore(invoke),[]);
   const characterStore=React.useMemo(()=>isTauriRuntime()?new IpcCharacterStore(invoke):new InMemoryCharacterStore(),[]);
@@ -943,13 +1206,26 @@ function App(){
   const modelProfileStore=React.useMemo(()=>isTauriRuntime()?new IpcModelProfileStore(invoke):new InMemoryModelProfileStore(),[]);
   const credentialProfileStore=React.useMemo(()=>isTauriRuntime()?new IpcCredentialProfileStore(invoke):new InMemoryCredentialProfileStore(),[]);
   const providerPresetStore=React.useMemo(()=>isTauriRuntime()?new IpcProviderPresetStore(invoke):new InMemoryProviderPresetStore(),[]);
+  const settingsValidator=React.useMemo(()=>new StandardContractValidator(),[]);
+  const settingsStore=React.useMemo(()=>isTauriRuntime()?new IpcSettingsStore(invoke,settingsValidator):new InMemorySettingsStore(settingsValidator),[settingsValidator]);
   const [credentialProfiles,setCredentialProfiles]=React.useState<readonly CredentialProfile[]>([]);
   const [credentialSavedMap,setCredentialSavedMap]=React.useState<Record<string,boolean>>({});
   const [providerPresets,setProviderPresets]=React.useState<readonly ProviderPreset[]>([]);
   const [activePresetId,setActivePresetId]=React.useState<string|null>(null);
+  const [appSettings,setAppSettings]=React.useState<AppSettings>(()=>defaultAppSettings());
+  const [settingsLoadMessage,setSettingsLoadMessage]=React.useState("");
   const credentialProfileStateRef=React.useRef<CredentialProfileStoreState>(emptyCredentialProfileState());
   const providerPresetStateRef=React.useRef<ProviderPresetStoreState>(emptyProviderPresetState());
   const retriever=React.useMemo(()=>isTauriRuntime()?new IpcFullTextRetriever(invoke):undefined,[]);
+
+  const reportViewError=React.useCallback((error:Error,info:React.ErrorInfo)=>{
+    foundationRef.current?.recordDiagnosticError(
+      "ui-view",
+      "VIEW_RENDER_FAILED",
+      safeErrorMessage(error,"Unknown view error"),
+      {view,componentStack:info.componentStack??""}
+    );
+  },[view]);
 
   const controllerForSession=React.useCallback((session:ConversationSession)=>new ChatSessionController(
     session,
@@ -985,7 +1261,28 @@ function App(){
           if(!foundation)return Promise.reject(new Error("Chat context runtime is not available."));
           return foundation.buildContext(request);
         }
-      }
+      },
+      contextBudgetProvider:()=>{
+        const foundation=foundationRef.current;
+        const settings=foundation?.getSettings()??defaultAppSettings();
+        return {
+          availableContextTokens:settings.context.availableContextTokens,
+          reservedOutputTokens:settings.context.reservedOutputTokens,
+          systemOverheadTokens:0,
+          safetyMarginTokens:settings.context.safetyMarginTokens
+        };
+      },
+      recentConversationMessagesProvider:()=>foundationRef.current?.getSettings().context.recentConversationMessages??defaultAppSettings().context.recentConversationMessages,
+      memoryExtractor:{
+        extract:request=>{
+          const foundation=foundationRef.current;
+          return foundation?foundation.extractMemory(request):Promise.resolve([]);
+        }
+      },
+      memoryExtractionEnabled:()=>{
+        return foundationRef.current?.getSettings().chat.automaticLongTermMemory??true;
+      },
+      traceStore:foundationRef.current?.getChatTraceStore()
     }
   ),[]);
 
@@ -1044,16 +1341,20 @@ function App(){
     const foundation=foundationRef.current;
     if(!foundation)throw new Error("Conversation runtime is not available.");
     const snapshot=controller.getSnapshot();
-    await foundation.clearConversation(snapshot.characterId,snapshot.conversationId);
-    const active=await foundation.getActiveConversation(snapshot.characterId);
-    const profile=await loadModelProfile(snapshot.characterId);
-    const nextController=controllerForConversation(active,profile);
-    setActiveConversation(active);
-    setConversations(await foundation.listConversations(snapshot.characterId));
-    setActiveModelProfile(profile);
-    setChatController(nextController);
-    conversationLoadErrorRef.current=undefined;
-  },[controllerForConversation,loadModelProfile]);
+    controller.clear();
+    setActiveConversation(current=>current?{...current,messages:[]}:current);
+    setChatController(controller);
+    try{
+      await foundation.clearConversation(snapshot.characterId,snapshot.conversationId);
+      const active=await foundation.getActiveConversation(snapshot.characterId);
+      setActiveConversation(active);
+      setConversations(await foundation.listConversations(snapshot.characterId));
+      conversationLoadErrorRef.current=undefined;
+    }catch(error){
+      await persistConversation(controller);
+      throw error;
+    }
+  },[controllerForConversation,loadModelProfile,persistConversation]);
 
   const syncCharacters=React.useCallback(async(runtimeInstance:FoundationRuntime)=>{
     const list=await runtimeInstance.listCharacters();
@@ -1068,7 +1369,7 @@ function App(){
     setConversations(await runtimeInstance.listConversations(active.id));
     setActiveConversation(loaded.conversation);
     setActiveModelProfile(loaded.profile);
-    setChatController(current=>current?.getSnapshot().characterId===active.id&&current.getSnapshot().conversationId===loaded.conversation.id?current:loaded.controller);
+    setChatController(loaded.controller);
   },[controllerForConversation,loadModelProfile]);
 
   const addConfigurationLoadError=React.useCallback((diagnostics:RuntimeDiagnostics):RuntimeDiagnostics=>{
@@ -1112,10 +1413,12 @@ function App(){
     providerConfigurationErrorRef.current=configurationLoadError;
     providerPresetStateRef.current=presetState;
     credentialProfileStateRef.current=credentialState;
+    setChatController(null);
     await foundationRef.current?.stop();
     const next=await startFoundationRuntime({
-      providerConfiguration:config,credentialStore,characterStore,coreBookStore,memoryStore,retriever,retrievalIndexWriter:retriever,
+      providerConfiguration:config,credentialStore,characterStore,coreBookStore,memoryStore,conversationStore,retriever,retrievalIndexWriter:retriever,
       providerPresetConfigurations:materializePresetConfigurations(presetState.presets,credentialState.profiles),
+      settingsStore,
       activeProviderPresetId:presetState.activePresetId??undefined
     });
     foundationRef.current=next;
@@ -1151,7 +1454,6 @@ function App(){
           presetState={...presetState,activePresetId:presetState.presets[0]!.id};
           await providerPresetStore.save(presetState);
         }
-        if(legacy)setConfiguration(legacy);
         const savedMap:Record<string,boolean>={};
         for(const profile of credentialState.profiles){
           try{savedMap[profile.id]=await credentialStore.exists(profile.credentialReference)}catch{savedMap[profile.id]=false;}
@@ -1165,14 +1467,10 @@ function App(){
         setActivePresetId(presetState.activePresetId);
         providerPresetStateRef.current=presetState;
         credentialProfileStateRef.current=credentialState;
-        if(legacy){
-          const legacyProfile=credentialState.profiles.find(profile=>profile.credentialReference.id===legacy.credentialReference?.id);
-          setCredentialSaved(Boolean(legacyProfile&&savedMap[legacyProfile.id]));
-        }else setCredentialSaved(false);
-        if(loaded.error)setSettingsMessage("Legacy provider configuration could not be loaded: "+loaded.error);
         await refreshRuntime(activeConfiguration,loaded.error,presetState,credentialState);
+        const loadedSettings=foundationRef.current?.getSettings()??defaultAppSettings();
+        setAppSettings(loadedSettings);
         if(!active)return;
-        const hostSnapshot=await loadHost();if(active)setHost(hostSnapshot);
         const sync=async()=>{
           const foundation=foundationRef.current;if(!foundation||!active)return;
           try{const snapshot=await foundation.diagnostics();const live=await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(snapshot));if(active)setRuntime(live)}
@@ -1203,14 +1501,27 @@ function App(){
     const foundation=foundationRef.current;
     const character=activeCharacter;
     if(!foundation||!character||chatController?.getSnapshot().sending)return;
-    const conversation=await foundation.setActiveConversation(character.id,id);
+    const previousConversation=activeConversation;
+    const local=conversations.find(item=>item.id===id);
     const profile=activeModelProfile??await loadModelProfile(character.id);
-    const controller=controllerForConversation(conversation,profile);
-    setActiveConversation(conversation);
-    setConversations(await foundation.listConversations(character.id));
-    setChatController(controller);
-    setView("chat");
-  },[activeCharacter,activeModelProfile,chatController,controllerForConversation,loadModelProfile]);
+    if(local){
+      const optimistic=controllerForConversation(local,profile);
+      setActiveConversation(local);setChatController(optimistic);setView("chat");
+    }
+    try{
+      const conversation=await foundation.setActiveConversation(character.id,id);
+      const controller=controllerForConversation(conversation,profile);
+      setActiveConversation(conversation);
+      setConversations(await foundation.listConversations(character.id));
+      setChatController(controller);
+    }catch(error){
+      if(previousConversation){
+        setActiveConversation(previousConversation);
+        setChatController(controllerForConversation(previousConversation,profile));
+      }
+      throw error;
+    }
+  },[activeCharacter,activeConversation,activeModelProfile,chatController,controllerForConversation,conversations,loadModelProfile]);
 
   const createConversation=React.useCallback(async()=>{
     const foundation=foundationRef.current;
@@ -1349,52 +1660,31 @@ function App(){
     });
   },[modelProfileStore]);
 
-  const save=async()=>{
-    setSettingsMessage("");
-    const validation=validateProviderConfiguration(configuration);
-    if(!validation.valid){setSettingsMessage(validation.errors.join(" "));return}
-    setSaving(true);
+  const saveAppSettings=React.useCallback(async()=>{
+    const errors=validateAppSettings(appSettings);
+    if(errors.length){setSettingsLoadMessage(errors.join(" "));return;}
+    const foundation=foundationRef.current;
+    if(!foundation){setSettingsLoadMessage("Settings runtime is not available.");return;}
+    setSaving(true);setSettingsLoadMessage("");
     try{
-      if(apiKey.length>0)await credentialStore.setSecret(configuration.credentialReference!,apiKey);
-      const hasCredential=await credentialStore.exists(configuration.credentialReference!);
-      if(configuration.enabled&&!hasCredential){setSettingsMessage("Save an API credential before enabling the provider.");return}
-      await configurationStore.save(configuration);
-      setApiKey("");
-      setCredentialSaved(hasCredential);
-      await refreshRuntime(configuration);
-      setSettingsMessage("Provider configuration saved.");
-    }catch(error){
-      setSettingsMessage(error instanceof Error?error.message:"Provider configuration could not be saved.");
-    }finally{setSaving(false)}
-  };
+      const next=await foundation.updateSettings(appSettings);
+      setAppSettings(next);
+      setSettingsLoadMessage("Settings saved.");
+    }catch(error){setSettingsLoadMessage(error instanceof Error?error.message:"Settings could not be saved.");}
+    finally{setSaving(false);}
+  },[appSettings]);
 
-  const removeCredential=async()=>{
-    setSettingsMessage("");
+  const resetAppSettings=React.useCallback(async()=>{
+    const foundation=foundationRef.current;
+    if(!foundation){setSettingsLoadMessage("Settings runtime is not available.");return;}
+    setSaving(true);setSettingsLoadMessage("");
     try{
-      if(!configuration.credentialReference){setSettingsMessage("No credential reference is configured.");return}
-      await credentialStore.deleteSecret(configuration.credentialReference);
-      const disabled={...configuration,enabled:false};
-      await configurationStore.save(disabled);
-      setConfiguration(disabled);
-      setCredentialSaved(false);
-      setApiKey("");
-      await refreshRuntime(disabled);
-      setSettingsMessage("Stored credential removed and real provider disabled.");
-    }catch(error){
-      setSettingsMessage(error instanceof Error?error.message:"Credential removal failed.");
-    }
-  };
-
-  const test=async()=>{
-    setSettingsMessage("");
-    setTesting(true);
-    try{
-      const result=await testProviderConfiguration(configuration,credentialStore);
-      setSettingsMessage(resultLabel(result)+(result.message?" · "+result.message:""));
-    }catch(error){
-      setSettingsMessage(error instanceof Error?error.message:"Provider connection test failed.");
-    }finally{setTesting(false)}
-  };
+      const next=await foundation.resetSettings();
+      setAppSettings(next);
+      setSettingsLoadMessage("Settings restored to defaults.");
+    }catch(error){setSettingsLoadMessage(error instanceof Error?error.message:"Settings could not be reset.");}
+    finally{setSaving(false);}
+  },[]);
 
   return <main className="app-shell">
     <header className="app-header">
@@ -1404,15 +1694,36 @@ function App(){
         <button className={view==="characters"?"nav-button active":"nav-button"} onClick={()=>setView("characters")}>Characters</button>
         <button className={view==="core-book"?"nav-button active":"nav-button"} onClick={()=>setView("core-book")}>Core Book</button>
         <button className={view==="model-profile"?"nav-button active":"nav-button"} onClick={()=>setView("model-profile")}>Model Profile</button>
-        <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Provider Presets</button>
+        <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Settings</button>
+        {appSettings.ui.showDiagnosticsInChat&&<button className={view==="diagnostics"?"nav-button active":"nav-button"} onClick={()=>setView("diagnostics")}>Diagnostics</button>}
       </nav>
     </header>
+    <ViewErrorBoundary key={view} view={view} onError={reportViewError}>
     {view==="model-profile"&&activeCharacter&&activeModelProfile
       ?<ModelProfileView profile={activeModelProfile} runtime={runtime} presets={providerPresets} activePresetId={activePresetId} onSave={saveModelProfile}/>
       :view==="settings"
-      ?<ProviderPresetsView presets={providerPresets} activePresetId={activePresetId} credentialProfiles={credentialProfiles} credentialSaved={credentialSavedMap}
-          runtime={runtime} onSavePreset={saveProviderPreset} onActivatePreset={activateProviderPreset} onDeletePreset={deleteProviderPreset}
-          onCreateCredential={createCredentialProfile} onDeleteCredential={deleteCredentialProfile} onRefreshModels={refreshPresetModels} onTestPreset={testPreset}/>
+      ?<SettingsContainerView
+          appSettings={appSettings}
+          onAppSettingsChange={setAppSettings}
+          settingsLoadMessage={settingsLoadMessage}
+          settingsSaving={saving}
+          onSaveSettings={saveAppSettings}
+          onResetSettings={resetAppSettings}
+          runtime={runtime}
+          providerPresets={providerPresets}
+          activePresetId={activePresetId}
+          credentialProfiles={credentialProfiles}
+          credentialSavedMap={credentialSavedMap}
+          onSavePreset={saveProviderPreset}
+          onActivatePreset={activateProviderPreset}
+          onDeletePreset={deleteProviderPreset}
+          onCreateCredential={createCredentialProfile}
+          onDeleteCredential={deleteCredentialProfile}
+          onRefreshModels={refreshPresetModels}
+          onTestPreset={testPreset}
+          onError={reportViewError}/>
+      :view==="diagnostics"&&foundationRef.current
+      ?<DiagnosticsView runtime={foundationRef.current} settings={appSettings}/>
       :startupStatus==="error"
         ?<section className="loading-panel" role="alert">
           <strong>Character runtime initialization failed.</strong>
@@ -1433,6 +1744,7 @@ function App(){
         :view==="core-book"&&activeCharacter
           ?<CoreBookView runtime={foundationRef.current!} character={activeCharacter}/>
           :<section className="loading-panel">Initializing characters…</section>}
+    </ViewErrorBoundary>
   </main>;
 }
 

@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/app-settings/v1",
+  "title": "AI Companion Nova App Settings v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "schemaVersion",
+    "chat",
+    "context",
+    "memory",
+    "retrieval",
+    "diagnostics",
+    "ui"
+  ],
+  "properties": {
+    "apiVersion": {
+      "const": "1"
+    },
+    "schemaVersion": {
+      "const": "1"
+    },
+    "chat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "automaticLongTermMemory"
+      ],
+      "properties": {
+        "automaticLongTermMemory": {
+          "type": "boolean"
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "availableContextTokens",
+        "reservedOutputTokens",
+        "safetyMarginTokens",
+        "recentConversationMessages"
+      ],
+      "properties": {
+        "availableContextTokens": {
+          "type": "integer",
+          "minimum": 256,
+          "maximum": 32768
+        },
+        "reservedOutputTokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16384
+        },
+        "safetyMarginTokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4096
+        },
+        "recentConversationMessages": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    },
+    "memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateLimit"
+      ],
+      "properties": {
+        "candidateLimit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    },
+    "retrieval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateLimit"
+      ],
+      "properties": {
+        "candidateLimit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "logLevel",
+        "keepRecentEntries"
+      ],
+      "properties": {
+        "logLevel": {
+          "enum": [
+            "off",
+            "errors",
+            "normal",
+            "verbose",
+            "debug"
+          ]
+        },
+        "keepRecentEntries": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        }
+      }
+    },
+    "ui": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "showDiagnosticsInChat"
+      ],
+      "properties": {
+        "showDiagnosticsInChat": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}
