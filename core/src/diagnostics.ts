@@ -124,6 +124,12 @@ export class InMemoryChatTraceStore implements ChatTraceStore{
       ...(memoryPatch?{
         memoryExtraction:{
           started:memoryPatch.started??current.memoryExtraction?.started??false,
+          ...(memoryPatch.status!==undefined?{status:memoryPatch.status}:current.memoryExtraction?.status!==undefined?{status:current.memoryExtraction.status}:{}),
+          ...(memoryPatch.requestId!==undefined?{requestId:redactDiagnosticText(memoryPatch.requestId)}:current.memoryExtraction?.requestId!==undefined?{requestId:current.memoryExtraction.requestId}:{}),
+          ...(memoryPatch.providerId!==undefined?{providerId:redactDiagnosticText(memoryPatch.providerId)}:current.memoryExtraction?.providerId!==undefined?{providerId:current.memoryExtraction.providerId}:{}),
+          ...(memoryPatch.model!==undefined?{model:redactDiagnosticText(memoryPatch.model)}:current.memoryExtraction?.model!==undefined?{model:current.memoryExtraction.model}:{}),
+          ...(memoryPatch.conversationId!==undefined?{conversationId:redactDiagnosticText(memoryPatch.conversationId)}:current.memoryExtraction?.conversationId!==undefined?{conversationId:current.memoryExtraction.conversationId}:{}),
+          ...(memoryPatch.contextMessageCount!==undefined?{contextMessageCount:memoryPatch.contextMessageCount}:current.memoryExtraction?.contextMessageCount!==undefined?{contextMessageCount:current.memoryExtraction.contextMessageCount}:{}),
           candidates:(memoryPatch.candidates??current.memoryExtraction?.candidates??[]).map(cloneCandidate),
           accepted:(memoryPatch.accepted??current.memoryExtraction?.accepted??[]).map(cloneCandidate),
           rejected:(memoryPatch.rejected??current.memoryExtraction?.rejected??[]).map(cloneCandidate),
