@@ -61,7 +61,7 @@ async function main(){
 
   const contextEngine=createDeterministicContextEngine(
     {listCoreBookEntries:async()=>[]},
-    {memoryBroker,recentMessageCount:()=>8,memoryCandidateLimit:()=>8}
+    {memoryBroker:broker,recentMessageCount:()=>8,memoryCandidateLimit:()=>8}
   );
   const assembled=await contextEngine.build({
     apiVersion:"1",schemaVersion:"1",characterId:"character.a",conversationId:conversation!.id,
