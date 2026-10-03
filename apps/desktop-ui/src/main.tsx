@@ -1273,14 +1273,11 @@ function App(){
         };
       },
       recentConversationMessagesProvider:()=>foundationRef.current?.getSettings().context.recentConversationMessages??defaultAppSettings().context.recentConversationMessages,
-      memoryExtractor:{
-        extract:request=>{
+      automaticMemoryAgent:{
+        process:request=>{
           const foundation=foundationRef.current;
-          return foundation?foundation.extractMemory(request):Promise.resolve([]);
+          return foundation?foundation.processAutomaticMemory(request):Promise.resolve(undefined);
         }
-      },
-      memoryExtractionEnabled:()=>{
-        return foundationRef.current?.getSettings().chat.automaticLongTermMemory??true;
       },
       traceStore:foundationRef.current?.getChatTraceStore()
     }
