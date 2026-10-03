@@ -26,6 +26,8 @@ async function main(){
     characterExists:async id=>id==="character.a",
     conversationExists:async(characterId,conversationId)=>characterId==="character.a"&&Boolean(await conversationStore.get(characterId,conversationId))
   });
+  const defaultConversation=createConversationTemplate("character.a");
+  await conversationStore.save(defaultConversation);
   const conversation=await conversationStore.getActive("character.a");
   ok(Boolean(conversation),"default conversation exists");
   const traceStore=new InMemoryChatTraceStore();
