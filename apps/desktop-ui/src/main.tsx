@@ -1059,24 +1059,28 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
         </div>
       </div>}
 
-      {selected.memoryExtraction&&<div className="diagnostic-block">
-        <h3>Automatic Memory Extraction</h3>
-        <p>Started: {selected.memoryExtraction.started?"yes":"no"}</p>
-         <div className="status-grid">
-           <span>Status</span><strong>{selected.memoryExtraction.status??"—"}</strong>
-           <span>Provider</span><strong>{selected.memoryExtraction.providerId??"—"}</strong>
-           <span>Model</span><strong>{selected.memoryExtraction.model??"—"}</strong>
-           <span>Request</span><strong>{selected.memoryExtraction.requestId??"—"}</strong>
-           <span>Conversation</span><strong>{selected.memoryExtraction.conversationId??"—"}</strong>
-           <span>Context messages</span><strong>{selected.memoryExtraction.contextMessageCount===undefined?"—":selected.memoryExtraction.contextMessageCount}</strong>
-         </div>
-        <h4>Candidates</h4>{selected.memoryExtraction.candidates.length===0?<div>None</div>:selected.memoryExtraction.candidates.map((candidate,index)=><TraceCandidate key={candidate.content+index} candidate={candidate}/>)}
-        <h4>Accepted</h4>{selected.memoryExtraction.accepted.length===0?<div>None</div>:selected.memoryExtraction.accepted.map((candidate,index)=><TraceCandidate key={candidate.content+index} candidate={candidate}/>)}
-        <h4>Rejected</h4>{selected.memoryExtraction.rejected.length===0?<div>None</div>:selected.memoryExtraction.rejected.map((item,index)=><div className="diagnostic-candidate" key={item.candidate.content+index}><div className="diagnostic-reason">{item.reason}</div><TraceCandidate candidate={item.candidate}/></div>)}
-        <h4>Duplicates</h4>{selected.memoryExtraction.duplicate.length===0?<div>None</div>:selected.memoryExtraction.duplicate.map((candidate,index)=><TraceCandidate key={candidate.content+index} candidate={candidate}/>)}
-        <h4>Superseded</h4>{selected.memoryExtraction.superseded.length===0?<div>None</div>:selected.memoryExtraction.superseded.map(item=><div className="row" key={item.memoryId}><span>{item.candidate.content}</span><span>{item.memoryId}</span></div>)}
-        <h4>Created</h4>{selected.memoryExtraction.created.length===0?<div>None</div>:selected.memoryExtraction.created.map(item=><div className="row" key={item.memoryId}><span>{item.candidate.content}</span><span>{item.memoryId}</span></div>)}
-        {selected.memoryExtraction.failed&&<div className="error">{selected.memoryExtraction.failed}</div>}
+      {selected.automaticMemory&&<div className="diagnostic-block">
+        <h3>Automatic Memory</h3>
+        <div className="status-grid">
+          <span>Started</span><strong>{selected.automaticMemory.started?"yes":"no"}</strong>
+          <span>Status</span><strong>{selected.automaticMemory.status??"—"}</strong>
+          <span>Provider preset</span><strong>{selected.automaticMemory.providerPresetId??"—"}</strong>
+          <span>Provider</span><strong>{selected.automaticMemory.providerId??"—"}</strong>
+          <span>Model</span><strong>{selected.automaticMemory.model??"—"}</strong>
+          <span>Request</span><strong>{selected.automaticMemory.requestId??"—"}</strong>
+          <span>Conversation</span><strong>{selected.automaticMemory.conversationId??"—"}</strong>
+          <span>Context messages</span><strong>{selected.automaticMemory.contextMessageCount??"—"}</strong>
+          <span>User message</span><strong>{selected.automaticMemory.userMessagePresent?"yes":"no"}</strong>
+          <span>Assistant response</span><strong>{selected.automaticMemory.assistantResponsePresent?"yes":"no"}</strong>
+        </div>
+        <h4>Result</h4>
+        <div className="diagnostic-candidate-content">{selected.automaticMemory.result??"—"}</div>
+        <h4>Persistence</h4>
+        <div className="status-grid">
+          <span>Status</span><strong>{selected.automaticMemory.persistence?.status??"none"}</strong>
+          <span>Memory id</span><strong>{selected.automaticMemory.persistence?.memoryId??"—"}</strong>
+        </div>
+        {selected.automaticMemory.failed&&<div className="error">{selected.automaticMemory.failed}</div>}
       </div>}
 
       {selected.error&&<div className="error">{selected.error.code}: {selected.error.message}</div>}
