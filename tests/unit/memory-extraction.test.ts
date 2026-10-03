@@ -225,7 +225,7 @@ async function main(){
     const secretResult=JSON.stringify({memories:[
       {type:"fact",content:"API key: sk-12345678901234567890",tags:["secret"],importance:100,confidence:100,source:"conversation",sourceReference:"conversation.a",mutationPolicy:"auto"}
     ]});
-    const {service,broker}=await newService(secretResult);
+    const {service,broker,traceStore}=await newService(secretResult);
     equal((await service.process(requestBase)).length,0,"secret candidate is rejected");
     equal((await broker.search({characterId:"character.a",conversationId:"conversation.a",query:"",limit:10})).length,0,"secret candidate never reaches persistence");
     equal(traceStore.recent(1)[0]?.memoryExtraction?.rejected[0]?.reason,"secret detected","secret rejection reason is precise");
