@@ -67,7 +67,7 @@ async function main(){
   );
   const assembled=await contextEngine.build({
     apiVersion:"1",schemaVersion:"1",characterId:"character.a",conversationId:conversation!.id,
-    messages:[{role:"user",content:"What is my favorite color?"}],
+    messages:[{role:"user",content:"green"}],
     budget:{availableContextTokens:4096,reservedOutputTokens:512,systemOverheadTokens:0,safetyMarginTokens:64}
   });
   equal(assembled.includedCandidates.filter(candidate=>candidate.source==="memory").length,1,"same conversation memory becomes eligible to Context Engine");
