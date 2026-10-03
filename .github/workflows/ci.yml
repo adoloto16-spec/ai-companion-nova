@@ -71,6 +71,10 @@ jobs:
             librsvg2-dev \
             patchelf
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Rust clippy
+        run: cargo clippy --workspace --all-features --all-targets -- -D warnings
       - run: cargo check --workspace
       - run: cargo check --workspace --all-features
       - run: cargo test -p nova-desktop-host --all-features characters::tests
