@@ -126,7 +126,7 @@ export class MemoryExtractionService{
     const key=request.characterId+"\0"+request.conversationId+"\0"+request.turnId;
     if(this.inFlight.has(key))return [];
     this.inFlight.add(key);
-    this.traceStore?.update(request.turnId,{memoryExtraction:{started:true,status:"started",requestId:"memory-extraction:"+request.turnId,providerId:request.providerId??"default",model:request.model,conversationId:request.conversationId,contextMessageCount:request.contextMessages.length,candidates:[],accepted:[],rejected:[],duplicate:[],superseded:[],created:[]}});
+    this.traceStore?.update(request.turnId,{memoryExtraction:{started:true,status:"started",requestId:"memory-extraction:"+request.turnId,providerId:request.providerId??"default",model:request.model,conversationId:request.conversationId,contextMessageCount:Math.min(8,request.contextMessages.length),candidates:[],accepted:[],rejected:[],duplicate:[],superseded:[],created:[]}});
     try{
       let active=await this.broker.search({characterId:request.characterId,conversationId:request.conversationId,query:"",status:"active",limit:100});
       if(active.some(item=>item.metadata?.turnId===request.turnId))return [];
