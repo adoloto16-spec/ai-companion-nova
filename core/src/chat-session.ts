@@ -1,6 +1,6 @@
 import type {
   AssembledContext,ChatErrorCode,ChatGenerationOptions,ChatMessage,ChatRequest,ChatResponse,ChatStreamEvent,
-  ChatStreamHandlers,ChatStreamOptions,ChatUsage,CharacterId,ChatTraceStore,ContextBuildRequest,ContextBudget,MemoryExtractionRequest,ModelProfile,Unsubscribe
+  ChatStreamHandlers,ChatStreamOptions,ChatUsage,CharacterId,ChatTraceStore,ContextBuildRequest,ContextBudget,AutomaticMemoryAgentRequest,ModelProfile,Unsubscribe
 } from "../../contracts/src/index";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,DEFAULT_APP_SETTINGS} from "../../contracts/src/index";
 
@@ -113,8 +113,8 @@ export class ConversationSession{
 export interface ChatContextBuilderBoundary{
   buildContext(request:ContextBuildRequest):Promise<AssembledContext>;
 }
-export interface ChatCompletedTurnMemoryBoundary{
-  extract(request:MemoryExtractionRequest):Promise<unknown>;
+export interface AutomaticMemoryAgentBoundary{
+  process(request:AutomaticMemoryAgentRequest):Promise<unknown>;
 }
 export interface ChatSessionControllerOptions{
   requestIdFactory?:()=>string;
@@ -122,8 +122,8 @@ export interface ChatSessionControllerOptions{
   contextBudget?:ContextBudget;
   contextBudgetProvider?:()=>ContextBudget;
   recentConversationMessagesProvider?:()=>number;
-  memoryExtractor?:ChatCompletedTurnMemoryBoundary;
-  memoryExtractionEnabled?:()=>boolean;
+  automaticMemoryAgent?:AutomaticMemoryAgentBoundary;
+  automaticMemoryEnabled?:()=>boolean;
   traceStore?:ChatTraceStore;
 }
 const DEFAULT_CHAT_CONTEXT_BUDGET:ContextBudget={
@@ -153,8 +153,8 @@ export class ChatSessionController{
   private readonly contextBudget:ContextBudget;
   private readonly contextBudgetProvider?:()=>ContextBudget;
   private readonly recentConversationMessagesProvider?:()=>number;
-  private readonly memoryExtractor?:ChatCompletedTurnMemoryBoundary;
-  private readonly memoryExtractionEnabled?:()=>boolean;
+  private readonly automaticMemoryAgent?:AutomaticMemoryAgentBoundary;
+  private readonly automaticMemoryEnabled?:()=>boolean;
   private readonly traceStore?:ChatTraceStore;
   private modelProfile?:ModelProfile;
   private sending=false;
@@ -174,8 +174,8 @@ export class ChatSessionController{
     this.contextBudget=options.contextBudget??DEFAULT_CHAT_CONTEXT_BUDGET;
     this.contextBudgetProvider=options.contextBudgetProvider;
     this.recentConversationMessagesProvider=options.recentConversationMessagesProvider;
-    this.memoryExtractor=options.memoryExtractor;
-    this.memoryExtractionEnabled=options.memoryExtractionEnabled;
+    this.automaticMemoryAgent=options.automaticMemoryAgent;
+    this.automaticMemoryEnabled=options.automaticMemoryEnabled;
     this.traceStore=options.traceStore;
     const messages=session.getMessages();
     const lastAssistant=[...messages].reverse().find(message=>message.role==="assistant");
@@ -468,21 +468,23 @@ export class ChatSessionController{
           durationMs:Date.now()-providerStartedAt
         }
       });
-      if(this.memoryExtractor&&(this.memoryExtractionEnabled?.()??true)){const providerPresetId=this.modelProfile?.providerPresetId??this.runtime.getActiveProviderPresetId?.();
-        const extractionRequest:MemoryExtractionRequest={
-          apiVersion:"1",
-          schemaVersion:"1",
-          characterId:this.session.characterId,
-          conversationId:this.session.conversationId,
-          turnId:active.requestId,
-          model:canonicalResponse.model,
-          providerId:canonicalResponse.providerId,
-          ...(providerPresetId?{providerPresetId}:{}),
-          userMessage:cloneMessage(userMessage),
-          assistantMessage:cloneMessage(canonicalMessage),
-          contextMessages:contextMessages.filter(message=>message.metadata?.contextSource===undefined||message.metadata?.contextSource==="conversation").slice(-(this.recentConversationMessagesProvider?.()??8)).map(cloneMessage)
-        };
-        void Promise.resolve(this.memoryExtractor.extract(extractionRequest)).catch(()=>undefined);
+      if(this.automaticMemoryAgent&&(this.automaticMemoryEnabled?.()??true)){
+        const providerPresetId=this.modelProfile?.providerPresetId??this.runtime.getActiveProviderPresetId?.();
+        if(providerPresetId){
+          const agentRequest:AutomaticMemoryAgentRequest={
+            apiVersion:"1",
+            schemaVersion:"1",
+            characterId:this.session.characterId,
+            conversationId:this.session.conversationId,
+            turnId:active.requestId,
+            model:"",
+            providerPresetId,
+            userMessage:cloneMessage(userMessage),
+            assistantMessage:cloneMessage(canonicalMessage),
+            contextMessages:contextMessages.filter(message=>message.metadata?.contextSource===undefined||message.metadata?.contextSource==="conversation").slice(-(this.recentConversationMessagesProvider?.()??8)).map(cloneMessage)
+          };
+          void Promise.resolve(this.automaticMemoryAgent.process(agentRequest)).catch(()=>undefined);
+        }
       }
 
       return {status:"sent",response:canonicalResponse};
