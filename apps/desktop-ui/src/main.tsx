@@ -19,7 +19,7 @@ import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
-  type Character, type CoreBookActivation, type CoreBookEntry,
+  type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem, type MemoryType,
   defaultAppSettings, DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS, validateAppSettings, StandardContractValidator,
   type ProviderPreset, type ProviderPresetStoreState, type ModelInfo
 } from "../../../contracts/src/index";
@@ -574,6 +574,255 @@ function CoreBookView({runtime,character}:{runtime:FoundationRuntime;character:C
         </div>
         {message&&<div className="notice" role="status">{message}</div>}
       </div>
+    </div>
+  </section>;
+}
+
+type MemoryDraft={
+  type:MemoryType;
+  content:string;
+  tags:string;
+  importance:number;
+  confidence:number;
+  validFrom:string;
+  validUntil:string;
+};
+
+const MEMORY_TYPES:readonly MemoryType[]=["fact","preference","relationship","event","experience","goal","instruction","observation"];
+
+function containsSensitiveMemoryText(value:string):boolean{
+  return /authorization\s*:\s*bearer\s+\S+|\bbearer\s+[A-Za-z0-9._-]{16,}\b|\bsk-[A-Za-z0-9_-]{16,}\b|api[_ -]?key\s*[:=]\s*\S+|password\s*[:=]\s*\S+|secret\s*[:=]\s*\S+/i.test(value);
+}
+function redactMemoryText(value:string):string{
+  return value
+    .replace(/authorization\s*:\s*bearer\s+\S+/gi,"Authorization: Bearer [REDACTED]")
+    .replace(/\bbearer\s+[A-Za-z0-9._-]{16,}\b/gi,"Bearer [REDACTED]")
+    .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/gi,"[REDACTED]")
+    .replace(/api[_ -]?key\s*[:=]\s*\S+/gi,"api-key=[REDACTED]")
+    .replace(/password\s*[:=]\s*\S+/gi,"password=[REDACTED]")
+    .replace(/secret\s*[:=]\s*\S+/gi,"secret=[REDACTED]");
+}
+function memoryDate(value:string):string{
+  try{return new Date(value).toLocaleString();}
+  catch{return value;}
+}
+function memoryDraftFromItem(item:MemoryItem):MemoryDraft{
+  return {
+    type:item.type,
+    content:item.content,
+    tags:item.tags.join(", "),
+    importance:item.importance,
+    confidence:item.confidence,
+    validFrom:item.validFrom??"",
+    validUntil:item.validUntil??""
+  };
+}
+function newMemoryDraft():MemoryDraft{
+  return {type:"fact",content:"",tags:"",importance:70,confidence:80,validFrom:"",validUntil:""};
+}
+
+function MemoryView({
+  runtime,character,conversations,activeConversation,onSelectConversation
+}:{
+  runtime:FoundationRuntime;
+  character:Character;
+  conversations:readonly Conversation[];
+  activeConversation:Conversation;
+  onSelectConversation:(id:string)=>Promise<void>;
+}){
+  const [search,setSearch]=React.useState("");
+  const [memories,setMemories]=React.useState<readonly MemoryItem[]>([]);
+  const [selectedId,setSelectedId]=React.useState<string|undefined>();
+  const [draft,setDraft]=React.useState<MemoryDraft>(()=>newMemoryDraft());
+  const [editing,setEditing]=React.useState(false);
+  const [busy,setBusy]=React.useState(false);
+  const [loadError,setLoadError]=React.useState("");
+  const [message,setMessage]=React.useState("");
+
+  const selected=memories.find(item=>item.id===selectedId);
+  const load=React.useCallback(async(query=search)=>{
+    setBusy(true);setLoadError("");
+    try{
+      const next=await runtime.searchMemory({
+        characterId:character.id,
+        conversationId:activeConversation.id,
+        query:query.trim(),
+        status:"active",
+        limit:100
+      });
+      setMemories(next);
+      setSelectedId(current=>current&&next.some(item=>item.id===current)?current:next[0]?.id);
+    }catch(error){
+      setLoadError("Memory could not be loaded: "+safeErrorMessage(error));
+      setMemories([]);
+      setSelectedId(undefined);
+    }finally{setBusy(false);}
+  },[activeConversation.id,character.id,runtime,search]);
+
+  React.useEffect(()=>{setSearch("");setEditing(false);setSelectedId(undefined);setMessage("");void load("");},[activeConversation.id,character.id,load]);
+
+  React.useEffect(()=>{
+    if(selected&&!editing)setDraft(memoryDraftFromItem(selected));
+  },[selected,editing]);
+
+  const select=React.useCallback((item:MemoryItem)=>{
+    setSelectedId(item.id);setDraft(memoryDraftFromItem(item));setEditing(false);setMessage("");
+  },[]);
+
+  const startCreate=()=>{
+    setSelectedId(undefined);
+    setDraft(newMemoryDraft());
+    setEditing(true);
+    setMessage("");
+  };
+
+  const save=async()=>{
+    if(!draft.content.trim())return;
+    if(containsSensitiveMemoryText(draft.content)){
+      setMessage("Memory was not saved because the content appears to contain a credential or secret.");
+      return;
+    }
+    setBusy(true);setMessage("");setLoadError("");
+    try{
+      const tags=draft.tags.split(",").map(tag=>tag.trim()).filter(Boolean);
+      if(selected){
+        const updated=await runtime.updateMemory(character.id,activeConversation.id,selected.id,{
+          type:draft.type,
+          content:draft.content,
+          tags,
+          importance:draft.importance,
+          confidence:draft.confidence,
+          validFrom:draft.validFrom.trim()||null,
+          validUntil:draft.validUntil.trim()||null
+        });
+        setSelectedId(updated.id);
+        setMessage("Memory updated.");
+      }else{
+        const created=await runtime.createMemory(character.id,{
+          conversationId:activeConversation.id,
+          type:draft.type,
+          content:draft.content,
+          tags,
+          importance:draft.importance,
+          confidence:draft.confidence,
+          validFrom:draft.validFrom.trim()||null,
+          validUntil:draft.validUntil.trim()||null,
+          source:"user",
+          mutationPolicy:"locked",
+          metadata:{origin:"memory-ui"}
+        });
+        setSelectedId(created.id);
+        setMessage("Memory created.");
+      }
+      setEditing(false);
+      await load(search);
+    }catch(error){
+      setMessage("Memory could not be saved: "+safeErrorMessage(error));
+    }finally{setBusy(false);}
+  };
+
+  const archive=async()=>{
+    if(!selected)return;
+    if(!window.confirm("Archive this memory?"))return;
+    setBusy(true);setMessage("");setLoadError("");
+    try{
+      await runtime.archiveMemory(character.id,activeConversation.id,selected.id);
+      setSelectedId(undefined);setEditing(false);setMessage("Memory archived.");
+      await load(search);
+    }catch(error){setMessage("Memory could not be archived: "+safeErrorMessage(error))}
+    finally{setBusy(false);}
+  };
+
+  return <section className="memory-panel">
+    <div className="memory-toolbar">
+      <div>
+        <h2>Memory</h2>
+        <p className="chat-subtitle">Active Character: {character.name} · Conversation: {activeConversation.title}</p>
+      </div>
+      <div className="actions">
+        <button type="button" onClick={startCreate} disabled={busy}>Add Memory</button>
+        <button type="button" onClick={()=>void load(search)} disabled={busy}>Refresh</button>
+      </div>
+    </div>
+
+    <div className="settings-grid memory-layout">
+      <section>
+        <h3>Scope</h3>
+        <label>Character
+          <input value={character.name} readOnly/>
+        </label>
+        <label>Conversation
+          <select value={activeConversation.id} onChange={event=>void onSelectConversation(event.target.value)} disabled={busy}>
+            {conversations.map(conversation=><option key={conversation.id} value={conversation.id}>{conversation.title}</option>)}
+          </select>
+        </label>
+        <label>Search memory
+          <input
+            value={search}
+            onChange={event=>setSearch(event.target.value)}
+            onKeyDown={event=>{if(event.key==="Enter")void load(search)}}
+            placeholder="Search memory"
+            disabled={busy}/>
+        </label>
+        <div className="actions"><button type="button" onClick={()=>void load(search)} disabled={busy}>Search</button><button type="button" onClick={()=>void load("")} disabled={busy||search.length===0}>Clear Search</button></div>
+        {loadError&&<div className="error">{loadError}<div className="actions"><button type="button" onClick={()=>void load(search)} disabled={busy}>Retry</button></div></div>}
+        {!loadError&&memories.length===0&&<div className="memory-empty">No active memory in this Conversation.</div>}
+        {!loadError&&memories.length>0&&<div className="memory-list" role="listbox" aria-label="Active memories">
+          {memories.map(item=>
+            <button type="button" key={item.id} className={item.id===selectedId?"memory-row active":"memory-row"} onClick={()=>select(item)} disabled={busy}>
+              <strong>{redactMemoryText(item.content)}</strong>
+              <span>{item.type} · importance {item.importance} · confidence {item.confidence}</span>
+              <small>{memoryDate(item.updatedAt)}</small>
+            </button>
+          )}
+        </div>}
+      </section>
+
+      <section>
+        <h3>{selected?"Memory Details":"Add Memory"}</h3>
+        {selected&&!editing&&<div className="status-grid">
+          <span>Content</span><strong>{redactMemoryText(selected.content)}</strong>
+          <span>Type</span><strong>{selected.type}</strong>
+          <span>Tags</span><strong>{selected.tags.length?selected.tags.join(", "):"—"}</strong>
+          <span>Importance</span><strong>{selected.importance}</strong>
+          <span>Confidence</span><strong>{selected.confidence}</strong>
+          <span>Valid From</span><strong>{selected.validFrom?memoryDate(selected.validFrom):"—"}</strong>
+          <span>Valid Until</span><strong>{selected.validUntil?memoryDate(selected.validUntil):"—"}</strong>
+          <span>Source</span><strong>{selected.source}</strong>
+          <span>Source Reference</span><strong>{selected.sourceReference??"—"}</strong>
+          <span>Mutation Policy</span><strong>{selected.mutationPolicy}</strong>
+          <span>Status</span><strong>{selected.status}</strong>
+          <span>Created</span><strong>{memoryDate(selected.createdAt)}</strong>
+          <span>Updated</span><strong>{memoryDate(selected.updatedAt)}</strong>
+        </div>}
+        {selected&&!editing&&containsSensitiveMemoryText(selected.content)&&<div className="hint">Sensitive-looking content is hidden in the Memory UI.</div>}
+        {editing&&<div>
+          <label>Content
+            {containsSensitiveMemoryText(draft.content)
+              ?<div className="error">Sensitive-looking content is hidden and cannot be edited in this UI.</div>
+              :<textarea value={draft.content} onChange={event=>setDraft(current=>({...current,content:event.target.value}))} rows={9} disabled={busy}/>}
+          </label>
+          <div className="core-book-grid">
+            <label>Type<select value={draft.type} onChange={event=>setDraft(current=>({...current,type:event.target.value as MemoryType}))} disabled={busy}>{MEMORY_TYPES.map(type=><option key={type} value={type}>{type}</option>)}</select></label>
+            <label>Tags<input value={draft.tags} onChange={event=>setDraft(current=>({...current,tags:event.target.value}))} placeholder="comma, separated, tags" disabled={busy}/></label>
+          </div>
+          <div className="core-book-grid">
+            <label>Importance<input type="number" min={0} max={100} value={draft.importance} onChange={event=>setDraft(current=>({...current,importance:Number(event.target.value)}))} disabled={busy}/></label>
+            <label>Confidence<input type="number" min={0} max={100} value={draft.confidence} onChange={event=>setDraft(current=>({...current,confidence:Number(event.target.value)}))} disabled={busy}/></label>
+          </div>
+          <div className="core-book-grid">
+            <label>Valid From<input type="datetime-local" value={draft.validFrom} onChange={event=>setDraft(current=>({...current,validFrom:event.target.value}))} disabled={busy}/></label>
+            <label>Valid Until<input type="datetime-local" value={draft.validUntil} onChange={event=>setDraft(current=>({...current,validUntil:event.target.value}))} disabled={busy}/></label>
+          </div>
+          <div className="actions">
+            <button type="button" onClick={()=>void save()} disabled={busy||!draft.content.trim()||containsSensitiveMemoryText(draft.content)}>Save</button>
+            <button type="button" onClick={()=>{setEditing(false);if(selected)setDraft(memoryDraftFromItem(selected));else setDraft(newMemoryDraft())}} disabled={busy}>Cancel</button>
+          </div>
+        </div>}
+        {selected&&!editing&&<div className="actions"><button type="button" onClick={()=>{setDraft(memoryDraftFromItem(selected));setEditing(true);setMessage("")}} disabled={busy||containsSensitiveMemoryText(selected.content)}>Edit</button><button type="button" onClick={()=>void archive()} disabled={busy}>Archive</button></div>}
+        {!selected&&!editing&&<div className="memory-empty">Select a memory or choose Add Memory.</div>}
+        {message&&<div className="notice" role="status">{message}</div>}
+      </section>
     </div>
   </section>;
 }
