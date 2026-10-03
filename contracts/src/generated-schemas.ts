@@ -2779,257 +2779,10 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       }
     }
   },
-  "memory-candidate": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/memory-candidate/v1",
-    "title": "AI Companion Nova Memory Candidate v1",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "type",
-      "content",
-      "tags",
-      "importance",
-      "confidence",
-      "source",
-      "sourceReference",
-      "mutationPolicy"
-    ],
-    "properties": {
-      "type": {
-        "enum": [
-          "fact",
-          "preference",
-          "relationship",
-          "event",
-          "experience",
-          "goal",
-          "instruction",
-          "observation"
-        ]
-      },
-      "content": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 4000
-      },
-      "tags": {
-        "type": "array",
-        "maxItems": 16,
-        "items": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 64
-        }
-      },
-      "importance": {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 100
-      },
-      "confidence": {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 100
-      },
-      "source": {
-        "const": "conversation"
-      },
-      "sourceReference": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200
-      },
-      "mutationPolicy": {
-        "const": "auto"
-      }
-    }
-  },
-  "memory-extraction-request": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/memory-extraction-request/v1",
-    "title": "AI Companion Nova Memory Extraction Request v1",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "apiVersion",
-      "schemaVersion",
-      "characterId",
-      "conversationId",
-      "turnId",
-      "model",
-      "userMessage",
-      "assistantMessage",
-      "contextMessages"
-    ],
-    "properties": {
-      "apiVersion": {
-        "const": "1"
-      },
-      "schemaVersion": {
-        "const": "1"
-      },
-      "characterId": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200
-      },
-      "conversationId": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200
-      },
-      "turnId": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200
-      },
-      "model": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200
-      },
-      "providerId": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200
-      },
-      "providerPresetId": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200
-      },
-      "userMessage": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "role",
-          "content"
-        ],
-        "properties": {
-          "id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200
-          },
-          "role": {
-            "enum": [
-              "system",
-              "user",
-              "assistant",
-              "tool"
-            ]
-          },
-          "content": {
-            "type": "string"
-          },
-          "toolCallId": {
-            "type": "string",
-            "minLength": 1
-          },
-          "metadata": {
-            "type": "object",
-            "additionalProperties": true
-          }
-        }
-      },
-      "assistantMessage": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "role",
-          "content"
-        ],
-        "properties": {
-          "id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200
-          },
-          "role": {
-            "enum": [
-              "system",
-              "user",
-              "assistant",
-              "tool"
-            ]
-          },
-          "content": {
-            "type": "string"
-          },
-          "toolCallId": {
-            "type": "string",
-            "minLength": 1
-          },
-          "metadata": {
-            "type": "object",
-            "additionalProperties": true
-          }
-        }
-      },
-      "contextMessages": {
-        "type": "array",
-        "maxItems": 16,
-        "items": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "role",
-            "content"
-          ],
-          "properties": {
-            "id": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 200
-            },
-            "role": {
-              "enum": [
-                "system",
-                "user",
-                "assistant",
-                "tool"
-              ]
-            },
-            "content": {
-              "type": "string"
-            },
-            "toolCallId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "metadata": {
-              "type": "object",
-              "additionalProperties": true
-            }
-          }
-        }
-      }
-    }
-  },
-  "memory-extraction-result": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/memory-extraction-result/v1",
-    "title": "AI Companion Nova Memory Extraction Result v1",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "memories"
-    ],
-    "properties": {
-      "memories": {
-        "type": "array",
-        "maxItems": 12,
-        "items": {
-          "$ref": "https://schemas.ai-companion-nova.dev/memory-candidate/v1"
-        }
-      }
-    }
-  },
   "app-settings": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v1",
-    "title": "AI Companion Nova App Settings v1",
+    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v2",
+    "title": "AI Companion Nova App Settings v2",
     "type": "object",
     "additionalProperties": false,
     "required": [
@@ -3040,14 +2793,15 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       "memory",
       "retrieval",
       "diagnostics",
-      "ui"
+      "ui",
+      "memoryAgent"
     ],
     "properties": {
       "apiVersion": {
         "const": "1"
       },
       "schemaVersion": {
-        "const": "1"
+        "const": "2"
       },
       "chat": {
         "type": "object",
@@ -3154,6 +2908,31 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         "properties": {
           "showDiagnosticsInChat": {
             "type": "boolean"
+          }
+        }
+      },
+      "memoryAgent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "enabled",
+          "providerPresetId",
+          "model"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "providerPresetId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 200
           }
         }
       }
