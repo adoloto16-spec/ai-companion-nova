@@ -9,7 +9,7 @@ import {
 import {defaultAppSettings,StandardContractValidator} from "../../contracts/src";
 import type {ChatRequest,ChatResponse} from "../../contracts/src";
 import {InMemoryMemoryStore} from "../../host/memory/src";
-import {InMemoryConversationStore} from "../../host/conversations/src";
+import {InMemoryConversationStore,createConversationTemplate} from "../../host/conversations/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error(label+" expected "+String(expected)+" got "+String(actual))}
 function ok(value:unknown,label:string){if(!value)throw new Error(label)}
@@ -55,7 +55,8 @@ async function main(){
   await conversationStore.clear("character.a",conversation!.id);
   equal((await broker.search({characterId:"character.a",conversationId:conversation!.id,query:"green",status:"active",limit:10})).length,1,"clearing conversation messages preserves long-term memory");
 
-  const other=await conversationStore.create("character.a",{title:"Second conversation"});
+  const other=createConversationTemplate("character.a",{title:"Second conversation"});
+  await conversationStore.save(other);
   equal((await broker.search({characterId:"character.a",conversationId:other.id,query:"green",status:"active",limit:10})).length,0,"memory is not visible in another conversation");
 
   const contextEngine=createDeterministicContextEngine(
