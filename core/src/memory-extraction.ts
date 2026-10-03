@@ -142,26 +142,33 @@ export class MemoryExtractionService{
       const superseded:{candidate:MemoryCandidate;memoryId:string}[]=[];
       const createdTrace:{candidate:MemoryCandidate;memoryId:string}[]=[];
       for(const candidate of result.memories){
-        if(!this.safeCandidate(candidate,request.conversationId)){
-          rejected.push({candidate,reason:"candidate failed source, scope, mutation policy, score, or secret validation"});
+        const normalizedCandidate:MemoryCandidate={
+          ...candidate,
+          source:"conversation",
+          sourceReference:request.conversationId,
+          mutationPolicy:"auto"
+        };
+        const rejectionReason=this.safeCandidate(normalizedCandidate);
+        if(rejectionReason){
+          rejected.push({candidate:normalizedCandidate,reason:rejectionReason});
           this.traceStore?.update(request.turnId,{memoryExtraction:{candidates:[...result.memories],accepted:[...accepted],rejected:[...rejected],duplicate:[...duplicate],superseded:[...superseded],created:[...createdTrace]}});
           continue;
         }
-        const keyContent=normalizedContentKey(candidate.content);
+        const keyContent=normalizedContentKey(normalizedCandidate.content);
         if(active.some(item=>normalizedContentKey(item.content)===keyContent)){
-          duplicate.push(candidate);
+          duplicate.push(normalizedCandidate);
           this.traceStore?.update(request.turnId,{memoryExtraction:{candidates:[...result.memories],accepted:[...accepted],rejected:[...rejected],duplicate:[...duplicate],superseded:[...superseded],created:[...createdTrace]}});
           continue;
         }
 
-        const replacementTarget=active.find(item=>sameSubjectShape(candidate,item));
+        const replacementTarget=active.find(item=>sameSubjectShape(normalizedCandidate,item));
         if(replacementTarget){
           try{
-            const replacement=await this.broker.supersede(request.characterId,request.conversationId,replacementTarget.id,this.toCreateInput(candidate,request),this.authority());
+            const replacement=await this.broker.supersede(request.characterId,request.conversationId,replacementTarget.id,this.toCreateInput(normalizedCandidate,request),this.authority());
             created.push(replacement);
-            accepted.push(candidate);
-            superseded.push({candidate,memoryId:replacement.id});
-            createdTrace.push({candidate,memoryId:replacement.id});
+            accepted.push(normalizedCandidate);
+            superseded.push({candidate:normalizedCandidate,memoryId:replacement.id});
+            createdTrace.push({candidate:normalizedCandidate,memoryId:replacement.id});
             active=[...active.filter(item=>item.id!==replacementTarget.id),replacement];
           }catch{
             this.recordFailure("PERSISTENCE_SKIPPED","Memory replacement was not authorized or could not be persisted.");
@@ -170,10 +177,10 @@ export class MemoryExtractionService{
           continue;
         }
         try{
-          const item=await this.broker.create(request.characterId,this.toCreateInput(candidate,request),this.authority());
+          const item=await this.broker.create(request.characterId,this.toCreateInput(normalizedCandidate,request),this.authority());
           created.push(item);
-          accepted.push(candidate);
-          createdTrace.push({candidate,memoryId:item.id});
+          accepted.push(normalizedCandidate);
+          createdTrace.push({candidate:normalizedCandidate,memoryId:item.id});
           active=[...active,item];
         }catch{
           this.recordFailure("PERSISTENCE_SKIPPED","Memory candidate could not be persisted.");
@@ -246,11 +253,14 @@ export class MemoryExtractionService{
     return result;
   }
 
-  private safeCandidate(candidate:MemoryCandidate,conversationId:string):boolean{
-    if(candidate.source!=="conversation"||candidate.sourceReference!==conversationId||candidate.mutationPolicy!=="auto")return false;
-    if(!Number.isInteger(candidate.importance)||candidate.importance<0||candidate.importance>100)return false;
-    if(!Number.isInteger(candidate.confidence)||candidate.confidence<0||candidate.confidence>100)return false;
-    return !containsSecret(candidate.content)&&candidate.tags.every(tag=>!containsSecret(tag));
+  private safeCandidate(candidate:MemoryCandidate):string|undefined{
+    if(candidate.source!=="conversation")return "invalid source";
+    if(candidate.sourceReference!==candidate.sourceReference.trim())return "invalid source reference";
+    if(candidate.mutationPolicy!=="auto")return "invalid mutation policy";
+    if(!Number.isInteger(candidate.importance)||candidate.importance<0||candidate.importance>100)return "invalid importance";
+    if(!Number.isInteger(candidate.confidence)||candidate.confidence<0||candidate.confidence>100)return "invalid confidence";
+    if(containsSecret(candidate.content)||candidate.tags.some(tag=>containsSecret(tag)))return "secret detected";
+    return undefined;
   }
   private toCreateInput(candidate:MemoryCandidate,request:MemoryExtractionRequest):MemoryCreateInput{
     return {
