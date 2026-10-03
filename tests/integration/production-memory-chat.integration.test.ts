@@ -134,13 +134,13 @@ async function main(){
     });
 
     equal(commands.includes(RETRIEVAL_COMMANDS.search),true,"MemoryCandidateSource calls IpcFullTextRetriever.search through the IPC boundary");
-    const realQuery=retrievalQueries.at(-1);
-    equal(realQuery?.characterId,character.id,"production RetrievalQuery preserves character scope");
-    equal(realQuery?.conversationId,conversation.id,"production RetrievalQuery preserves conversation scope");
-    equal(realQuery?.query,query,"production RetrievalQuery uses the latest user message");
+    const realQuery=[...retrievalQueries].reverse().find(item=>item.sources?.includes("memory"));
+    equal(realQuery?.characterId,character.id,"production Memory RetrievalQuery preserves character scope");
+    equal(realQuery?.conversationId,conversation.id,"production Memory RetrievalQuery preserves conversation scope");
+    equal(realQuery?.query,query,"production Memory RetrievalQuery uses the latest user message");
     equal(realQuery?.sources,["memory"],"production RetrievalQuery requests Memory source only");
     equal(realQuery?.filters?.status,"active","production RetrievalQuery requests active Dynamic Memory");
-    const result=retrievalResults.at(-1);
+    const result=[...retrievalResults].reverse().find(item=>item.query===query);
     ok(Boolean(result),"production retrieval returns a RetrievalResult");
     ok(result?.candidates.some(candidate=>candidate.source==="memory"&&candidate.sourceId===memory.id),"RetrievalResult contains source=memory");
     const selected=assembled.includedCandidates.find(candidate=>candidate.referenceId===memory.id);
