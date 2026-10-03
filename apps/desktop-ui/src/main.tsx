@@ -1062,6 +1062,14 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
       {selected.memoryExtraction&&<div className="diagnostic-block">
         <h3>Automatic Memory Extraction</h3>
         <p>Started: {selected.memoryExtraction.started?"yes":"no"}</p>
+         <div className="status-grid">
+           <span>Status</span><strong>{selected.memoryExtraction.status??"—"}</strong>
+           <span>Provider</span><strong>{selected.memoryExtraction.providerId??"—"}</strong>
+           <span>Model</span><strong>{selected.memoryExtraction.model??"—"}</strong>
+           <span>Request</span><strong>{selected.memoryExtraction.requestId??"—"}</strong>
+           <span>Conversation</span><strong>{selected.memoryExtraction.conversationId??"—"}</strong>
+           <span>Context messages</span><strong>{selected.memoryExtraction.contextMessageCount===undefined?"—":selected.memoryExtraction.contextMessageCount}</strong>
+         </div>
         <h4>Candidates</h4>{selected.memoryExtraction.candidates.length===0?<div>None</div>:selected.memoryExtraction.candidates.map((candidate,index)=><TraceCandidate key={candidate.content+index} candidate={candidate}/>)}
         <h4>Accepted</h4>{selected.memoryExtraction.accepted.length===0?<div>None</div>:selected.memoryExtraction.accepted.map((candidate,index)=><TraceCandidate key={candidate.content+index} candidate={candidate}/>)}
         <h4>Rejected</h4>{selected.memoryExtraction.rejected.length===0?<div>None</div>:selected.memoryExtraction.rejected.map((item,index)=><div className="diagnostic-candidate" key={item.candidate.content+index}><div className="diagnostic-reason">{item.reason}</div><TraceCandidate candidate={item.candidate}/></div>)}
