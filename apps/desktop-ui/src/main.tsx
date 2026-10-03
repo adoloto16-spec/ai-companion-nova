@@ -20,7 +20,7 @@ import {
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
   type Character, type CoreBookActivation, type CoreBookEntry,
-  defaultAppSettings, validateAppSettings, StandardContractValidator,
+  defaultAppSettings, DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS, validateAppSettings, StandardContractValidator,
   type ProviderPreset, type ProviderPresetStoreState, type ModelInfo
 } from "../../../contracts/src/index";
 import "./styles.css";
@@ -1160,6 +1160,19 @@ function AutomaticMemorySettingsView({
         <small>Default: {defaults.memoryAgent.model||"Use the selected preset model"}</small>
       </label>
       <p className="hint">The Memory Agent uses one ordinary text ChatRequest through the selected Provider Preset. It does not use the active Chat provider automatically.</p>
+      <label>Memory Agent Instructions
+        <textarea
+          value={settings.memoryAgent.instructions}
+          onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,instructions:event.target.value}})}
+          rows={12}
+          maxLength={12000}
+          disabled={saving}/>
+        <small>These instructions control what the agent considers durable. Safety/privacy rules, NO_MEMORY, plain-text output, and Core-owned metadata remain immutable. {settings.memoryAgent.instructions.length}/12000</small>
+      </label>
+      <div className="actions">
+        <button type="button" onClick={()=>onChange({...settings,memoryAgent:{...settings.memoryAgent,instructions:DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS}})} disabled={saving}>Restore Default</button>
+      </div>
+
       <div className="actions">
         <button type="button" onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save Automatic Memory"}</button>
       </div>
