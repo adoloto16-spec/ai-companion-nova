@@ -2781,8 +2781,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
   },
   "app-settings": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v2",
-    "title": "AI Companion Nova App Settings v2",
+    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v3",
+    "title": "AI Companion Nova App Settings v3",
     "type": "object",
     "additionalProperties": false,
     "required": [
@@ -2801,7 +2801,7 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         "const": "1"
       },
       "schemaVersion": {
-        "const": "2"
+        "const": "3"
       },
       "chat": {
         "type": "object",
@@ -2917,7 +2917,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         "required": [
           "enabled",
           "providerPresetId",
-          "model"
+          "model",
+          "instructions"
         ],
         "properties": {
           "enabled": {
@@ -2933,6 +2934,10 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           "model": {
             "type": "string",
             "maxLength": 200
+          },
+          "instructions": {
+            "type": "string",
+            "maxLength": 12000
           }
         }
       }
