@@ -53,7 +53,32 @@ async function main(){
     contextMessages:[]
   });
   ok(Boolean(created),"completed turn creates long-term memory");
+  equal(created?.status,"active","automatic memory is active");
+  equal(created?.id.trim().length>0,true,"automatic memory receives a non-empty id");
+  equal(created?.tags,[],"automatic memory accepts empty tags");
+  equal(created?.importance,70,"automatic memory importance is deterministic");
+  equal(created?.confidence,80,"automatic memory confidence is deterministic");
+  equal(created?.source,"conversation","automatic memory provenance is deterministic");
+  equal(created?.sourceReference,"integration-turn-1","automatic memory sourceReference is the turn id");
+  equal(created?.mutationPolicy,"auto","automatic memory mutation policy is deterministic");
 
+  const edited=await broker.update("character.a",conversation!.id,created!.id,{
+    type:"preference",content:"User prefers green aviation examples.",tags:["aviation"],importance:85,confidence:90
+  },{
+    actorId:"local-user",actorType:"user",trusted:true,capabilities:[]
+  });
+  equal(edited.type,"preference","MemoryBroker updates editable type");
+  equal(edited.content,"User prefers green aviation examples.","MemoryBroker updates content");
+  equal(edited.tags,["aviation"],"MemoryBroker updates tags");
+  const updatedContext=await createDeterministicContextEngine({listCoreBookEntries:async()=>[]},{memoryBroker:broker,recentMessageCount:()=>8,memoryCandidateLimit:()=>8}).build({
+    apiVersion:"1",schemaVersion:"1",characterId:"character.a",conversationId:conversation!.id,
+    messages:[{role:"user",content:"aviation"}],
+    budget:{availableContextTokens:4096,reservedOutputTokens:512,systemOverheadTokens:0,safetyMarginTokens:64}
+  });
+  equal(updatedContext.includedCandidates.filter(candidate=>candidate.referenceId===created!.id).length,1,"updated memory remains eligible to Context Engine");
+  await broker.archive("character.a",conversation!.id,created!.id,{actorId:"local-user",actorType:"user",trusted:true,capabilities:[]});
+  equal((await broker.search({characterId:"character.a",conversationId:conversation!.id,query:"",status:"active",limit:10})).length,0,"archived memory leaves active memory list");
+  equal((await broker.search({characterId:"character.a",conversationId:conversation!.id,query:"",status:"archived",limit:10})).length,1,"archived memory remains persisted");
   await conversationStore.clear("character.a",conversation!.id);
   equal((await broker.search({characterId:"character.a",conversationId:conversation!.id,query:"green",status:"active",limit:10})).length,1,"clearing conversation messages preserves long-term memory");
 
