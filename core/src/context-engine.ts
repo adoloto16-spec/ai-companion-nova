@@ -109,17 +109,16 @@ export class MemoryCandidateSource implements ContextCandidateSource {
           diagnosticErrorMessage(error),
           {characterId:request.characterId,conversationId:request.conversationId,query,sources:["memory"]}
         );
-        throw error;
+        return [];
       }
       if(retrieval.degraded){
-        const error=new Error(retrieval.error??"Retrieval returned a degraded result.");
         this.diagnostics?.recordError(
           "context-memory",
           "RETRIEVAL_DEGRADED",
-          error.message,
+          retrieval.error??"Retrieval returned a degraded result.",
           {characterId:request.characterId,conversationId:request.conversationId,query,sources:["memory"]}
         );
-        throw error;
+        return [];
       }
       const canonical=await Promise.all(retrieval.candidates
         .filter(candidate=>candidate.source==="memory"&&candidate.characterId===request.characterId&&candidate.conversationId===request.conversationId)
@@ -135,7 +134,7 @@ export class MemoryCandidateSource implements ContextCandidateSource {
           diagnosticErrorMessage(error),
           {characterId:request.characterId,conversationId:request.conversationId,query}
         );
-        throw error;
+        return [];
       }
     }
 
