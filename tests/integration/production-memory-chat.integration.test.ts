@@ -140,7 +140,7 @@ async function main(){
     equal(realQuery?.query,query,"production Memory RetrievalQuery uses the latest user message");
     equal(realQuery?.sources,["memory"],"production RetrievalQuery requests Memory source only");
     equal(realQuery?.filters?.status,"active","production RetrievalQuery requests active Dynamic Memory");
-    const result=[...retrievalResults].reverse().find(item=>item.query===query);
+    const result=[...retrievalResults].reverse().find(item=>item.query===query&&item.candidates.some(candidate=>candidate.source==="memory"));
     ok(Boolean(result),"production retrieval returns a RetrievalResult");
     ok(result?.candidates.some(candidate=>candidate.source==="memory"&&candidate.sourceId===memory.id),"RetrievalResult contains source=memory");
     const selected=assembled.includedCandidates.find(candidate=>candidate.referenceId===memory.id);
