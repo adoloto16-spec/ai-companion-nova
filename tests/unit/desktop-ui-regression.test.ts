@@ -33,7 +33,7 @@ for(const removed of ["Provider Presets","Provider Settings"]){
 }
 
 for(const label of ["General","Provider Presets","Automatic Memory"]){
-  assert.ok(settingsContainer.includes(">"+label+"</button>"),"Settings sub-navigation must expose "+label);
+  assert.ok(settingsContainer.includes(">"+label+"</button>")||settingsContainer.includes(">"+label+"\n      </button>")||settingsContainer.includes(">\n        "+label+"\n      </button>"),"Settings sub-navigation must expose "+label);
 }
 assert.ok(settingsContainer.includes('tab==="general"'),"Settings must have a General tab");
 assert.ok(settingsContainer.includes('tab==="provider-presets"'),"Settings must have a Provider Presets tab");
