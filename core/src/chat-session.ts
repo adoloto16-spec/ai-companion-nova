@@ -469,22 +469,17 @@ export class ChatSessionController{
         }
       });
       if(this.automaticMemoryAgent&&(this.automaticMemoryEnabled?.()??true)){
-        const providerPresetId=this.modelProfile?.providerPresetId??this.runtime.getActiveProviderPresetId?.();
-        if(providerPresetId){
-          const agentRequest:AutomaticMemoryAgentRequest={
-            apiVersion:"1",
-            schemaVersion:"1",
-            characterId:this.session.characterId,
-            conversationId:this.session.conversationId,
-            turnId:active.requestId,
-            model:"",
-            providerPresetId,
-            userMessage:cloneMessage(userMessage),
-            assistantMessage:cloneMessage(canonicalMessage),
-            contextMessages:contextMessages.filter(message=>message.metadata?.contextSource===undefined||message.metadata?.contextSource==="conversation").slice(-(this.recentConversationMessagesProvider?.()??8)).map(cloneMessage)
-          };
-          void Promise.resolve(this.automaticMemoryAgent.process(agentRequest)).catch(()=>undefined);
-        }
+        const agentRequest:AutomaticMemoryAgentRequest={
+          apiVersion:"1",
+          schemaVersion:"1",
+          characterId:this.session.characterId,
+          conversationId:this.session.conversationId,
+          turnId:active.requestId,
+          userMessage:cloneMessage(userMessage),
+          assistantMessage:cloneMessage(canonicalMessage),
+          contextMessages:contextMessages.filter(message=>message.metadata?.contextSource===undefined||message.metadata?.contextSource==="conversation").slice(-(this.recentConversationMessagesProvider?.()??8)).map(cloneMessage)
+        };
+        void Promise.resolve(this.automaticMemoryAgent.process(agentRequest)).catch(()=>undefined);
       }
 
       return {status:"sent",response:canonicalResponse};
