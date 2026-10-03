@@ -1,11 +1,12 @@
 export type DiagnosticsLogLevel="off"|"errors"|"normal"|"verbose"|"debug";
 
 export const APP_SETTINGS_API_VERSION:"1"="1";
-export const APP_SETTINGS_SCHEMA_VERSION:"2"="2";
+export const APP_SETTINGS_SCHEMA_VERSION:"3"="3";
+export const DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS="Review the relevant conversation context, user message, and assistant response.\nDecide whether there is durable information worth remembering after this conversation ends.\nKeep information only when it is useful beyond the current turn.\nExamples: stable user preferences, persistent user facts, important relationships, long-term goals, commitments or decisions, durable instructions, meaningful experiences, and important assistant commitments or decisions.";
 
 export interface AppSettings{
   apiVersion:"1";
-  schemaVersion:"2";
+  schemaVersion:"3";
   chat:{
     automaticLongTermMemory:boolean;
   };
@@ -13,6 +14,7 @@ export interface AppSettings{
     enabled:boolean;
     providerPresetId:string|null;
     model:string;
+    instructions:string;
   };
   context:{
     availableContextTokens:number;
@@ -39,7 +41,7 @@ export const DEFAULT_APP_SETTINGS:AppSettings={
   apiVersion:APP_SETTINGS_API_VERSION,
   schemaVersion:APP_SETTINGS_SCHEMA_VERSION,
   chat:{automaticLongTermMemory:true},
-  memoryAgent:{enabled:true,providerPresetId:null,model:""},
+  memoryAgent:{enabled:true,providerPresetId:null,model:DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS},
   context:{
     availableContextTokens:4096,
     reservedOutputTokens:1024,
@@ -86,6 +88,7 @@ export function validateAppSettings(settings:AppSettings):string[]{
   if(typeof settings.memoryAgent.enabled!=="boolean")errors.push("Automatic Memory Agent enabled must be boolean.");
   if(settings.memoryAgent.providerPresetId!==null&&(typeof settings.memoryAgent.providerPresetId!=="string"||settings.memoryAgent.providerPresetId.trim().length===0))errors.push("Automatic Memory Agent provider preset must be empty or a non-empty string.");
   if(typeof settings.memoryAgent.model!=="string")errors.push("Automatic Memory Agent model must be a string.");
+  if(typeof settings.memoryAgent.instructions!=="string"||settings.memoryAgent.instructions.length>12000)errors.push("Automatic Memory Agent instructions must be a string up to 12000 characters.");
   integer(settings.context.availableContextTokens,"Context size",256,SECURITY_MAX.availableContextTokens);
   integer(settings.context.reservedOutputTokens,"Reserved response tokens",0,SECURITY_MAX.reservedOutputTokens);
   integer(settings.context.safetyMarginTokens,"Safety margin",0,SECURITY_MAX.safetyMarginTokens);
@@ -105,7 +108,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const input=value as Record<string,unknown>;
   const legacy=input.schemaVersion==="0"||input.schemaVersion===undefined||input.schemaVersion==="1";
   if(input.apiVersion!==undefined&&input.apiVersion!=="1"&&!legacy)throw new Error("Unsupported AppSettings apiVersion.");
-  if(input.schemaVersion!==undefined&&!["0","1","2"].includes(String(input.schemaVersion)))throw new Error("Unsupported AppSettings schemaVersion.");
+  if(input.schemaVersion!==undefined&&!["0","1","2","3"].includes(String(input.schemaVersion)))throw new Error("Unsupported AppSettings schemaVersion.");
   const root=value as Record<string,any>;
   const context=root.context&&typeof root.context==="object"?root.context:{};
   const memory=root.memory&&typeof root.memory==="object"?root.memory:{};
@@ -120,14 +123,18 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const logLevelValue=(typeof diagnostics.logLevel==="string"?diagnostics.logLevel:legacyLog)??defaults.diagnostics.logLevel;
   if(!["off","errors","normal","verbose","debug"].includes(logLevelValue))throw new Error("Unsupported diagnostics log level.");
   const legacyEnabled=typeof chat.automaticLongTermMemory==="boolean"?chat.automaticLongTermMemory:defaults.chat.automaticLongTermMemory;
-  const currentSchema=input.schemaVersion==="2";
-  const memoryAgentEnabled=currentSchema&&typeof memoryAgent.enabled==="boolean"?memoryAgent.enabled:legacyEnabled;
-  const memoryAgentPreset=currentSchema&&typeof memoryAgent.providerPresetId==="string"&&memoryAgent.providerPresetId.trim()?memoryAgent.providerPresetId.trim():null;
-  const memoryAgentModel=currentSchema&&typeof memoryAgent.model==="string"?memoryAgent.model.trim():"";
+  const currentSchema=input.schemaVersion==="3";
+  const previousSchema=input.schemaVersion==="2";
+  const memoryAgentEnabled=(currentSchema||previousSchema)&&typeof memoryAgent.enabled==="boolean"?memoryAgent.enabled:legacyEnabled;
+  const memoryAgentPreset=(currentSchema||previousSchema)&&typeof memoryAgent.providerPresetId==="string"&&memoryAgent.providerPresetId.trim()?memoryAgent.providerPresetId.trim():null;
+  const memoryAgentModel=(currentSchema||previousSchema)&&typeof memoryAgent.model==="string"?memoryAgent.model.trim():"";
+  const memoryAgentInstructions=currentSchema&&typeof memoryAgent.instructions==="string"&&memoryAgent.instructions.trim()
+    ?memoryAgent.instructions.trim()
+    :DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS;
   const next:AppSettings={
-    apiVersion:"1",schemaVersion:"2",
+    apiVersion:"1",schemaVersion:"3",
     chat:{automaticLongTermMemory:legacyEnabled},
-    memoryAgent:{enabled:memoryAgentEnabled,providerPresetId:memoryAgentPreset,model:memoryAgentModel},
+    memoryAgent:{enabled:memoryAgentEnabled,providerPresetId:memoryAgentPreset,model:memoryAgentModel,instructions:memoryAgentInstructions},
     context:{
       availableContextTokens:typeof context.availableContextTokens==="number"?context.availableContextTokens:(legacyContextBudget??defaults.context.availableContextTokens),
       reservedOutputTokens:typeof context.reservedOutputTokens==="number"?context.reservedOutputTokens:defaults.context.reservedOutputTokens,
