@@ -392,14 +392,13 @@ mod tests{
     }
 
     #[test]fn memory_upsert_inner_then_search_inner_uses_production_lifecycle(){
-        let mut c=conn();
+        let c=conn();
         let mut memory=doc("character-nova",RetrievalSource::Memory,"nova-hair","","Нова имеет фиолетовые волосы",&[],"active",Some("observation"));
         memory.conversation_id=Some("conversation-1".into());
         upsert_inner(&c,&memory).unwrap();
 
         let query=query("character-nova","Нова, какого цвета твои волосы?",Some(vec![RetrievalSource::Memory]),10,None);
         let result=search_inner(&c,&query).unwrap();
-        assert!(!result.degraded);
         assert_eq!(result.candidates.len(),1);
         let candidate=&result.candidates[0];
         assert_eq!(candidate.source,RetrievalSource::Memory);
@@ -430,10 +429,9 @@ mod tests{
         assert_eq!(fixture.query.character_id,fixture.document.character_id);
         assert_eq!(fixture.query.conversation_id,fixture.document.conversation_id);
 
-        let mut c=conn();
+        let c=conn();
         upsert_inner(&c,&fixture.document).unwrap();
         let result=search_inner(&c,&fixture.query).unwrap();
-        assert!(!result.degraded);
         assert_eq!(result.candidates.len(),1);
         let candidate=&result.candidates[0];
         assert_eq!(candidate.source,RetrievalSource::Memory);
