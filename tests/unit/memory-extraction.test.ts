@@ -182,6 +182,16 @@ async function main(){
   }
 
   {
+    const invalidConstFields=JSON.stringify({memories:[
+      {type:"fact",content:"The table is green.",tags:["table"],importance:90,confidence:95,source:"user",sourceReference:"conversation.a",mutationPolicy:"suggest"}
+    ]});
+    const {service,broker,diagnostics}=await newService(invalidConstFields);
+    equal((await service.process(requestBase)).length,0,"source and mutation policy const violations are rejected by schema");
+    equal((await broker.search({characterId:"character.a",conversationId:"conversation.a",query:"",limit:10})).length,0,"const-violating candidate is never persisted");
+    equal(diagnostics.recentErrors(1)[0]?.code,"SCHEMA_VALIDATION_FAILED","const violations preserve schema validation");
+
+  }
+  {
     const result=JSON.stringify({memories:[
       {type:"fact",content:"The table is green.",tags:["table","color"],importance:90,confidence:95,source:"conversation",sourceReference:"conversation.a",mutationPolicy:"auto"}
     ]});
