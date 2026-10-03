@@ -606,6 +606,17 @@ function memoryDate(value:string):string{
   try{return new Date(value).toLocaleString();}
   catch{return value;}
 }
+function memoryDateInput(value:string|null):string{
+  if(!value)return "";
+  return value.slice(0,16);
+}
+function memoryDateValue(value:string):string|null{
+  const trimmed=value.trim();
+  if(!trimmed)return null;
+  const date=new Date(trimmed);
+  if(!Number.isFinite(date.getTime()))throw new Error("Valid dates must be valid timestamps.");
+  return date.toISOString();
+}
 function memoryDraftFromItem(item:MemoryItem):MemoryDraft{
   return {
     type:item.type,
@@ -613,8 +624,8 @@ function memoryDraftFromItem(item:MemoryItem):MemoryDraft{
     tags:item.tags.join(", "),
     importance:item.importance,
     confidence:item.confidence,
-    validFrom:item.validFrom??"",
-    validUntil:item.validUntil??""
+    validFrom:memoryDateInput(item.validFrom),
+    validUntil:memoryDateInput(item.validUntil)
   };
 }
 function newMemoryDraft():MemoryDraft{
@@ -692,8 +703,8 @@ function MemoryView({
           tags,
           importance:draft.importance,
           confidence:draft.confidence,
-          validFrom:draft.validFrom.trim()||null,
-          validUntil:draft.validUntil.trim()||null
+          validFrom:memoryDateValue(draft.validFrom),
+          validUntil:memoryDateValue(draft.validUntil)
         });
         setSelectedId(updated.id);
         setMessage("Memory updated.");
