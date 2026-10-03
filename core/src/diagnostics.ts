@@ -109,7 +109,7 @@ export class InMemoryChatTraceStore implements ChatTraceStore{
       return;
     }
     const current=this.traces[index]!;
-    const memoryPatch=patch.memoryExtraction;
+    const memoryPatch=patch.automaticMemory;
     const next:ChatTurnTrace={
       ...current,
       ...patch,
@@ -122,23 +122,23 @@ export class InMemoryChatTraceStore implements ChatTraceStore{
         }
       }:current.contextBuild?{contextBuild:current.contextBuild}:{}),
       ...(memoryPatch?{
-        memoryExtraction:{
-          started:memoryPatch.started??current.memoryExtraction?.started??false,
-          ...(memoryPatch.status!==undefined?{status:memoryPatch.status}:current.memoryExtraction?.status!==undefined?{status:current.memoryExtraction.status}:{}),
-          ...(memoryPatch.requestId!==undefined?{requestId:redactDiagnosticText(memoryPatch.requestId)}:current.memoryExtraction?.requestId!==undefined?{requestId:current.memoryExtraction.requestId}:{}),
-          ...(memoryPatch.providerId!==undefined?{providerId:redactDiagnosticText(memoryPatch.providerId)}:current.memoryExtraction?.providerId!==undefined?{providerId:current.memoryExtraction.providerId}:{}),
-          ...(memoryPatch.model!==undefined?{model:redactDiagnosticText(memoryPatch.model)}:current.memoryExtraction?.model!==undefined?{model:current.memoryExtraction.model}:{}),
-          ...(memoryPatch.conversationId!==undefined?{conversationId:redactDiagnosticText(memoryPatch.conversationId)}:current.memoryExtraction?.conversationId!==undefined?{conversationId:current.memoryExtraction.conversationId}:{}),
-          ...(memoryPatch.contextMessageCount!==undefined?{contextMessageCount:memoryPatch.contextMessageCount}:current.memoryExtraction?.contextMessageCount!==undefined?{contextMessageCount:current.memoryExtraction.contextMessageCount}:{}),
-          candidates:(memoryPatch.candidates??current.memoryExtraction?.candidates??[]).map(cloneCandidate),
-          accepted:(memoryPatch.accepted??current.memoryExtraction?.accepted??[]).map(cloneCandidate),
-          rejected:(memoryPatch.rejected??current.memoryExtraction?.rejected??[]).map(cloneCandidate),
-          duplicate:(memoryPatch.duplicate??current.memoryExtraction?.duplicate??[]).map(cloneCandidate),
-          superseded:memoryPatch.superseded??current.memoryExtraction?.superseded??[],
-          created:memoryPatch.created??current.memoryExtraction?.created??[],
-          ...(memoryPatch.failed!==undefined?{failed:redactDiagnosticText(memoryPatch.failed)}:current.memoryExtraction?.failed!==undefined?{failed:current.memoryExtraction.failed}:{})
+        automaticMemory:{
+          started:memoryPatch.started??current.automaticMemory?.started??false,
+          ...(memoryPatch.status!==undefined?{status:memoryPatch.status}:current.automaticMemory?.status!==undefined?{status:current.automaticMemory.status}:{}),
+          ...(memoryPatch.requestId!==undefined?{requestId:redactDiagnosticText(memoryPatch.requestId)}:current.automaticMemory?.requestId!==undefined?{requestId:current.automaticMemory.requestId}:{}),
+          ...(memoryPatch.providerId!==undefined?{providerId:redactDiagnosticText(memoryPatch.providerId)}:current.automaticMemory?.providerId!==undefined?{providerId:current.automaticMemory.providerId}:{}),
+          ...(memoryPatch.model!==undefined?{model:redactDiagnosticText(memoryPatch.model)}:current.automaticMemory?.model!==undefined?{model:current.automaticMemory.model}:{}),
+          ...(memoryPatch.conversationId!==undefined?{conversationId:redactDiagnosticText(memoryPatch.conversationId)}:current.automaticMemory?.conversationId!==undefined?{conversationId:current.automaticMemory.conversationId}:{}),
+          ...(memoryPatch.contextMessageCount!==undefined?{contextMessageCount:memoryPatch.contextMessageCount}:current.automaticMemory?.contextMessageCount!==undefined?{contextMessageCount:current.automaticMemory.contextMessageCount}:{}),
+          candidates:(memoryPatch.candidates??current.automaticMemory?.candidates??[]).map(cloneCandidate),
+          accepted:(memoryPatch.accepted??current.automaticMemory?.accepted??[]).map(cloneCandidate),
+          rejected:(memoryPatch.rejected??current.automaticMemory?.rejected??[]).map(cloneCandidate),
+          duplicate:(memoryPatch.duplicate??current.automaticMemory?.duplicate??[]).map(cloneCandidate),
+          superseded:memoryPatch.superseded??current.automaticMemory?.superseded??[],
+          created:memoryPatch.created??current.automaticMemory?.created??[],
+          ...(memoryPatch.failed!==undefined?{failed:redactDiagnosticText(memoryPatch.failed)}:current.automaticMemory?.failed!==undefined?{failed:current.automaticMemory.failed}:{})
         }
-      }:current.memoryExtraction?{memoryExtraction:current.memoryExtraction}:{})
+      }:current.automaticMemory?{automaticMemory:current.automaticMemory}:{})
     };
     this.traces[index]=cloneTrace(next);
   }
