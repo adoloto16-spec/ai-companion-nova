@@ -12,14 +12,15 @@
     "memory",
     "retrieval",
     "diagnostics",
-    "ui"
+    "ui",
+    "memoryAgent"
   ],
   "properties": {
     "apiVersion": {
       "const": "1"
     },
     "schemaVersion": {
-      "const": "1"
+      "const": "2"
     },
     "chat": {
       "type": "object",
@@ -126,6 +127,31 @@
       "properties": {
         "showDiagnosticsInChat": {
           "type": "boolean"
+        }
+      }
+    },
+    "memoryAgent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "providerPresetId",
+        "model"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "providerPresetId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "model": {
+          "type": "string",
+          "maxLength": 200
         }
       }
     }
