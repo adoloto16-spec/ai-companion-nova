@@ -93,7 +93,7 @@ fn default_settings()->AppSettings{
     AppSettings{
         api_version:API_VERSION.into(),schema_version:SCHEMA_VERSION.into(),
         chat:ChatSettings{automatic_long_term_memory:true},
-        memory_agent:MemoryAgentSettings{enabled:true,provider_preset_id:None,model:DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS.to_string()},
+        memory_agent:MemoryAgentSettings{enabled:true,provider_preset_id:None,model:String::new(),instructions:DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS.to_string()},
         context:ContextSettings{available_context_tokens:4096,reserved_output_tokens:1024,safety_margin_tokens:128,recent_conversation_messages:8},
         memory:MemorySettings{candidate_limit:8},
         retrieval:RetrievalSettings{candidate_limit:32},
@@ -135,7 +135,7 @@ fn migrate(value:Value)->Result<(AppSettings,bool),String>{
         if let Some(root)=normalized.as_object_mut(){
             root.insert("schemaVersion".into(),Value::String(SCHEMA_VERSION.into()));
             if let Some(memory_agent)=root.get_mut("memoryAgent").and_then(Value::as_object_mut){
-                memory_agent.entry("instructions".into()).or_insert_with(||Value::String(DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS.into()));
+                memory_agent.entry("instructions").or_insert_with(||Value::String(DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS.into()));
             }else{
                 let mut memory_agent=serde_json::Map::new();
                 memory_agent.insert("enabled".into(),Value::Bool(true));
