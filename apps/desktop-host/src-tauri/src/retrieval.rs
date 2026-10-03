@@ -397,7 +397,8 @@ mod tests{
         memory.conversation_id=Some("conversation-1".into());
         upsert_inner(&c,&memory).unwrap();
 
-        let query=query("character-nova","Нова, какого цвета твои волосы?",Some(vec![RetrievalSource::Memory]),10,None);
+        let mut query=query("character-nova","Нова, какого цвета твои волосы?",Some(vec![RetrievalSource::Memory]),10,None);
+        query.conversation_id=Some("conversation-1".into());
         let result=search_inner(&c,&query).unwrap();
         assert_eq!(result.candidates.len(),1);
         let candidate=&result.candidates[0];
