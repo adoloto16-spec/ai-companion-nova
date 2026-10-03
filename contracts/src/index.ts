@@ -539,6 +539,7 @@ export const CONTRACT_VERSIONS={
   chatResponse:{apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION},
   chatError:{apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION},
   appSettings:{apiVersion:APP_SETTINGS_API_VERSION,schemaVersion:APP_SETTINGS_SCHEMA_VERSION},
+  automaticMemoryAgentRequest:{apiVersion:AUTOMATIC_MEMORY_AGENT_API_VERSION,schemaVersion:AUTOMATIC_MEMORY_AGENT_SCHEMA_VERSION},
   chatTurnTrace:{apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION},
   providerConfiguration:{apiVersion:PROVIDER_CONFIGURATION_API_VERSION,schemaVersion:PROVIDER_CONFIGURATION_SCHEMA_VERSION},
   providerConnectionTestResult:{apiVersion:PROVIDER_CONFIGURATION_API_VERSION,schemaVersion:PROVIDER_CONFIGURATION_SCHEMA_VERSION},
