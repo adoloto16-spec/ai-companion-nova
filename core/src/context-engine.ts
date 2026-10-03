@@ -10,6 +10,7 @@ import type {
   CoreBookEntry,
   CoreBookEntryId,
   CharacterId,
+  DiagnosticsStore,
   MemoryBroker,
   MemoryItem,
   MemorySearchQuery,
@@ -45,6 +46,26 @@ export interface MemoryCandidateReader {
   get?(characterId:CharacterId,conversationId:string,memoryId:string):Promise<MemoryItem|undefined>;
 }
 
+function diagnosticErrorMessage(error:unknown):string{
+  if(error instanceof Error)return error.message;
+  if(typeof error==="string")return error;
+  if(error&&typeof error==="object"){
+    const record=error as Record<string,unknown>;
+    for(const key of ["message","reason","error"]){
+      const value=record[key];
+      if(typeof value==="string"&&value.trim())return value;
+      if(value&&typeof value==="object"){
+        const nested=value as Record<string,unknown>;
+        for(const nestedKey of ["message","reason"]){
+          const nestedValue=nested[nestedKey];
+          if(typeof nestedValue==="string"&&nestedValue.trim())return nestedValue;
+        }
+      }
+    }
+  }
+  return "Unknown memory retrieval error";
+}
+
 const DEFAULT_MEMORY_CANDIDATE_LIMIT=DEFAULT_APP_SETTINGS.memory.candidateLimit;
 type DynamicNumber=number|(()=>number);
 
@@ -54,7 +75,8 @@ export class MemoryCandidateSource implements ContextCandidateSource {
     private readonly reader:MemoryCandidateReader,
     private readonly estimator:TokenEstimator=new DeterministicApproxTokenEstimator(),
     private readonly maxResults:DynamicNumber=DEFAULT_MEMORY_CANDIDATE_LIMIT,
-    private readonly retriever?:Retriever
+    private readonly retriever?:Retriever,
+    private readonly diagnostics?:Pick<DiagnosticsStore,"recordError">
   ){
     if(typeof maxResults==="number"&&(!Number.isInteger(maxResults)||maxResults<1))throw new Error("maxResults must be a positive integer.");
   }
@@ -80,14 +102,40 @@ export class MemoryCandidateSource implements ContextCandidateSource {
           limit:maxResults,
           filters:{status:"active"}
         });
-      }catch{return []}
+      }catch(error){
+        this.diagnostics?.recordError(
+          "context-memory",
+          "RETRIEVAL_FAILED",
+          diagnosticErrorMessage(error),
+          {characterId:request.characterId,conversationId:request.conversationId,query,sources:["memory"]}
+        );
+        return [];
+      }
+      if(retrieval.degraded){
+        this.diagnostics?.recordError(
+          "context-memory",
+          "RETRIEVAL_DEGRADED",
+          retrieval.error??"Retrieval returned a degraded result.",
+          {characterId:request.characterId,conversationId:request.conversationId,query,sources:["memory"]}
+        );
+        return [];
+      }
       const canonical=await Promise.all(retrieval.candidates
         .filter(candidate=>candidate.source==="memory"&&candidate.characterId===request.characterId&&candidate.conversationId===request.conversationId)
         .map(candidate=>this.reader.get?.(request.characterId,request.conversationId,candidate.sourceId)));
       results=canonical.filter((item):item is MemoryItem=>Boolean(item));
     }else{
-      try{results=await this.reader.search({characterId:request.characterId,conversationId:request.conversationId,query,status:"active",limit:maxResults});}
-      catch{return []}
+      try{
+        results=await this.reader.search({characterId:request.characterId,conversationId:request.conversationId,query,status:"active",limit:maxResults});
+      }catch(error){
+        this.diagnostics?.recordError(
+          "context-memory",
+          "MEMORY_STORE_SEARCH_FAILED",
+          diagnosticErrorMessage(error),
+          {characterId:request.characterId,conversationId:request.conversationId,query}
+        );
+        return [];
+      }
     }
 
     return results
@@ -348,6 +396,7 @@ export interface ContextEngineOptions {
   memoryCandidateLimit?:DynamicNumber;
   retrievalCandidateLimit?:DynamicNumber;
   retriever?:Retriever;
+  diagnostics?:Pick<DiagnosticsStore,"recordError">;
 }
 
 export class DeterministicContextEngine implements ContextEngineContract {
@@ -468,7 +517,8 @@ export function createDeterministicContextEngine(
       options.memoryBroker,
       estimator,
       options.memoryCandidateLimit??DEFAULT_MEMORY_CANDIDATE_LIMIT,
-      options.retriever
+      options.retriever,
+      options.diagnostics
     ));
   }
   return new DeterministicContextEngine(sources,options);

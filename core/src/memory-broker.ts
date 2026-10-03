@@ -242,6 +242,7 @@ export class MemoryBrokerImpl implements MemoryBroker{
     actorAllowed(current,authority);
     const next:MemoryItem={
       ...current,
+      type:input.type===undefined?current.type:input.type,
       content:input.content===undefined?current.content:requireContent(input.content),
       tags:input.tags===undefined?[...current.tags]:requireTags(input.tags),
       importance:input.importance===undefined?current.importance:requireScore(input.importance,"importance"),

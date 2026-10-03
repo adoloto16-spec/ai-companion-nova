@@ -74,6 +74,16 @@ jobs:
             librsvg2-dev \
             patchelf
       - uses: dtolnay/rust-toolchain@stable
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install TypeScript test dependencies
+        run: pnpm install --no-frozen-lockfile
+      - name: Build TypeScript test harness
+        run: pnpm build
       - run: cargo check --workspace
       - run: cargo check --workspace --all-features
       - run: cargo test -p nova-desktop-host --all-features characters::tests
@@ -81,6 +91,18 @@ jobs:
       - run: cargo test -p nova-desktop-host --all-features model_profiles::tests
       - run: cargo test -p nova-desktop-host --all-features credential_profiles::tests
       - run: cargo test -p nova-desktop-host --all-features provider_presets::tests
+      - name: Memory indexer -> Rust fixture producer
+        env:
+          NOVA_RETRIEVAL_FIXTURE: ${{ github.workspace }}/.tmp/retrieval-indexer-rust-boundary.json
+        run: node build/tests/integration/retrieval-indexer-rust-boundary.integration.test.js
+      - name: Retrieval exact-token regression
+        run: cargo test -p nova-desktop-host --all-features retrieval::tests::russian_exact_token_memory_retrieval_uses_fts5
+      - name: Retrieval upsert lifecycle regression
+        run: cargo test -p nova-desktop-host --all-features retrieval::tests::memory_upsert_inner_then_search_inner_uses_production_lifecycle
+      - name: Retrieval indexer -> Rust FTS5 boundary
+        env:
+          NOVA_RETRIEVAL_FIXTURE: ${{ github.workspace }}/.tmp/retrieval-indexer-rust-boundary.json
+        run: cargo test -p nova-desktop-host --all-features retrieval::tests::indexer_fixture_reaches_real_rust_fts5 -- --ignored
 
   windows-installer:
     runs-on: windows-latest

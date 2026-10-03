@@ -19,8 +19,8 @@ import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
-  type Character, type CoreBookActivation, type CoreBookEntry,
-  defaultAppSettings, validateAppSettings, StandardContractValidator,
+  type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem, type MemoryType,
+  defaultAppSettings, DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS, validateAppSettings, StandardContractValidator,
   type ProviderPreset, type ProviderPresetStoreState, type ModelInfo
 } from "../../../contracts/src/index";
 import "./styles.css";
@@ -578,6 +578,266 @@ function CoreBookView({runtime,character}:{runtime:FoundationRuntime;character:C
   </section>;
 }
 
+type MemoryDraft={
+  type:MemoryType;
+  content:string;
+  tags:string;
+  importance:number;
+  confidence:number;
+  validFrom:string;
+  validUntil:string;
+};
+
+const MEMORY_TYPES:readonly MemoryType[]=["fact","preference","relationship","event","experience","goal","instruction","observation"];
+
+function containsSensitiveMemoryText(value:string):boolean{
+  return /authorization\s*:\s*bearer\s+\S+|\bbearer\s+[A-Za-z0-9._-]{16,}\b|\bsk-[A-Za-z0-9_-]{16,}\b|api[_ -]?key\s*[:=]\s*\S+|password\s*[:=]\s*\S+|secret\s*[:=]\s*\S+/i.test(value);
+}
+function redactMemoryText(value:string):string{
+  return value
+    .replace(/authorization\s*:\s*bearer\s+\S+/gi,"Authorization: Bearer [REDACTED]")
+    .replace(/\bbearer\s+[A-Za-z0-9._-]{16,}\b/gi,"Bearer [REDACTED]")
+    .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/gi,"[REDACTED]")
+    .replace(/api[_ -]?key\s*[:=]\s*\S+/gi,"api-key=[REDACTED]")
+    .replace(/password\s*[:=]\s*\S+/gi,"password=[REDACTED]")
+    .replace(/secret\s*[:=]\s*\S+/gi,"secret=[REDACTED]");
+}
+function memoryDate(value:string):string{
+  try{return new Date(value).toLocaleString();}
+  catch{return value;}
+}
+function memoryDateInput(value:string|null):string{
+  if(!value)return "";
+  return value.slice(0,16);
+}
+function memoryDateValue(value:string):string|null{
+  const trimmed=value.trim();
+  if(!trimmed)return null;
+  const date=new Date(trimmed);
+  if(!Number.isFinite(date.getTime()))throw new Error("Valid dates must be valid timestamps.");
+  return date.toISOString();
+}
+function memoryDraftFromItem(item:MemoryItem):MemoryDraft{
+  return {
+    type:item.type,
+    content:item.content,
+    tags:item.tags.join(", "),
+    importance:item.importance,
+    confidence:item.confidence,
+    validFrom:memoryDateInput(item.validFrom),
+    validUntil:memoryDateInput(item.validUntil)
+  };
+}
+function newMemoryDraft():MemoryDraft{
+  return {type:"fact",content:"",tags:"",importance:70,confidence:80,validFrom:"",validUntil:""};
+}
+
+function MemoryView({
+  runtime,character,conversations,activeConversation,onSelectConversation
+}:{
+  runtime:FoundationRuntime;
+  character:Character;
+  conversations:readonly Conversation[];
+  activeConversation:Conversation;
+  onSelectConversation:(id:string)=>Promise<void>;
+}){
+  const [search,setSearch]=React.useState("");
+  const [memories,setMemories]=React.useState<readonly MemoryItem[]>([]);
+  const [selectedId,setSelectedId]=React.useState<string|undefined>();
+  const [draft,setDraft]=React.useState<MemoryDraft>(()=>newMemoryDraft());
+  const [editing,setEditing]=React.useState(false);
+  const [busy,setBusy]=React.useState(false);
+  const [loadError,setLoadError]=React.useState("");
+  const [message,setMessage]=React.useState("");
+
+  const selected=memories.find(item=>item.id===selectedId);
+  const load=React.useCallback(async(query=search)=>{
+    setBusy(true);setLoadError("");
+    try{
+      const next=await runtime.searchMemory({
+        characterId:character.id,
+        conversationId:activeConversation.id,
+        query:query.trim(),
+        status:"active",
+        limit:100
+      });
+      setMemories(next);
+      setSelectedId(current=>current&&next.some(item=>item.id===current)?current:next[0]?.id);
+    }catch(error){
+      setLoadError("Memory could not be loaded: "+safeErrorMessage(error));
+      setMemories([]);
+      setSelectedId(undefined);
+    }finally{setBusy(false);}
+  },[activeConversation.id,character.id,runtime,search]);
+
+  React.useEffect(()=>{setSearch("");setEditing(false);setSelectedId(undefined);setMessage("");void load("");},[activeConversation.id,character.id,load]);
+
+  React.useEffect(()=>{
+    if(selected&&!editing)setDraft(memoryDraftFromItem(selected));
+  },[selected,editing]);
+
+  const select=React.useCallback((item:MemoryItem)=>{
+    setSelectedId(item.id);setDraft(memoryDraftFromItem(item));setEditing(false);setMessage("");
+  },[]);
+
+  const startCreate=()=>{
+    setSelectedId(undefined);
+    setDraft(newMemoryDraft());
+    setEditing(true);
+    setMessage("");
+  };
+
+  const save=async()=>{
+    if(!draft.content.trim())return;
+    if(containsSensitiveMemoryText(draft.content)){
+      setMessage("Memory was not saved because the content appears to contain a credential or secret.");
+      return;
+    }
+    setBusy(true);setMessage("");setLoadError("");
+    try{
+      const tags=draft.tags.split(",").map(tag=>tag.trim()).filter(Boolean);
+      if(selected){
+        const updated=await runtime.updateMemory(character.id,activeConversation.id,selected.id,{
+          type:draft.type,
+          content:draft.content,
+          tags,
+          importance:draft.importance,
+          confidence:draft.confidence,
+          validFrom:memoryDateValue(draft.validFrom),
+          validUntil:memoryDateValue(draft.validUntil)
+        });
+        setSelectedId(updated.id);
+        setMessage("Memory updated.");
+      }else{
+        const created=await runtime.createMemory(character.id,{
+          conversationId:activeConversation.id,
+          type:draft.type,
+          content:draft.content,
+          tags,
+          importance:draft.importance,
+          confidence:draft.confidence,
+          validFrom:draft.validFrom.trim()||null,
+          validUntil:draft.validUntil.trim()||null,
+          source:"user",
+          mutationPolicy:"locked",
+          metadata:{origin:"memory-ui"}
+        });
+        setSelectedId(created.id);
+        setMessage("Memory created.");
+      }
+      setEditing(false);
+      await load(search);
+    }catch(error){
+      setMessage("Memory could not be saved: "+safeErrorMessage(error));
+    }finally{setBusy(false);}
+  };
+
+  const archive=async()=>{
+    if(!selected)return;
+    if(!window.confirm("Archive this memory?"))return;
+    setBusy(true);setMessage("");setLoadError("");
+    try{
+      await runtime.archiveMemory(character.id,activeConversation.id,selected.id);
+      setSelectedId(undefined);setEditing(false);setMessage("Memory archived.");
+      await load(search);
+    }catch(error){setMessage("Memory could not be archived: "+safeErrorMessage(error))}
+    finally{setBusy(false);}
+  };
+
+  return <section className="memory-panel">
+    <div className="memory-toolbar">
+      <div>
+        <h2>Memory</h2>
+        <p className="chat-subtitle">Active Character: {character.name} · Conversation: {activeConversation.title}</p>
+      </div>
+      <div className="actions">
+        <button type="button" onClick={startCreate} disabled={busy}>Add Memory</button>
+        <button type="button" onClick={()=>void load(search)} disabled={busy}>Refresh</button>
+      </div>
+    </div>
+
+    <div className="settings-grid memory-layout">
+      <section>
+        <h3>Scope</h3>
+        <label>Character
+          <input value={character.name} readOnly/>
+        </label>
+        <label>Conversation
+          <select value={activeConversation.id} onChange={event=>void onSelectConversation(event.target.value)} disabled={busy}>
+            {conversations.map(conversation=><option key={conversation.id} value={conversation.id}>{conversation.title}</option>)}
+          </select>
+        </label>
+        <label>Search memory
+          <input
+            value={search}
+            onChange={event=>setSearch(event.target.value)}
+            onKeyDown={event=>{if(event.key==="Enter")void load(search)}}
+            placeholder="Search memory"
+            disabled={busy}/>
+        </label>
+        <div className="actions"><button type="button" onClick={()=>void load(search)} disabled={busy}>Search</button><button type="button" onClick={()=>void load("")} disabled={busy||search.length===0}>Clear Search</button></div>
+        {loadError&&<div className="error">{loadError}<div className="actions"><button type="button" onClick={()=>void load(search)} disabled={busy}>Retry</button></div></div>}
+        {!loadError&&memories.length===0&&<div className="memory-empty">No active memory in this Conversation.</div>}
+        {!loadError&&memories.length>0&&<div className="memory-list" role="listbox" aria-label="Active memories">
+          {memories.map(item=>
+            <button type="button" key={item.id} className={item.id===selectedId?"memory-row active":"memory-row"} onClick={()=>select(item)} disabled={busy}>
+              <strong>{redactMemoryText(item.content)}</strong>
+              <span>{item.type} · importance {item.importance} · confidence {item.confidence}</span>
+              <small>{memoryDate(item.updatedAt)}</small>
+            </button>
+          )}
+        </div>}
+      </section>
+
+      <section>
+        <h3>{selected?"Memory Details":"Add Memory"}</h3>
+        {selected&&!editing&&<div className="status-grid">
+          <span>Content</span><strong>{redactMemoryText(selected.content)}</strong>
+          <span>Type</span><strong>{selected.type}</strong>
+          <span>Tags</span><strong>{selected.tags.length?selected.tags.join(", "):"—"}</strong>
+          <span>Importance</span><strong>{selected.importance}</strong>
+          <span>Confidence</span><strong>{selected.confidence}</strong>
+          <span>Valid From</span><strong>{selected.validFrom?memoryDate(selected.validFrom):"—"}</strong>
+          <span>Valid Until</span><strong>{selected.validUntil?memoryDate(selected.validUntil):"—"}</strong>
+          <span>Source</span><strong>{selected.source}</strong>
+          <span>Source Reference</span><strong>{selected.sourceReference??"—"}</strong>
+          <span>Mutation Policy</span><strong>{selected.mutationPolicy}</strong>
+          <span>Status</span><strong>{selected.status}</strong>
+          <span>Created</span><strong>{memoryDate(selected.createdAt)}</strong>
+          <span>Updated</span><strong>{memoryDate(selected.updatedAt)}</strong>
+        </div>}
+        {selected&&!editing&&containsSensitiveMemoryText(selected.content)&&<div className="hint">Sensitive-looking content is hidden in the Memory UI.</div>}
+        {editing&&<div>
+          <label>Content
+            {containsSensitiveMemoryText(draft.content)
+              ?<div className="error">Sensitive-looking content is hidden and cannot be edited in this UI.</div>
+              :<textarea value={draft.content} onChange={event=>setDraft(current=>({...current,content:event.target.value}))} rows={9} disabled={busy}/>}
+          </label>
+          <div className="core-book-grid">
+            <label>Type<select value={draft.type} onChange={event=>setDraft(current=>({...current,type:event.target.value as MemoryType}))} disabled={busy}>{MEMORY_TYPES.map(type=><option key={type} value={type}>{type}</option>)}</select></label>
+            <label>Tags<input value={draft.tags} onChange={event=>setDraft(current=>({...current,tags:event.target.value}))} placeholder="comma, separated, tags" disabled={busy}/></label>
+          </div>
+          <div className="core-book-grid">
+            <label>Importance<input type="number" min={0} max={100} value={draft.importance} onChange={event=>setDraft(current=>({...current,importance:Number(event.target.value)}))} disabled={busy}/></label>
+            <label>Confidence<input type="number" min={0} max={100} value={draft.confidence} onChange={event=>setDraft(current=>({...current,confidence:Number(event.target.value)}))} disabled={busy}/></label>
+          </div>
+          <div className="core-book-grid">
+            <label>Valid From<input type="datetime-local" value={draft.validFrom} onChange={event=>setDraft(current=>({...current,validFrom:event.target.value}))} disabled={busy}/></label>
+            <label>Valid Until<input type="datetime-local" value={draft.validUntil} onChange={event=>setDraft(current=>({...current,validUntil:event.target.value}))} disabled={busy}/></label>
+          </div>
+          <div className="actions">
+            <button type="button" onClick={()=>void save()} disabled={busy||!draft.content.trim()||containsSensitiveMemoryText(draft.content)}>Save</button>
+            <button type="button" onClick={()=>{setEditing(false);if(selected)setDraft(memoryDraftFromItem(selected));else setDraft(newMemoryDraft())}} disabled={busy}>Cancel</button>
+          </div>
+        </div>}
+        {selected&&!editing&&<div className="actions"><button type="button" onClick={()=>{setDraft(memoryDraftFromItem(selected));setEditing(true);setMessage("")}} disabled={busy||containsSensitiveMemoryText(selected.content)}>Edit</button><button type="button" onClick={()=>void archive()} disabled={busy}>Archive</button></div>}
+        {!selected&&!editing&&<div className="memory-empty">Select a memory or choose Add Memory.</div>}
+        {message&&<div className="notice" role="status">{message}</div>}
+      </section>
+    </div>
+  </section>;
+}
+
 function ProviderPresetsView({
   presets,activePresetId,credentialProfiles,credentialSaved,runtime,
   onSavePreset,onActivatePreset,onDeletePreset,onCreateCredential,onDeleteCredential,onRefreshModels,onTestPreset
@@ -907,10 +1167,6 @@ function AppSettingsView({
 
     <section>
       <h3>Memory</h3>
-      <label className="checkbox">Automatic long-term memory extraction
-        <input type="checkbox" checked={settings.chat.automaticLongTermMemory}
-          onChange={event=>onChange({...settings,chat:{...settings.chat,automaticLongTermMemory:event.target.checked}})} disabled={saving}/>
-      </label>
       <label>Memory items
         <input type="number" min={1} max={100} value={settings.memory.candidateLimit}
           onChange={event=>setNumber("memory","candidateLimit",Number(event.target.value))} disabled={saving}/>
@@ -1059,24 +1315,29 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
         </div>
       </div>}
 
-      {selected.memoryExtraction&&<div className="diagnostic-block">
-        <h3>Automatic Memory Extraction</h3>
-        <p>Started: {selected.memoryExtraction.started?"yes":"no"}</p>
-         <div className="status-grid">
-           <span>Status</span><strong>{selected.memoryExtraction.status??"—"}</strong>
-           <span>Provider</span><strong>{selected.memoryExtraction.providerId??"—"}</strong>
-           <span>Model</span><strong>{selected.memoryExtraction.model??"—"}</strong>
-           <span>Request</span><strong>{selected.memoryExtraction.requestId??"—"}</strong>
-           <span>Conversation</span><strong>{selected.memoryExtraction.conversationId??"—"}</strong>
-           <span>Context messages</span><strong>{selected.memoryExtraction.contextMessageCount===undefined?"—":selected.memoryExtraction.contextMessageCount}</strong>
-         </div>
-        <h4>Candidates</h4>{selected.memoryExtraction.candidates.length===0?<div>None</div>:selected.memoryExtraction.candidates.map((candidate,index)=><TraceCandidate key={candidate.content+index} candidate={candidate}/>)}
-        <h4>Accepted</h4>{selected.memoryExtraction.accepted.length===0?<div>None</div>:selected.memoryExtraction.accepted.map((candidate,index)=><TraceCandidate key={candidate.content+index} candidate={candidate}/>)}
-        <h4>Rejected</h4>{selected.memoryExtraction.rejected.length===0?<div>None</div>:selected.memoryExtraction.rejected.map((item,index)=><div className="diagnostic-candidate" key={item.candidate.content+index}><div className="diagnostic-reason">{item.reason}</div><TraceCandidate candidate={item.candidate}/></div>)}
-        <h4>Duplicates</h4>{selected.memoryExtraction.duplicate.length===0?<div>None</div>:selected.memoryExtraction.duplicate.map((candidate,index)=><TraceCandidate key={candidate.content+index} candidate={candidate}/>)}
-        <h4>Superseded</h4>{selected.memoryExtraction.superseded.length===0?<div>None</div>:selected.memoryExtraction.superseded.map(item=><div className="row" key={item.memoryId}><span>{item.candidate.content}</span><span>{item.memoryId}</span></div>)}
-        <h4>Created</h4>{selected.memoryExtraction.created.length===0?<div>None</div>:selected.memoryExtraction.created.map(item=><div className="row" key={item.memoryId}><span>{item.candidate.content}</span><span>{item.memoryId}</span></div>)}
-        {selected.memoryExtraction.failed&&<div className="error">{selected.memoryExtraction.failed}</div>}
+      {selected.automaticMemory&&<div className="diagnostic-block">
+        <h3>Automatic Memory</h3>
+        <div className="status-grid">
+          <span>Started</span><strong>{selected.automaticMemory.started?"yes":"no"}</strong>
+          <span>Status</span><strong>{selected.automaticMemory.status??"—"}</strong>
+          <span>Provider preset</span><strong>{selected.automaticMemory.providerPresetId??"—"}</strong>
+          <span>Provider</span><strong>{selected.automaticMemory.providerId??"—"}</strong>
+          <span>Model</span><strong>{selected.automaticMemory.model??"—"}</strong>
+          <span>Request</span><strong>{selected.automaticMemory.requestId??"—"}</strong>
+          <span>Conversation</span><strong>{selected.automaticMemory.conversationId??"—"}</strong>
+          <span>Context messages</span><strong>{selected.automaticMemory.contextMessageCount??"—"}</strong>
+          <span>User message</span><strong>{selected.automaticMemory.userMessagePresent?"yes":"no"}</strong>
+          <span>Assistant response</span><strong>{selected.automaticMemory.assistantResponsePresent?"yes":"no"}</strong>
+        </div>
+        <h4>Result</h4>
+        <div className="diagnostic-candidate-content">{selected.automaticMemory.result??"—"}</div>
+        <h4>Persistence</h4>
+        <div className="status-grid">
+          <span>Status</span><strong>{selected.automaticMemory.persistence?.status??"none"}</strong>
+          <span>Memory id</span><strong>{selected.automaticMemory.persistence?.memoryId??"—"}</strong>
+          {selected.automaticMemory.persistence?.reason&&<><span>Reason</span><strong>{selected.automaticMemory.persistence.reason}</strong></>}
+        </div>
+        {selected.automaticMemory.failed&&<div className="error">{selected.automaticMemory.failed}</div>}
       </div>}
 
       {selected.error&&<div className="error">{selected.error.code}: {selected.error.message}</div>}
@@ -1116,6 +1377,80 @@ class ViewErrorBoundary extends React.Component<{
   }
 }
 
+function AutomaticMemorySettingsView({
+  settings,onChange,providerPresets,saving,message,onSave
+}:{
+  settings:AppSettings;
+  onChange:(settings:AppSettings)=>void;
+  providerPresets:readonly ProviderPreset[];
+  saving:boolean;
+  message:string;
+  onSave:()=>Promise<void>;
+}){
+  const selectedPreset=settings.memoryAgent.providerPresetId
+    ?providerPresets.find(preset=>preset.id===settings.memoryAgent.providerPresetId)
+    :undefined;
+  const defaults=defaultAppSettings();
+  return <div className="settings-grid">
+    <section>
+      <h2>Automatic Memory</h2>
+      <p className="chat-subtitle">A separate background memory agent runs after completed chat turns. Main chat never depends on this call succeeding.</p>
+      <label className="checkbox">Enable automatic long-term memory
+        <input
+          type="checkbox"
+          checked={settings.memoryAgent.enabled}
+          onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,enabled:event.target.checked}})}
+          disabled={saving}/>
+      </label>
+      <label>Memory Agent Provider Preset
+        <select
+          value={settings.memoryAgent.providerPresetId??""}
+          onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,providerPresetId:event.target.value||null}})}
+          disabled={saving}>
+          <option value="">Select a Provider Preset</option>
+          {providerPresets.map(preset=><option key={preset.id} value={preset.id}>{preset.name||preset.id}</option>)}
+        </select>
+      </label>
+      {settings.memoryAgent.providerPresetId&&!selectedPreset&&<div className="error">Selected Memory Agent Provider Preset is no longer available.</div>}
+      <label>Memory Agent Model
+        <input
+          value={settings.memoryAgent.model}
+          onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,model:event.target.value}})}
+          placeholder={selectedPreset?.model||"Use the preset/discovered model"}
+          disabled={saving}/>
+        <small>Default: {defaults.memoryAgent.model||"Use the selected preset model"}</small>
+      </label>
+      <p className="hint">The Memory Agent uses one ordinary text ChatRequest through the selected Provider Preset. It does not use the active Chat provider automatically.</p>
+      <label>Memory Agent Instructions
+        <textarea
+          value={settings.memoryAgent.instructions}
+          onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,instructions:event.target.value}})}
+          rows={12}
+          maxLength={12000}
+          disabled={saving}/>
+        <small>These instructions control what the agent considers durable. Safety/privacy rules, NO_MEMORY, plain-text output, and Core-owned metadata remain immutable. {settings.memoryAgent.instructions.length}/12000</small>
+      </label>
+      <div className="actions">
+        <button type="button" onClick={()=>onChange({...settings,memoryAgent:{...settings.memoryAgent,instructions:DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS}})} disabled={saving}>Restore Default</button>
+      </div>
+
+      <div className="actions">
+        <button type="button" onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save Automatic Memory"}</button>
+      </div>
+      {message&&<div className="notice" role="status">{message}</div>}
+    </section>
+    <section>
+      <h3>Current binding</h3>
+      <div className="status-grid">
+        <span>Enabled</span><strong>{settings.memoryAgent.enabled?"yes":"no"}</strong>
+        <span>Provider preset</span><strong>{selectedPreset?.name??settings.memoryAgent.providerPresetId??"not configured"}</strong>
+        <span>Model</span><strong>{settings.memoryAgent.model||selectedPreset?.model||"preset/discovery default"}</strong>
+      </div>
+      <p className="hint">Memory Agent failures are isolated from the successful main chat turn and reported separately in Diagnostics.</p>
+    </section>
+  </div>;
+}
+
 function SettingsContainerView({
   appSettings,onAppSettingsChange,settingsLoadMessage,settingsSaving,onSaveSettings,onResetSettings,
   runtime,providerPresets,activePresetId,credentialProfiles,credentialSavedMap,
@@ -1141,23 +1476,76 @@ function SettingsContainerView({
   onTestPreset:(preset:ProviderPreset)=>Promise<ProviderConnectionTestResult>;
   onError:(error:Error,info:React.ErrorInfo)=>void;
 }){
-  const [tab,setTab]=React.useState<"general"|"provider-presets">("general");
+  const [tab,setTab]=React.useState<"general"|"provider-presets"|"automatic-memory">("general");
+  let content:React.ReactNode;
+  if(tab==="general"){
+    content=<ViewErrorBoundary key="settings-general" view="settings-general" onError={onError}>
+      <AppSettingsView
+        settings={appSettings}
+        onChange={onAppSettingsChange}
+        onSave={onSaveSettings}
+        onReset={onResetSettings}
+        saving={settingsSaving}
+        message={settingsLoadMessage}/>
+    </ViewErrorBoundary>;
+  }else if(tab==="provider-presets"){
+    content=<ViewErrorBoundary key="settings-provider-presets" view="settings-provider-presets" onError={onError}>
+      <ProviderPresetsView
+        presets={providerPresets}
+        activePresetId={activePresetId}
+        credentialProfiles={credentialProfiles}
+        credentialSaved={credentialSavedMap}
+        runtime={runtime}
+        onSavePreset={onSavePreset}
+        onActivatePreset={onActivatePreset}
+        onDeletePreset={onDeletePreset}
+        onCreateCredential={onCreateCredential}
+        onDeleteCredential={onDeleteCredential}
+        onRefreshModels={onRefreshModels}
+        onTestPreset={onTestPreset}/>
+    </ViewErrorBoundary>;
+  }else{
+    content=<ViewErrorBoundary key="settings-automatic-memory" view="settings-automatic-memory" onError={onError}>
+      <AutomaticMemorySettingsView
+        settings={appSettings}
+        onChange={onAppSettingsChange}
+        providerPresets={providerPresets}
+        saving={settingsSaving}
+        message={settingsLoadMessage}
+        onSave={onSaveSettings}/>
+    </ViewErrorBoundary>;
+  }
   return <section className="settings-container" aria-label="Settings">
     <div className="settings-subnav" role="tablist" aria-label="Settings sections">
-      <button type="button" role="tab" aria-selected={tab==="general"} className={tab==="general"?"nav-button active":"nav-button"} onClick={()=>setTab("general")}>General</button>
-      <button type="button" role="tab" aria-selected={tab==="provider-presets"} className={tab==="provider-presets"?"nav-button active":"nav-button"} onClick={()=>setTab("provider-presets")}>Provider Presets</button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={tab==="general"}
+        className={tab==="general"?"nav-button active":"nav-button"}
+        onClick={()=>setTab("general")}>
+        General
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={tab==="provider-presets"}
+        className={tab==="provider-presets"?"nav-button active":"nav-button"}
+        onClick={()=>setTab("provider-presets")}>
+        Provider Presets
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={tab==="automatic-memory"}
+        className={tab==="automatic-memory"?"nav-button active":"nav-button"}
+        onClick={()=>setTab("automatic-memory")}>
+        Automatic Memory
+      </button>
     </div>
-    {tab==="general"
-      ?<ViewErrorBoundary key="settings-general" view="settings-general" onError={onError}>
-        <AppSettingsView settings={appSettings} onChange={onAppSettingsChange} onSave={onSaveSettings} onReset={onResetSettings} saving={settingsSaving} message={settingsLoadMessage}/>
-      </ViewErrorBoundary>
-      :<ViewErrorBoundary key="settings-provider-presets" view="settings-provider-presets" onError={onError}>
-        <ProviderPresetsView presets={providerPresets} activePresetId={activePresetId} credentialProfiles={credentialProfiles} credentialSaved={credentialSavedMap}
-          runtime={runtime} onSavePreset={onSavePreset} onActivatePreset={onActivatePreset} onDeletePreset={onDeletePreset}
-          onCreateCredential={onCreateCredential} onDeleteCredential={onDeleteCredential} onRefreshModels={onRefreshModels} onTestPreset={onTestPreset}/>
-      </ViewErrorBoundary>}
+    {content}
   </section>;
 }
+
 function isTauriRuntime():boolean{
   return typeof window!=="undefined" && Boolean((window as unknown as Record<string,unknown>).__TAURI_INTERNALS__);
 }
@@ -1182,7 +1570,7 @@ function credentialSavedEntries(
 }
 
 function App(){
-  const [view,setView]=React.useState<"chat"|"characters"|"core-book"|"model-profile"|"settings"|"diagnostics">("chat");
+  const [view,setView]=React.useState<"chat"|"characters"|"core-book"|"memory"|"model-profile"|"settings"|"diagnostics">("chat");
   const [runtime,setRuntime]=React.useState<RuntimeDiagnostics>(preview);
   const [saving,setSaving]=React.useState(false);
   const [startupStatus,setStartupStatus]=React.useState<"initializing"|"ready"|"error">("initializing");
@@ -1273,14 +1661,11 @@ function App(){
         };
       },
       recentConversationMessagesProvider:()=>foundationRef.current?.getSettings().context.recentConversationMessages??defaultAppSettings().context.recentConversationMessages,
-      memoryExtractor:{
-        extract:request=>{
+      automaticMemoryAgent:{
+        process:request=>{
           const foundation=foundationRef.current;
-          return foundation?foundation.extractMemory(request):Promise.resolve([]);
+          return foundation?foundation.processAutomaticMemory(request):Promise.resolve(undefined);
         }
-      },
-      memoryExtractionEnabled:()=>{
-        return foundationRef.current?.getSettings().chat.automaticLongTermMemory??true;
       },
       traceStore:foundationRef.current?.getChatTraceStore()
     }
@@ -1560,6 +1945,27 @@ function App(){
     setActiveModelProfile(profile);
   },[activeCharacter,activeModelProfile,chatController,controllerForConversation,loadModelProfile]);
 
+  const selectMemoryConversation=React.useCallback(async(id:string)=>{
+    const foundation=foundationRef.current;
+    const character=activeCharacter;
+    if(!foundation||!character||chatController?.getSnapshot().sending)return;
+    const previousConversation=activeConversation;
+    const profile=activeModelProfile??await loadModelProfile(character.id);
+    try{
+      const conversation=await foundation.setActiveConversation(character.id,id);
+      const controller=controllerForConversation(conversation,profile);
+      setActiveConversation(conversation);
+      setConversations(await foundation.listConversations(character.id));
+      setChatController(controller);
+    }catch(error){
+      if(previousConversation){
+        setActiveConversation(previousConversation);
+        setChatController(controllerForConversation(previousConversation,profile));
+      }
+      throw error;
+    }
+  },[activeCharacter,activeConversation,activeModelProfile,chatController,controllerForConversation,conversations,loadModelProfile]);
+
   const createCharacter=React.useCallback(async(name:string)=>{
     const foundation=foundationRef.current;
     if(!foundation)return;
@@ -1693,6 +2099,7 @@ function App(){
         <button className={view==="chat"?"nav-button active":"nav-button"} onClick={()=>setView("chat")}>Chat</button>
         <button className={view==="characters"?"nav-button active":"nav-button"} onClick={()=>setView("characters")}>Characters</button>
         <button className={view==="core-book"?"nav-button active":"nav-button"} onClick={()=>setView("core-book")}>Core Book</button>
+        <button className={view==="memory"?"nav-button active":"nav-button"} onClick={()=>setView("memory")}>Memory</button>
         <button className={view==="model-profile"?"nav-button active":"nav-button"} onClick={()=>setView("model-profile")}>Model Profile</button>
         <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Settings</button>
         {appSettings.ui.showDiagnosticsInChat&&<button className={view==="diagnostics"?"nav-button active":"nav-button"} onClick={()=>setView("diagnostics")}>Diagnostics</button>}
@@ -1722,6 +2129,8 @@ function App(){
           onRefreshModels={refreshPresetModels}
           onTestPreset={testPreset}
           onError={reportViewError}/>
+      :view==="memory"&&activeCharacter&&activeConversation&&foundationRef.current
+      ?<MemoryView runtime={foundationRef.current} character={activeCharacter} conversations={conversations} activeConversation={activeConversation} onSelectConversation={selectMemoryConversation}/>
       :view==="diagnostics"&&foundationRef.current
       ?<DiagnosticsView runtime={foundationRef.current} settings={appSettings}/>
       :startupStatus==="error"

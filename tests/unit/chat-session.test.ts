@@ -148,9 +148,9 @@ async function main(){
       return responseFor(request,"Hello");
     }
   };
-  let extractionCalls=0;
-  const extractionTurns:string[]=[];
-  const streamingController=new ChatSessionController(streamingSession,streamingRuntime,{requestIdFactory:(()=>{let n=0;return ()=>"stream-"+(++n)})(),memoryExtractor:{extract:async request=>{extractionCalls++;extractionTurns.push(request.turnId);return [];}}});
+  let automaticMemoryCalls=0;
+  const automaticMemoryTurns:string[]=[];
+  const streamingController=new ChatSessionController(streamingSession,streamingRuntime,{requestIdFactory:(()=>{let n=0;return ()=>"stream-"+(++n)})(),automaticMemoryAgent:{process:async request=>{automaticMemoryCalls++;automaticMemoryTurns.push(request.turnId);return undefined;}}});
   streamingController.subscribe(snapshot=>streamingSnapshots.push(snapshot));
   const streamed=await streamingController.submit("hello","fake-streaming-chat");
   equal(streamed.status,"sent","controller streaming success");
@@ -159,8 +159,8 @@ async function main(){
   equal(streamingSession.getMessages()[1]?.content,"Hello","streaming assembles final assistant content");
   equal(streamingSession.getMessages()[1]?.metadata?.streamStatus,"complete","completed assistant state");
   await Promise.resolve();
-  equal(extractionCalls,1,"completed stream triggers exactly one extraction");
-  equal(extractionTurns[0],"stream-1","extraction uses stable turn identity");
+  equal(automaticMemoryCalls,1,"completed stream triggers exactly one Automatic Memory Agent call");
+  equal(automaticMemoryTurns[0],"stream-1","Automatic Memory Agent uses stable turn identity");
 
   let contextBuilds=0;
   const contextRuntime={
@@ -201,8 +201,8 @@ async function main(){
       throw abortError();
     }
   };
-  let stoppedExtractionCalls=0;
-  const stopController=new ChatSessionController(new ConversationSession("stop-conversation","character.stop"),stopRuntime,{requestIdFactory:()=> "stop-1",memoryExtractor:{extract:async()=>{stoppedExtractionCalls++;return [];}}});
+  let stoppedMemoryAgentCalls=0;
+  const stopController=new ChatSessionController(new ConversationSession("stop-conversation","character.stop"),stopRuntime,{requestIdFactory:()=> "stop-1",automaticMemoryAgent:{process:async()=>{stoppedMemoryAgentCalls++;return undefined;}}});
   const stopPromise=stopController.submit("stop me","fake-streaming-chat");
   while(!stopController.getSnapshot().messages.some(message=>message.content==="partial ")){await Promise.resolve();}
   const stopped=await stopController.stop();
@@ -214,7 +214,7 @@ async function main(){
   equal(stopController.getSnapshot().messages.at(-1)?.metadata?.streamStatus,"interrupted","Stop marks assistant interrupted");
   await stopPromise;
   await Promise.resolve();
-  equal(stoppedExtractionCalls,0,"interrupted stream does not trigger extraction");
+  equal(stoppedMemoryAgentCalls,0,"interrupted stream does not trigger Automatic Memory Agent");
 
   let continueCalls=0;
   const continueRuntime={

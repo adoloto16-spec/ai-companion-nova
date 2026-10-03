@@ -207,7 +207,7 @@ fn search_inner(conn:&Connection,q:&RetrievalQuery)->Result<RetrievalResult,Stri
     let status:Option<String>=conn.query_row("SELECT value FROM retrieval_meta WHERE key='status'",[],|r|r.get(0)).optional().map_err(|e|e.to_string())?;
     let degraded=status.as_deref()!=Some("ready");
     let error=degraded.then(||"Retrieval index is degraded or requires rebuild.".to_string());
-    let mut st=conn.prepare("SELECT d.source,d.source_id,d.character_id,d.conversation_id,-bm25(f,8.0,5.0,3.0),snippet(f,1,'[[MATCH]]','[[/MATCH]]','...',18),highlight(f,0,'[[MATCH]]','[[/MATCH]]'),highlight(f,2,'[[MATCH]]','[[/MATCH]]'),d.title,d.tags,d.status,d.type,d.updated_at FROM retrieval_fts f JOIN retrieval_documents d ON d.rowid=f.rowid WHERE f MATCH ?1 AND d.character_id=?2 AND (d.source='core_book' OR (d.source='memory' AND d.conversation_id=?3)) ORDER BY 5 DESC,d.source ASC,d.source_id ASC LIMIT 500").map_err(|e|e.to_string())?;
+    let mut st=conn.prepare("SELECT d.source,d.source_id,d.character_id,d.conversation_id,-bm25(retrieval_fts,8.0,5.0,3.0),snippet(retrieval_fts,1,'[[MATCH]]','[[/MATCH]]','...',18),highlight(retrieval_fts,0,'[[MATCH]]','[[/MATCH]]'),highlight(retrieval_fts,2,'[[MATCH]]','[[/MATCH]]'),d.title,d.tags,d.status,d.type,d.updated_at FROM retrieval_fts JOIN retrieval_documents d ON d.rowid=retrieval_fts.rowid WHERE retrieval_fts MATCH ?1 AND d.character_id=?2 AND (d.source='core_book' OR (d.source='memory' AND d.conversation_id=?3)) ORDER BY 5 DESC,d.source ASC,d.source_id ASC LIMIT 500").map_err(|e|e.to_string())?;
     let mut rows=st.query(params![m,char_id,q.conversation_id.as_deref().unwrap_or("")]).map_err(|e|e.to_string())?;
     let mut out=Vec::new();
     while let Some(r)=rows.next().map_err(|e|e.to_string())?{
@@ -374,6 +374,75 @@ mod tests{
         assert!(result.candidates.iter().all(|x|x.character_id=="a"));
         assert!(result.candidates.iter().all(|x|x.source==RetrievalSource::CoreBook));
     }
+    #[test]fn russian_exact_token_memory_retrieval_uses_fts5(){
+        let mut c=conn();
+        let mut memory=doc("character-nova",RetrievalSource::Memory,"nova-hair","","Нова имеет фиолетовые волосы",&[],"active",Some("observation"));
+        memory.conversation_id=Some("conversation-1".into());
+        rebuild(&mut c,None,&[memory]).unwrap();
+        let mut exact_query=query("character-nova","Нова, какого цвета твои волосы?",Some(vec![RetrievalSource::Memory]),10,None);
+        exact_query.conversation_id=Some("conversation-1".into());
+        let result=search_inner(&c,&exact_query).unwrap();
+        assert!(!result.degraded);
+        assert_eq!(result.candidates.len(),1);
+        assert_eq!(result.candidates[0].source,RetrievalSource::Memory);
+        assert_eq!(result.candidates[0].source_id,"nova-hair");
+        assert_eq!(result.candidates[0].character_id,"character-nova");
+        assert_eq!(result.candidates[0].conversation_id.as_deref(),Some("conversation-1"));
+        assert!(result.candidates[0].matched_text.contains("Нова"));
+    }
+
+    #[test]fn memory_upsert_inner_then_search_inner_uses_production_lifecycle(){
+        let c=conn();
+        let mut memory=doc("character-nova",RetrievalSource::Memory,"nova-hair","","Нова имеет фиолетовые волосы",&[],"active",Some("observation"));
+        memory.conversation_id=Some("conversation-1".into());
+        upsert_inner(&c,&memory).unwrap();
+
+        let mut query=query("character-nova","Нова, какого цвета твои волосы?",Some(vec![RetrievalSource::Memory]),10,None);
+        query.conversation_id=Some("conversation-1".into());
+        let result=search_inner(&c,&query).unwrap();
+        assert_eq!(result.candidates.len(),1);
+        let candidate=&result.candidates[0];
+        assert_eq!(candidate.source,RetrievalSource::Memory);
+        assert_eq!(candidate.source_id,"nova-hair");
+        assert_eq!(candidate.character_id,"character-nova");
+        assert_eq!(candidate.conversation_id.as_deref(),Some("conversation-1"));
+        assert_eq!(candidate.metadata.status.as_deref(),Some("active"));
+        assert!(candidate.matched_text.contains("Нова"));
+    }
+
+    #[derive(Debug,Deserialize)]
+    struct RetrievalBridgeFixture{
+        document:RetrievalIndexDocument,
+        query:RetrievalQuery
+    }
+
+    #[test]
+    #[ignore = "CI runs the real cross-language indexer -> Rust FTS5 fixture"]
+    fn indexer_fixture_reaches_real_rust_fts5(){
+        let path=std::env::var("NOVA_RETRIEVAL_FIXTURE").expect("NOVA_RETRIEVAL_FIXTURE must be set");
+        let raw=std::fs::read_to_string(path).unwrap();
+        let fixture:RetrievalBridgeFixture=serde_json::from_str(&raw).unwrap();
+        assert_eq!(fixture.document.source,RetrievalSource::Memory);
+        assert_eq!(fixture.document.tags,Vec::<String>::new());
+        assert_eq!(fixture.document.status.as_deref(),Some("active"));
+        assert_eq!(fixture.document.content,"Нова имеет фиолетовые волосы");
+        assert_eq!(fixture.query.query,"Нова, какого цвета твои волосы?");
+        assert_eq!(fixture.query.character_id,fixture.document.character_id);
+        assert_eq!(fixture.query.conversation_id,fixture.document.conversation_id);
+
+        let c=conn();
+        upsert_inner(&c,&fixture.document).unwrap();
+        let result=search_inner(&c,&fixture.query).unwrap();
+        assert_eq!(result.candidates.len(),1);
+        let candidate=&result.candidates[0];
+        assert_eq!(candidate.source,RetrievalSource::Memory);
+        assert_eq!(candidate.character_id,fixture.document.character_id);
+        assert_eq!(candidate.conversation_id,fixture.document.conversation_id);
+        assert_eq!(candidate.source_id,fixture.document.source_id);
+        assert_eq!(candidate.metadata.status.as_deref(),Some("active"));
+        assert!(candidate.matched_text.contains("Нова"));
+    }
+
     #[test]fn filters_and_deterministic_tie_break(){
         let mut c=conn();
         let docs=[
