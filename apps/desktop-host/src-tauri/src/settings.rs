@@ -131,13 +131,23 @@ fn migrate(value:Value)->Result<(AppSettings,bool),String>{
     let legacy=schema.map(|v|v==LEGACY_SCHEMA_VERSION).unwrap_or(true);
     let previous=schema==Some(PREVIOUS_SCHEMA_VERSION)||schema==Some(LEGACY_PREVIOUS_SCHEMA_VERSION);
     if schema==Some(PREVIOUS_SCHEMA_VERSION){
-        let mut result=default_settings();
-        let settings:AppSettings=serde_json::from_value(value.clone()).map_err(|e|format!("invalid AppSettings schema v2: {e}"))?;
-        result=settings;
-        result.schema_version=SCHEMA_VERSION.into();
-        if result.memory_agent.instructions.trim().is_empty(){result.memory_agent.instructions=DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS.into();}
-        validate(&result)?;
-        return Ok((result,true));
+        let mut normalized=value.clone();
+        if let Some(root)=normalized.as_object_mut(){
+            root.insert("schemaVersion".into(),Value::String(SCHEMA_VERSION.into()));
+            if let Some(memory_agent)=root.get_mut("memoryAgent").and_then(Value::as_object_mut){
+                memory_agent.entry("instructions".into()).or_insert_with(||Value::String(DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS.into()));
+            }else{
+                let mut memory_agent=serde_json::Map::new();
+                memory_agent.insert("enabled".into(),Value::Bool(true));
+                memory_agent.insert("providerPresetId".into(),Value::Null);
+                memory_agent.insert("model".into(),Value::String(String::new()));
+                memory_agent.insert("instructions".into(),Value::String(DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS.into()));
+                root.insert("memoryAgent".into(),Value::Object(memory_agent));
+            }
+        }
+        let settings:AppSettings=serde_json::from_value(normalized).map_err(|e|format!("invalid AppSettings schema v2: {e}"))?;
+        validate(&settings)?;
+        return Ok((settings,true));
     }
     if !legacy && !previous{
         let settings:AppSettings=serde_json::from_value(value).map_err(|e|format!("invalid AppSettings: {e}"))?;
