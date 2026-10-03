@@ -161,7 +161,7 @@ async function main(){
     async rebuild(){},
     async rebuildAll(){}
   } as any;
-  const contextEngine=createDeterministicContextEngine(
+  const russianContextEngine=createDeterministicContextEngine(
     {listCoreBookEntries:async()=>[]},
     {memoryBroker:broker,retriever:lexicalRetriever,memoryCandidateLimit:()=>8}
   );
@@ -180,7 +180,7 @@ async function main(){
       source:"memory",sourceId:provenanceMemory.id,title:"",content:provenanceMemory.content,tags:[],status:"active",type:"observation",
       updatedAt:provenanceMemory.updatedAt
     });
-    const assembledRussian=await contextEngine.build({
+    const assembledRussian=await russianContextEngine.build({
       apiVersion:"1",schemaVersion:"1",characterId:"character.a",conversationId:conversation!.id,
       messages:[{role:"user",content:"Нова, какого цвета твои волосы?"}],
       budget:{availableContextTokens:4096,reservedOutputTokens:512,systemOverheadTokens:0,safetyMarginTokens:64}
