@@ -82,6 +82,7 @@ async function main(){
 
   {
     const {agent,broker,traceStore}=await fixture("User prefers green.");
+    completedMainTrace(traceStore);
     const created=await agent.process(baseRequest);
     ok(Boolean(created),"plain text creates memory");
     equal(created?.id.startsWith("memory."),true,"automatic memory id is non-empty and generated");
