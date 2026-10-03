@@ -39,8 +39,8 @@ assert.ok(settingsContainer.includes('tab==="general"'),"Settings must have a Ge
 assert.ok(settingsContainer.includes('tab==="provider-presets"'),"Settings must have a Provider Presets tab");
 assert.ok(settingsContainer.includes('tab==="automatic-memory"'),"Settings must have an Automatic Memory tab");
 assert.ok(settingsContainer.includes("<AutomaticMemorySettingsView"),"Settings must render AutomaticMemorySettingsView");
-assert.ok(settingsContainer.includes("<AppSettingsView "), "General tab must render AppSettingsView");
-assert.ok(settingsContainer.includes("<ProviderPresetsView "), "Provider Presets tab must render the existing ProviderPresetsView");
+assert.ok(settingsContainer.includes("<AppSettingsView"), "General tab must render AppSettingsView");
+assert.ok(settingsContainer.includes("<ProviderPresetsView"), "Provider Presets tab must render the existing ProviderPresetsView");
 
 for(const forbidden of ["appSettings","saveAppSettings","resetAppSettings","foundationRef","setSettingsLoadMessage","setSaving"]){
   assert.equal(providerPresets.includes(forbidden),false,"ProviderPresetsView must not access App-local "+forbidden);
