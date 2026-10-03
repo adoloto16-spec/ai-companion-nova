@@ -41,7 +41,7 @@ export const DEFAULT_APP_SETTINGS:AppSettings={
   apiVersion:APP_SETTINGS_API_VERSION,
   schemaVersion:APP_SETTINGS_SCHEMA_VERSION,
   chat:{automaticLongTermMemory:true},
-  memoryAgent:{enabled:true,providerPresetId:null,model:DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS},
+  memoryAgent:{enabled:true,providerPresetId:null,model:"",instructions:DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS},
   context:{
     availableContextTokens:4096,
     reservedOutputTokens:1024,
