@@ -32,11 +32,13 @@ for(const removed of ["Provider Presets","Provider Settings"]){
   assert.equal(navigation.includes(">"+removed+"</button>"),false,"Primary navigation must not expose "+removed);
 }
 
-for(const label of ["General","Provider Presets"]){
+for(const label of ["General","Provider Presets","Automatic Memory"]){
   assert.ok(settingsContainer.includes(">"+label+"</button>"),"Settings sub-navigation must expose "+label);
 }
 assert.ok(settingsContainer.includes('tab==="general"'),"Settings must have a General tab");
 assert.ok(settingsContainer.includes('tab==="provider-presets"'),"Settings must have a Provider Presets tab");
+assert.ok(settingsContainer.includes('tab==="automatic-memory"'),"Settings must have an Automatic Memory tab");
+assert.ok(settingsContainer.includes("<AutomaticMemorySettingsView"),"Settings must render AutomaticMemorySettingsView");
 assert.ok(settingsContainer.includes("<AppSettingsView "), "General tab must render AppSettingsView");
 assert.ok(settingsContainer.includes("<ProviderPresetsView "), "Provider Presets tab must render the existing ProviderPresetsView");
 
