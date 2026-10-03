@@ -149,7 +149,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   };
   const contextEngine=options.contextEngine??createDeterministicContextEngine(
     {listCoreBookEntries:characterId=>coreBookManager.listCoreBookEntries(characterId)},
-    {memoryBroker,retriever:options.retriever,recentMessageCount:()=>settingsManager.get().context.recentConversationMessages,memoryCandidateLimit:()=>settingsManager.get().memory.candidateLimit,retrievalCandidateLimit:()=>settingsManager.get().retrieval.candidateLimit}
+    {memoryBroker,retriever:options.retriever,diagnostics:diagnosticsStore,recentMessageCount:()=>settingsManager.get().context.recentConversationMessages,memoryCandidateLimit:()=>settingsManager.get().memory.candidateLimit,retrievalCandidateLimit:()=>settingsManager.get().retrieval.candidateLimit}
   );
   const retrievalIndexer=options.retrievalIndexWriter
     ? new RetrievalEventIndexer({events,coreBook:coreBookManager,memory:memoryBroker,writer:options.retrievalIndexWriter})
