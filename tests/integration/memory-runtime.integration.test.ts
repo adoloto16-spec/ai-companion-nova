@@ -26,6 +26,26 @@ async function main(){
         persistedStates.set(state.characterId,state);
         return undefined;
       }
+      case "supersede_memory":{
+        const characterId=args?.characterId;
+        const conversationId=args?.conversationId;
+        const previousMemoryId=args?.previousMemoryId;
+        const replacement=args?.replacement;
+        if(typeof characterId!=="string"||typeof conversationId!=="string"||typeof previousMemoryId!=="string"||!replacement||typeof replacement!=="object"){
+          throw new Error("invalid supersede IPC test boundary");
+        }
+        const current=persistedStates.get(characterId);
+        if(!current)throw new Error("memory state was not found");
+        const index=current.items.findIndex(item=>item.id===previousMemoryId);
+        if(index<0)throw new Error("memory item was not found");
+        const next=JSON.parse(JSON.stringify(current)) as MemoryStoreState;
+        const superseded=next.items[index]!;
+        superseded.status="superseded";
+        superseded.updatedAt=(replacement as {updatedAt:string}).updatedAt;
+        next.items.push(JSON.parse(JSON.stringify(replacement)));
+        persistedStates.set(characterId,next);
+        return JSON.parse(JSON.stringify(replacement));
+      }
       default:
         throw new Error("Unexpected memory IPC command: "+command);
     }
