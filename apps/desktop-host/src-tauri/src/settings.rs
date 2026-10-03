@@ -5,7 +5,7 @@ use tauri::Manager;
 
 const API_VERSION:&str="1";
 const SCHEMA_VERSION:&str="2";
-const FILE_NAME:&str="app-settings-v2.json";
+const FILE_NAME:&str="app-settings-v1.json";
 const LEGACY_SCHEMA_VERSION:&str="0";
 const PREVIOUS_SCHEMA_VERSION:&str="1";
 const MAX_CONTEXT_TOKENS:i64=32768;
