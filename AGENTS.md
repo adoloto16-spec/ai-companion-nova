@@ -29,6 +29,8 @@ At minimum, use the existing project commands when applicable:
 - `pnpm test:architecture`
 - `cargo check --workspace`
 - `cargo check --workspace --all-features`
+- `cargo fmt --all -- --check`
+- `cargo clippy --workspace --all-features --all-targets -- -D warnings`
 
 If a check is not run, say so explicitly. For Windows packaging changes, verify the Windows NSIS workflow/artifact separately.
 
