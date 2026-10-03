@@ -14,6 +14,8 @@ async function main(){
   const defaults=await manager.initialize();
   equal(defaults,defaultAppSettings(),"missing settings resolve to deterministic defaults");
   equal(DEFAULT_APP_SETTINGS.context.availableContextTokens,4096,"default context size");
+  equal(defaults.memoryAgent.enabled,true,"Automatic Memory Agent defaults enabled");
+  equal(defaults.memoryAgent.providerPresetId,null,"Automatic Memory Agent has no implicit provider binding");
   const custom={
     ...defaults,
     context:{...defaults.context,availableContextTokens:8192,reservedOutputTokens:2048,safetyMarginTokens:256,recentConversationMessages:4},
@@ -27,7 +29,7 @@ async function main(){
   await manager.set(custom);
   equal((await manager.get()).context.availableContextTokens,8192,"custom context size persists in store");
   equal((await manager.get()).memory.candidateLimit,3,"custom memory candidate limit persists");
-  equal((await manager.get()).chat.automaticLongTermMemory,false,"custom extraction toggle persists");
+  equal((await manager.get()).chat.automaticLongTermMemory,false,"legacy automatic memory toggle persists for compatibility");
   const reset=await manager.reset();
   equal(reset,defaultAppSettings(),"reset restores defaults");
   let rejected=false;
@@ -38,6 +40,14 @@ async function main(){
   equal(legacy.context.recentConversationMessages,12,"legacy recent message count migrates");
   equal(legacy.memory.candidateLimit,5,"legacy memory limit migrates");
   equal(legacy.diagnostics.logLevel,"debug","legacy diagnostics level migrates");
+  equal(legacy.schemaVersion,"2","legacy settings migrate to schema v2");
+  equal(legacy.memoryAgent.enabled,true,"legacy automatic memory flag migrates to memoryAgent");
+  const previous=migrateAppSettings({...defaultAppSettings(),schemaVersion:"1",chat:{automaticLongTermMemory:false}} as any);
+  equal(previous.memoryAgent.enabled,false,"schema v1 automaticLongTermMemory migrates to memoryAgent");
+  const explicit=migrateAppSettings({...defaultAppSettings(),schemaVersion:"2",chat:{automaticLongTermMemory:false},memoryAgent:{enabled:true,providerPresetId:"preset.memory",model:"memory-model"}} as any);
+  equal(explicit.memoryAgent.enabled,true,"explicit memoryAgent setting overrides legacy boolean");
+  equal(explicit.memoryAgent.providerPresetId,"preset.memory","memory agent provider binding migrates");
+
   const diagnostics=new InMemoryDiagnosticsStore(2);
   diagnostics.recordError("test","ONE","apiKey: secret-value");
   diagnostics.recordError("test","TWO","Authorization: Bearer abcdefghijklmnop");
