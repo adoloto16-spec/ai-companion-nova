@@ -42,7 +42,7 @@ async function main(){
         const superseded=next.items[index]!;
         superseded.status="superseded";
         superseded.updatedAt=(replacement as {updatedAt:string}).updatedAt;
-        next.items.push(JSON.parse(JSON.stringify(replacement)));
+        next.items=[...next.items,JSON.parse(JSON.stringify(replacement))];
         persistedStates.set(characterId,next);
         return JSON.parse(JSON.stringify(replacement));
       }
