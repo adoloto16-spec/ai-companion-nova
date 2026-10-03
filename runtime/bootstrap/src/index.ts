@@ -25,7 +25,7 @@ import {InMemoryMemoryStore} from "../../../host/memory/src/index";
 import type {CoreBookCreateInput,CoreBookUpdateInput} from "../../../core/src/core-book-manager";
 import {activeProviderId,buildConfiguredProvider,buildProviderForDiscovery,buildProviderForPreset,testProviderConfiguration} from "./provider-configuration";
 import {RetrievalEventIndexer} from "../../../core/src/retrieval-indexer";
-import {MemoryExtractionService} from "../../../core/src/memory-extraction";
+import {AutomaticMemoryAgent} from "../../../core/src/automatic-memory-agent";
 
 export interface OpenAICompatibleRuntimeConfig{
   config:OpenAICompatibleProviderConfig;
@@ -95,7 +95,7 @@ export interface FoundationRuntime{
   deleteCoreBookEntry(characterId:CharacterId,entryId:CoreBookEntryId):Promise<void>;
   setCoreBookEntryEnabled(characterId:CharacterId,entryId:CoreBookEntryId,enabled:boolean):Promise<CoreBookEntry>;
   buildContext(request:ContextBuildRequest):Promise<AssembledContext>;
-  extractMemory(request:import("../../../contracts/src/index").MemoryExtractionRequest):Promise<readonly MemoryItem[]>;
+  processAutomaticMemory(request:import("../../../contracts/src/index").AutomaticMemoryAgentRequest):Promise<MemoryItem|undefined>;
   getMemory(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>;
   searchMemory(query:MemorySearchQuery):Promise<readonly MemoryItem[]>;
   createMemory(characterId:CharacterId,input:MemoryCreateInput):Promise<MemoryItem>;
@@ -186,7 +186,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   providers.register(new FakeVisionProvider(),["vision"]);
 
   const aiRuntime=new AiRuntime(providers,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
-  const extractionChatRuntime={
+  const automaticMemoryRuntime={
     chat:async (request:ChatRequest,providerPresetId?:string):Promise<ChatResponse>=>{
       if(providerPresetId){
         const configuration=providerPresetConfigurations.get(providerPresetId);
@@ -200,9 +200,27 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
         return scopedRuntime.generate({...request,providerId:"openai-compatible"});
       }
       return aiRuntime.generate(request.providerId?request:{...request,providerId:activeProviderId(providerConfiguration)});
+    },
+    getChatModelForPreset:async(providerPresetId:string)=>{
+      const configuration=providerPresetConfigurations.get(providerPresetId);
+      if(!configuration)return "fake-chat";
+      const provider=buildProviderForDiscovery(configuration,credentialStore,options.httpClient);
+      if(!provider)return configuration.model||"fake-chat";
+      try{
+        const models=await provider.listModels();
+        return models[0]?.id??(configuration.model||"fake-chat");
+      }catch{
+        return configuration.model||"fake-chat";
+      }
     }
   };
-  const memoryExtractionService=new MemoryExtractionService(extractionChatRuntime,memoryBroker,{validator:contractValidator,diagnostics:diagnosticsStore,traceStore});
+  const automaticMemoryAgent=new AutomaticMemoryAgent({
+    settings:()=>settingsManager.get(),
+    broker:memoryBroker,
+    runtime:automaticMemoryRuntime,
+    diagnostics:diagnosticsStore,
+    traceStore
+  });
 
   const moduleCapabilities:Record<string,readonly string[]>={
     "character.fake":["character.expression","character.speech"],
@@ -417,7 +435,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     deleteCoreBookEntry:(characterId,entryId)=>coreBookManager.deleteCoreBookEntry(characterId,entryId),
     setCoreBookEntryEnabled:(characterId,entryId,enabled)=>coreBookManager.setCoreBookEntryEnabled(characterId,entryId,enabled),
     buildContext:request=>contextEngine.build(request),
-    extractMemory:request=>memoryExtractionService.process(request),
+    processAutomaticMemory:request=>automaticMemoryAgent.process(request),
     getMemory:(characterId,conversationId,memoryId)=>memoryBroker.get(characterId,conversationId,memoryId),
     searchMemory:query=>memoryBroker.search(query),
     createMemory:(characterId,input)=>memoryBroker.create(characterId,input,userMemoryAuthority),
