@@ -1203,27 +1203,75 @@ function SettingsContainerView({
   onError:(error:Error,info:React.ErrorInfo)=>void;
 }){
   const [tab,setTab]=React.useState<"general"|"provider-presets"|"automatic-memory">("general");
+  let content:React.ReactNode;
+  if(tab==="general"){
+    content=<ViewErrorBoundary key="settings-general" view="settings-general" onError={onError}>
+      <AppSettingsView
+        settings={appSettings}
+        onChange={onAppSettingsChange}
+        onSave={onSaveSettings}
+        onReset={onResetSettings}
+        saving={settingsSaving}
+        message={settingsLoadMessage}/>
+    </ViewErrorBoundary>;
+  }else if(tab==="provider-presets"){
+    content=<ViewErrorBoundary key="settings-provider-presets" view="settings-provider-presets" onError={onError}>
+      <ProviderPresetsView
+        presets={providerPresets}
+        activePresetId={activePresetId}
+        credentialProfiles={credentialProfiles}
+        credentialSaved={credentialSavedMap}
+        runtime={runtime}
+        onSavePreset={onSavePreset}
+        onActivatePreset={onActivatePreset}
+        onDeletePreset={onDeletePreset}
+        onCreateCredential={onCreateCredential}
+        onDeleteCredential={onDeleteCredential}
+        onRefreshModels={onRefreshModels}
+        onTestPreset={onTestPreset}/>
+    </ViewErrorBoundary>;
+  }else{
+    content=<ViewErrorBoundary key="settings-automatic-memory" view="settings-automatic-memory" onError={onError}>
+      <AutomaticMemorySettingsView
+        settings={appSettings}
+        onChange={onAppSettingsChange}
+        providerPresets={providerPresets}
+        saving={settingsSaving}
+        message={settingsLoadMessage}
+        onSave={onSaveSettings}/>
+    </ViewErrorBoundary>;
+  }
   return <section className="settings-container" aria-label="Settings">
     <div className="settings-subnav" role="tablist" aria-label="Settings sections">
-      <button type="button" role="tab" aria-selected={tab==="general"} className={tab==="general"?"nav-button active":"nav-button"} onClick={()=>setTab("general")}>General</button>
-      <button type="button" role="tab" aria-selected={tab==="provider-presets"} className={tab==="provider-presets"?"nav-button active":"nav-button"} onClick={()=>setTab("provider-presets")}>Provider Presets</button>
-      <button type="button" role="tab" aria-selected={tab==="automatic-memory"} className={tab==="automatic-memory"?"nav-button active":"nav-button"} onClick={()=>setTab("automatic-memory")}>Automatic Memory</button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={tab==="general"}
+        className={tab==="general"?"nav-button active":"nav-button"}
+        onClick={()=>setTab("general")}>
+        General
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={tab==="provider-presets"}
+        className={tab==="provider-presets"?"nav-button active":"nav-button"}
+        onClick={()=>setTab("provider-presets")}>
+        Provider Presets
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={tab==="automatic-memory"}
+        className={tab==="automatic-memory"?"nav-button active":"nav-button"}
+        onClick={()=>setTab("automatic-memory")}>
+        Automatic Memory
+      </button>
     </div>
-    {tab==="general"
-      ?<ViewErrorBoundary key="settings-general" view="settings-general" onError={onError}>
-        <AppSettingsView settings={appSettings} onChange={onAppSettingsChange} onSave={onSaveSettings} onReset={onResetSettings} saving={settingsSaving} message={settingsLoadMessage}/>
-      </ViewErrorBoundary>
-      :tab==="provider-presets"
-      ?<ViewErrorBoundary key="settings-provider-presets" view="settings-provider-presets" onError={onError}>
-        <ProviderPresetsView presets={providerPresets} activePresetId={activePresetId} credentialProfiles={credentialProfiles} credentialSaved={credentialSavedMap}
-          runtime={runtime} onSavePreset={onSavePreset} onActivatePreset={onActivatePreset} onDeletePreset={onDeletePreset}
-          onCreateCredential={onCreateCredential} onDeleteCredential={onDeleteCredential} onRefreshModels={onRefreshModels} onTestPreset={onTestPreset}/>
-      </ViewErrorBoundary>
-      :<ViewErrorBoundary key="settings-automatic-memory" view="settings-automatic-memory" onError={onError}>
-        <AutomaticMemorySettingsView settings={appSettings} onChange={onAppSettingsChange} providerPresets={providerPresets} saving={settingsSaving} message={settingsLoadMessage} onSave={onSaveSettings}/>
-      </ViewErrorBoundary>
+    {content}
   </section>;
 }
+
 function isTauriRuntime():boolean{
   return typeof window!=="undefined" && Boolean((window as unknown as Record<string,unknown>).__TAURI_INTERNALS__);
 }
