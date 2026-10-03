@@ -63,6 +63,49 @@ function cloneMessage(message:ChatMessage):ChatMessage{
   return {...message,...(message.metadata?{metadata:{...message.metadata}}:{})};
 }
 
+function extractFirstJsonObject(value:string):string|undefined{
+  const trimmed=value.trim();
+  if(!trimmed)return undefined;
+  const fenced=/^\\s*```(?:json)?\\s*([\\s\\S]*?)\\s*```\\s*$/i.exec(trimmed);
+  const source=fenced?.[1]?.trim()??trimmed;
+  const start=source.indexOf("{");
+  if(start<0)return undefined;
+
+  let depth=0;
+  let inString=false;
+  let escaped=false;
+  for(let index=start;index<source.length;index++){
+    const character=source[index];
+    if(inString){
+      if(escaped){escaped=false;continue;}
+      if(character==="\\"){escaped=true;continue;}
+      if(character==="\""){inString=false;}
+      continue;
+    }
+    if(character==="\""){inString=true;continue;}
+    if(character==="{"){depth++;continue;}
+    if(character==="}"){depth--;if(depth===0)return source.slice(start,index+1);}
+  }
+  return undefined;
+}
+
+function parseMemoryExtractionResult(value:string):unknown|undefined{
+  const candidates:string[]=[];
+  const trimmed=value.trim();
+  if(trimmed)candidates.push(trimmed);
+  const extracted=extractFirstJsonObject(value);
+  if(extracted&&extracted!==trimmed)candidates.push(extracted);
+  for(const candidate of candidates){
+    try{
+      const parsed=JSON.parse(candidate);
+      if(parsed&&typeof parsed==="object"&&!Array.isArray(parsed))return parsed;
+    }catch{
+      // Keep extraction conservative: do not attempt repair or inference.
+    }
+  }
+  return undefined;
+}
+
 export class MemoryExtractionService{
   private readonly validator:SchemaValidator;
   private readonly diagnostics?:DiagnosticsStore;
@@ -83,7 +126,7 @@ export class MemoryExtractionService{
     const key=request.characterId+"\0"+request.conversationId+"\0"+request.turnId;
     if(this.inFlight.has(key))return [];
     this.inFlight.add(key);
-    this.traceStore?.update(request.turnId,{memoryExtraction:{started:true,candidates:[],accepted:[],rejected:[],duplicate:[],superseded:[],created:[]}});
+    this.traceStore?.update(request.turnId,{memoryExtraction:{started:true,status:"started",requestId:"memory-extraction:"+request.turnId,providerId:request.providerId??"default",model:request.model,conversationId:request.conversationId,contextMessageCount:request.contextMessages.length,candidates:[],accepted:[],rejected:[],duplicate:[],superseded:[],created:[]}});
     try{
       let active=await this.broker.search({characterId:request.characterId,conversationId:request.conversationId,query:"",status:"active",limit:100});
       if(active.some(item=>item.metadata?.turnId===request.turnId))return [];
@@ -139,8 +182,14 @@ export class MemoryExtractionService{
       }
       return created;
     }catch{
-      this.traceStore?.update(request.turnId,{memoryExtraction:{failed:"Automatic memory extraction failed; chat remains successful."}});
-      this.recordFailure("EXTRACTION_FAILED","Automatic memory extraction failed; chat remains successful.");
+      this.traceStore?.update(request.turnId,{memoryExtraction:{status:"failed",failed:"Automatic memory extraction failed; chat remains successful."}});
+      this.recordFailure("EXTRACTION_FAILED","Automatic memory extraction failed; chat remains successful.",{
+        requestId:"memory-extraction:"+request.turnId,
+        providerId:request.providerId??"default",
+        model:request.model,
+        conversationId:request.conversationId,
+        contextMessageCount:request.contextMessages.length
+      });
       return [];
     }finally{
       this.inFlight.delete(key);
@@ -164,17 +213,37 @@ export class MemoryExtractionService{
       context:{conversationId:request.conversationId,messages:[
         {role:"system",content:EXTRACTION_SYSTEM_PROMPT},
         {role:"user",content:safeText(JSON.stringify(payload))}
-      ]},
-      generation:{responseFormat:{type:"json",schema:STANDARD_SCHEMAS["memory-extraction-result"] as Record<string,unknown>}}
+      ]}
+    };
+    const diagnosticMetadata={
+      requestId:chatRequest.requestId,
+      providerId:request.providerId??"default",
+      model:request.model,
+      conversationId:request.conversationId,
+      contextMessageCount:payload.contextMessages.length
     };
     let response:ChatResponse;
     try{response=await this.runtime.chat(chatRequest,request.providerPresetId);}
-    catch{this.traceStore?.update(request.turnId,{memoryExtraction:{failed:"Provider call failed."}});this.recordFailure("PROVIDER_FAILURE","Memory extraction provider call failed.");return undefined;}
-    let parsed:unknown;
-    try{parsed=JSON.parse(response.message.content)}catch{this.traceStore?.update(request.turnId,{memoryExtraction:{failed:"Malformed provider JSON."}});this.recordFailure("MALFORMED_RESULT","Memory extraction returned malformed JSON.");return undefined;}
+    catch{
+      this.traceStore?.update(request.turnId,{memoryExtraction:{status:"failed",failed:"Provider call failed."}});
+      this.recordFailure("PROVIDER_FAILURE","Memory extraction provider call failed.",diagnosticMetadata);
+      return undefined;
+    }
+    const parsed=parseMemoryExtractionResult(response.message.content);
+    if(parsed===undefined){
+      this.traceStore?.update(request.turnId,{memoryExtraction:{status:"failed",failed:"Malformed provider JSON."}});
+      this.recordFailure("MALFORMED_RESULT","Memory extraction returned malformed JSON.",diagnosticMetadata);
+      return undefined;
+    }
     const validation=this.validator.validate(parsed,STANDARD_SCHEMAS["memory-extraction-result"]!);
-    if(!validation.valid){this.traceStore?.update(request.turnId,{memoryExtraction:{failed:"Provider result failed extraction schema validation."}});this.recordFailure("MALFORMED_RESULT","Memory extraction result failed schema validation.");return undefined;}
-    return parsed as MemoryExtractionResult;
+    if(!validation.valid){
+      this.traceStore?.update(request.turnId,{memoryExtraction:{status:"failed",failed:"Provider result failed extraction schema validation."}});
+      this.recordFailure("SCHEMA_VALIDATION_FAILED","Memory extraction result failed schema validation.",diagnosticMetadata);
+      return undefined;
+    }
+    const result=parsed as MemoryExtractionResult;
+    this.traceStore?.update(request.turnId,{memoryExtraction:{status:"completed",candidates:[...result.memories]}});
+    return result;
   }
 
   private safeCandidate(candidate:MemoryCandidate,conversationId:string):boolean{
@@ -193,5 +262,5 @@ export class MemoryExtractionService{
   private authority():MemoryMutationAuthority{
     return {actorId:"memory-extractor",actorType:"system",trusted:true,capabilities:["memory.create","memory.write.auto"]};
   }
-  private recordFailure(code:string,message:string):void{this.diagnostics?.recordError(this.source,code,message);}
+  private recordFailure(code:string,message:string,metadata?:Record<string,unknown>):void{this.diagnostics?.recordError(this.source,code,message,metadata);}
 }
