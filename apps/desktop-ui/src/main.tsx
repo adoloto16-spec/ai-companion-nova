@@ -907,10 +907,6 @@ function AppSettingsView({
 
     <section>
       <h3>Memory</h3>
-      <label className="checkbox">Automatic long-term memory extraction
-        <input type="checkbox" checked={settings.chat.automaticLongTermMemory}
-          onChange={event=>onChange({...settings,chat:{...settings.chat,automaticLongTermMemory:event.target.checked}})} disabled={saving}/>
-      </label>
       <label>Memory items
         <input type="number" min={1} max={100} value={settings.memory.candidateLimit}
           onChange={event=>setNumber("memory","candidateLimit",Number(event.target.value))} disabled={saving}/>
@@ -1120,6 +1116,67 @@ class ViewErrorBoundary extends React.Component<{
   }
 }
 
+function AutomaticMemorySettingsView({
+  settings,onChange,providerPresets,saving,message,onSave
+}:{
+  settings:AppSettings;
+  onChange:(settings:AppSettings)=>void;
+  providerPresets:readonly ProviderPreset[];
+  saving:boolean;
+  message:string;
+  onSave:()=>Promise<void>;
+}){
+  const selectedPreset=settings.memoryAgent.providerPresetId
+    ?providerPresets.find(preset=>preset.id===settings.memoryAgent.providerPresetId)
+    :undefined;
+  const defaults=defaultAppSettings();
+  return <div className="settings-grid">
+    <section>
+      <h2>Automatic Memory</h2>
+      <p className="chat-subtitle">A separate background memory agent runs after completed chat turns. Main chat never depends on this call succeeding.</p>
+      <label className="checkbox">Enable automatic long-term memory
+        <input
+          type="checkbox"
+          checked={settings.memoryAgent.enabled}
+          onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,enabled:event.target.checked}})}
+          disabled={saving}/>
+      </label>
+      <label>Memory Agent Provider Preset
+        <select
+          value={settings.memoryAgent.providerPresetId??""}
+          onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,providerPresetId:event.target.value||null}})}
+          disabled={saving}>
+          <option value="">Select a Provider Preset</option>
+          {providerPresets.map(preset=><option key={preset.id} value={preset.id}>{preset.name||preset.id}</option>)}
+        </select>
+      </label>
+      {settings.memoryAgent.providerPresetId&&!selectedPreset&&<div className="error">Selected Memory Agent Provider Preset is no longer available.</div>}
+      <label>Memory Agent Model
+        <input
+          value={settings.memoryAgent.model}
+          onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,model:event.target.value}})}
+          placeholder={selectedPreset?.model||"Use the preset/discovered model"}
+          disabled={saving}/>
+        <small>Default: {defaults.memoryAgent.model||"Use the selected preset model"}</small>
+      </label>
+      <p className="hint">The Memory Agent uses one ordinary text ChatRequest through the selected Provider Preset. It does not use the active Chat provider automatically.</p>
+      <div className="actions">
+        <button type="button" onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save Automatic Memory"}</button>
+      </div>
+      {message&&<div className="notice" role="status">{message}</div>}
+    </section>
+    <section>
+      <h3>Current binding</h3>
+      <div className="status-grid">
+        <span>Enabled</span><strong>{settings.memoryAgent.enabled?"yes":"no"}</strong>
+        <span>Provider preset</span><strong>{selectedPreset?.name??settings.memoryAgent.providerPresetId??"not configured"}</strong>
+        <span>Model</span><strong>{settings.memoryAgent.model||selectedPreset?.model||"preset/discovery default"}</strong>
+      </div>
+      <p className="hint">Memory Agent failures are isolated from the successful main chat turn and reported separately in Diagnostics.</p>
+    </section>
+  </div>;
+}
+
 function SettingsContainerView({
   appSettings,onAppSettingsChange,settingsLoadMessage,settingsSaving,onSaveSettings,onResetSettings,
   runtime,providerPresets,activePresetId,credentialProfiles,credentialSavedMap,
@@ -1145,21 +1202,26 @@ function SettingsContainerView({
   onTestPreset:(preset:ProviderPreset)=>Promise<ProviderConnectionTestResult>;
   onError:(error:Error,info:React.ErrorInfo)=>void;
 }){
-  const [tab,setTab]=React.useState<"general"|"provider-presets">("general");
+  const [tab,setTab]=React.useState<"general"|"provider-presets"|"automatic-memory">("general");
   return <section className="settings-container" aria-label="Settings">
     <div className="settings-subnav" role="tablist" aria-label="Settings sections">
       <button type="button" role="tab" aria-selected={tab==="general"} className={tab==="general"?"nav-button active":"nav-button"} onClick={()=>setTab("general")}>General</button>
       <button type="button" role="tab" aria-selected={tab==="provider-presets"} className={tab==="provider-presets"?"nav-button active":"nav-button"} onClick={()=>setTab("provider-presets")}>Provider Presets</button>
+      <button type="button" role="tab" aria-selected={tab==="automatic-memory"} className={tab==="automatic-memory"?"nav-button active":"nav-button"} onClick={()=>setTab("automatic-memory")}>Automatic Memory</button>
     </div>
     {tab==="general"
       ?<ViewErrorBoundary key="settings-general" view="settings-general" onError={onError}>
         <AppSettingsView settings={appSettings} onChange={onAppSettingsChange} onSave={onSaveSettings} onReset={onResetSettings} saving={settingsSaving} message={settingsLoadMessage}/>
       </ViewErrorBoundary>
-      :<ViewErrorBoundary key="settings-provider-presets" view="settings-provider-presets" onError={onError}>
+      :tab==="provider-presets"
+      ?<ViewErrorBoundary key="settings-provider-presets" view="settings-provider-presets" onError={onError}>
         <ProviderPresetsView presets={providerPresets} activePresetId={activePresetId} credentialProfiles={credentialProfiles} credentialSaved={credentialSavedMap}
           runtime={runtime} onSavePreset={onSavePreset} onActivatePreset={onActivatePreset} onDeletePreset={onDeletePreset}
           onCreateCredential={onCreateCredential} onDeleteCredential={onDeleteCredential} onRefreshModels={onRefreshModels} onTestPreset={onTestPreset}/>
-      </ViewErrorBoundary>}
+      </ViewErrorBoundary>
+      :<ViewErrorBoundary key="settings-automatic-memory" view="settings-automatic-memory" onError={onError}>
+        <AutomaticMemorySettingsView settings={appSettings} onChange={onAppSettingsChange} providerPresets={providerPresets} saving={settingsSaving} message={settingsLoadMessage} onSave={onSaveSettings}/>
+      </ViewErrorBoundary>
   </section>;
 }
 function isTauriRuntime():boolean{
