@@ -10,6 +10,7 @@ import type {
   CoreBookEntry,
   CoreBookEntryId,
   CharacterId,
+  DiagnosticsStore,
   MemoryBroker,
   MemoryItem,
   MemorySearchQuery,
