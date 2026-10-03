@@ -207,7 +207,7 @@ fn search_inner(conn:&Connection,q:&RetrievalQuery)->Result<RetrievalResult,Stri
     let status:Option<String>=conn.query_row("SELECT value FROM retrieval_meta WHERE key='status'",[],|r|r.get(0)).optional().map_err(|e|e.to_string())?;
     let degraded=status.as_deref()!=Some("ready");
     let error=degraded.then(||"Retrieval index is degraded or requires rebuild.".to_string());
-    let mut st=conn.prepare("SELECT d.source,d.source_id,d.character_id,d.conversation_id,-bm25(f,8.0,5.0,3.0),snippet(f,1,'[[MATCH]]','[[/MATCH]]','...',18),highlight(f,0,'[[MATCH]]','[[/MATCH]]'),highlight(f,2,'[[MATCH]]','[[/MATCH]]'),d.title,d.tags,d.status,d.type,d.updated_at FROM retrieval_fts f JOIN retrieval_documents d ON d.rowid=f.rowid WHERE f MATCH ?1 AND d.character_id=?2 AND (d.source='core_book' OR (d.source='memory' AND d.conversation_id=?3)) ORDER BY 5 DESC,d.source ASC,d.source_id ASC LIMIT 500").map_err(|e|e.to_string())?;
+    let mut st=conn.prepare("SELECT d.source,d.source_id,d.character_id,d.conversation_id,-bm25(retrieval_fts,8.0,5.0,3.0),snippet(retrieval_fts,1,'[[MATCH]]','[[/MATCH]]','...',18),highlight(retrieval_fts,0,'[[MATCH]]','[[/MATCH]]'),highlight(retrieval_fts,2,'[[MATCH]]','[[/MATCH]]'),d.title,d.tags,d.status,d.type,d.updated_at FROM retrieval_fts f JOIN retrieval_documents d ON d.rowid=f.rowid WHERE f MATCH ?1 AND d.character_id=?2 AND (d.source='core_book' OR (d.source='memory' AND d.conversation_id=?3)) ORDER BY 5 DESC,d.source ASC,d.source_id ASC LIMIT 500").map_err(|e|e.to_string())?;
     let mut rows=st.query(params![m,char_id,q.conversation_id.as_deref().unwrap_or("")]).map_err(|e|e.to_string())?;
     let mut out=Vec::new();
     while let Some(r)=rows.next().map_err(|e|e.to_string())?{
