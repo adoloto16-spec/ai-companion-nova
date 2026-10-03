@@ -1,7 +1,4 @@
-import {
-  ChatSessionController,
-  ConversationSession
-} from "../../core/src";
+// Composition-boundary test only: the retrieval transport is a deterministic mock. Rust/Tauri FTS5 retrieval is covered by the Rust boundary tests.\nimport {\n  ChatSessionController,\n  ConversationSession\n} from "../../core/src";
 import {defaultAppSettings} from "../../contracts/src";
 import type {
   ChatRequest,
@@ -108,7 +105,7 @@ async function main(){
       conversationId:conversation.id,
       type:"observation",
       content:"Нова имеет фиолетовые волосы",
-      tags:["Нова","волосы"],
+      tags:[],
       importance:95,
       confidence:90,
       source:"user",
@@ -116,7 +113,7 @@ async function main(){
     });
 
     ok(commands.includes(RETRIEVAL_COMMANDS.upsert),"MemoryCreated reaches production retrieval index writer through IPC");
-    ok(documents.has(character.id+":"+memory.id),"active Dynamic Memory is present in retrieval index");
+    ok(documents.has(character.id+":"+memory.id),"active Dynamic Memory is present in mocked retrieval writer state");\n    equal(memory.tags,[],"Automatic Memory may be created without activation tags");
 
     const query="Нова, какого цвета твои волосы?";
     const assembled=await runtime.buildContext({
@@ -224,6 +221,6 @@ async function main(){
     await failingRuntime.stop();
   }
 
-  console.log("PASS production Dynamic Memory retrieval -> Context Engine -> ChatRequest integration");
+  console.log("PASS Dynamic Memory retrieval composition boundary (mocked retrieval) -> Context Engine -> ChatRequest");
 }
 void main().catch(error=>{console.error(error);process.exitCode=1});
