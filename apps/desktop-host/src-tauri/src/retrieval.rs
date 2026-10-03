@@ -374,6 +374,21 @@ mod tests{
         assert!(result.candidates.iter().all(|x|x.character_id=="a"));
         assert!(result.candidates.iter().all(|x|x.source==RetrievalSource::CoreBook));
     }
+    #[test]fn russian_exact_token_memory_retrieval_uses_fts5(){
+        let mut c=conn();
+        let mut memory=doc("character-nova",RetrievalSource::Memory,"nova-hair","","Нова имеет фиолетовые волосы",&[],"active",Some("observation"));
+        memory.conversation_id=Some("conversation-1".into());
+        rebuild(&mut c,None,&[memory]).unwrap();
+        let result=search_inner(&c,&query("character-nova","Нова, какого цвета твои волосы?",Some(vec![RetrievalSource::Memory]),10,None)).unwrap();
+        assert!(!result.degraded);
+        assert_eq!(result.candidates.len(),1);
+        assert_eq!(result.candidates[0].source,RetrievalSource::Memory);
+        assert_eq!(result.candidates[0].source_id,"nova-hair");
+        assert_eq!(result.candidates[0].character_id,"character-nova");
+        assert_eq!(result.candidates[0].conversation_id.as_deref(),Some("conversation-1"));
+        assert!(result.candidates[0].matched_text.contains("Нова"));
+    }
+
     #[test]fn filters_and_deterministic_tie_break(){
         let mut c=conn();
         let docs=[

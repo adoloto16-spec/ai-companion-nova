@@ -139,6 +139,59 @@ async function main(){
   equal((await broker.search({characterId:"character.a",conversationId:conversation!.id,query:"",status:"active",limit:10})).length,0,"archived memory leaves active memory list");
   equal((await broker.search({characterId:"character.a",conversationId:conversation!.id,query:"",status:"archived",limit:10})).length,1,"archived memory remains persisted");
 
+  const lexicalDocuments:RetrievalIndexDocument[]=[];
+  const lexicalRetriever={
+    async search(query:{characterId:string;conversationId?:string;query:string}):Promise<{apiVersion:"1";schemaVersion:"1";characterId:string;query:string;candidates:RetrievalIndexDocument[];degraded:false}>{
+      const candidates=lexicalDocuments
+        .filter(document=>document.characterId===query.characterId)
+        .filter(document=>document.source==="memory"&&document.conversationId===query.conversationId)
+        .filter(document=>document.status==="active"&&document.content.includes("Нова"));
+      return {
+        apiVersion:"1",schemaVersion:"1",characterId:query.characterId,query:query.query,
+        candidates:candidates.map(document=>({
+          ...document,
+          score:1,
+          matchedText:"Нова",
+          matches:[{field:"content",text:"Нова"}],
+          metadata:{title:null,status:document.status,memory_type:document.type,updatedAt:document.updatedAt}
+        })) as any,
+        degraded:false
+      };
+    },
+    async rebuild(){},
+    async rebuildAll(){}
+  } as any;
+  const contextEngine=createDeterministicContextEngine(
+    {listCoreBookEntries:async()=>[]},
+    {memoryBroker:broker,retriever:lexicalRetriever,memoryCandidateLimit:()=>8}
+  );
+  lexicalDocuments.push({
+    apiVersion:"1",schemaVersion:"1",characterId:"character.a",conversationId:conversation!.id,
+    source:"memory",sourceId:"nova-hair",title:"",content:"Нова имеет фиолетовые волосы",tags:[],status:"active",type:"observation",
+    updatedAt:"2026-10-03T00:00:00.000Z"
+  });
+  for(const provenance of ["user","conversation"] as const){
+    const provenanceMemory=await broker.create("character.a",{
+      id:"memory-"+provenance,conversationId:conversation!.id,type:"observation",content:"Нова имеет фиолетовые волосы",
+      tags:[],importance:70,confidence:80,source:provenance,sourceReference:"turn-"+provenance,mutationPolicy:"auto"
+    },{actorId:"local-user",actorType:"user",trusted:true,capabilities:[]});
+    lexicalDocuments.push({
+      apiVersion:"1",schemaVersion:"1",characterId:"character.a",conversationId:conversation!.id,
+      source:"memory",sourceId:provenanceMemory.id,title:"",content:provenanceMemory.content,tags:[],status:"active",type:"observation",
+      updatedAt:provenanceMemory.updatedAt
+    });
+    const assembledRussian=await contextEngine.build({
+      apiVersion:"1",schemaVersion:"1",characterId:"character.a",conversationId:conversation!.id,
+      messages:[{role:"user",content:"Нова, какого цвета твои волосы?"}],
+      budget:{availableContextTokens:4096,reservedOutputTokens:512,systemOverheadTokens:0,safetyMarginTokens:64}
+    });
+    const selected=assembledRussian.includedCandidates.find(candidate=>candidate.referenceId===provenanceMemory.id);
+    ok(Boolean(selected),"Russian Dynamic Memory candidate is selected for "+provenance);
+    equal(selected?.source,"memory","selected Russian memory uses retrieval source memory for "+provenance);
+    equal(selected?.characterId,"character.a","selected memory keeps character scope for "+provenance);
+    equal(assembledRussian.messages.some(message=>message.content==="Нова имеет фиолетовые волосы"),true,"final context carries Russian memory content for "+provenance);
+  }
+
   indexer.stop();
   console.log("PASS Automatic Memory Agent integration pipeline");
 }
