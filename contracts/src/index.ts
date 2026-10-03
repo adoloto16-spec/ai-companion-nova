@@ -247,6 +247,7 @@ export interface MemorySearchQuery{
   limit?:number;
 }
 export interface MemoryUpdateInput{
+  type?:MemoryType;
   content?:string;
   tags?:readonly string[];
   importance?:number;
