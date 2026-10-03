@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.ai-companion-nova.dev/app-settings/v1",
-  "title": "AI Companion Nova App Settings v1",
+  "$id": "https://schemas.ai-companion-nova.dev/app-settings/v3",
+  "title": "AI Companion Nova App Settings v3",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -20,7 +20,7 @@
       "const": "1"
     },
     "schemaVersion": {
-      "const": "2"
+      "const": "3"
     },
     "chat": {
       "type": "object",
@@ -136,7 +136,8 @@
       "required": [
         "enabled",
         "providerPresetId",
-        "model"
+        "model",
+        "instructions"
       ],
       "properties": {
         "enabled": {
@@ -152,6 +153,10 @@
         "model": {
           "type": "string",
           "maxLength": 200
+        },
+        "instructions": {
+          "type": "string",
+          "maxLength": 12000
         }
       }
     }
