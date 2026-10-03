@@ -35,9 +35,9 @@ function memoryCandidate(document:RetrievalIndexDocument,query:RetrievalQuery):R
     matchedText:"Нова",
     matches:[{field:"content",text:"[[MATCH]]Нова[[/MATCH]] имеет фиолетовые волосы"}],
     metadata:{
-      title:null,
-      status:document.status??null,
-      type:document.type??null,
+      title:undefined,
+      status:document.status,
+      type:document.type,
       updatedAt:document.updatedAt
     }
   };
