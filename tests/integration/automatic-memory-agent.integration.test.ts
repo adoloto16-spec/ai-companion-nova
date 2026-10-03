@@ -76,9 +76,6 @@ async function main(){
     budget:{availableContextTokens:4096,reservedOutputTokens:512,systemOverheadTokens:0,safetyMarginTokens:64}
   });
   equal(updatedContext.includedCandidates.filter(candidate=>candidate.referenceId===created!.id).length,1,"updated memory remains eligible to Context Engine");
-  await broker.archive("character.a",conversation!.id,created!.id,{actorId:"local-user",actorType:"user",trusted:true,capabilities:[]});
-  equal((await broker.search({characterId:"character.a",conversationId:conversation!.id,query:"",status:"active",limit:10})).length,0,"archived memory leaves active memory list");
-  equal((await broker.search({characterId:"character.a",conversationId:conversation!.id,query:"",status:"archived",limit:10})).length,1,"archived memory remains persisted");
   await conversationStore.clear("character.a",conversation!.id);
   equal((await broker.search({characterId:"character.a",conversationId:conversation!.id,query:"green",status:"active",limit:10})).length,1,"clearing conversation messages preserves long-term memory");
 
@@ -97,6 +94,10 @@ async function main(){
   });
   equal(assembled.includedCandidates.filter(candidate=>candidate.source==="memory").length,1,"same conversation memory becomes eligible to Context Engine");
   ok(!JSON.stringify(assembled.includedCandidates).includes(other.id),"context assembly never includes other conversation id");
+
+  await broker.archive("character.a",conversation!.id,created!.id,{actorId:"local-user",actorType:"user",trusted:true,capabilities:[]});
+  equal((await broker.search({characterId:"character.a",conversationId:conversation!.id,query:"",status:"active",limit:10})).length,0,"archived memory leaves active memory list");
+  equal((await broker.search({characterId:"character.a",conversationId:conversation!.id,query:"",status:"archived",limit:10})).length,1,"archived memory remains persisted");
 
   console.log("PASS Automatic Memory Agent integration pipeline");
 }
