@@ -66,7 +66,7 @@ function cloneMessage(message:ChatMessage):ChatMessage{
 function extractFirstJsonObject(value:string):string|undefined{
   const trimmed=value.trim();
   if(!trimmed)return undefined;
-  const fenced=/^\\s*```(?:json)?\\s*([\\s\\S]*?)\\s*```\\s*$/i.exec(trimmed);
+  const fenced=/^\s*```(?:json)?\s*([\s\S]*?)\s*```\s*$/i.exec(trimmed);
   const source=fenced?.[1]?.trim()??trimmed;
   const start=source.indexOf("{");
   if(start<0)return undefined;
