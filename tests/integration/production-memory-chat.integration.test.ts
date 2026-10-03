@@ -210,20 +210,16 @@ async function main(){
       mutationPolicy:"locked"
     });
     ok(Boolean(failingMemory),"failing production composition still creates memory");
-    let surfaced=false;
-    try{
-      await failingRuntime.buildContext({
-        apiVersion:"1",
-        schemaVersion:"1",
-        characterId:character.id,
-        conversationId:conversation.id,
-        messages:[{role:"user",content:"Нова, какого цвета твои волосы?"}],
-        budget:{availableContextTokens:1024,reservedOutputTokens:128,systemOverheadTokens:0,safetyMarginTokens:0}
-      });
-    }catch{surfaced=true}
-    ok(surfaced,"retrieval failure is not converted into an empty memory result");
-    const diagnostic=failingRuntime.diagnostics().then(snapshot=>snapshot.recentErrors.find(error=>error.code==="RETRIEVAL_FAILED"));
-    ok(Boolean((await diagnostic)),"retrieval failure is visible through existing diagnostics");
+    await failingRuntime.buildContext({
+      apiVersion:"1",
+      schemaVersion:"1",
+      characterId:character.id,
+      conversationId:conversation.id,
+      messages:[{role:"user",content:"Нова, какого цвета твои волосы?"}],
+      budget:{availableContextTokens:1024,reservedOutputTokens:128,systemOverheadTokens:0,safetyMarginTokens:0}
+    });
+    const diagnostic=(await failingRuntime.diagnostics()).recentErrors.find(error=>error.code==="RETRIEVAL_FAILED");
+    ok(Boolean(diagnostic),"retrieval failure is visible through existing diagnostics instead of being silently treated as a normal miss");
   }finally{
     await failingRuntime.stop();
   }
