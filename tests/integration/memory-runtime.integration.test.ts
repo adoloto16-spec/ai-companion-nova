@@ -10,15 +10,20 @@ function ok(value:unknown,label:string){if(!value)throw new Error(label)}
 
 async function main(){
   const characterStore=new InMemoryCharacterStore();
-  let persistedState:MemoryStoreState|undefined;
+  const persistedStates=new Map<string,MemoryStoreState>();
   const memoryInvoke=async(command:string,args?:Record<string,unknown>):Promise<unknown>=>{
     switch(command){
-      case "get_memory_state":
-        return persistedState?JSON.parse(JSON.stringify(persistedState)) as MemoryStoreState:undefined;
+      case "get_memory_state":{
+        const characterId=args?.characterId;
+        if(typeof characterId!=="string")throw new Error("missing characterId in test IPC boundary");
+        const state=persistedStates.get(characterId);
+        return state?JSON.parse(JSON.stringify(state)) as MemoryStoreState:undefined;
+      }
       case "save_memory_state":{
         const stateValue=args?.stateValue;
-        if(!stateValue)throw new Error("missing stateValue in test IPC boundary");
-        persistedState=JSON.parse(JSON.stringify(stateValue)) as MemoryStoreState;
+        if(!stateValue||typeof stateValue!=="object")throw new Error("missing stateValue in test IPC boundary");
+        const state=JSON.parse(JSON.stringify(stateValue)) as MemoryStoreState;
+        persistedStates.set(state.characterId,state);
         return undefined;
       }
       default:
