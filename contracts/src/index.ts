@@ -438,6 +438,12 @@ export interface ChatTurnTrace{
   error?:{code:string;message:string};
   memoryExtraction?:{
     started:boolean;
+    status?:"started"|"completed"|"failed";
+    requestId?:string;
+    providerId?:string;
+    model?:string;
+    conversationId?:string;
+    contextMessageCount?:number;
     candidates:readonly MemoryCandidate[];
     accepted:readonly MemoryCandidate[];
     rejected:readonly {candidate:MemoryCandidate;reason:string}[];
