@@ -391,6 +391,59 @@ mod tests{
         assert!(result.candidates[0].matched_text.contains("Нова"));
     }
 
+    #[test]fn memory_upsert_inner_then_search_inner_uses_production_lifecycle(){
+        let mut c=conn();
+        let mut memory=doc("character-nova",RetrievalSource::Memory,"nova-hair","","Нова имеет фиолетовые волосы",&[],"active",Some("observation"));
+        memory.conversation_id=Some("conversation-1".into());
+        upsert_inner(&c,&memory).unwrap();
+
+        let query=query("character-nova","Нова, какого цвета твои волосы?",Some(vec![RetrievalSource::Memory]),10,None);
+        let result=search_inner(&c,&query).unwrap();
+        assert!(!result.degraded);
+        assert_eq!(result.candidates.len(),1);
+        let candidate=&result.candidates[0];
+        assert_eq!(candidate.source,RetrievalSource::Memory);
+        assert_eq!(candidate.source_id,"nova-hair");
+        assert_eq!(candidate.character_id,"character-nova");
+        assert_eq!(candidate.conversation_id.as_deref(),Some("conversation-1"));
+        assert_eq!(candidate.metadata.status.as_deref(),Some("active"));
+        assert!(candidate.matched_text.contains("Нова"));
+    }
+
+    #[derive(Debug,Deserialize)]
+    struct RetrievalBridgeFixture{
+        document:RetrievalIndexDocument,
+        query:RetrievalQuery
+    }
+
+    #[test]
+    #[ignore = "CI runs the real cross-language indexer -> Rust FTS5 fixture"]
+    fn indexer_fixture_reaches_real_rust_fts5(){
+        let path=std::env::var("NOVA_RETRIEVAL_FIXTURE").expect("NOVA_RETRIEVAL_FIXTURE must be set");
+        let raw=std::fs::read_to_string(path).unwrap();
+        let fixture:RetrievalBridgeFixture=serde_json::from_str(&raw).unwrap();
+        assert_eq!(fixture.document.source,RetrievalSource::Memory);
+        assert_eq!(fixture.document.tags,Vec::<String>::new());
+        assert_eq!(fixture.document.status.as_deref(),Some("active"));
+        assert_eq!(fixture.document.content,"Нова имеет фиолетовые волосы");
+        assert_eq!(fixture.query.query,"Нова, какого цвета твои волосы?");
+        assert_eq!(fixture.query.character_id,fixture.document.character_id);
+        assert_eq!(fixture.query.conversation_id,fixture.document.conversation_id);
+
+        let mut c=conn();
+        upsert_inner(&c,&fixture.document).unwrap();
+        let result=search_inner(&c,&fixture.query).unwrap();
+        assert!(!result.degraded);
+        assert_eq!(result.candidates.len(),1);
+        let candidate=&result.candidates[0];
+        assert_eq!(candidate.source,RetrievalSource::Memory);
+        assert_eq!(candidate.character_id,fixture.document.character_id);
+        assert_eq!(candidate.conversation_id,fixture.document.conversation_id);
+        assert_eq!(candidate.source_id,fixture.document.source_id);
+        assert_eq!(candidate.metadata.status.as_deref(),Some("active"));
+        assert!(candidate.matched_text.contains("Нова"));
+    }
+
     #[test]fn filters_and_deterministic_tie_break(){
         let mut c=conn();
         let docs=[
