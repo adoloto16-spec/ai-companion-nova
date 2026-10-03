@@ -4,9 +4,10 @@ use std::{fs,io::Write,path::{Path,PathBuf}};
 use tauri::Manager;
 
 const API_VERSION:&str="1";
-const SCHEMA_VERSION:&str="1";
-const FILE_NAME:&str="app-settings-v1.json";
+const SCHEMA_VERSION:&str="2";
+const FILE_NAME:&str="app-settings-v2.json";
 const LEGACY_SCHEMA_VERSION:&str="0";
+const PREVIOUS_SCHEMA_VERSION:&str="1";
 const MAX_CONTEXT_TOKENS:i64=32768;
 const MAX_RESERVED_OUTPUT:i64=16384;
 const MAX_SAFETY_MARGIN:i64=4096;
@@ -20,6 +21,14 @@ const MAX_DIAGNOSTICS_ENTRIES:i64=500;
 pub struct ChatSettings{
     #[serde(rename="automaticLongTermMemory")]
     pub automatic_long_term_memory:bool
+}
+#[derive(Debug,Deserialize,Serialize,Clone)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryAgentSettings{
+    pub enabled:bool,
+    #[serde(rename="providerPresetId")]
+    pub provider_preset_id:Option<String>,
+    pub model:String
 }
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(deny_unknown_fields)]
@@ -67,6 +76,8 @@ pub struct AppSettings{
     #[serde(rename="schemaVersion")]
     pub schema_version:String,
     pub chat:ChatSettings,
+    #[serde(rename="memoryAgent")]
+    pub memory_agent:MemoryAgentSettings,
     pub context:ContextSettings,
     pub memory:MemorySettings,
     pub retrieval:RetrievalSettings,
@@ -78,6 +89,7 @@ fn default_settings()->AppSettings{
     AppSettings{
         api_version:API_VERSION.into(),schema_version:SCHEMA_VERSION.into(),
         chat:ChatSettings{automatic_long_term_memory:true},
+        memory_agent:MemoryAgentSettings{enabled:true,provider_preset_id:None,model:String::new()},
         context:ContextSettings{available_context_tokens:4096,reserved_output_tokens:1024,safety_margin_tokens:128,recent_conversation_messages:8},
         memory:MemorySettings{candidate_limit:8},
         retrieval:RetrievalSettings{candidate_limit:32},
@@ -110,8 +122,10 @@ fn validate(settings:&AppSettings)->Result<(),String>{
 }
 
 fn migrate(value:Value)->Result<(AppSettings,bool),String>{
-    let legacy=value.get("schemaVersion").and_then(Value::as_str).map(|v|v==LEGACY_SCHEMA_VERSION).unwrap_or(true);
-    if !legacy{
+    let schema=value.get("schemaVersion").and_then(Value::as_str);
+    let legacy=schema.map(|v|v==LEGACY_SCHEMA_VERSION).unwrap_or(true);
+    let previous=schema==Some(PREVIOUS_SCHEMA_VERSION);
+    if !legacy && !previous{
         let settings:AppSettings=serde_json::from_value(value).map_err(|e|format!("invalid AppSettings: {e}"))?;
         validate(&settings)?;
         return Ok((settings,false));
@@ -137,6 +151,11 @@ fn migrate(value:Value)->Result<(AppSettings,bool),String>{
     }
     if let Some(chat)=value.get("chat").and_then(Value::as_object){
         if let Some(v)=chat.get("automaticLongTermMemory").and_then(Value::as_bool){result.chat.automatic_long_term_memory=v;}
+    }
+    if let Some(memory_agent)=value.get("memoryAgent").and_then(Value::as_object){
+        if let Some(v)=memory_agent.get("enabled").and_then(Value::as_bool){result.memory_agent.enabled=v;}
+        if let Some(v)=memory_agent.get("providerPresetId").and_then(Value::as_str){result.memory_agent.provider_preset_id=Some(v.to_string());}
+        if let Some(v)=memory_agent.get("model").and_then(Value::as_str){result.memory_agent.model=v.to_string();}
     }
     validate(&result)?;
     Ok((result,true))
@@ -195,5 +214,6 @@ mod tests{
         let mut settings=default_settings();settings.context.available_context_tokens=MAX_CONTEXT_TOKENS+1;
         assert!(validate(&settings).is_err());
     }
-    #[test]fn preserves_canonical_round_trip(){let settings=default_settings();let encoded=serde_json::to_vec(&settings).expect("encode");let (restored,migrated)=migrate(serde_json::from_slice(&encoded).expect("json")).expect("canonical settings should round-trip");assert!(!migrated);assert_eq!(restored.context.available_context_tokens,settings.context.available_context_tokens);}
+    #[test]fn preserves_canonical_round_trip(){let settings=default_settings();let encoded=serde_json::to_vec(&settings).expect("encode");let (restored,migrated)=migrate(serde_json::from_slice(&encoded).expect("json")).expect("canonical settings should round-trip");assert!(!migrated);assert_eq!(restored.memory_agent.enabled,settings.memory_agent.enabled);}
+    #[test]fn migrates_previous_schema_memory_agent(){let value=serde_json::json!({"schemaVersion":"1","apiVersion":"1","chat":{"automaticLongTermMemory":false},"context":{"availableContextTokens":4096,"reservedOutputTokens":1024,"safetyMarginTokens":128,"recentConversationMessages":8},"memory":{"candidateLimit":8},"retrieval":{"candidateLimit":32},"diagnostics":{"logLevel":"normal","keepRecentEntries":100},"ui":{"showDiagnosticsInChat":true}});let (settings,migrated)=migrate(value).expect("schema v1 should migrate");assert!(migrated);assert!(!settings.memory_agent.enabled);assert_eq!(settings.schema_version,SCHEMA_VERSION);}
 }
