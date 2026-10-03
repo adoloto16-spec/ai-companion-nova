@@ -433,7 +433,7 @@ export interface ChatTurnTrace{
     userMessagePresent?:boolean;
     assistantResponsePresent?:boolean;
     result?:string;
-    persistence?:{status:"created"|"duplicate"|"rejected"|"none";memoryId?:string};
+    persistence?:{status:"created"|"duplicate"|"rejected"|"none";memoryId?:string;reason?:string};
     failed?:string;
   };
 }
