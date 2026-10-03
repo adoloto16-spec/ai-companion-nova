@@ -1558,7 +1558,7 @@ function credentialSavedEntries(
 }
 
 function App(){
-  const [view,setView]=React.useState<"chat"|"characters"|"core-book"|"model-profile"|"settings"|"diagnostics">("chat");
+  const [view,setView]=React.useState<"chat"|"characters"|"core-book"|"memory"|"model-profile"|"settings"|"diagnostics">("chat");
   const [runtime,setRuntime]=React.useState<RuntimeDiagnostics>(preview);
   const [saving,setSaving]=React.useState(false);
   const [startupStatus,setStartupStatus]=React.useState<"initializing"|"ready"|"error">("initializing");
@@ -1933,6 +1933,27 @@ function App(){
     setActiveModelProfile(profile);
   },[activeCharacter,activeModelProfile,chatController,controllerForConversation,loadModelProfile]);
 
+  const selectMemoryConversation=React.useCallback(async(id:string)=>{
+    const foundation=foundationRef.current;
+    const character=activeCharacter;
+    if(!foundation||!character||chatController?.getSnapshot().sending)return;
+    const previousConversation=activeConversation;
+    const profile=activeModelProfile??await loadModelProfile(character.id);
+    try{
+      const conversation=await foundation.setActiveConversation(character.id,id);
+      const controller=controllerForConversation(conversation,profile);
+      setActiveConversation(conversation);
+      setConversations(await foundation.listConversations(character.id));
+      setChatController(controller);
+    }catch(error){
+      if(previousConversation){
+        setActiveConversation(previousConversation);
+        setChatController(controllerForConversation(previousConversation,profile));
+      }
+      throw error;
+    }
+  },[activeCharacter,activeConversation,activeModelProfile,chatController,controllerForConversation,conversations,loadModelProfile]);
+
   const createCharacter=React.useCallback(async(name:string)=>{
     const foundation=foundationRef.current;
     if(!foundation)return;
@@ -2066,6 +2087,7 @@ function App(){
         <button className={view==="chat"?"nav-button active":"nav-button"} onClick={()=>setView("chat")}>Chat</button>
         <button className={view==="characters"?"nav-button active":"nav-button"} onClick={()=>setView("characters")}>Characters</button>
         <button className={view==="core-book"?"nav-button active":"nav-button"} onClick={()=>setView("core-book")}>Core Book</button>
+        <button className={view==="memory"?"nav-button active":"nav-button"} onClick={()=>setView("memory")}>Memory</button>
         <button className={view==="model-profile"?"nav-button active":"nav-button"} onClick={()=>setView("model-profile")}>Model Profile</button>
         <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Settings</button>
         {appSettings.ui.showDiagnosticsInChat&&<button className={view==="diagnostics"?"nav-button active":"nav-button"} onClick={()=>setView("diagnostics")}>Diagnostics</button>}
@@ -2095,6 +2117,8 @@ function App(){
           onRefreshModels={refreshPresetModels}
           onTestPreset={testPreset}
           onError={reportViewError}/>
+      :view==="memory"&&activeCharacter&&activeConversation&&foundationRef.current
+      ?<MemoryView runtime={foundationRef.current} character={activeCharacter} conversations={conversations} activeConversation={activeConversation} onSelectConversation={selectMemoryConversation}/>
       :view==="diagnostics"&&foundationRef.current
       ?<DiagnosticsView runtime={foundationRef.current} settings={appSettings}/>
       :startupStatus==="error"
