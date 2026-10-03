@@ -1,5 +1,6 @@
 import {InMemoryAuditService} from "../../core/src";
-import {InMemoryMemoryStore} from "../../host/memory/src";
+import type {MemoryStoreState} from "../../contracts/src";
+import {IpcMemoryStore} from "../../host/memory/src";
 import {createFoundationRuntime} from "../../runtime/bootstrap/src";
 import {InMemoryCharacterStore} from "../../host/characters/src";
 import {InMemoryConversationStore} from "../../host/conversations/src";
@@ -9,7 +10,22 @@ function ok(value:unknown,label:string){if(!value)throw new Error(label)}
 
 async function main(){
   const characterStore=new InMemoryCharacterStore();
-  const memoryStore=new InMemoryMemoryStore();
+  let persistedState:MemoryStoreState|undefined;
+  const memoryInvoke=async(command:string,args?:Record<string,unknown>):Promise<unknown>=>{
+    switch(command){
+      case "get_memory_state":
+        return persistedState?JSON.parse(JSON.stringify(persistedState)) as MemoryStoreState:undefined;
+      case "save_memory_state":{
+        const stateValue=args?.stateValue;
+        if(!stateValue)throw new Error("missing stateValue in test IPC boundary");
+        persistedState=JSON.parse(JSON.stringify(stateValue)) as MemoryStoreState;
+        return undefined;
+      }
+      default:
+        throw new Error("Unexpected memory IPC command: "+command);
+    }
+  };
+  const memoryStore=new IpcMemoryStore(memoryInvoke);
   const conversationStore=new InMemoryConversationStore();
   const runtime=await createFoundationRuntime({characterStore,memoryStore,conversationStore});
   await runtime.start();
@@ -32,7 +48,7 @@ async function main(){
     });
     equal(replacement.status,"active","runtime supersede returns active replacement");
     equal((await runtime.getMemory(nova.id,novaConversation.id,created.id))?.status,"superseded","runtime retains historical memory");
-    const reloaded=await createFoundationRuntime({characterStore,memoryStore,conversationStore});
+    const reloaded=await createFoundationRuntime({characterStore,memoryStore:new IpcMemoryStore(memoryInvoke),conversationStore});
     await reloaded.start();
     try{
       equal((await reloaded.getMemory(nova.id,novaConversation.id,replacement.id))?.content,"Nova met the user in Munich.","memory survives runtime restart");

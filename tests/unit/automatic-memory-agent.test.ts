@@ -158,39 +158,46 @@ async function main(){
   }
 
   {
-    const validator=new StandardContractValidator();
-    const rejectingStore={
-      async load(){return undefined},
-      async save(){throw new Error("disk full during memory persistence")},
-      async supersede(){throw new Error("not used")}
+    const assertPersistenceFailure=async(failure:unknown,turnId:string,expectedReason:string,label:string)=>{
+      const validator=new StandardContractValidator();
+      const rejectingStore={
+        async load(){return undefined},
+        async save(){throw failure},
+        async supersede(){throw new Error("not used")}
+      };
+      const broker=new MemoryBrokerImpl({
+        store:rejectingStore as any,
+        validator,
+        audit:new InMemoryAuditService(),
+        events:new InMemoryEventBus(),
+        characterExists:async id=>id==="character.a",
+        conversationExists:async (characterId,conversationId)=>characterId==="character.a"&&conversationId==="conversation.a"
+      });
+      const diagnostics=new InMemoryDiagnosticsStore();
+      const traceStore=new InMemoryChatTraceStore();
+      const settings={...defaultAppSettings(),memoryAgent:{...defaultAppSettings().memoryAgent,providerPresetId:"preset.memory",model:"memory-model"}};
+      const agent=new AutomaticMemoryAgent({
+        settings:()=>settings,
+        broker,
+        diagnostics,
+        traceStore,
+        runtime:{
+          async chat(request){return response(request,"Persistent memory text.")},
+          async getChatModelForPreset(){return "memory-model";}
+        }
+      });
+      traceStore.start({turnId,requestId:turnId,characterId:"character.a",conversationId:"conversation.a",timestamp:"2026-10-03T00:00:00.000Z"});
+      traceStore.update(turnId,{status:"completed"});
+      equal(await agent.process({...baseRequest,turnId}),undefined,label+" does not create memory");
+      const persistence=traceStore.recent(1)[0]?.automaticMemory?.persistence;
+      equal(persistence?.status,"rejected",label+" is explicitly rejected");
+      equal(persistence?.reason,expectedReason,label+" exposes the real safe reason");
     };
-    const broker=new MemoryBrokerImpl({
-      store:rejectingStore as any,
-      validator,
-      audit:new InMemoryAuditService(),
-      events:new InMemoryEventBus(),
-      characterExists:async id=>id==="character.a",
-      conversationExists:async (characterId,conversationId)=>characterId==="character.a"&&conversationId==="conversation.a"
-    });
-    const diagnostics=new InMemoryDiagnosticsStore();
-    const traceStore=new InMemoryChatTraceStore();
-    const settings={...defaultAppSettings(),memoryAgent:{...defaultAppSettings().memoryAgent,providerPresetId:"preset.memory",model:"memory-model"}};
-    const agent=new AutomaticMemoryAgent({
-      settings:()=>settings,
-      broker,
-      diagnostics,
-      traceStore,
-      runtime:{
-        async chat(request){return response(request,"Persistent memory text.")},
-        async getChatModelForPreset(){return "memory-model";}
-      }
-    });
-    traceStore.start({turnId:"persistence-rejected",requestId:"persistence-rejected",characterId:"character.a",conversationId:"conversation.a",timestamp:"2026-10-03T00:00:00.000Z"});
-    traceStore.update("persistence-rejected",{status:"completed"});
-    equal(await agent.process({...baseRequest,turnId:"persistence-rejected"}),undefined,"persistence failure does not create memory");
-    const persistence=traceStore.recent(1)[0]?.automaticMemory?.persistence;
-    equal(persistence?.status,"rejected","persistence failure is explicitly rejected");
-    equal(persistence?.reason,"disk full during memory persistence","persistence rejection exposes safe direct reason");
+
+    await assertPersistenceFailure(new Error("disk full during memory persistence"),"persistence-error","disk full during memory persistence","Error persistence failure");
+    await assertPersistenceFailure("disk full from string error","persistence-string","disk full from string error","String persistence failure");
+    await assertPersistenceFailure({message:"disk full from tauri message"},"persistence-message","disk full from tauri message","Tauri {message} persistence failure");
+    await assertPersistenceFailure({error:{message:"disk full from nested error"}},"persistence-nested","disk full from nested error","Nested {error} persistence failure");
   }
 
   {

@@ -71,8 +71,25 @@ function safeText(value:string):string{
 function containsSecret(value:string):boolean{
   return SECRET_PATTERNS.some(pattern=>pattern.test(value));
 }
-function safePersistenceReason(value:string):string{
-  return safeText(value).replace(/\s+/g," ").trim().slice(0,512);
+function extractSafeErrorMessage(value:unknown,seen=new Set<object>(),depth=0):string{
+  if(depth>4)return "";
+  if(value instanceof Error)return value.message;
+  if(typeof value==="string")return value;
+  if(!value||typeof value!=="object")return "";
+  if(seen.has(value))return "";
+  seen.add(value);
+  const record=value as Record<string,unknown>;
+  for(const key of ["message","error","reason"] as const){
+    if(!(key in record))continue;
+    const message=extractSafeErrorMessage(record[key],seen,depth+1);
+    if(message.trim())return message;
+  }
+  return "";
+}
+function safePersistenceReason(value:unknown):string{
+  const message=extractSafeErrorMessage(value);
+  const safe=safeText(message).replace(/\s+/g," ").trim().slice(0,512);
+  return safe||"Memory could not be persisted.";
 }
 function normalizedContent(value:string):string{
   return value.normalize("NFKC").toLocaleLowerCase().replace(/\s+/g," ").trim();
@@ -213,8 +230,8 @@ export class AutomaticMemoryAgent{
           metadata:{origin:"automatic-memory-agent",turnId:request.turnId}
         },authority);
       }catch(error){
-        const message=error instanceof Error?error.message:"Memory could not be persisted.";
-        this.traceStore?.update(request.turnId,{automaticMemory:{status:"completed",result:content,persistence:{status:"rejected",reason:safePersistenceReason(message)}}});
+        const message=safePersistenceReason(error);
+        this.traceStore?.update(request.turnId,{automaticMemory:{status:"completed",result:content,persistence:{status:"rejected",reason:message}}});
         this.recordFailure("PERSISTENCE_FAILED","Automatic Memory Agent memory could not be persisted.",request.turnId,presetId,model,message);
         return undefined;
       }

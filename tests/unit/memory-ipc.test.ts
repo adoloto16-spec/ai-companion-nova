@@ -26,12 +26,16 @@ async function main(){
     metadata:{origin:"test"}
   };
   let state:MemoryStoreState|undefined={apiVersion:"1",schemaVersion:"2",characterId:"character.a",items:[item]};
+  let saveArgs:Record<string,unknown>|undefined;
   const calls:string[]=[];
   const store=new IpcMemoryStore(async(command,args)=>{
     calls.push(command);
     switch(command){
       case "get_memory_state":return args?.characterId==="character.a"?state:undefined;
-      case "save_memory_state":state=args?.state as MemoryStoreState;return undefined;
+      case "save_memory_state":
+        saveArgs=args;
+        state=args?.stateValue as MemoryStoreState;
+        return undefined;
       case "supersede_memory":return args?.replacement;
       default:throw new Error("Unexpected memory command: "+command);
     }
@@ -40,7 +44,10 @@ async function main(){
   const loaded=await store.load("character.a");
   ok(Boolean(loaded),"IpcMemoryStore loads through the existing get_memory_state command");
   equal(loaded?.items[0]?.tags,[],"IPC memory item permits empty tags");
-  await store.save({...loaded!,items:[item]});
+  const expectedState={...loaded!,items:[item]};
+  await store.save(expectedState);
+  equal(saveArgs,{stateValue:expectedState},"IpcMemoryStore.save maps state through the canonical Tauri stateValue argument");
+  equal(Object.keys(saveArgs??{}),["stateValue"],"IpcMemoryStore.save does not send the legacy state argument");
   const superseding={...item,id:"memory.ipc.2",content:"User prefers green aviation examples."};
   const replaced=await store.supersede("character.a","conversation.a",item.id,superseding);
   equal(replaced.id,"memory.ipc.2","IpcMemoryStore routes supersede to the existing command");

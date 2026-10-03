@@ -48,7 +48,7 @@ export class IpcMemoryStore implements MemoryStore{
     return value===null||value===undefined?undefined:value as MemoryStoreState;
   }
   async save(state:MemoryStoreState):Promise<void>{
-    await this.invoke(MEMORY_COMMANDS.save,{state:cloneState(state)});
+    await this.invoke(MEMORY_COMMANDS.save,{stateValue:cloneState(state)});
   }
   async supersede(characterId:CharacterId,conversationId:ConversationId,previousMemoryId:string,replacement:MemoryItem):Promise<MemoryItem>{
     const value=await this.invoke(MEMORY_COMMANDS.supersede,{characterId,conversationId,previousMemoryId,replacement:cloneItem(replacement)});

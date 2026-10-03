@@ -3,12 +3,13 @@ import {
   InMemoryAuditService,
   InMemoryEventBus,
   MemoryBrokerImpl,
+  RetrievalEventIndexer,
   createDeterministicContextEngine,
   InMemoryChatTraceStore
 } from "../../core/src";
 import {defaultAppSettings,StandardContractValidator} from "../../contracts/src";
-import type {ChatRequest,ChatResponse} from "../../contracts/src";
-import {InMemoryMemoryStore} from "../../host/memory/src";
+import type {ChatRequest,ChatResponse,MemoryStoreState,RetrievalIndexDocument} from "../../contracts/src";
+import {IpcMemoryStore} from "../../host/memory/src";
 import {InMemoryConversationStore,createConversationTemplate} from "../../host/conversations/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error(label+" expected "+String(expected)+" got "+String(actual))}
@@ -16,16 +17,44 @@ function ok(value:unknown,label:string){if(!value)throw new Error(label)}
 
 async function main(){
   const validator=new StandardContractValidator();
-  const memoryStore=new InMemoryMemoryStore();
+  let persistedState:MemoryStoreState|undefined;
+  const memoryInvoke=async(command:string,args?:Record<string,unknown>):Promise<unknown>=>{
+    switch(command){
+      case "get_memory_state":
+        return persistedState?JSON.parse(JSON.stringify(persistedState)) as MemoryStoreState:undefined;
+      case "save_memory_state":{
+        const stateValue=args?.stateValue;
+        if(!stateValue)throw new Error("missing stateValue in test IPC boundary");
+        persistedState=JSON.parse(JSON.stringify(stateValue)) as MemoryStoreState;
+        return undefined;
+      }
+      default:
+        throw new Error("Unexpected memory IPC command: "+command);
+    }
+  };
+  const memoryStore=new IpcMemoryStore(memoryInvoke);
   const conversationStore=new InMemoryConversationStore();
+  const events=new InMemoryEventBus();
   const broker=new MemoryBrokerImpl({
     store:memoryStore,
     validator,
     audit:new InMemoryAuditService(),
-    events:new InMemoryEventBus(),
+    events,
     characterExists:async id=>id==="character.a",
     conversationExists:async(characterId,conversationId)=>characterId==="character.a"&&Boolean(await conversationStore.get(characterId,conversationId))
   });
+  const indexed:RetrievalIndexDocument[]=[];
+  const indexer=new RetrievalEventIndexer({
+    events,
+    coreBook:{getCoreBookEntry:async()=>undefined},
+    memory:broker,
+    writer:{
+      upsert:async(document)=>{indexed.push(document);},
+      remove:async()=>{},
+      removeCharacter:async()=>{}
+    }
+  });
+  indexer.start();
   const defaultConversation=createConversationTemplate("character.a");
   await conversationStore.save(defaultConversation);
   const conversation=await conversationStore.getActive("character.a");
@@ -61,6 +90,17 @@ async function main(){
   equal(created?.source,"conversation","automatic memory provenance is deterministic");
   equal(created?.sourceReference,"integration-turn-1","automatic memory sourceReference is the turn id");
   equal(created?.mutationPolicy,"auto","automatic memory mutation policy is deterministic");
+  ok(indexed.some(document=>document.source==="memory"&&document.sourceId===created!.id),"MemoryCreated updates the retrieval index");
+  const reloadedStore=new IpcMemoryStore(memoryInvoke);
+  const reloadedBroker=new MemoryBrokerImpl({
+    store:reloadedStore,
+    validator,
+    audit:new InMemoryAuditService(),
+    events:new InMemoryEventBus(),
+    characterExists:async id=>id==="character.a",
+    conversationExists:async(characterId,conversationId)=>characterId==="character.a"&&conversationId==="conversation.a"
+  });
+  equal((await reloadedBroker.get("character.a",conversation!.id,created!.id))?.status,"active","automatic memory survives a persistence reload");
 
   const edited=await broker.update("character.a",conversation!.id,created!.id,{
     type:"preference",content:"User prefers green aviation examples.",tags:["aviation"],importance:85,confidence:90
@@ -99,6 +139,7 @@ async function main(){
   equal((await broker.search({characterId:"character.a",conversationId:conversation!.id,query:"",status:"active",limit:10})).length,0,"archived memory leaves active memory list");
   equal((await broker.search({characterId:"character.a",conversationId:conversation!.id,query:"",status:"archived",limit:10})).length,1,"archived memory remains persisted");
 
+  indexer.stop();
   console.log("PASS Automatic Memory Agent integration pipeline");
 }
 void main().catch(error=>{console.error(error);process.exitCode=1});
