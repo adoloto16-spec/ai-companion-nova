@@ -121,23 +121,11 @@ export class InMemoryChatTraceStore implements ChatTraceStore{
           omittedCandidates:patch.contextBuild.omittedCandidates.map(cloneCandidate)
         }
       }:current.contextBuild?{contextBuild:current.contextBuild}:{}),
-      ...(memoryPatch?{
-        automaticMemory:{
-          started:memoryPatch.started??current.automaticMemory?.started??false,
-          ...(memoryPatch.status!==undefined?{status:memoryPatch.status}:current.automaticMemory?.status!==undefined?{status:current.automaticMemory.status}:{}),
-          ...(memoryPatch.requestId!==undefined?{requestId:redactDiagnosticText(memoryPatch.requestId)}:current.automaticMemory?.requestId!==undefined?{requestId:current.automaticMemory.requestId}:{}),
-          ...(memoryPatch.providerId!==undefined?{providerId:redactDiagnosticText(memoryPatch.providerId)}:current.automaticMemory?.providerId!==undefined?{providerId:current.automaticMemory.providerId}:{}),
-          ...(memoryPatch.model!==undefined?{model:redactDiagnosticText(memoryPatch.model)}:current.automaticMemory?.model!==undefined?{model:current.automaticMemory.model}:{}),
-          ...(memoryPatch.conversationId!==undefined?{conversationId:redactDiagnosticText(memoryPatch.conversationId)}:current.automaticMemory?.conversationId!==undefined?{conversationId:current.automaticMemory.conversationId}:{}),
-          ...(memoryPatch.contextMessageCount!==undefined?{contextMessageCount:memoryPatch.contextMessageCount}:current.automaticMemory?.contextMessageCount!==undefined?{contextMessageCount:current.automaticMemory.contextMessageCount}:{}),
-          candidates:(memoryPatch.candidates??current.automaticMemory?.candidates??[]).map(cloneCandidate),
-          accepted:(memoryPatch.accepted??current.automaticMemory?.accepted??[]).map(cloneCandidate),
-          rejected:(memoryPatch.rejected??current.automaticMemory?.rejected??[]).map(cloneCandidate),
-          duplicate:(memoryPatch.duplicate??current.automaticMemory?.duplicate??[]).map(cloneCandidate),
-          superseded:memoryPatch.superseded??current.automaticMemory?.superseded??[],
-          created:memoryPatch.created??current.automaticMemory?.created??[],
-          ...(memoryPatch.failed!==undefined?{failed:redactDiagnosticText(memoryPatch.failed)}:current.automaticMemory?.failed!==undefined?{failed:current.automaticMemory.failed}:{})
-        }
+      ...(patch.automaticMemory?{
+        automaticMemory:sanitizeRecord({
+          ...(current.automaticMemory??{}),
+          ...patch.automaticMemory
+        }) as ChatTurnTrace["automaticMemory"]
       }:current.automaticMemory?{automaticMemory:current.automaticMemory}:{})
     };
     this.traces[index]=cloneTrace(next);
