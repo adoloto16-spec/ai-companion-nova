@@ -199,8 +199,6 @@ export interface CoreBookStore{
 export type MemoryItemId=string;
 export const MEMORY_API_VERSION:ApiVersion="1";
 export const MEMORY_SCHEMA_VERSION="2";
-export const MEMORY_EXTRACTION_API_VERSION:ApiVersion="1";
-export const MEMORY_EXTRACTION_SCHEMA_VERSION="1";
 export type MemoryType="fact"|"preference"|"relationship"|"event"|"experience"|"goal"|"instruction"|"observation";
 export type MemoryStatus="active"|"superseded"|"archived";
 export type MemorySource="user"|"conversation"|"file"|"tool"|"model"|"system";
@@ -298,31 +296,20 @@ export interface MemoryBroker{
   supersede(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
   archive(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>;
 }
-export interface MemoryExtractionRequest{
+export const AUTOMATIC_MEMORY_AGENT_API_VERSION:ApiVersion="1";
+export const AUTOMATIC_MEMORY_AGENT_SCHEMA_VERSION="1";
+export interface AutomaticMemoryAgentRequest{
   apiVersion:ApiVersion;
   schemaVersion:string;
   characterId:CharacterId;
   conversationId:ConversationId;
   turnId:string;
   model:string;
-  providerId?:string;
-  providerPresetId?:string;
+  providerPresetId:string;
   userMessage:ChatMessage;
   assistantMessage:ChatMessage;
   contextMessages:readonly ChatMessage[];
 }
-export interface MemoryCandidate{
-  type:MemoryType;
-  content:string;
-  tags:readonly string[];
-  importance:number;
-  confidence:number;
-  source:MemorySource;
-  sourceReference:string;
-  mutationPolicy:MemoryMutationPolicy;
-}
-export interface MemoryExtractionResult{memories:readonly MemoryCandidate[];}
-
 export const CONTEXT_API_VERSION:ApiVersion="1";
 export const CONTEXT_SCHEMA_VERSION="1";
 
@@ -436,26 +423,25 @@ export interface ChatTurnTrace{
     durationMs?:number;
   };
   error?:{code:string;message:string};
-  memoryExtraction?:{
+  automaticMemory?:{
     started:boolean;
-    status?:"started"|"completed"|"failed";
+    status?:"started"|"completed"|"failed"|"skipped";
     requestId?:string;
+    providerPresetId?:string;
     providerId?:string;
     model?:string;
     conversationId?:string;
     contextMessageCount?:number;
-    candidates:readonly MemoryCandidate[];
-    accepted:readonly MemoryCandidate[];
-    rejected:readonly {candidate:MemoryCandidate;reason:string}[];
-    duplicate:readonly MemoryCandidate[];
-    superseded:readonly {candidate:MemoryCandidate;memoryId:string}[];
-    created:readonly {candidate:MemoryCandidate;memoryId:string}[];
+    userMessagePresent?:boolean;
+    assistantResponsePresent?:boolean;
+    result?:string;
+    persistence?:{status:"created"|"duplicate"|"rejected"|"none";memoryId?:string};
     failed?:string;
   };
 }
 export type ChatTurnTracePatch=Partial<Omit<ChatTurnTrace,"turnId"|"requestId"|"characterId"|"conversationId"|"timestamp"|"memoryExtraction">>&{
   contextBuild?:ChatTurnTrace["contextBuild"];
-  memoryExtraction?:Partial<NonNullable<ChatTurnTrace["memoryExtraction"]>>;
+  automaticMemory?:Partial<NonNullable<ChatTurnTrace["automaticMemory"]>>;
 };
 
 export interface ChatTraceStore{
@@ -563,9 +549,6 @@ export const CONTRACT_VERSIONS={
   memoryItem:{apiVersion:MEMORY_API_VERSION,schemaVersion:MEMORY_SCHEMA_VERSION},
   memorySearchQuery:{apiVersion:MEMORY_API_VERSION,schemaVersion:MEMORY_SCHEMA_VERSION},
   memoryStoreState:{apiVersion:MEMORY_API_VERSION,schemaVersion:MEMORY_SCHEMA_VERSION},
-  memoryCandidate:{apiVersion:MEMORY_EXTRACTION_API_VERSION,schemaVersion:MEMORY_EXTRACTION_SCHEMA_VERSION},
-  memoryExtractionRequest:{apiVersion:MEMORY_EXTRACTION_API_VERSION,schemaVersion:MEMORY_EXTRACTION_SCHEMA_VERSION},
-  memoryExtractionResult:{apiVersion:MEMORY_EXTRACTION_API_VERSION,schemaVersion:MEMORY_EXTRACTION_SCHEMA_VERSION},
   contextSource:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
   contextZone:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
   contextBudget:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
