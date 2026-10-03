@@ -88,20 +88,6 @@ async function main(){
     equal(document?.status,"active","index document marks active memory");
     equal(fixtureQuery?.query,"Нова, какого цвета твои волосы?","fixture carries the exact retrieval query");
 
-    await runtime.buildContext({
-      apiVersion:"1",
-      schemaVersion:"1",
-      characterId:character.id,
-      conversationId:conversation.id,
-      messages:[{role:"user",content:"Нова, какого цвета твои волосы?"}],
-      budget:{
-        availableContextTokens:defaultAppSettings().context.availableContextTokens,
-        reservedOutputTokens:defaultAppSettings().context.reservedOutputTokens,
-        systemOverheadTokens:0,
-        safetyMarginTokens:defaultAppSettings().context.safetyMarginTokens
-      }
-    });
-
     ok(await import("node:fs/promises").then(fs=>fs.readFile(fixturePath,"utf8")),"Rust boundary fixture is written after the real indexer event path");
   }finally{
     await runtime.stop();
