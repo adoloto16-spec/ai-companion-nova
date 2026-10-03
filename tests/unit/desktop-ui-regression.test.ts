@@ -14,6 +14,7 @@ function blockBetween(startMarker:string,endMarker:string):string{
 }
 
 const providerPresets=blockBetween("function ProviderPresetsView(","function ModelProfileView(");
+const memoryView=blockBetween("function MemoryView(","function ProviderPresetsView(");
 const settingsContainer=blockBetween("function SettingsContainerView(","function isTauriRuntime():boolean");
 const syncCharacters=blockBetween("const syncCharacters=React.useCallback","const addConfigurationLoadError=React.useCallback");
 const refreshRuntime=blockBetween("const refreshRuntime=React.useCallback","React.useEffect(()=>{");
@@ -25,7 +26,7 @@ assert.equal(app.includes('view==="provider-settings"'),false,"Provider Settings
 assert.equal(app.includes('view==="provider-presets"'),false,"Provider Presets must not remain a top-level route");
 
 const navigation=app.slice(app.indexOf("<nav className=\"app-nav\""),app.indexOf("</nav>",app.indexOf("<nav className=\"app-nav\"")));
-for(const label of ["Chat","Characters","Core Book","Model Profile","Settings","Diagnostics"]){
+for(const label of ["Chat","Characters","Core Book","Memory","Model Profile","Settings","Diagnostics"]){
   assert.ok(navigation.includes(">"+label+"</button>"),"Primary navigation must expose "+label);
 }
 for(const removed of ["Provider Presets","Provider Settings"]){
@@ -41,6 +42,14 @@ assert.ok(settingsContainer.includes('tab==="automatic-memory"'),"Settings must 
 assert.ok(settingsContainer.includes("<AutomaticMemorySettingsView"),"Settings must render AutomaticMemorySettingsView");
 assert.ok(settingsContainer.includes("<AppSettingsView"), "General tab must render AppSettingsView");
 assert.ok(settingsContainer.includes("<ProviderPresetsView"), "Provider Presets tab must render the existing ProviderPresetsView");
+assert.ok(app.includes('view==="memory"'),"Primary navigation must render Memory view");
+for(const token of ["searchMemory","createMemory","updateMemory","archiveMemory"]){assert.ok(memoryView.includes("runtime."+token),"Memory UI must use existing FoundationRuntime "+token+" API");}
+for(const token of ["character.id","activeConversation.id"]){assert.ok(memoryView.includes(token),"Memory UI must preserve explicit character/conversation scope");}
+assert.ok(memoryView.includes("Search memory"),"Memory UI must expose full-text search");
+assert.ok(memoryView.includes("Add Memory"),"Memory UI must expose manual creation");
+assert.ok(memoryView.includes("Archive"),"Memory UI must expose archive");
+assert.ok(source.includes("Memory Agent Instructions"),"Settings must expose editable Memory Agent Instructions");
+assert.ok(source.includes("Restore Default"),"Settings must expose Restore Default for Memory Agent Instructions");
 
 for(const forbidden of ["appSettings","saveAppSettings","resetAppSettings","foundationRef","setSettingsLoadMessage","setSaving"]){
   assert.equal(providerPresets.includes(forbidden),false,"ProviderPresetsView must not access App-local "+forbidden);
