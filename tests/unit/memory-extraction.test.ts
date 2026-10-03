@@ -121,6 +121,35 @@ async function main(){
 
   {
     const result=JSON.stringify({memories:[
+      {type:"fact",content:"The table is green.",tags:["table","color"],importance:90,confidence:95,source:"conversation",sourceReference:"wrong-conversation-id",mutationPolicy:"auto"}
+    ]});
+    const {service,broker,traceStore}=await newService(result);
+    const created=await service.process(requestBase);
+    equal(created.length,1,"wrong source reference is normalized and candidate is accepted");
+    const stored=(await broker.search({characterId:"character.a",conversationId:requestBase.conversationId,query:"table",status:"active",limit:10}))[0];
+    equal(stored?.conversationId,requestBase.conversationId,"normalized memory stays in the current conversation");
+    equal(stored?.sourceReference,requestBase.conversationId,"normalized source reference uses the current conversation");
+    equal(traceStore.recent(1)[0]?.memoryExtraction?.accepted.length,1,"normalized candidate is accepted in trace");
+    equal(traceStore.recent(1)[0]?.memoryExtraction?.rejected.length,0,"normalized candidate is not rejected");
+  }
+
+  {
+    const result=JSON.stringify({memories:[
+      {type:"fact",content:"User has purple hair and finds it important.",tags:["appearance"],importance:90,confidence:95,source:"conversation",sourceReference:"arbitrary-valid-string",mutationPolicy:"auto"}
+    ]});
+    const {service,broker}=await newService(result);
+    const created=await service.process({
+      ...requestBase,
+      userMessage:{id:"u-purple",role:"user",content:"у тебя фиолетовые волосы - запомни это важно"}
+    });
+    equal(created.length,1,"real-world purple-hair phrase creates a memory");
+    const stored=(await broker.search({characterId:"character.a",conversationId:requestBase.conversationId,query:"purple hair",status:"active",limit:10}))[0];
+    ok(Boolean(stored),"real-world phrase memory is persisted");
+    equal(stored?.sourceReference,requestBase.conversationId,"real-world phrase memory is conversation-scoped");
+  }
+
+  {
+    const result=JSON.stringify({memories:[
       {type:"fact",content:"The table is green.",tags:["table","color"],importance:90,confidence:95,source:"conversation",sourceReference:"conversation.a",mutationPolicy:"auto"}
     ]});
     const {service,broker}=await newService("Here is the JSON result:\n"+result+"\nEnd.");
@@ -199,6 +228,28 @@ async function main(){
     const {service,broker}=await newService(secretResult);
     equal((await service.process(requestBase)).length,0,"secret candidate is rejected");
     equal((await broker.search({characterId:"character.a",conversationId:"conversation.a",query:"",limit:10})).length,0,"secret candidate never reaches persistence");
+    equal(traceStore.recent(1)[0]?.memoryExtraction?.rejected[0]?.reason,"secret detected","secret rejection reason is precise");
+  }
+
+  {
+    const invalidImportance=JSON.stringify({memories:[
+      {type:"fact",content:"The table is green.",tags:["table"],importance:101,confidence:95,source:"conversation",sourceReference:"conversation.a",mutationPolicy:"auto"}
+    ]});
+    const {service,broker,traceStore,diagnostics}=await newService(invalidImportance);
+    equal((await service.process(requestBase)).length,0,"invalid importance is rejected by schema validation");
+    equal((await broker.search({characterId:"character.a",conversationId:"conversation.a",query:"",limit:10})).length,0,"invalid importance is never persisted");
+    equal(traceStore.recent(1)[0]?.memoryExtraction?.failed,"Provider result failed extraction schema validation.","invalid importance preserves schema validation");
+    equal(diagnostics.recentErrors(1)[0]?.code,"SCHEMA_VALIDATION_FAILED","invalid importance is diagnosed as schema failure");
+  }
+
+  {
+    const invalidConfidence=JSON.stringify({memories:[
+      {type:"fact",content:"The table is green.",tags:["table"],importance:90,confidence:-1,source:"conversation",sourceReference:"conversation.a",mutationPolicy:"auto"}
+    ]});
+    const {service,broker,diagnostics}=await newService(invalidConfidence);
+    equal((await service.process(requestBase)).length,0,"invalid confidence is rejected by schema validation");
+    equal((await broker.search({characterId:"character.a",conversationId:"conversation.a",query:"",limit:10})).length,0,"invalid confidence is never persisted");
+    equal(diagnostics.recentErrors(1)[0]?.code,"SCHEMA_VALIDATION_FAILED","invalid confidence is diagnosed as schema failure");
   }
 
   ok(true,"automatic memory extraction suite reached completion");
