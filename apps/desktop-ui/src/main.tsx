@@ -1324,6 +1324,7 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
         <div className="status-grid">
           <span>Status</span><strong>{selected.automaticMemory.persistence?.status??"none"}</strong>
           <span>Memory id</span><strong>{selected.automaticMemory.persistence?.memoryId??"—"}</strong>
+          {selected.automaticMemory.persistence?.reason&&<><span>Reason</span><strong>{selected.automaticMemory.persistence.reason}</strong></>}
         </div>
         {selected.automaticMemory.failed&&<div className="error">{selected.automaticMemory.failed}</div>}
       </div>}
