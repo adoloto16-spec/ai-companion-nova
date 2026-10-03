@@ -122,6 +122,17 @@ async function main(){
   }
 
   {
+    const {agent,requests,settings}=await fixture("Decision memory.");
+    settings.memoryAgent.instructions="Prefer important decisions and durable preferences; do not store casual facts.";
+    await agent.process({...baseRequest,turnId:"custom-instructions-1"});
+    const systemPrompt=requests[0]?.context.messages.find(message=>message.role==="system")?.content??"";
+    ok(systemPrompt.includes("Prefer important decisions and durable preferences"),"custom instructions are sent to the memory agent");
+    ok(systemPrompt.includes("Never store API keys"),"immutable safety remains present with custom instructions");
+    ok(systemPrompt.includes("return exactly: NO_MEMORY"),"immutable NO_MEMORY protocol remains present with custom instructions");
+    ok(systemPrompt.includes("Never output JSON"),"plain-text output protocol remains immutable");
+  }
+
+  {
     const {agent,diagnostics,traceStore}=await fixture(new Error("provider offline"));
     completedMainTrace(traceStore,{...baseRequest,turnId:"provider-failure-1"});
     equal(await agent.process({...baseRequest,turnId:"provider-failure-1"}),undefined,"provider failure creates no memory");
@@ -144,6 +155,42 @@ async function main(){
     const {agent,broker}=await fixture("API key: sk-12345678901234567890");
     equal(await agent.process({...baseRequest,turnId:"secret-1"}),undefined,"secret output is rejected");
     equal((await broker.search({characterId:"character.a",conversationId:"conversation.a",query:"",limit:10})).length,0,"secret memory is never persisted");
+  }
+
+  {
+    const validator=new StandardContractValidator();
+    const rejectingStore={
+      async load(){return undefined},
+      async save(){throw new Error("disk full during memory persistence")},
+      async supersede(){throw new Error("not used")}
+    };
+    const broker=new MemoryBrokerImpl({
+      store:rejectingStore as any,
+      validator,
+      audit:new InMemoryAuditService(),
+      events:new InMemoryEventBus(),
+      characterExists:async id=>id==="character.a",
+      conversationExists:async (characterId,conversationId)=>characterId==="character.a"&&conversationId==="conversation.a"
+    });
+    const diagnostics=new InMemoryDiagnosticsStore();
+    const traceStore=new InMemoryChatTraceStore();
+    const settings={...defaultAppSettings(),memoryAgent:{...defaultAppSettings().memoryAgent,providerPresetId:"preset.memory",model:"memory-model"}};
+    const agent=new AutomaticMemoryAgent({
+      settings:()=>settings,
+      broker,
+      diagnostics,
+      traceStore,
+      runtime:{
+        async chat(request){return response(request,"Persistent memory text.")},
+        async getChatModelForPreset(){return "memory-model";}
+      }
+    });
+    traceStore.start({turnId:"persistence-rejected",requestId:"persistence-rejected",characterId:"character.a",conversationId:"conversation.a",timestamp:"2026-10-03T00:00:00.000Z"});
+    traceStore.update("persistence-rejected",{status:"completed"});
+    equal(await agent.process({...baseRequest,turnId:"persistence-rejected"}),undefined,"persistence failure does not create memory");
+    const persistence=traceStore.recent(1)[0]?.automaticMemory?.persistence;
+    equal(persistence?.status,"rejected","persistence failure is explicitly rejected");
+    equal(persistence?.reason,"disk full during memory persistence","persistence rejection exposes safe direct reason");
   }
 
   {
