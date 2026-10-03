@@ -192,6 +192,8 @@ async function main(){
     const broker=new MemoryBrokerImpl({store,validator,audit:new InMemoryAuditService(),characterExists:async id=>id==="character.a",conversationExists:async (characterId,conversationId)=>characterId==="character.a"&&conversationId==="conversation.a"});
     let calls=0;
     const traceStore=new InMemoryChatTraceStore();
+    traceStore.start({turnId:"disabled",requestId:"disabled",characterId:"character.a",conversationId:"conversation.a",timestamp:"2026-10-03T00:00:00.000Z"});
+    traceStore.update("disabled",{status:"completed"});
     const agent=new AutomaticMemoryAgent({
       settings:()=>settings,broker,traceStore,
       runtime:{async chat(request){calls++;return response(request,"memory")},async getChatModelForPreset(){return "memory-model";}}
