@@ -32,6 +32,7 @@ label{display:grid;gap:6px;margin:12px 0}.checkbox{display:flex;align-items:cent
 input,select{padding:9px;border:1px solid #394655;border-radius:7px;background:#0f141b;color:#e9eef5}
 .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
 .row{display:flex;justify-content:space-between;gap:14px;padding:6px 0;border-bottom:1px solid #202833}
+.memory-panel{display:grid;gap:18px}.memory-toolbar{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:18px;border:1px solid #2a3441;border-radius:12px;background:#151c25}.memory-toolbar h2{margin:0}.memory-layout{grid-template-columns:minmax(280px,.9fr) minmax(360px,1.4fr)}.memory-list{display:grid;gap:8px;margin-top:14px}.memory-row{display:grid;gap:4px;width:100%;padding:12px 14px;text-align:left;background:#121a22;border:1px solid #2a3441;border-radius:8px}.memory-row.active{background:#243242;border-color:#566779}.memory-row strong{white-space:pre-wrap;overflow-wrap:anywhere}.memory-row span,.memory-row small{opacity:.72}.memory-empty{padding:18px;border:1px dashed #394655;border-radius:8px;opacity:.8}
 .error{padding:5px 0;overflow-wrap:anywhere}.notice{margin-top:10px}.hint,small{display:block;margin-top:8px;opacity:.8}
 .status-grid{display:grid;grid-template-columns:auto 1fr;gap:8px 14px}
 @media (max-width:760px){.app-shell{padding:14px}.settings-grid{grid-template-columns:1fr}.settings-grid section:first-child{grid-column:auto}.chat-panel{height:calc(100vh - 92px);min-height:420px}.chat-message{max-width:88%}}
