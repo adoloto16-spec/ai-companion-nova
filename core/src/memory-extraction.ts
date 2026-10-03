@@ -255,7 +255,7 @@ export class MemoryExtractionService{
 
   private safeCandidate(candidate:MemoryCandidate):string|undefined{
     if(candidate.source!=="conversation")return "invalid source";
-    if(candidate.sourceReference!==candidate.sourceReference.trim())return "invalid source reference";
+    if(!candidate.sourceReference.trim())return "invalid source reference";
     if(candidate.mutationPolicy!=="auto")return "invalid mutation policy";
     if(!Number.isInteger(candidate.importance)||candidate.importance<0||candidate.importance>100)return "invalid importance";
     if(!Number.isInteger(candidate.confidence)||candidate.confidence<0||candidate.confidence>100)return "invalid confidence";
