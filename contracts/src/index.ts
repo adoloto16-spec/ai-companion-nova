@@ -304,8 +304,6 @@ export interface AutomaticMemoryAgentRequest{
   characterId:CharacterId;
   conversationId:ConversationId;
   turnId:string;
-  model:string;
-  providerPresetId:string;
   userMessage:ChatMessage;
   assistantMessage:ChatMessage;
   contextMessages:readonly ChatMessage[];
