@@ -98,7 +98,7 @@ async function main(){
     audit:new InMemoryAuditService(),
     events:new InMemoryEventBus(),
     characterExists:async id=>id==="character.a",
-    conversationExists:async(characterId,conversationId)=>characterId==="character.a"&&conversationId==="conversation.a"
+    conversationExists:async(characterId,conversationId)=>characterId==="character.a"&&Boolean(await conversationStore.get(characterId,conversationId))
   });
   equal((await reloadedBroker.get("character.a",conversation!.id,created!.id))?.status,"active","automatic memory survives a persistence reload");
 
