@@ -43,7 +43,7 @@ async function main(){
     async getChatModelForPreset(){return "memory-model";}
   };
   const agent=new AutomaticMemoryAgent({
-    settings:()=>({...defaultAppSettings(),memoryAgent:{enabled:true,providerPresetId:"preset.memory",model:"memory-model"}}),
+    settings:()=>({...defaultAppSettings(),memoryAgent:{...defaultAppSettings().memoryAgent,enabled:true,providerPresetId:"preset.memory",model:"memory-model"}}),
     broker,runtime,traceStore
   });
   const created=await agent.process({
@@ -54,7 +54,7 @@ async function main(){
   });
   ok(Boolean(created),"completed turn creates long-term memory");
   equal(created?.status,"active","automatic memory is active");
-  equal(created?.id.trim().length>0,true,"automatic memory receives a non-empty id");
+  equal(created!.id.trim().length>0,true,"automatic memory receives a non-empty id");
   equal(created?.tags,[],"automatic memory accepts empty tags");
   equal(created?.importance,70,"automatic memory importance is deterministic");
   equal(created?.confidence,80,"automatic memory confidence is deterministic");
