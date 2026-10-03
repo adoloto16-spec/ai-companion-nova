@@ -81,9 +81,10 @@ async function main(){
   }
 
   {
-    const {agent,broker}=await fixture("User prefers green.");
+    const {agent,broker,traceStore}=await fixture("User prefers green.");
     const created=await agent.process(baseRequest);
     ok(Boolean(created),"plain text creates memory");
+    equal(created?.id.startsWith("memory."),true,"automatic memory id is non-empty and generated");
     equal(created?.content,"User prefers green.","memory content exactly matches agent text");
     equal(created?.type,"observation","Core owns memory type");
     equal(created?.tags,[],"Core owns empty tags");
@@ -92,6 +93,9 @@ async function main(){
     equal(created?.source,"conversation","Core owns provenance source");
     equal(created?.sourceReference,baseRequest.turnId,"Core owns turn provenance");
     equal(created?.mutationPolicy,"auto","Core owns automatic mutation policy");
+    equal(created?.status,"active","automatic memory is active after persistence");
+    equal(traceStore.recent(1)[0]?.automaticMemory?.persistence?.status,"created","Automatic Memory trace records successful persistence");
+    equal(traceStore.recent(1)[0]?.automaticMemory?.persistence?.memoryId,created?.id,"Automatic Memory trace records the generated memory id");
     equal((await broker.search({characterId:"character.a",conversationId:"conversation.a",query:"green",status:"active",limit:10})).length,1,"memory is persisted");
   }
 
