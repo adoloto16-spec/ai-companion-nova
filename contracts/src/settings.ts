@@ -5,7 +5,7 @@ export const APP_SETTINGS_SCHEMA_VERSION:"2"="2";
 
 export interface AppSettings{
   apiVersion:"1";
-  schemaVersion:"1";
+  schemaVersion:"2";
   chat:{
     automaticLongTermMemory:boolean;
   };
