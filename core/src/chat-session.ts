@@ -123,7 +123,6 @@ export interface ChatSessionControllerOptions{
   contextBudgetProvider?:()=>ContextBudget;
   recentConversationMessagesProvider?:()=>number;
   automaticMemoryAgent?:AutomaticMemoryAgentBoundary;
-  automaticMemoryEnabled?:()=>boolean;
   traceStore?:ChatTraceStore;
 }
 const DEFAULT_CHAT_CONTEXT_BUDGET:ContextBudget={
@@ -154,7 +153,6 @@ export class ChatSessionController{
   private readonly contextBudgetProvider?:()=>ContextBudget;
   private readonly recentConversationMessagesProvider?:()=>number;
   private readonly automaticMemoryAgent?:AutomaticMemoryAgentBoundary;
-  private readonly automaticMemoryEnabled?:()=>boolean;
   private readonly traceStore?:ChatTraceStore;
   private modelProfile?:ModelProfile;
   private sending=false;
@@ -175,7 +173,6 @@ export class ChatSessionController{
     this.contextBudgetProvider=options.contextBudgetProvider;
     this.recentConversationMessagesProvider=options.recentConversationMessagesProvider;
     this.automaticMemoryAgent=options.automaticMemoryAgent;
-    this.automaticMemoryEnabled=options.automaticMemoryEnabled;
     this.traceStore=options.traceStore;
     const messages=session.getMessages();
     const lastAssistant=[...messages].reverse().find(message=>message.role==="assistant");
@@ -468,7 +465,7 @@ export class ChatSessionController{
           durationMs:Date.now()-providerStartedAt
         }
       });
-      if(this.automaticMemoryAgent&&(this.automaticMemoryEnabled?.()??true)){
+      if(this.automaticMemoryAgent){
         const agentRequest:AutomaticMemoryAgentRequest={
           apiVersion:"1",
           schemaVersion:"1",
