@@ -57,7 +57,7 @@ async function main(){
   await conversationStore.clear("character.a",conversation!.id);
   equal((await broker.search({characterId:"character.a",conversationId:conversation!.id,query:"green",status:"active",limit:10})).length,1,"clearing conversation messages preserves long-term memory");
 
-  const other=createConversationTemplate("character.a",{title:"Second conversation"});
+  const other=createConversationTemplate("character.a",{id:"conversation.b",title:"Second conversation"});
   await conversationStore.save(other);
   equal((await broker.search({characterId:"character.a",conversationId:other.id,query:"green",status:"active",limit:10})).length,0,"memory is not visible in another conversation");
 
