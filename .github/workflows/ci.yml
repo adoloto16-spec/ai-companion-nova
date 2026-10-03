@@ -81,6 +81,8 @@ jobs:
       - run: cargo test -p nova-desktop-host --all-features model_profiles::tests
       - run: cargo test -p nova-desktop-host --all-features credential_profiles::tests
       - run: cargo test -p nova-desktop-host --all-features provider_presets::tests
+      - name: Retrieval exact-token regression
+        run: cargo test -p nova-desktop-host --all-features retrieval::tests::russian_exact_token_memory_retrieval_uses_fts5
 
   windows-installer:
     runs-on: windows-latest
