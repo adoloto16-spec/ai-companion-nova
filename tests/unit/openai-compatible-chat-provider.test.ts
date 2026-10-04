@@ -124,7 +124,7 @@ async function metadataAndCapabilitiesTest(){
   const capabilities=p.capabilities();
   equal(capabilities.streaming,true,"streaming capability");
   equal(capabilities.toolCalling,false,"tool calling capability");
-  equal(capabilities.structuredOutput,false,"structured output capability");
+  equal(capabilities.structuredOutput,true,"structured output adapter capability");
   equal(capabilities.reasoning,false,"reasoning capability");
 }
 
@@ -162,6 +162,41 @@ async function requestMappingTest(){
   equal(sent.messages[3]!.content,"second user message","message ordering");
 }
 
+async function structuredRequestMappingTest(){
+  const http=new FakeHttpClient();
+  const p=provider(http);
+  const schema={
+    type:"object",
+    additionalProperties:false,
+    properties:{decision:{enum:["remember","no_memory"]},content:{type:"string"}},
+    required:["decision","content"]
+  };
+  await p.chat({...request(),generation:{responseFormat:{type:"json-schema",schema,name:"memory_agent_decision",strict:true}}});
+  const body=http.requests[0]?.body;
+  if(body===undefined)throw new Error("expected structured request body");
+  const sent=JSON.parse(body) as {response_format?:{type:string;json_schema?:{name:string;strict:boolean;schema:unknown}}};
+  equal(sent.response_format?.type,"json_schema","structured response_format type");
+  equal(sent.response_format?.json_schema?.name,"memory_agent_decision","structured schema name");
+  equal(sent.response_format?.json_schema?.strict,true,"structured schema strict");
+  equal(JSON.stringify(sent.response_format?.json_schema?.schema),JSON.stringify(schema),"structured schema mapping");
+}
+async function plainRequestOmitsResponseFormatTest(){
+  const http=new FakeHttpClient();
+  await provider(http).chat({...request(),generation:{temperature:0.2,responseFormat:{type:"text"}}});
+  const body=http.requests[0]?.body;
+  if(body===undefined)throw new Error("expected plain request body");
+  const sent=JSON.parse(body) as {response_format?:unknown};
+  equal(sent.response_format,undefined,"plain request has no response_format");
+}
+async function structuredUnsupportedClassificationTest(){
+  const http=new FakeHttpClient();
+  http.next={status:400,body:'{"error":{"message":"response_format json_schema is not supported"}}'};
+  await throwsAsync(
+    ()=>provider(http).chat({...request(),generation:{responseFormat:{type:"json-schema",schema:{type:"object"}}}}),
+    error=>error instanceof OpenAICompatibleProviderError&&error.chatError.code==="UNSUPPORTED"&&error.chatError.details?.category==="capability",
+    "structured unsupported is classified as capability"
+  );
+}
 async function successResponseMappingTest(){
   const http=new FakeHttpClient();
   const p=provider(http);
@@ -495,6 +530,9 @@ void (async()=>{
   for(const [name,test] of [
     ["Metadata and capabilities",metadataAndCapabilitiesTest],
     ["Request mapping",requestMappingTest],
+    ["Structured request mapping",structuredRequestMappingTest],
+    ["Plain request mapping",plainRequestOmitsResponseFormatTest],
+    ["Structured unsupported classification",structuredUnsupportedClassificationTest],
     ["Success response mapping",successResponseMappingTest],
     ["Finish reasons",finishReasonTest],
     ["Malformed response",malformedResponseTest],
