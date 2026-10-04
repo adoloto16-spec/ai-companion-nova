@@ -282,7 +282,7 @@ fn mem_doc(e:&crate::memory::MemoryItem)->Option<RetrievalIndexDocument>{
         crate::memory::MemoryType::Event=>"event",crate::memory::MemoryType::Experience=>"experience",crate::memory::MemoryType::Goal=>"goal",
         crate::memory::MemoryType::Instruction=>"instruction",crate::memory::MemoryType::Observation=>"observation"
     };
-    Some(RetrievalIndexDocument{api_version:API_VERSION.into(),schema_version:SCHEMA_VERSION.into(),character_id:e.character_id.clone(),conversation_id:Some(e.conversation_id.clone()),source:RetrievalSource::Memory,source_id:e.id.clone(),title:String::new(),content:e.content.clone(),tags:e.tags.clone(),status:Some("active".into()),memory_type:Some(typ.into()),updated_at:e.updated_at.clone()})
+    Some(RetrievalIndexDocument{api_version:API_VERSION.into(),schema_version:SCHEMA_VERSION.into(),character_id:e.character_id.clone(),conversation_id:e.origin_conversation_id.clone(),source:RetrievalSource::Memory,source_id:e.id.clone(),title:String::new(),content:e.content.clone(),tags:e.tags.clone(),status:Some("active".into()),memory_type:Some(typ.into()),updated_at:e.updated_at.clone()})
 }
 
 fn load_docs(app:&tauri::AppHandle,c:&str,ml:&crate::memory::MemoryWriteLock)->Result<Vec<RetrievalIndexDocument>,String>{
