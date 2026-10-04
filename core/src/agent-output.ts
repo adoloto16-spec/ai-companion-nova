@@ -39,7 +39,7 @@ function isCapabilityUnsupported(error:unknown):boolean{
   const record=error as Record<string,unknown>;
   if(record.code==="UNSUPPORTED"){
     const details=record.details;
-    return !details||typeof details!=="object"||((details as Record<string,unknown>).category==="capability");
+    return !!details&&typeof details==="object"&&((details as Record<string,unknown>).category==="capability");
   }
   const nested=record.chatError;
   if(nested&&typeof nested==="object"){
