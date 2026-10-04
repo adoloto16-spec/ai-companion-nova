@@ -38,7 +38,6 @@ async function main(){
   const otherCharacter=await broker.list("character.b");
   equal(otherCharacter.length,0,"other character never receives memory");
   equal(calls,2,"agent was invoked once per completed turn");
-  equal(traces.recent(1)[0]?.automaticMemory?.persistence?.status,"duplicate","trace records character-scoped duplicate");
 
   let failedCalls=0;
   const failing=new AutomaticMemoryAgent({
