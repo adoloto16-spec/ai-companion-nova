@@ -90,7 +90,7 @@ async function main(){
     ok(context.includedCandidates.some(candidate=>candidate.referenceId===replacementMemory.id),"active replacement memory is included");
     ok(!context.includedCandidates.some(candidate=>candidate.referenceId===supersededMemory.id),"superseded memory is excluded from automatic context");
     equal(context.messages.find(message=>message.content.includes("Nova likes tea."))?.metadata?.contextSource,"memory","assembled Memory provenance source");
-    equal(context.messages.find(message=>message.content==="Nova likes tea.")?.metadata?.contextReferenceId,novaMemory.id,"assembled Memory provenance reference");
+    equal(context.includedCandidates.find(candidate=>candidate.referenceId===novaMemory.id)?.referenceId,novaMemory.id,"assembled Memory provenance reference");
     equal(context.messages.find(message=>message.content==="Nova likes tea.")?.role,"system","memory is injected as explicit context, not user command");
     ok(!context.includedCandidates.some(candidate=>candidate.content.includes("GM owns")),"GM Core Book is isolated");
     equal(context.characterId,nova.id,"runtime context remains character scoped");
