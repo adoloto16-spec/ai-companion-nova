@@ -38,7 +38,7 @@ export class InMemoryMemoryStore implements MemoryStore{
 
     if(state.items.some(item=>item.id===replacement.id))throw new Error("Memory id already exists.");
     const now=replacement.updatedAt;
-    state.items[index]={...state.items[index]!,status:"superseded",updatedAt:now,metadata:{...state.items[index]!.metadata}};
+    state.items[index]={...state.items[index]!,status:"superseded",updatedAt:now,supersededBy:replacement.id,metadata:{...state.items[index]!.metadata}};
     state.items.push(cloneItem(replacement));
     this.states.set(characterId,cloneState(state));
     return cloneItem(replacement);
