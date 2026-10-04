@@ -130,7 +130,6 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const logLevelValue=(typeof diagnostics.logLevel==="string"?diagnostics.logLevel:legacyLog)??defaults.diagnostics.logLevel;
   if(!["off","errors","normal","verbose","debug"].includes(logLevelValue))throw new Error("Unsupported diagnostics log level.");
   const legacyEnabled=typeof chat.automaticLongTermMemory==="boolean"?chat.automaticLongTermMemory:defaults.chat.automaticLongTermMemory;
-  const currentSchema=input.schemaVersion==="3";
   const previousSchema=input.schemaVersion==="2";
   const memoryAgentEnabled=(["3","4"].includes(String(input.schemaVersion))||previousSchema)&&typeof memoryAgent.enabled==="boolean"?memoryAgent.enabled:legacyEnabled;
   const memoryAgentPreset=(["3","4"].includes(String(input.schemaVersion))||previousSchema)&&typeof memoryAgent.providerPresetId==="string"&&memoryAgent.providerPresetId.trim()?memoryAgent.providerPresetId.trim():null;
