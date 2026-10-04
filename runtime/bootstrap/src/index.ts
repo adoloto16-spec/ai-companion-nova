@@ -1,9 +1,9 @@
-import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryArchiveReason,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider} from "../../../contracts/src/index";
+import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryArchiveReason,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,MemorySemanticIndexStore,RetrievalQuery,RetrievalResult,Retriever,ChatProvider} from "../../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore} from "../../../contracts/src/index";
 import type {Conversation,ConversationCreateInput,ConversationId,ConversationStore,ConversationUpdateInput} from "../../../contracts/src/index";
 import {
-  AiRuntime,AutomaticMemoryAgent,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,
+  AiRuntime,AutomaticMemoryAgent,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,MemorySemanticDeduplicator,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,
   InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,
   DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
   InMemoryActorIdentityResolver,createMemoryConfig,SettingsManager,InMemoryChatTraceStore
@@ -21,9 +21,9 @@ import {InMemoryCredentialStore} from "../../../host/credentials/src/index";
 import {InMemoryConversationStore} from "../../../host/conversations/src/index";
 import {InMemorySettingsStore} from "../../../host/settings/src/index";
 import {InMemoryCoreBookStore} from "../../../host/core-book/src/index";
-import {InMemoryMemoryStore} from "../../../host/memory/src/index";
+import {InMemoryMemorySemanticIndexStore,InMemoryMemoryStore} from "../../../host/memory/src/index";
 import type {CoreBookCreateInput,CoreBookUpdateInput} from "../../../core/src/core-book-manager";
-import {activeProviderId,buildConfiguredProvider,buildProviderForDiscovery,buildProviderForPreset,testProviderConfiguration} from "./provider-configuration";
+import {activeProviderId,buildConfiguredProvider,buildEmbeddingProviderForPreset,buildProviderForDiscovery,buildProviderForPreset,testProviderConfiguration} from "./provider-configuration";
 import {RetrievalEventIndexer} from "../../../core/src/retrieval-indexer";
 
 
@@ -46,6 +46,8 @@ export interface FoundationRuntimeOptions{
   contextEngine?:ContextEngine;
   retriever?:Retriever;
   retrievalIndexWriter?:RetrievalIndexWriter;
+  semanticIndexStore?:MemorySemanticIndexStore;
+  embeddingHttpClient?:import("../../../providers/embeddings/openai-compatible/src").EmbeddingHttpClient;
   providerPresetConfigurations?:readonly {presetId:string;configuration:ProviderConfiguration}[];
   activeProviderPresetId?:string;
 }
@@ -133,6 +135,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const coreBookStore=options.coreBookStore??new InMemoryCoreBookStore();
   const coreBookManager=new CoreBookManager(coreBookStore,{events,clock:{now:()=>new Date().toISOString()},characterExists:async characterId=>Boolean(await characterManager.getCharacter(characterId))});
   const memoryStore=options.memoryStore??new InMemoryMemoryStore();
+  const semanticIndexStore=options.semanticIndexStore??new InMemoryMemorySemanticIndexStore();
+
   const conversationStore=options.conversationStore??new InMemoryConversationStore();
   const conversationManager=new ConversationManager(conversationStore,{characterExists:async characterId=>Boolean(await characterManager.getCharacter(characterId)),events,clock:{now:()=>new Date().toISOString()}});
   const credentialStore=options.credentialStore??options.openAICompatible?.credentialStore??new InMemoryCredentialStore();
@@ -232,6 +236,28 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     traceStore
   });
 
+  const semanticMemoryDeduplicator=new MemorySemanticDeduplicator({
+    settings:()=>settingsManager.get(),
+    broker:memoryBroker,
+    indexStore:semanticIndexStore,
+    embeddingProvider:async()=>{
+      const semanticSettings=settingsManager.get().semanticDedup;
+      const presetId=semanticSettings.embeddingProviderPresetId?.trim()??"";
+      const configuration=presetId?providerPresetConfigurations.get(presetId):undefined;
+      if(!configuration)return undefined;
+      return buildEmbeddingProviderForPreset(configuration,semanticSettings.embeddingModel,credentialStore,options.embeddingHttpClient);
+    },
+    judgeRuntime:extractionChatRuntime,
+    getChatModelForPreset:resolveChatModelForPreset,
+    validator:contractValidator,
+    diagnostics:diagnosticsStore,
+    events,
+    listCharacterIds:async()=> (await characterManager.listCharacters()).map(character=>character.id),
+    clock:{now:()=>new Date().toISOString()},
+    source:"memory-semantic-deduplication"
+  });
+  semanticMemoryDeduplicator.start();
+
   const moduleCapabilities:Record<string,readonly string[]>={
     "character.fake":["character.expression","character.speech"],
     "memory.fake":["memory.search","memory.write"],
@@ -330,6 +356,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       try{await conversationManager.getActiveConversation(await characterManager.getActiveCharacter().then(character=>character.id));}
       catch(error){diagnosticsStore.recordError("conversation-storage","LOAD_FAILED",error instanceof Error?error.message:String(error));}
       retrievalIndexer?.start();
+      try{await semanticMemoryDeduplicator.rebuildAll();}
+      catch(error){diagnosticsStore.recordError("memory-semantic-deduplication","STARTUP_REBUILD_FAILED",error instanceof Error?error.message:String(error));}
       if(options.retriever){
         try{await options.retriever.rebuildAll();retrievalDegraded=false}
         catch(error){retrievalDegraded=true;diagnosticsStore.recordError("retrieval","REBUILD_FAILED",error instanceof Error?error.message:String(error))}
@@ -338,7 +366,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       await moduleManager.startAll();
       runtimeStatus="running";
     },
-    async stop(){try{retrievalIndexer?.stop();await moduleManager.stopAll();}finally{runtimeStatus="stopped";}},
+    async stop(){try{semanticMemoryDeduplicator.stop();retrievalIndexer?.stop();await moduleManager.stopAll();}finally{runtimeStatus="stopped";}},
     diagnostics:snapshot,
     recordDiagnosticError:(source,code,message,metadata)=>diagnosticsStore.recordError(source,code,message,metadata),
     invoke:request=>broker.execute({request,credential:characterCredential}),
