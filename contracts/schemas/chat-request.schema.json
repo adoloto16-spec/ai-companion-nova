@@ -117,12 +117,21 @@
             "type": {
               "enum": [
                 "text",
-                "json"
+                "json",
+                "json-schema"
               ]
             },
             "schema": {
               "type": "object",
               "additionalProperties": true
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "strict": {
+              "type": "boolean"
             }
           }
         }
