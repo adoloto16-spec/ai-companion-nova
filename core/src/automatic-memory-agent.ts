@@ -158,11 +158,13 @@ export class AutomaticMemoryAgent{
         return undefined;
       }
       const content=safeText(rawContent);
-      const existing=await this.options.broker.list(request.characterId);
-      const duplicate=existing.find(item=>item.status==="active"&&normalizedContent(item.content)===normalizedContent(content));
-      if(duplicate){
-        this.options.traceStore?.update(request.turnId,{automaticMemory:{status:"completed",result:content,persistence:{status:"duplicate",memoryId:duplicate.id}}});
-        return duplicate;
+      if(!settings.semanticDedup.enabled){
+        const existing=await this.options.broker.list(request.characterId);
+        const duplicate=existing.find(item=>item.status==="active"&&normalizedContent(item.content)===normalizedContent(content));
+        if(duplicate){
+          this.options.traceStore?.update(request.turnId,{automaticMemory:{status:"completed",result:content,persistence:{status:"duplicate",memoryId:duplicate.id}}});
+          return duplicate;
+        }
       }
       const authority:MemoryMutationAuthority={actorId:"automatic-memory-agent",actorType:"system",trusted:true,capabilities:["memory.create","memory.write.auto"],moduleId:"automatic-memory-agent"};
       const created=await this.options.broker.create(request.characterId,{
