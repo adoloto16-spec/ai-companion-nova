@@ -21,3 +21,5 @@ export * from "./automatic-memory-agent";
 export * from "./memory-extraction";
 export * from "./retrieval-indexer";
 export * from "./settings";
+
+export * from "./agent-output";
