@@ -339,6 +339,8 @@ export interface MemoryBroker{
   archive(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>;
 }
 export interface AutomaticMemoryAgentRequest{
+  apiVersion:ApiVersion;
+  schemaVersion:string;
   characterId:CharacterId;
   conversationId:ConversationId;
   turnId:string;
