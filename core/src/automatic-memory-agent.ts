@@ -131,7 +131,7 @@ export class AutomaticMemoryAgent{
         validator:this.options.validator,
         parseStructured,
         parsePlain,
-        diagnostics:options.diagnostics,
+        diagnostics:this.options.diagnostics,
         source:this.options.source??"automatic-memory-agent"
       });
       this.options.traceStore?.update(request.turnId,{automaticMemory:{
