@@ -57,6 +57,8 @@ pub struct MemoryItem{
     #[serde(rename="mutationPolicy")]
     pub mutation_policy:MutationPolicy,
     pub status:MemoryStatus,
+    #[serde(rename="archiveReason")]
+    pub archive_reason:Option<MemoryArchiveReason>,
     pub metadata:Map<String,Value>,
 }
 
