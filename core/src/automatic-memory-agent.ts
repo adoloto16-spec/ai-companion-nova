@@ -82,7 +82,7 @@ export class AutomaticMemoryAgent{
     const presetId=settings.memoryAgent.providerPresetId?.trim()??"";
     const requestId="memory-agent:"+request.turnId;
     this.options.traceStore?.update(request.turnId,{automaticMemory:{
-      started:false,status:"started",requestId,providerPresetId:presetId||undefined,
+      started:true,status:"started",requestId,providerPresetId:presetId||undefined,
       conversationId:request.conversationId,contextMessageCount:request.contextMessages.length,
       userMessagePresent:Boolean(request.userMessage.content.trim()),
       assistantResponsePresent:Boolean(request.assistantMessage.content.trim())
