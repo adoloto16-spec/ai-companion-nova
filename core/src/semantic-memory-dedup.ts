@@ -554,6 +554,10 @@ export class MemorySemanticDeduplicator{
   }
 
   private skip(reason:string,characterId:CharacterId,candidates?:readonly SemanticMemoryCandidate[],scores?:Readonly<Record<string,number>>):SemanticDedupExecution{
+    this.options.diagnostics?.recordError(this.options.source??"memory-semantic-deduplication","SEMANTIC_DEDUP_SKIPPED",reason,{
+      characterId,
+      ...(candidates?{candidateCount:candidates.length,candidateIds:candidates.map(item=>item.memory.id),similarityScores:scores??{}}:{})
+    });
     return {
       status:"skipped",reason,candidateCount:candidates?.length??0,
       candidateIds:candidates?.map(item=>item.memory.id)??[],similarityScores:scores??{}
