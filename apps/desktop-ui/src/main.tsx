@@ -441,10 +441,17 @@ function CharacterMemoryView({runtime,character,originConversationId}:{
   };
 
   const shown=items.filter(item=>tab==="active"?item.status==="active":item.status==="archived");
-  const typeOptions=React.createElement(React.Fragment,null,
-    <option value="observation">Observation</option><option value="fact">Fact</option><option value="preference">Preference</option>
-    <option value="relationship">Relationship</option><option value="event">Event</option><option value="experience">Experience</option>
-    <option value="goal">Goal</option><option value="instruction">Instruction</option>
+  const typeOptions=(
+    <>
+      <option value="observation">Observation</option>
+      <option value="fact">Fact</option>
+      <option value="preference">Preference</option>
+      <option value="relationship">Relationship</option>
+      <option value="event">Event</option>
+      <option value="experience">Experience</option>
+      <option value="goal">Goal</option>
+      <option value="instruction">Instruction</option>
+    </>
   );
 
   return <section className="characters-panel">
