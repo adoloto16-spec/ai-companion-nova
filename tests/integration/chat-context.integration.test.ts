@@ -48,7 +48,7 @@ async function main(){
     const firstCaptured=captured;
     equal(firstCaptured.context.messages.find(message=>message.content.includes("Nova likes jasmine tea."))?.metadata?.contextSource,"memory","ChatRequest receives memory context");
     equal(firstCaptured.context.messages.find(message=>message.content.includes("Nova likes jasmine tea."))?.metadata?.contextReferenceId,"memory.chat.1","ChatRequest preserves memory reference");
-    equal(firstCaptured.context.messages.find(message=>message.content==="Nova likes jasmine tea.")?.role,"user","memory remains data-role");
+    equal(firstCaptured.context.messages.find(message=>message.content.includes("Nova likes jasmine tea."))?.role,"system","memory is context, not a user command");
 
     const second=await controller.submit("A completely unrelated topic.","fake-chat");
     equal(second.status,"sent","chat without matching memory still succeeds");
