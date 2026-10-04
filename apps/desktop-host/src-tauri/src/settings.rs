@@ -4,7 +4,7 @@ use std::{fs,io::Write,path::{Path,PathBuf}};
 use tauri::Manager;
 
 const API_VERSION:&str="1";
-const SCHEMA_VERSION:&str="4";
+const SCHEMA_VERSION:&str="5";
 const FILE_NAME:&str="app-settings-v1.json";
 const LEGACY_SCHEMA_VERSION:&str="0";
 const PREVIOUS_SCHEMA_VERSION:&str="3";
@@ -16,10 +16,13 @@ const MAX_SAFETY_MARGIN:i64=4096;
 const MAX_RECENT_MESSAGES:i64=100;
 const MAX_MEMORY_CANDIDATES:i64=100;
 const MAX_RETRIEVAL_CANDIDATES:i64=100;
+const MAX_SEMANTIC_CANDIDATES:i64=100;
+const MAX_SEMANTIC_PROMPT:usize=12000;
 const MAX_DIAGNOSTICS_ENTRIES:i64=500;
 const MAX_MEMORY_AGENT_PROMPT:usize=12000;
 const DEFAULT_MEMORY_AGENT_PROMPT_VERSION:&str="1";
 const DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS:&str="You are a long-term memory agent.\nDecide whether the exchange contains durable information worth remembering after this conversation ends.\nReturn only the requested output.\nGood memories are brief, self-contained, durable, and understandable without the original conversation.\nDo not invent ids or metadata; the application supplies all internal state.";
+const DEFAULT_MEMORY_JUDGE_INSTRUCTIONS:&str="You are a memory deduplication judge.\nCompare the NEW MEMORY with each CANDIDATE.\nRelations: duplicate, new_supersedes_candidate, candidate_supersedes_new, distinct, uncertain.\nReturn only the requested output.\nUse only candidateId values supplied in CANDIDATES; never invent ids.";
 
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(deny_unknown_fields)]
@@ -41,6 +44,35 @@ pub struct MemoryAgentSettings{
     pub prompt_backup:Option<String>,
     #[serde(rename="defaultPromptVersion")]
     pub default_prompt_version:String
+}
+#[derive(Debug,Deserialize,Serialize,Clone)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryJudgeSettings{
+    pub enabled:bool,
+    #[serde(rename="providerPresetId")]
+    pub provider_preset_id:Option<String>,
+    pub model:String,
+    #[serde(rename="outputMode")]
+    pub output_mode:String,
+    pub prompt:String,
+    #[serde(rename="promptBackup")]
+    pub prompt_backup:Option<String>,
+    #[serde(rename="defaultPromptVersion")]
+    pub default_prompt_version:String
+}
+#[derive(Debug,Deserialize,Serialize,Clone)]
+#[serde(deny_unknown_fields)]
+pub struct SemanticDedupSettings{
+    pub enabled:bool,
+    #[serde(rename="embeddingProviderPresetId")]
+    pub embedding_provider_preset_id:Option<String>,
+    #[serde(rename="embeddingModel")]
+    pub embedding_model:String,
+    #[serde(rename="candidateSimilarityThreshold")]
+    pub candidate_similarity_threshold:f64,
+    #[serde(rename="candidateLimit")]
+    pub candidate_limit:i64,
+    pub judge:MemoryJudgeSettings
 }
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(deny_unknown_fields)]
@@ -90,6 +122,8 @@ pub struct AppSettings{
     pub chat:ChatSettings,
     #[serde(rename="memoryAgent")]
     pub memory_agent:MemoryAgentSettings,
+    #[serde(rename="semanticDedup")]
+    pub semantic_dedup:SemanticDedupSettings,
     pub context:ContextSettings,
     pub memory:MemorySettings,
     pub retrieval:RetrievalSettings,
@@ -102,6 +136,14 @@ fn default_settings()->AppSettings{
         api_version:API_VERSION.into(),schema_version:SCHEMA_VERSION.into(),
         chat:ChatSettings{automatic_long_term_memory:true},
         memory_agent:MemoryAgentSettings{enabled:true,provider_preset_id:None,model:String::new(),output_mode:"auto".into(),prompt:DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS.to_string(),prompt_backup:None,default_prompt_version:DEFAULT_MEMORY_AGENT_PROMPT_VERSION.into()},
+        semantic_dedup:SemanticDedupSettings{
+            enabled:false,embedding_provider_preset_id:None,embedding_model:String::new(),
+            candidate_similarity_threshold:0.88,candidate_limit:5,
+            judge:MemoryJudgeSettings{
+                enabled:true,provider_preset_id:None,model:String::new(),output_mode:"auto".into(),
+                prompt:DEFAULT_MEMORY_JUDGE_INSTRUCTIONS.to_string(),prompt_backup:None,default_prompt_version:"1".into()
+            }
+        },
         context:ContextSettings{available_context_tokens:4096,reserved_output_tokens:1024,safety_margin_tokens:128,recent_conversation_messages:8},
         memory:MemorySettings{candidate_limit:8},
         retrieval:RetrievalSettings{candidate_limit:32},
@@ -128,6 +170,13 @@ fn validate(settings:&AppSettings)->Result<(),String>{
     valid_integer(settings.context.recent_conversation_messages,1,MAX_RECENT_MESSAGES,"Recent messages")?;
     valid_integer(settings.memory.candidate_limit,1,MAX_MEMORY_CANDIDATES,"Memory items")?;
     valid_integer(settings.retrieval.candidate_limit,1,MAX_RETRIEVAL_CANDIDATES,"Retrieval candidates")?;
+    valid_integer(settings.semantic_dedup.candidate_limit,1,MAX_SEMANTIC_CANDIDATES,"Semantic candidate items")?;
+    if !settings.semantic_dedup.candidate_similarity_threshold.is_finite()||!(0.0..=1.0).contains(&settings.semantic_dedup.candidate_similarity_threshold){return Err("Semantic candidate similarity threshold must be between 0 and 1.".into());}
+    if settings.semantic_dedup.embedding_model.len()>200{return Err("Semantic embedding model exceeds the 200 character limit.".into());}
+    if !matches!(settings.semantic_dedup.judge.output_mode.as_str(),"auto"|"structured"|"plain"){return Err("Unsupported Memory Judge output mode".into());}
+    if settings.semantic_dedup.judge.prompt.len()>MAX_SEMANTIC_PROMPT{return Err("Memory Judge prompt exceeds the 12000 character limit.".into());}
+    if settings.semantic_dedup.judge.prompt_backup.as_ref().map(|value|value.len()>MAX_SEMANTIC_PROMPT).unwrap_or(false){return Err("Memory Judge prompt backup exceeds the 12000 character limit.".into());}
+    if settings.semantic_dedup.judge.default_prompt_version.trim().is_empty(){return Err("Memory Judge default prompt version must not be empty.".into());}
     if !matches!(settings.diagnostics.log_level.as_str(),"off"|"errors"|"normal"|"verbose"|"debug"){return Err("Unsupported diagnostics log level".into());}
     valid_integer(settings.diagnostics.keep_recent_entries,1,MAX_DIAGNOSTICS_ENTRIES,"Recent diagnostic entries")?;
     if !matches!(settings.memory_agent.output_mode.as_str(),"auto"|"structured"|"plain"){return Err("Unsupported Automatic Memory Agent output mode".into());}
@@ -151,6 +200,16 @@ fn migrate_memory_agent_object(root:&mut serde_json::Map<String,Value>){
 fn migrate(value:Value)->Result<(AppSettings,bool),String>{
     let schema=value.get("schemaVersion").and_then(Value::as_str);
     let legacy=schema.map(|v|v==LEGACY_SCHEMA_VERSION).unwrap_or(true);
+    if schema==Some("4"){
+        let mut normalized=value.clone();
+        if let Some(root)=normalized.as_object_mut(){
+            root.insert("schemaVersion".into(),Value::String(SCHEMA_VERSION.into()));
+            root.insert("semanticDedup".into(),serde_json::to_value(&default_settings().semantic_dedup).map_err(|e|format!("failed to encode semantic dedup defaults: {e}"))?);
+        }
+        let settings:AppSettings=serde_json::from_value(normalized).map_err(|e|format!("invalid AppSettings schema v4: {e}"))?;
+        validate(&settings)?;
+        return Ok((settings,true));
+    }
     if schema==Some("3"){
         let mut normalized=value.clone();
         if let Some(root)=normalized.as_object_mut(){
@@ -295,7 +354,7 @@ mod tests{
         assert!(settings.memory_agent.prompt_backup.is_none());
         assert_eq!(settings.memory_agent.default_prompt_version,DEFAULT_MEMORY_AGENT_PROMPT_VERSION);
     }
-    #[test]fn preserves_schema_v4_prompt_backup(){
+    #[test]fn migrates_schema_v4_prompt_backup(){
         let value=serde_json::json!({
             "schemaVersion":"4","apiVersion":"1",
             "chat":{"automaticLongTermMemory":true},
@@ -305,10 +364,20 @@ mod tests{
             "diagnostics":{"logLevel":"normal","keepRecentEntries":100},"ui":{"showDiagnosticsInChat":true}
         });
         let (settings,migrated)=migrate(value).expect("schema v4 should round-trip");
-        assert!(!migrated);
+        assert!(migrated);
         assert_eq!(settings.memory_agent.output_mode,"structured");
         assert_eq!(settings.memory_agent.prompt,"custom");
         assert_eq!(settings.memory_agent.prompt_backup.as_deref(),Some("previous"));
+        assert_eq!(settings.semantic_dedup.candidate_limit,5);
+        assert_eq!(settings.schema_version,SCHEMA_VERSION);
+    }
+    #[test]fn preserves_schema_v5_semantic_settings(){
+        let settings=default_settings();
+        let encoded=serde_json::to_vec(&settings).expect("encode");
+        let (restored,migrated)=migrate(serde_json::from_slice(&encoded).expect("json")).expect("schema v5 should round-trip");
+        assert!(!migrated);
+        assert_eq!(restored.semantic_dedup.candidate_similarity_threshold,0.88);
+        assert_eq!(restored.semantic_dedup.judge.default_prompt_version,"1");
     }
 
 }
