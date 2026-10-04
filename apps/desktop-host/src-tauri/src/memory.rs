@@ -237,6 +237,18 @@ fn v2_config_path(app:&tauri::AppHandle,character_id:&str)->Result<PathBuf,Strin
     Ok(config_dir(app)?.join(v2_memory_file_name(scope)))
 }
 
+fn normalize_v3_value(mut value:Value)->Result<MemoryStoreState,String>{
+    let object=value.as_object_mut().ok_or_else(||"dynamic memory v3 storage must be a JSON object".to_string())?;
+    if object.get("apiVersion").and_then(Value::as_str)!=Some(API_VERSION){return Err("unsupported dynamic memory v3 apiVersion".to_string());}
+    if object.get("schemaVersion").and_then(Value::as_str)!=Some(SCHEMA_VERSION){return Err("unsupported dynamic memory v3 schemaVersion".to_string());}
+    let items=object.get_mut("items").and_then(Value::as_array_mut).ok_or_else(||"dynamic memory v3 items must be an array".to_string())?;
+    for item in items{
+        let item_object=item.as_object_mut().ok_or_else(||"dynamic memory v3 item must be an object".to_string())?;
+        item_object.entry("archiveReason").or_insert(Value::Null);
+    }
+    serde_json::from_value(value).map_err(|e|format!("invalid dynamic memory v3 storage: {e}"))
+}
+
 fn migrate_v2_value(mut value:Value)->Result<MemoryStoreState,String>{
     let object=value.as_object_mut().ok_or_else(||"dynamic memory v2 storage must be a JSON object".to_string())?;
     if object.get("apiVersion").and_then(Value::as_str)!=Some(API_VERSION){return Err("unsupported dynamic memory v2 apiVersion".to_string());}
@@ -250,6 +262,7 @@ fn migrate_v2_value(mut value:Value)->Result<MemoryStoreState,String>{
         }else{
             item_object.remove("conversationId");
         }
+        item_object.entry("archiveReason").or_insert(Value::Null);
     }
     object.insert("schemaVersion".to_string(),Value::String(SCHEMA_VERSION.to_string()));
     serde_json::from_value(value).map_err(|e|format!("invalid migrated dynamic memory v2 storage: {e}"))
@@ -260,10 +273,10 @@ fn load_unlocked(app:&tauri::AppHandle,character_id:&str)->Result<Option<MemoryS
     if path.exists(){
         let bytes=fs::read(&path).map_err(|e|format!("failed to read dynamic memory storage: {e}"))?;
         let value:Value=serde_json::from_slice(&bytes).map_err(|e|format!("invalid dynamic memory storage file: {e}"))?;
-        let state=if value.get("schemaVersion").and_then(Value::as_str)==Some("2"){
-            migrate_v2_value(value)?
-        }else{
-            serde_json::from_value(value).map_err(|e|format!("invalid dynamic memory storage file: {e}"))?
+        let state=match value.get("schemaVersion").and_then(Value::as_str){
+            Some("2")=>migrate_v2_value(value)?,
+            Some("3")=>normalize_v3_value(value)?,
+            _=>serde_json::from_value(value).map_err(|e|format!("invalid dynamic memory storage file: {e}"))?
         };
         validate(&state,character_id)?;
         if state.schema_version==SCHEMA_VERSION{
