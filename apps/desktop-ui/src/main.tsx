@@ -1079,6 +1079,30 @@ function AppSettingsView({
       <label>Memory Agent model override
         <input value={settings.memoryAgent.model} onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,model:event.target.value}})} placeholder="Preset model / discovered model" disabled={saving}/>
       </label>
+      <label>Output Format
+        <select value={settings.memoryAgent.outputMode} onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,outputMode:event.target.value as AppSettings["memoryAgent"]["outputMode"]}})} disabled={saving}>
+          <option value="auto">Auto</option>
+          <option value="structured">Structured</option>
+          <option value="plain">Plain</option>
+        </select>
+        <small>{settings.memoryAgent.outputMode==="auto"?"Structured first; Plain only on explicit capability/unsupported failure.":settings.memoryAgent.outputMode==="structured"?"Structured is explicit; unsupported is terminal.":"Plain text only; no response format is sent."}</small>
+      </label>
+      <label>Agent Prompt
+        <textarea value={settings.memoryAgent.prompt} onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,prompt:event.target.value}})} rows={10} maxLength={12000} disabled={saving}/>
+        <small>{settings.memoryAgent.prompt===defaults.memoryAgent.prompt?"Default prompt":"Custom prompt"} · default version {settings.memoryAgent.defaultPromptVersion}</small>
+      </label>
+      <div className="actions">
+        <button type="button" onClick={()=>{
+          const previous=settings.memoryAgent.prompt===defaults.memoryAgent.prompt?settings.memoryAgent.promptBackup:settings.memoryAgent.prompt;
+          onChange({...settings,memoryAgent:{...settings.memoryAgent,prompt:defaults.memoryAgent.prompt,promptBackup:previous||settings.memoryAgent.promptBackup}});
+        }} disabled={saving}>Reset to Default</button>
+        <button type="button" onClick={()=>{
+          if(settings.memoryAgent.promptBackup){
+            onChange({...settings,memoryAgent:{...settings.memoryAgent,prompt:settings.memoryAgent.promptBackup,promptBackup:settings.memoryAgent.prompt}});
+          }
+        }} disabled={saving||!settings.memoryAgent.promptBackup}>Restore Previous</button>
+        <button type="button" onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save"}</button>
+      </div>
       <label>Memory items
         <input type="number" min={1} max={100} value={settings.memory.candidateLimit}
           onChange={event=>setNumber("memory","candidateLimit",Number(event.target.value))} disabled={saving}/>
