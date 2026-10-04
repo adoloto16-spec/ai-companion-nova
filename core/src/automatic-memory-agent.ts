@@ -3,7 +3,7 @@ import {DEFAULT_AUTOMATIC_MEMORY_PROMPT} from "../../contracts/src/settings";
 import {STANDARD_SCHEMAS} from "../../contracts/src/index";
 import type {
   AutomaticMemoryAgentRequest,ChatMessage,ChatRequest,ChatResponse,ChatTurnTrace,DiagnosticsStore,MemoryBroker,MemoryItem,MemoryMutationAuthority,
-  SchemaValidator,AppSettings
+  SchemaValidator,AppSettings,ChatTraceStore
 } from "../../contracts/src/index";
 
 const SECRET_PATTERNS=[
@@ -67,7 +67,7 @@ export interface AutomaticMemoryAgentOptions{
   runtime:AutomaticMemoryAgentRuntime;
   validator:SchemaValidator;
   diagnostics?:DiagnosticsStore;
-  traceStore?:{update(turnId:string,patch:Partial<ChatTurnTrace>):void};
+  traceStore?:Pick<ChatTraceStore,"update">;
   source?:string;
 }
 export interface AutomaticMemoryAgentResult{
@@ -128,7 +128,7 @@ export class AutomaticMemoryAgent{
         providerPresetId:presetId,
         schemaName:"memory_agent_decision",
         schema:MEMORY_AGENT_SCHEMA,
-        validator:options.validator,
+        validator:this.options.validator,
         parseStructured,
         parsePlain,
         diagnostics:options.diagnostics,
