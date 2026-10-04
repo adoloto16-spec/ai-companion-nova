@@ -526,7 +526,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
 
     const durationMs=Date.now()-started;
     if(response.status<200||response.status>=300){
-      throw this.httpFailure(response.status,request,durationMs);
+      throw this.httpFailure(response.status,request,durationMs,response.body);
     }
 
     let payload:unknown;
