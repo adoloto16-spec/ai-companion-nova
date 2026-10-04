@@ -415,7 +415,7 @@ export class MemorySemanticDeduplicator{
     const existing=new Map(state.records.map(record=>[record.memoryId,record] as const));
     const newHash=deterministicContentHash(newMemory.content);
     let newRecord=existing.get(newMemory.id);
-    let newVector:newRecord extends never?never:readonly number[];
+    let newVector:readonly number[];
     const cachedNewIsValid=Boolean(
       newRecord
       &&newRecord.characterId===characterId
