@@ -21,6 +21,10 @@ pub enum MemoryType{Fact,Preference,Relationship,Event,Experience,Goal,Instructi
 #[serde(rename_all="lowercase",deny_unknown_fields)]
 pub enum MemoryStatus{Active,Superseded,Archived}
 
+#[derive(Debug,Deserialize,Serialize,Clone,PartialEq,Eq)]
+#[serde(rename_all="lowercase",deny_unknown_fields)]
+pub enum MemoryArchiveReason{Manual,Duplicate,Superseded,Other}
+
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(rename_all="lowercase",deny_unknown_fields)]
 pub enum MemorySource{User,Conversation,File,Tool,Model,System}
