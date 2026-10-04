@@ -100,7 +100,8 @@ export class MemoryBrokerImpl implements MemoryBroker{
     const legacy=args.length>=4;
     const memoryId=requireMemoryId((legacy?args[2]:args[1]) as string);
     const authority=(legacy?args[3]:args[2]) as MemoryMutationAuthority;
-    const reason=(legacy?args[4]:args[3])??"manual";
+    const reason=(legacy?args[4]:args[3]) as MemoryArchiveReason|undefined;
+    const effectiveReason=reason??"manual";
     const scope=await this.ensureCharacter(characterId);
     const state=await this.loadState(scope);
     const index=state.items.findIndex(candidate=>candidate.id===memoryId);
@@ -108,7 +109,7 @@ export class MemoryBrokerImpl implements MemoryBroker{
     const current=state.items[index]!;
     if(current.status!=="active")throw new Error("Only active memory items can be archived.");
     actorAllowed(current,authority);
-    const archived:MemoryItem={...current,status:"archived",archiveReason:reason,updatedAt:this.clock.now(),metadata:cloneMetadata(current.metadata)};
+    const archived:MemoryItem={...current,status:"archived",archiveReason:effectiveReason,updatedAt:this.clock.now(),metadata:cloneMetadata(current.metadata)};
     validateItemShape(archived,scope,this.deps.validator);
     state.items[index]=archived;
     await this.persist(scope,state);
@@ -126,11 +127,9 @@ export class MemoryBrokerImpl implements MemoryBroker{
   private async loadState(characterId:string):Promise<MutableMemoryStoreState>{const stored=await this.deps.store.load(characterId);if(!stored){const empty={apiVersion:MEMORY_API_VERSION,schemaVersion:MEMORY_SCHEMA_VERSION,characterId,items:[]};validateState(empty,characterId,this.deps.validator);return empty}validateState(stored,characterId,this.deps.validator);return cloneState(stored)}
   private async persist(characterId:string,state:MutableMemoryStoreState):Promise<void>{validateState(state,characterId,this.deps.validator);await this.deps.store.save(cloneState(state))}
   private async audit(operation:string,characterId:string,memoryId:string,authority:MemoryMutationAuthority,status:"success"|"denied"|"error",reason?:string):Promise<void>{await this.deps.audit.record({timestamp:this.clock.now(),actorId:authority.actorId,actorType:authority.actorType,module:authority.moduleId,action:"memory."+operation,resourceType:"resource",targetSummary:"character:"+characterId+"/memory:"+memoryId,argumentKeys:[],status,durationMs:0,allowed:status==="success",reason})}
-  private async publish(type:"MemoryCreated",payload:EventPayloadMap["MemoryCreated"]):Promise<void>;
-  private async publish(type:"MemoryUpdated",payload:EventPayloadMap["MemoryUpdated"]):Promise<void>;
-  private async publish(type:"MemorySuperseded",payload:EventPayloadMap["MemorySuperseded"]):Promise<void>;
-  private async publish(type:"MemoryArchived",payload:EventPayloadMap["MemoryArchived"]):Promise<void>;
-  private async publish(type:"MemoryRestored",payload:EventPayloadMap["MemoryRestored"]):Promise<void>;
-  private async publish(type:"MemoryDeleted",payload:EventPayloadMap["MemoryDeleted"]):Promise<void>;
-  private async publish(type:"MemoryCreated"|"MemoryUpdated"|"MemorySuperseded"|"MemoryArchived"|"MemoryRestored"|"MemoryDeleted",payload:EventPayloadMap["MemoryCreated"]|EventPayloadMap["MemoryUpdated"]|EventPayloadMap["MemorySuperseded"]|EventPayloadMap["MemoryArchived"]|EventPayloadMap["MemoryRestored"]|EventPayloadMap["MemoryDeleted"]):Promise<void>{if(!this.deps.events)return;switch(type){case "MemoryCreated":await this.deps.events.publish(createEvent(type,payload as EventPayloadMap["MemoryCreated"],this.source,()=>this.clock.now()));break;case "MemoryUpdated":await this.deps.events.publish(createEvent(type,payload as EventPayloadMap["MemoryUpdated"],this.source,()=>this.clock.now()));break;case "MemorySuperseded":await this.deps.events.publish(createEvent(type,payload as EventPayloadMap["MemorySuperseded"],this.source,()=>this.clock.now()));break;case "MemoryArchived":await this.deps.events.publish(createEvent(type,payload as EventPayloadMap["MemoryArchived"],this.source,()=>this.clock.now()));break;case "MemoryRestored":await this.deps.events.publish(createEvent(type,payload as EventPayloadMap["MemoryRestored"],this.source,()=>this.clock.now()));break;case "MemoryDeleted":await this.deps.events.publish(createEvent(type,payload as EventPayloadMap["MemoryDeleted"],this.source,()=>this.clock.now()));break}}
+  private async publish<K extends "MemoryCreated"|"MemoryUpdated"|"MemorySuperseded"|"MemoryArchived"|"MemoryRestored"|"MemoryDeleted">(type:K,payload:EventPayloadMap[K]):Promise<void>{
+    if(!this.deps.events)return;
+    await this.deps.events.publish(createEvent(type,payload,this.source,()=>this.clock.now()));
+  }
+
 }
