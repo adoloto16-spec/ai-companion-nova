@@ -95,8 +95,26 @@ export class MemoryBrokerImpl implements MemoryBroker{
   }
   async archive(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason):Promise<MemoryItem>;
   async archive(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason):Promise<MemoryItem>;
-  async archive(characterId:CharacterId,memoryOrConversationId:MemoryItemId|ConversationId,memoryIdOrAuthority:MemoryItemId|MemoryMutationAuthority,maybeAuthority?:MemoryMutationAuthority,maybeReason?:MemoryArchiveReason):Promise<MemoryItem>{
-    const legacy=typeof memoryIdOrAuthority==="string";const id=requireMemoryId(legacy?memoryIdOrAuthority as string:memoryOrConversationId);const authority=(legacy?maybeAuthority:memoryIdOrAuthority) as MemoryMutationAuthority;const reason=maybeReason??"manual";const scope=await this.ensureCharacter(characterId);const state=await this.loadState(scope);const index=state.items.findIndex(candidate=>candidate.id===id);if(index<0)throw new Error("Memory item was not found.");const current=state.items[index]!;if(current.status!=="active")throw new Error("Only active memory items can be archived.");actorAllowed(current,authority);const archived:MemoryItem={...current,status:"archived",archiveReason:reason,updatedAt:this.clock.now(),metadata:cloneMetadata(current.metadata)};validateItemShape(archived,scope,this.deps.validator);state.items[index]=archived;await this.persist(scope,state);await this.audit("archive",scope,id,authority,"success",reason);await this.publish("MemoryArchived",{characterId:scope,originConversationId:archived.originConversationId??undefined,memoryId:id,status:archived.status,updatedAt:archived.updatedAt,archiveReason:reason});return cloneItem(archived);
+  async archive(...args:[CharacterId,MemoryItemId,MemoryMutationAuthority,MemoryArchiveReason?]|[CharacterId,ConversationId,MemoryItemId,MemoryMutationAuthority,MemoryArchiveReason?]):Promise<MemoryItem>{
+    const characterId=args[0];
+    const legacy=args.length>=4;
+    const memoryId=requireMemoryId((legacy?args[2]:args[1]) as string);
+    const authority=(legacy?args[3]:args[2]) as MemoryMutationAuthority;
+    const reason=(legacy?args[4]:args[3])??"manual";
+    const scope=await this.ensureCharacter(characterId);
+    const state=await this.loadState(scope);
+    const index=state.items.findIndex(candidate=>candidate.id===memoryId);
+    if(index<0)throw new Error("Memory item was not found.");
+    const current=state.items[index]!;
+    if(current.status!=="active")throw new Error("Only active memory items can be archived.");
+    actorAllowed(current,authority);
+    const archived:MemoryItem={...current,status:"archived",archiveReason:reason,updatedAt:this.clock.now(),metadata:cloneMetadata(current.metadata)};
+    validateItemShape(archived,scope,this.deps.validator);
+    state.items[index]=archived;
+    await this.persist(scope,state);
+    await this.audit("archive",scope,memoryId,authority,"success",reason);
+    await this.publish("MemoryArchived",{characterId:scope,originConversationId:archived.originConversationId??undefined,memoryId,status:archived.status,updatedAt:archived.updatedAt,archiveReason:reason});
+    return cloneItem(archived);
   }
   async restore(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>{
     const scope=await this.ensureCharacter(characterId);const state=await this.loadState(scope);const index=state.items.findIndex(candidate=>candidate.id===requireMemoryId(memoryId));if(index<0)throw new Error("Memory item was not found.");const current=state.items[index]!;if(current.status!=="archived")throw new Error("Only archived memory items can be restored.");actorAllowed(current,authority);const restored:MemoryItem={...current,status:"active",archiveReason:null,updatedAt:this.clock.now(),metadata:cloneMetadata(current.metadata)};validateItemShape(restored,scope,this.deps.validator);state.items[index]=restored;await this.persist(scope,state);await this.audit("restore",scope,restored.id,authority,"success");await this.publish("MemoryRestored",{characterId:scope,originConversationId:restored.originConversationId??undefined,memoryId:restored.id,status:restored.status,updatedAt:restored.updatedAt});return cloneItem(restored);
