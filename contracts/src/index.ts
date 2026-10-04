@@ -205,6 +205,7 @@ export type MemoryType="fact"|"preference"|"relationship"|"event"|"experience"|"
 export type MemoryStatus="active"|"superseded"|"archived";
 export type MemorySource="user"|"conversation"|"file"|"tool"|"model"|"system";
 export type MemoryMutationPolicy="locked"|"suggest"|"auto";
+export type MemoryArchiveReason="manual"|"duplicate"|"superseded"|"other";
 export interface MemoryItem{
   id:MemoryItemId;
   characterId:CharacterId;
@@ -222,6 +223,7 @@ export interface MemoryItem{
   sourceReference:string|null;
   mutationPolicy:MemoryMutationPolicy;
   status:MemoryStatus;
+  archiveReason:MemoryArchiveReason|null;
   metadata:Record<string,unknown>;
 }
 export interface MemoryCreateInput{
@@ -334,9 +336,11 @@ export interface MemoryBroker{
   supersede(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
   /** @deprecated Compatibility overload; conversationId is provenance only. */
   supersede(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
-  archive(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  archive(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason):Promise<MemoryItem>;
   /** @deprecated Compatibility overload; conversationId is provenance only. */
-  archive(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  archive(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason):Promise<MemoryItem>;
+  restore(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  delete(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<void>;
 }
 export interface AutomaticMemoryAgentRequest{
   apiVersion:ApiVersion;
