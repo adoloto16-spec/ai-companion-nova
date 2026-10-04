@@ -7,6 +7,7 @@ function cloneSettings(settings:AppSettings):AppSettings{
     chat:{...settings.chat},
     context:{...settings.context},
     memory:{...settings.memory},
+    semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge}},
     retrieval:{...settings.retrieval},
     diagnostics:{...settings.diagnostics},
     ui:{...settings.ui}
