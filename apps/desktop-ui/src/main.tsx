@@ -1169,6 +1169,24 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
         </div>
       </div>}
 
+      {selected.automaticMemory&&<div className="diagnostic-block">
+        <h3>Automatic Memory Agent</h3>
+        <div className="status-grid">
+          <span>Started</span><strong>{selected.automaticMemory.started?"yes":"no"}</strong>
+          <span>Status</span><strong>{selected.automaticMemory.status??"—"}</strong>
+          <span>Preset</span><strong>{selected.automaticMemory.providerPresetId??"—"}</strong>
+          <span>Provider</span><strong>{selected.automaticMemory.providerId??"—"}</strong>
+          <span>Model</span><strong>{selected.automaticMemory.model??"—"}</strong>
+          <span>Origin conversation</span><strong>{selected.automaticMemory.conversationId??"—"}</strong>
+          <span>Context messages</span><strong>{selected.automaticMemory.contextMessageCount??"—"}</strong>
+          <span>Persistence</span><strong>{selected.automaticMemory.persistence?.status??"—"}</strong>
+          <span>Memory id</span><strong>{selected.automaticMemory.persistence?.memoryId??"—"}</strong>
+        </div>
+        {selected.automaticMemory.result&&<pre className="diagnostic-json">{selected.automaticMemory.result}</pre>}
+        {selected.automaticMemory.failed&&<div className="error">{selected.automaticMemory.failed}</div>}
+        {selected.automaticMemory.persistence?.reason&&<div className="diagnostic-reason">{selected.automaticMemory.persistence.reason}</div>}
+      </div>}
+
       {selected.memoryExtraction&&<div className="diagnostic-block">
         <h3>Automatic Memory Extraction</h3>
         <p>Started: {selected.memoryExtraction.started?"yes":"no"}</p>
