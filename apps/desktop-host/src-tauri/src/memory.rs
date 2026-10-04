@@ -387,5 +387,4 @@ mod tests{
         assert_eq!(migrated.items[0].origin_conversation_id.as_deref(),Some("conversation.a"));
         assert_eq!(migrated.items[0].content,"The user likes blue.");
     }
-    }
 }
