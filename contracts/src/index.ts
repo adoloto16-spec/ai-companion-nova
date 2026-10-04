@@ -484,6 +484,21 @@ export interface ChatTurnTrace{
     omittedCandidates:readonly ContextCandidate[];
   };
   finalRequest?:ChatRequest;
+  automaticMemory?:{
+    started:boolean;
+    status?:"started"|"completed"|"failed"|"skipped";
+    requestId?:string;
+    providerPresetId?:string;
+    providerId?:string;
+    model?:string;
+    conversationId?:string;
+    contextMessageCount?:number;
+    userMessagePresent?:boolean;
+    assistantResponsePresent?:boolean;
+    result?:string;
+    persistence?:{status:"created"|"duplicate"|"rejected"|"none";memoryId?:string;reason?:string};
+    failed?:string;
+  };
   providerResponse?:{
     providerId:string;
     model:string;
@@ -509,9 +524,10 @@ export interface ChatTurnTrace{
     failed?:string;
   };
 }
-export type ChatTurnTracePatch=Partial<Omit<ChatTurnTrace,"turnId"|"requestId"|"characterId"|"conversationId"|"timestamp"|"memoryExtraction">>&{
+export type ChatTurnTracePatch=Partial<Omit<ChatTurnTrace,"turnId"|"requestId"|"characterId"|"conversationId"|"timestamp"|"memoryExtraction"|"automaticMemory">>&{
   contextBuild?:ChatTurnTrace["contextBuild"];
   memoryExtraction?:Partial<NonNullable<ChatTurnTrace["memoryExtraction"]>>;
+  automaticMemory?:Partial<NonNullable<ChatTurnTrace["automaticMemory"]>>;
 };
 
 export interface ChatTraceStore{
