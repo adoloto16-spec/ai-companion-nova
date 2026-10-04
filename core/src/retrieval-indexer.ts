@@ -23,6 +23,8 @@ export class RetrievalEventIndexer{
       events.subscribe<EventPayloadMap["MemoryUpdated"]>("MemoryUpdated",event=>this.refreshMemory(event.payload.characterId,event.payload.memoryId,event.payload.originConversationId)),
       events.subscribe<EventPayloadMap["MemorySuperseded"]>("MemorySuperseded",async event=>{await this.remove(event.payload.characterId,"memory",event.payload.previousMemoryId,event.payload.originConversationId);await this.refreshMemory(event.payload.characterId,event.payload.memoryId,event.payload.originConversationId)}),
       events.subscribe<EventPayloadMap["MemoryArchived"]>("MemoryArchived",event=>this.remove(event.payload.characterId,"memory",event.payload.memoryId,event.payload.originConversationId)),
+    events.subscribe<EventPayloadMap["MemoryRestored"]>("MemoryRestored",event=>this.refreshMemory(event.payload.characterId,event.payload.memoryId,event.payload.originConversationId)),
+    events.subscribe<EventPayloadMap["MemoryDeleted"]>("MemoryDeleted",event=>this.remove(event.payload.characterId,"memory",event.payload.memoryId,event.payload.originConversationId)),
       events.subscribe<EventPayloadMap["CharacterDeleted"]>("CharacterDeleted",event=>this.options.writer.removeCharacter(event.payload.characterId))
     );
   }
