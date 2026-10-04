@@ -129,6 +129,13 @@ async function duplicateEventIntegrationTest(){
   const created=await fixtureValue.broker.create("character.a",{id:"new",type:"fact",content:"User prefers blue.",source:"user",mutationPolicy:"auto"},{
     actorId:"user",actorType:"user",trusted:true,capabilities:[]
   });
+  if(created.status==="active"){
+    console.error("semantic duplicate diagnostic:",JSON.stringify({
+      diagnostics:fixtureValue.diagnostics.recentErrors(),
+      judgeCalls:fixtureValue.judge.calls,
+      index:await fixtureValue.indexStore.load("character.a")
+    }));
+  }
   equal(created.status,"archived","duplicate archives NEW only");
   equal(created.archiveReason,"duplicate","duplicate archive reason");
   equal((await fixtureValue.broker.get("character.a","old"))?.status,"active","duplicate keeps OLD active");
