@@ -13,6 +13,7 @@ import {
   StandardContractValidator,
   type ChatRequest,
   type ChatProvider,
+  type EmbeddingProvider,
   type CredentialStore,
   type ProviderConfiguration,
   type ProviderConnectionTestResult
@@ -26,6 +27,13 @@ import {
 } from "../../../providers/chat/openai-compatible/src";
 
 const validator=new StandardContractValidator();
+import {
+  OPENAI_COMPATIBLE_EMBEDDING_PROVIDER_ID,
+  OpenAICompatibleEmbeddingProvider,
+  type EmbeddingHttpClient,
+  validateOpenAICompatibleEmbeddingProviderConfig
+} from "../../../providers/embeddings/openai-compatible/src";
+
 
 export function validateProviderConfiguration(configuration:ProviderConfiguration):{valid:boolean;errors:readonly string[]}{
   const schemaResult=validator.validate(configuration,STANDARD_SCHEMAS["provider-configuration"]!);
@@ -109,6 +117,18 @@ function validateProviderPresetConfiguration(configuration:ProviderConfiguration
   });
   for(const error of providerErrors)if(!errors.includes(error)&&!error.includes("credential"))errors.push(error);
   return {valid:errors.length===0,errors};
+}
+
+export function buildEmbeddingProviderForPreset(
+  configuration:ProviderConfiguration,
+  model:string,
+  credentialStore:CredentialStore,
+  httpClient?:EmbeddingHttpClient
+):EmbeddingProvider|undefined{
+  if(configuration.providerId!==OPENAI_COMPATIBLE_PROVIDER_ID)return undefined;
+  const effective={baseUrl:configuration.baseUrl,model:model.trim(),credential:configuration.credentialReference,timeoutMs:configuration.timeoutMs};
+  if(validateOpenAICompatibleEmbeddingProviderConfig(effective).length>0)return undefined;
+  return new OpenAICompatibleEmbeddingProvider(effective,credentialStore,httpClient);
 }
 
 export function buildProviderForPreset(configuration:ProviderConfiguration,credentialStore:CredentialStore,httpClient?:HttpClient):ChatProvider|undefined{
