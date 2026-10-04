@@ -21,7 +21,7 @@ async function main(){
     retrieval:{...defaults.retrieval,candidateLimit:7},
     diagnostics:{...defaults.diagnostics,logLevel:"verbose" as const,keepRecentEntries:25},
     chat:{...defaults.chat,automaticLongTermMemory:false},
-    memoryAgent:{...defaults.memoryAgent,enabled:true,providerPresetId:"preset.memory",model:"memory-model",outputMode:"structured",prompt:"Custom full prompt",promptBackup:"Previous prompt",defaultPromptVersion:"1"}
+    memoryAgent:{...defaults.memoryAgent,enabled:true,providerPresetId:"preset.memory",model:"memory-model",outputMode:"structured" as const,prompt:"Custom full prompt",promptBackup:"Previous prompt",defaultPromptVersion:"1"}
   };
   const errors=validateAppSettings(custom);
   equal(errors,[],"valid custom settings pass semantic validation");
