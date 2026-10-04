@@ -227,6 +227,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     settings:()=>settingsManager.get(),
     broker:memoryBroker,
     runtime:{chat:extractionChatRuntime.chat,getChatModelForPreset:resolveChatModelForPreset},
+    validator:contractValidator,
     diagnostics:diagnosticsStore,
     traceStore
   });
