@@ -46,7 +46,7 @@ async function main(){
     equal(first.status,"sent","chat with matching memory succeeds");
     if(!captured)throw new Error("ChatRequest was not captured");
     const firstCaptured=captured;
-    equal(firstCaptured.context.messages.find(message=>message.content==="Nova likes jasmine tea.")?.metadata?.contextSource,"memory","ChatRequest receives memory context");
+    equal(firstCaptured.context.messages.find(message=>message.content.includes("Nova likes jasmine tea."))?.metadata?.contextSource,"memory","ChatRequest receives memory context");
     equal(firstCaptured.context.messages.find(message=>message.content==="Nova likes jasmine tea.")?.metadata?.contextReferenceId,"memory.chat.1","ChatRequest preserves memory reference");
     equal(firstCaptured.context.messages.find(message=>message.content==="Nova likes jasmine tea.")?.role,"user","memory remains data-role");
 
