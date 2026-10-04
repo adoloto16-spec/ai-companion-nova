@@ -21,10 +21,10 @@ async function main(){
   const store=new InMemoryMemoryStore();
   const broker=new MemoryBrokerImpl({store,validator:new StandardContractValidator(),audit:new InMemoryAuditService(),events:new InMemoryEventBus()});
   const traces=new InMemoryChatTraceStore();
-  const settings={...defaultAppSettings(),memoryAgent:{...defaultAppSettings().memoryAgent,enabled:true,providerPresetId:"preset.memory",model:"memory-model"}};
+  const settings={...defaultAppSettings(),memoryAgent:{...defaultAppSettings().memoryAgent,enabled:true,providerPresetId:"preset.memory",model:"memory-model",outputMode:"plain",prompt:"CUSTOM MEMORY PROMPT",promptBackup:"PREVIOUS",defaultPromptVersion:"1"}};
   let calls=0;
   const runtime={async chat(req:ChatRequest){calls++;return response(req,"У пользователя любимый цвет — синий.")},async getChatModelForPreset(){return "memory-model"}};
-  const agent=new AutomaticMemoryAgent({settings:()=>settings,broker,runtime,traceStore:traces});
+  const agent=new AutomaticMemoryAgent({settings:()=>settings,broker,runtime,validator:new StandardContractValidator(),traceStore:traces});
 
   const first=await agent.process(request("conversation.a","turn-a"));
   ok(Boolean(first),"automatic agent creates durable memory");
@@ -35,6 +35,53 @@ async function main(){
   equal(duplicate?.id,first?.id,"same content is duplicate across conversations");
   equal((await broker.list("character.a")).length,1,"duplicate protection is character scoped");
 
+  const customHttpRequests:ChatRequest[]=[];
+  const customAgent=new AutomaticMemoryAgent({settings:()=>({...settings,memoryAgent:{...settings.memoryAgent,outputMode:"plain",prompt:"CUSTOM MEMORY PROMPT"}}),broker,runtime:{
+    async chat(req:ChatRequest){customHttpRequests.push(req);return response(req,"NO_MEMORY")},
+    async getChatModelForPreset(){return "memory-model"}
+  },validator:new StandardContractValidator(),traceStore:traces});
+  await customAgent.process(request("conversation.custom","turn-custom"));
+  equal(customHttpRequests[0]?.context.messages[0]?.content,"CUSTOM MEMORY PROMPT","custom prompt is sent verbatim");
+  equal(customHttpRequests[0]?.generation?.responseFormat,undefined,"plain agent request omits response format");
+
+  const structuredAgent=new AutomaticMemoryAgent({settings:()=>({...settings,memoryAgent:{...settings.memoryAgent,outputMode:"structured",prompt:"STRUCTURED"}}),broker,runtime:{
+    async chat(req:ChatRequest){return response(req,'{"decision":"remember","content":"Structured durable fact."}')},
+    async getChatModelForPreset(){return "memory-model"}
+  },validator:new StandardContractValidator(),traceStore:traces});
+  const structuredMemory=await structuredAgent.process(request("conversation.structured","turn-structured"));
+  ok(Boolean(structuredMemory),"structured remember creates memory");
+  equal((await broker.list("character.a")).filter(item=>item.content==="Structured durable fact.").length,1,"structured remember persisted");
+
+  const noMemoryAgent=new AutomaticMemoryAgent({settings:()=>({...settings,memoryAgent:{...settings.memoryAgent,outputMode:"structured"}}),broker,runtime:{
+    async chat(req:ChatRequest){return response(req,'{"decision":"no_memory","content":""}')},
+    async getChatModelForPreset(){return "memory-model"}
+  },validator:new StandardContractValidator(),traceStore:traces});
+  const beforeNoMemory=(await broker.list("character.a")).length;
+  equal(await noMemoryAgent.process(request("conversation.nomemory","turn-nomemory")),undefined,"structured no_memory does not persist");
+  equal((await broker.list("character.a")).length,beforeNoMemory,"no_memory leaves store unchanged");
+
+  const invalidAgent=new AutomaticMemoryAgent({settings:()=>({...settings,memoryAgent:{...settings.memoryAgent,outputMode:"structured"}}),broker,runtime:{
+    async chat(req:ChatRequest){return response(req,'{"decision":"remember","content":17}')},
+    async getChatModelForPreset(){return "memory-model"}
+  },validator:new StandardContractValidator(),traceStore:traces});
+  const beforeInvalid=(await broker.list("character.a")).length;
+  equal(await invalidAgent.process(request("conversation.invalid","turn-invalid")),undefined,"invalid structured schema does not persist");
+  equal((await broker.list("character.a")).length,beforeInvalid,"invalid structured output leaves store unchanged");
+
+  const autoStructuredCalls:ChatRequest[]=[];
+  let autoCall=0;
+  const autoAgent=new AutomaticMemoryAgent({settings:()=>({...settings,memoryAgent:{...settings.memoryAgent,outputMode:"auto"}}),broker,runtime:{
+    async chat(req:ChatRequest){
+      autoStructuredCalls.push(req);autoCall++;
+      if(autoCall===1)throw Object.assign(new Error("unsupported"),{chatError:{code:"UNSUPPORTED",details:{category:"capability"}}});
+      return response(req,"NO_MEMORY");
+    },async getChatModelForPreset(){return "memory-model"}
+  },validator:new StandardContractValidator(),traceStore:traces});
+  equal(await autoAgent.process(request("conversation.auto","turn-auto")),undefined,"auto fallback plain no-memory");
+  equal(autoStructuredCalls.length,2,"auto uses two calls only on capability failure");
+  equal(autoStructuredCalls[0]?.generation?.responseFormat?.type,"json-schema","auto first attempt structured");
+  equal(autoStructuredCalls[1]?.generation?.responseFormat,undefined,"auto fallback plain");
+
   const otherCharacter=await broker.list("character.b");
   equal(otherCharacter.length,0,"other character never receives memory");
   equal(calls,2,"agent was invoked once per completed turn");
@@ -44,7 +91,7 @@ async function main(){
     settings:()=>settings,broker,runtime:{
       async chat(){failedCalls++;throw new Error("provider unavailable")},
       async getChatModelForPreset(){return "memory-model"}
-    },traceStore:traces
+    },validator:new StandardContractValidator(),traceStore:traces
   });
   const failed=await failing.process(request("conversation.c","turn-c"));
   equal(failed,undefined,"provider failure is isolated");
