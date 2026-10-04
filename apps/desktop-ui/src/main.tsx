@@ -362,89 +362,147 @@ function CharacterMemoryView({runtime,character,originConversationId}:{
   originConversationId?:string;
 }){
   const [items,setItems]=React.useState<readonly MemoryItem[]>([]);
-  const [content,setContent]=React.useState("");
-  const [type,setType]=React.useState<MemoryItem["type"]>("observation");
-  const [importance,setImportance]=React.useState(70);
-  const [confidence,setConfidence]=React.useState(80);
+  const [tab,setTab]=React.useState<"active"|"archived">("active");
+  const [editingId,setEditingId]=React.useState<string|null>(null);
+  const [draft,setDraft]=React.useState<{type:MemoryItem["type"];content:string;tags:string;importance:number;confidence:number;validFrom:string;validUntil:string}>({
+    type:"observation",content:"",tags:"",importance:70,confidence:80,validFrom:"",validUntil:""
+  });
+  const [createDraft,setCreateDraft]=React.useState({type:"observation" as MemoryItem["type"],content:"",tags:"",importance:70,confidence:80,validFrom:"",validUntil:""});
   const [busy,setBusy]=React.useState(false);
   const [message,setMessage]=React.useState("");
 
   const refresh=React.useCallback(async()=>{
-    try{
-      const next=await runtime.listMemory(character.id);
-      setItems(next.filter(item=>item.status==="active"));
-    }catch(error){setMessage(error instanceof Error?error.message:"Character Memory could not be loaded.")}
+    try{setItems(await runtime.listMemory(character.id));}
+    catch(error){setMessage(error instanceof Error?error.message:"Character Memory could not be loaded.")}
   },[runtime,character.id]);
   React.useEffect(()=>{void refresh()},[refresh]);
 
+  const beginEdit=(item:MemoryItem)=>{
+    setEditingId(item.id);
+    setDraft({
+      type:item.type,content:item.content,tags:item.tags.join(", "),importance:item.importance,confidence:item.confidence,
+      validFrom:item.validFrom?item.validFrom.slice(0,19):"",validUntil:item.validUntil?item.validUntil.slice(0,19):""
+    });
+  };
+
+  const saveEdit=async()=>{
+    if(!editingId||!draft.content.trim())return;
+    setBusy(true);setMessage("");
+    try{
+      await runtime.updateMemory(character.id,editingId,{
+        type:draft.type,content:draft.content.trim(),
+        tags:draft.tags.split(",").map(value=>value.trim()).filter(Boolean),
+        importance:draft.importance,confidence:draft.confidence,
+        validFrom:draft.validFrom?new Date(draft.validFrom).toISOString():null,
+        validUntil:draft.validUntil?new Date(draft.validUntil).toISOString():null
+      });
+      setEditingId(null);setMessage("Memory updated.");await refresh();
+    }catch(error){setMessage(error instanceof Error?error.message:"Memory could not be updated.")}
+    finally{setBusy(false)}
+  };
+
   const create=async()=>{
-    if(!content.trim())return;
+    if(!createDraft.content.trim())return;
     setBusy(true);setMessage("");
     try{
       await runtime.createMemory(character.id,{
         originConversationId:originConversationId??null,
-        type,
-        content:content.trim(),
-        tags:[],
-        importance,
-        confidence,
-        source:"user",
-        sourceReference:null,
-        mutationPolicy:"locked",
-        metadata:{origin:"character-memory-ui"}
+        type:createDraft.type,content:createDraft.content.trim(),
+        tags:createDraft.tags.split(",").map(value=>value.trim()).filter(Boolean),
+        importance:createDraft.importance,confidence:createDraft.confidence,
+        validFrom:createDraft.validFrom?new Date(createDraft.validFrom).toISOString():null,
+        validUntil:createDraft.validUntil?new Date(createDraft.validUntil).toISOString():null,
+        source:"user",sourceReference:null,mutationPolicy:"locked",metadata:{origin:"character-memory-ui"}
       });
-      setContent("");
-      setMessage("Memory created.");
-      await refresh();
+      setCreateDraft({...createDraft,content:"",tags:""});
+      setMessage("Memory created.");await refresh();
     }catch(error){setMessage(error instanceof Error?error.message:"Memory could not be created.")}
     finally{setBusy(false)}
   };
 
   const archive=async(item:MemoryItem)=>{
     setBusy(true);setMessage("");
-    try{
-      await runtime.archiveMemory(character.id,originConversationId??"",item.id);
-      setMessage("Memory archived.");
-      await refresh();
-    }catch(error){setMessage(error instanceof Error?error.message:"Memory could not be archived.")}
+    try{await runtime.archiveMemory(character.id,item.id);setMessage("Memory archived.");await refresh();}
+    catch(error){setMessage(error instanceof Error?error.message:"Memory could not be archived.")}
+    finally{setBusy(false)}
+  };
+  const restore=async(item:MemoryItem)=>{
+    setBusy(true);setMessage("");
+    try{await runtime.restoreMemory(character.id,item.id);setMessage("Memory restored.");await refresh();}
+    catch(error){setMessage(error instanceof Error?error.message:"Memory could not be restored.")}
+    finally{setBusy(false)}
+  };
+  const permanentDelete=async(item:MemoryItem)=>{
+    if(!window.confirm("Delete this memory permanently? This cannot be undone."))return;
+    setBusy(true);setMessage("");
+    try{await runtime.deleteMemory(character.id,item.id);setMessage("Memory permanently deleted.");await refresh();}
+    catch(error){setMessage(error instanceof Error?error.message:"Memory could not be deleted.")}
     finally{setBusy(false)}
   };
 
+  const shown=items.filter(item=>tab==="active"?item.status==="active":item.status==="archived");
+  const typeOptions=React.createElement(React.Fragment,null,
+    <option value="observation">Observation</option><option value="fact">Fact</option><option value="preference">Preference</option>
+    <option value="relationship">Relationship</option><option value="event">Event</option><option value="experience">Experience</option>
+    <option value="goal">Goal</option><option value="instruction">Instruction</option>
+  );
+
   return <section className="characters-panel">
     <div className="characters-toolbar">
-      <div><h2>Character Memory · {character.name}</h2><p className="chat-subtitle">Long-term memory owned by this Character. Conversation is provenance only.</p></div>
+      <div><h2>Character Memory · {character.name}</h2><p className="chat-subtitle">Character-owned long-term memory. Conversation is provenance only.</p></div>
       <button type="button" onClick={()=>void refresh()} disabled={busy}>Refresh</button>
     </div>
-    <div className="character-list" role="listbox" aria-label="Character Memory">
-      {items.length===0&&<div className="core-book-empty">No active long-term memories.</div>}
-      {items.map(item=>
-        <div className="character-row" key={item.id}>
-          <div>
-            <strong>{item.content}</strong>
-            <small>{item.type} · importance {item.importance} · confidence {item.confidence}</small>
-            <small>Origin conversation: {item.originConversationId??"unknown / none"}</small>
+    <div className="actions" role="tablist" aria-label="Memory lifecycle">
+      <button type="button" className={tab==="active"?"active":""} onClick={()=>setTab("active")}>Active ({items.filter(item=>item.status==="active").length})</button>
+      <button type="button" className={tab==="archived"?"active":""} onClick={()=>setTab("archived")}>Archived ({items.filter(item=>item.status==="archived").length})</button>
+    </div>
+    <div className="character-list">
+      {shown.length===0&&<div className="core-book-empty">No {tab} memories.</div>}
+      {shown.map(item=>editingId===item.id
+        ?<div className="character-row" key={item.id}>
+          <div className="settings-grid">
+            <label>Type<select value={draft.type} onChange={event=>setDraft({...draft,type:event.target.value as MemoryItem["type"]})} disabled={busy}>{typeOptions}</select></label>
+            <label>Content<textarea rows={4} value={draft.content} onChange={event=>setDraft({...draft,content:event.target.value})} disabled={busy}/></label>
+            <label>Tags<input value={draft.tags} onChange={event=>setDraft({...draft,tags:event.target.value})} disabled={busy}/></label>
+            <div className="core-book-grid">
+              <label>Importance<input type="number" min={0} max={100} value={draft.importance} onChange={event=>setDraft({...draft,importance:Number(event.target.value)})} disabled={busy}/></label>
+              <label>Confidence<input type="number" min={0} max={100} value={draft.confidence} onChange={event=>setDraft({...draft,confidence:Number(event.target.value)})} disabled={busy}/></label>
+            </div>
+            <div className="core-book-grid">
+              <label>Valid from<input type="datetime-local" value={draft.validFrom} onChange={event=>setDraft({...draft,validFrom:event.target.value})} disabled={busy}/></label>
+              <label>Valid until<input type="datetime-local" value={draft.validUntil} onChange={event=>setDraft({...draft,validUntil:event.target.value})} disabled={busy}/></label>
+            </div>
+            <div className="actions"><button type="button" onClick={()=>void saveEdit()} disabled={busy||!draft.content.trim()}>Save</button><button type="button" onClick={()=>setEditingId(null)} disabled={busy}>Cancel</button></div>
           </div>
-          <button type="button" onClick={()=>void archive(item)} disabled={busy}>Archive</button>
+        </div>
+        :<div className="character-row" key={item.id}>
+          <div><strong>{item.content}</strong><small>{item.type} · importance {item.importance} · confidence {item.confidence}</small>
+            <small>Origin conversation: {item.originConversationId??"none"} · Archive reason: {item.archiveReason??"—"}</small>
+          </div>
+          <div className="actions">
+            {tab==="active"&&<><button type="button" onClick={()=>beginEdit(item)} disabled={busy}>Edit</button><button type="button" onClick={()=>void archive(item)} disabled={busy}>Archive</button></>}
+            {tab==="archived"&&<button type="button" onClick={()=>void restore(item)} disabled={busy}>Restore</button>}
+            <button type="button" onClick={()=>void permanentDelete(item)} disabled={busy}>Delete permanently</button>
+          </div>
         </div>
       )}
     </div>
-    <div className="character-actions">
+    {tab==="active"&&<div className="character-actions">
       <h3>Add long-term memory</h3>
-      <label>Type
-        <select value={type} onChange={event=>setType(event.target.value as MemoryItem["type"])} disabled={busy}>
-          <option value="observation">Observation</option><option value="fact">Fact</option><option value="preference">Preference</option>
-          <option value="relationship">Relationship</option><option value="event">Event</option><option value="experience">Experience</option>
-          <option value="goal">Goal</option><option value="instruction">Instruction</option>
-        </select>
-      </label>
-      <label>Content<textarea value={content} onChange={event=>setContent(event.target.value)} rows={5} disabled={busy}/></label>
+      <label>Type<select value={createDraft.type} onChange={event=>setCreateDraft({...createDraft,type:event.target.value as MemoryItem["type"]})} disabled={busy}>{typeOptions}</select></label>
+      <label>Content<textarea value={createDraft.content} onChange={event=>setCreateDraft({...createDraft,content:event.target.value})} rows={5} disabled={busy}/></label>
+      <label>Tags<input value={createDraft.tags} onChange={event=>setCreateDraft({...createDraft,tags:event.target.value})} placeholder="comma-separated" disabled={busy}/></label>
       <div className="core-book-grid">
-        <label>Importance<input type="number" min={0} max={100} value={importance} onChange={event=>setImportance(Number(event.target.value))} disabled={busy}/></label>
-        <label>Confidence<input type="number" min={0} max={100} value={confidence} onChange={event=>setConfidence(Number(event.target.value))} disabled={busy}/></label>
+        <label>Importance<input type="number" min={0} max={100} value={createDraft.importance} onChange={event=>setCreateDraft({...createDraft,importance:Number(event.target.value)})} disabled={busy}/></label>
+        <label>Confidence<input type="number" min={0} max={100} value={createDraft.confidence} onChange={event=>setCreateDraft({...createDraft,confidence:Number(event.target.value)})} disabled={busy}/></label>
       </div>
-      <div className="actions"><button type="button" onClick={()=>void create()} disabled={busy||!content.trim()}>Create Memory</button></div>
-      {message&&<div className="notice" role="status">{message}</div>}
-    </div>
+      <div className="core-book-grid">
+        <label>Valid from<input type="datetime-local" value={createDraft.validFrom} onChange={event=>setCreateDraft({...createDraft,validFrom:event.target.value})} disabled={busy}/></label>
+        <label>Valid until<input type="datetime-local" value={createDraft.validUntil} onChange={event=>setCreateDraft({...createDraft,validUntil:event.target.value})} disabled={busy}/></label>
+      </div>
+      <div className="actions"><button type="button" onClick={()=>void create()} disabled={busy||!createDraft.content.trim()}>Create Memory</button></div>
+    </div>}
+    {message&&<div className="notice" role="status">{message}</div>}
   </section>;
 }
 
