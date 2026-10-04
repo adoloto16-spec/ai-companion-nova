@@ -448,6 +448,7 @@ pub fn supersede(app:&tauri::AppHandle,character_id:&str,previous_memory_id:&str
 
 #[cfg(test)]
 mod tests{
+    use super::*;
     #[test]
     fn legacy_migration_is_lossless_and_preserves_provenance(){
         let legacy=LegacyMemoryStoreState{
