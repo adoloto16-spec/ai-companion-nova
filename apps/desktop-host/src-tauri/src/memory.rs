@@ -218,6 +218,7 @@ fn legacy_to_v3(legacy:LegacyMemoryStoreState,origin_conversation_id:&str)->Memo
             source_reference:item.source_reference,
             mutation_policy:item.mutation_policy,
             status:item.status,
+            archive_reason:None,
             metadata:item.metadata,
         }).collect()
     }
