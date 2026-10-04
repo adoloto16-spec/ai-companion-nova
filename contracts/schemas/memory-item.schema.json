@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.ai-companion-nova.dev/memory-item/v2",
-  "title": "AI Companion Nova Dynamic Memory Item v2",
+  "$id": "https://schemas.ai-companion-nova.dev/memory-item/v3",
+  "title": "AI Companion Nova Dynamic Memory Item v3",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "id",
     "characterId",
-    "conversationId",
+    "originConversationId",
     "type",
     "content",
     "tags",
@@ -127,8 +127,8 @@
       "maxProperties": 64,
       "additionalProperties": true
     },
-    "conversationId": {
-      "type": "string",
+    "originConversationId": {
+      "type": ["string", "null"],
       "minLength": 1,
       "maxLength": 200
     }
