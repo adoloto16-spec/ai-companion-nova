@@ -97,7 +97,7 @@ export class MemoryBrokerImpl implements MemoryBroker{
   async archive(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason):Promise<MemoryItem>;
   async archive(...args:[CharacterId,MemoryItemId,MemoryMutationAuthority,MemoryArchiveReason?]|[CharacterId,ConversationId,MemoryItemId,MemoryMutationAuthority,MemoryArchiveReason?]):Promise<MemoryItem>{
     const characterId=args[0];
-    const legacy=args.length>=4;
+    const legacy=typeof args[2]==="string";
     const memoryId=requireMemoryId((legacy?args[2]:args[1]) as string);
     const authority=(legacy?args[3]:args[2]) as MemoryMutationAuthority;
     const reason=(legacy?args[4]:args[3]) as MemoryArchiveReason|undefined;
