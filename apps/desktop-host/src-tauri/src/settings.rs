@@ -4,10 +4,11 @@ use std::{fs,io::Write,path::{Path,PathBuf}};
 use tauri::Manager;
 
 const API_VERSION:&str="1";
-const SCHEMA_VERSION:&str="3";
+const SCHEMA_VERSION:&str="4";
 const FILE_NAME:&str="app-settings-v1.json";
 const LEGACY_SCHEMA_VERSION:&str="0";
-const PREVIOUS_SCHEMA_VERSION:&str="2";
+const PREVIOUS_SCHEMA_VERSION:&str="3";
+const LEGACY_MEMORY_AGENT_SCHEMA_VERSION:&str="2";
 const LEGACY_PREVIOUS_SCHEMA_VERSION:&str="1";
 const MAX_CONTEXT_TOKENS:i64=32768;
 const MAX_RESERVED_OUTPUT:i64=16384;
@@ -16,7 +17,8 @@ const MAX_RECENT_MESSAGES:i64=100;
 const MAX_MEMORY_CANDIDATES:i64=100;
 const MAX_RETRIEVAL_CANDIDATES:i64=100;
 const MAX_DIAGNOSTICS_ENTRIES:i64=500;
-const MAX_MEMORY_AGENT_INSTRUCTIONS:usize=12000;
+const MAX_MEMORY_AGENT_PROMPT:usize=12000;
+const DEFAULT_MEMORY_AGENT_PROMPT_VERSION:&str="1";
 const DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS:&str="Review the relevant conversation context, user message, and assistant response.\nDecide whether there is durable information worth remembering after this conversation ends.\nKeep information only when it is useful beyond the current turn.\nExamples: stable user preferences, persistent user facts, important relationships, long-term goals, commitments or decisions, durable instructions, meaningful experiences, and important assistant commitments or decisions.";
 
 #[derive(Debug,Deserialize,Serialize,Clone)]
@@ -32,7 +34,13 @@ pub struct MemoryAgentSettings{
     #[serde(rename="providerPresetId")]
     pub provider_preset_id:Option<String>,
     pub model:String,
-    pub instructions:String
+    #[serde(rename="outputMode")]
+    pub output_mode:String,
+    pub prompt:String,
+    #[serde(rename="promptBackup")]
+    pub prompt_backup:Option<String>,
+    #[serde(rename="defaultPromptVersion")]
+    pub default_prompt_version:String
 }
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(deny_unknown_fields)]
@@ -93,7 +101,7 @@ fn default_settings()->AppSettings{
     AppSettings{
         api_version:API_VERSION.into(),schema_version:SCHEMA_VERSION.into(),
         chat:ChatSettings{automatic_long_term_memory:true},
-        memory_agent:MemoryAgentSettings{enabled:true,provider_preset_id:None,model:String::new(),instructions:DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS.to_string()},
+        memory_agent:MemoryAgentSettings{enabled:true,provider_preset_id:None,model:String::new(),output_mode:"auto".into(),prompt:DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS.to_string(),prompt_backup:None,default_prompt_version:DEFAULT_MEMORY_AGENT_PROMPT_VERSION.into()},
         context:ContextSettings{available_context_tokens:4096,reserved_output_tokens:1024,safety_margin_tokens:128,recent_conversation_messages:8},
         memory:MemorySettings{candidate_limit:8},
         retrieval:RetrievalSettings{candidate_limit:32},
@@ -122,8 +130,22 @@ fn validate(settings:&AppSettings)->Result<(),String>{
     valid_integer(settings.retrieval.candidate_limit,1,MAX_RETRIEVAL_CANDIDATES,"Retrieval candidates")?;
     if !matches!(settings.diagnostics.log_level.as_str(),"off"|"errors"|"normal"|"verbose"|"debug"){return Err("Unsupported diagnostics log level".into());}
     valid_integer(settings.diagnostics.keep_recent_entries,1,MAX_DIAGNOSTICS_ENTRIES,"Recent diagnostic entries")?;
-    if settings.memory_agent.instructions.len()>MAX_MEMORY_AGENT_INSTRUCTIONS{return Err("Automatic Memory Agent instructions exceed the 12000 character limit.".into());}
+    if !matches!(settings.memory_agent.output_mode.as_str(),"auto"|"structured"|"plain"){return Err("Unsupported Automatic Memory Agent output mode".into());}
+    if settings.memory_agent.prompt.len()>MAX_MEMORY_AGENT_PROMPT{return Err("Automatic Memory Agent prompt exceeds the 12000 character limit.".into());}
+    if settings.memory_agent.prompt_backup.as_ref().map(|value|value.len()>MAX_MEMORY_AGENT_PROMPT).unwrap_or(false){return Err("Automatic Memory Agent prompt backup exceeds the 12000 character limit.".into());}
+    if settings.memory_agent.default_prompt_version.trim().is_empty(){return Err("Automatic Memory Agent default prompt version must not be empty.".into());}
     Ok(())
+}
+
+fn migrate_memory_agent_object(root:&mut serde_json::Map<String,Value>){
+    if let Some(memory_agent)=root.get_mut("memoryAgent").and_then(Value::as_object_mut){
+        if memory_agent.get("prompt").is_none(){
+            if let Some(instructions)=memory_agent.remove("instructions"){memory_agent.insert("prompt".into(),instructions);}
+        }else{memory_agent.remove("instructions");}
+        memory_agent.entry("promptBackup").or_insert(Value::Null);
+        memory_agent.entry("defaultPromptVersion").or_insert_with(||Value::String(DEFAULT_MEMORY_AGENT_PROMPT_VERSION.into()));
+        memory_agent.entry("outputMode").or_insert_with(||Value::String("auto".into()));
+    }
 }
 
 fn migrate(value:Value)->Result<(AppSettings,bool),String>{
