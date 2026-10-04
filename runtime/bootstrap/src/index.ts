@@ -435,7 +435,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     setCoreBookEntryEnabled:(characterId,entryId,enabled)=>coreBookManager.setCoreBookEntryEnabled(characterId,entryId,enabled),
     buildContext:request=>contextEngine.build(request),
     extractMemory:async request=>{const item=await automaticMemoryAgent.process(request);return item?[item]:[]},
-    getMemory:(characterId,memoryOrConversationId,memoryId?)=>memoryId===undefined?memoryBroker.get(characterId,memoryOrConversationId):memoryBroker.get(characterId,memoryOrConversationId,memoryId),
+    getMemory:(characterId,memoryOrConversationId,memoryId?)=>memoryId===undefined?memoryBroker.get(characterId,memoryOrConversationId):memoryBroker.get(characterId,memoryOrConversationId as MemoryItemId,memoryId as MemoryItemId),
     searchMemory:query=>memoryBroker.search(query),
     listMemory:characterId=>memoryBroker.list(characterId),
     createMemory:(characterId,input)=>memoryBroker.create(characterId,input,userMemoryAuthority),
