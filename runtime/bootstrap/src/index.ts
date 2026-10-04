@@ -96,13 +96,21 @@ export interface FoundationRuntime{
   setCoreBookEntryEnabled(characterId:CharacterId,entryId:CoreBookEntryId,enabled:boolean):Promise<CoreBookEntry>;
   buildContext(request:ContextBuildRequest):Promise<AssembledContext>;
   extractMemory(request:import("../../../contracts/src/index").MemoryExtractionRequest):Promise<readonly MemoryItem[]>;
+  getMemory(characterId:CharacterId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>;
+  /** @deprecated Legacy conversation argument is provenance only. */
   getMemory(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>;
   searchMemory(query:MemorySearchQuery):Promise<readonly MemoryItem[]>;
   listMemory(characterId:CharacterId):Promise<readonly MemoryItem[]>;
   createMemory(characterId:CharacterId,input:MemoryCreateInput):Promise<MemoryItem>;
+  updateMemory(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryUpdateInput):Promise<MemoryItem>;
+  /** @deprecated Legacy conversation argument is provenance only. */
   updateMemory(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryUpdateInput):Promise<MemoryItem>;
   supersedeMemory(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryCreateInput):Promise<MemoryItem>;
-  archiveMemory(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId):Promise<MemoryItem>;
+  archiveMemory(characterId:CharacterId,memoryId:MemoryItemId,reason?:import("../../../contracts/src/index").MemoryArchiveReason):Promise<MemoryItem>;
+  /** @deprecated Legacy conversation argument is provenance only. */
+  archiveMemory(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,reason?:import("../../../contracts/src/index").MemoryArchiveReason):Promise<MemoryItem>;
+  restoreMemory(characterId:CharacterId,memoryId:MemoryItemId):Promise<MemoryItem>;
+  deleteMemory(characterId:CharacterId,memoryId:MemoryItemId):Promise<void>;
   searchRetrieval(query:RetrievalQuery):Promise<RetrievalResult>;
   rebuildRetrieval(characterId:CharacterId):Promise<void>;
   rebuildAllRetrieval():Promise<void>;
@@ -426,13 +434,15 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     setCoreBookEntryEnabled:(characterId,entryId,enabled)=>coreBookManager.setCoreBookEntryEnabled(characterId,entryId,enabled),
     buildContext:request=>contextEngine.build(request),
     extractMemory:async request=>{const item=await automaticMemoryAgent.process(request);return item?[item]:[]},
-    getMemory:(characterId,conversationId,memoryId)=>memoryBroker.get(characterId,conversationId,memoryId),
+    getMemory:(characterId,memoryOrConversationId,memoryId?)=>memoryBroker.get(characterId,memoryId??memoryOrConversationId,memoryId),
     searchMemory:query=>memoryBroker.search(query),
     listMemory:characterId=>memoryBroker.list(characterId),
     createMemory:(characterId,input)=>memoryBroker.create(characterId,input,userMemoryAuthority),
-    updateMemory:(characterId,conversationId,memoryId,input)=>memoryBroker.update(characterId,conversationId,memoryId,input,userMemoryAuthority),
+    updateMemory:(characterId,memoryOrConversationId,idOrInput,input?,_authority?)=>typeof idOrInput==="string" ? memoryBroker.update(characterId,idOrInput,input as MemoryUpdateInput,userMemoryAuthority) : memoryBroker.update(characterId,memoryOrConversationId as MemoryItemId,idOrInput as MemoryUpdateInput,userMemoryAuthority),
     supersedeMemory:(characterId,conversationId,memoryId,input)=>memoryBroker.supersede(characterId,conversationId,memoryId,input,userMemoryAuthority),
-    archiveMemory:(characterId,conversationId,memoryId)=>memoryBroker.archive(characterId,conversationId,memoryId,userMemoryAuthority),
+    archiveMemory:(characterId,memoryOrConversationId,memoryIdOrReason,maybeReason)=>typeof memoryIdOrReason==="string" ? memoryBroker.archive(characterId,memoryIdOrReason,userMemoryAuthority,maybeReason) : memoryBroker.archive(characterId,memoryOrConversationId as MemoryItemId,userMemoryAuthority,memoryIdOrReason),
+    restoreMemory:(characterId,memoryId)=>memoryBroker.restore(characterId,memoryId,userMemoryAuthority),
+    deleteMemory:(characterId,memoryId)=>memoryBroker.delete(characterId,memoryId,userMemoryAuthority),
     searchRetrieval:query=>{if(!options.retriever)throw new Error("Retrieval runtime is not configured.");const effective={...query,limit:query.limit??settingsManager.get().retrieval.candidateLimit};return options.retriever.search(effective);},
     rebuildRetrieval:characterId=>{if(!options.retriever)throw new Error("Retrieval runtime is not configured.");return options.retriever.rebuild(characterId);},
     rebuildAllRetrieval:()=>{if(!options.retriever)throw new Error("Retrieval runtime is not configured.");return options.retriever.rebuildAll();},
