@@ -562,7 +562,7 @@ export interface JsonSchema{$schema?:string;type?:string|string[];properties?:Re
 export interface ToolDefinition{id:string;version:string;schemaVersion:string;name:string;description:string;risk:ActionRisk;requiredCapabilities:readonly string[];resourceType:"domain"|"filesystem"|"application"|"resource";action:string;targetResolverId:string;confirmation:"never"|"policy";parameters:JsonSchema}
 export interface ChatMessage{id?:string;role:"system"|"user"|"assistant"|"tool";content:string;toolCallId?:string;metadata?:Record<string,unknown>}
 export interface ChatContext{conversationId:string;messages:readonly ChatMessage[];metadata?:Record<string,unknown>}
-export interface StructuredResponseFormat{type:"json-schema";schema:Record<string,unknown>;name?:string;strict?:boolean}
+export interface StructuredResponseFormat{type:"json-schema";schema:JsonSchema;name?:string;strict?:boolean}
 export type AgentOutputMode="auto"|"structured"|"plain";
 export type ResponseFormat={type:"text"}|{type:"json";schema:Record<string,unknown>}|StructuredResponseFormat;
 export interface ChatGenerationOptions{temperature?:number;maxTokens?:number;topP?:number;responseFormat?:ResponseFormat}
