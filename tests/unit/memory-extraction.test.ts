@@ -127,7 +127,7 @@ async function main(){
     const created=await service.process(requestBase);
     equal(created.length,1,"wrong source reference is normalized and candidate is accepted");
     const stored=(await broker.search({characterId:"character.a",conversationId:requestBase.conversationId,query:"table",status:"active",limit:10}))[0];
-    equal(stored?.conversationId,requestBase.conversationId,"normalized memory stays in the current conversation");
+    equal(stored?.originConversationId,requestBase.conversationId,"normalized memory stays in the current conversation");
     equal(stored?.sourceReference,requestBase.conversationId,"normalized source reference uses the current conversation");
     equal(traceStore.recent(1)[0]?.memoryExtraction?.accepted.length,1,"normalized candidate is accepted in trace");
     equal(traceStore.recent(1)[0]?.memoryExtraction?.rejected.length,0,"normalized candidate is not rejected");
