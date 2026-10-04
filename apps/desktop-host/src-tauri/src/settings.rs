@@ -276,6 +276,39 @@ mod tests{
         assert!(validate(&settings).is_err());
     }
     #[test]fn preserves_canonical_round_trip(){let settings=default_settings();let encoded=serde_json::to_vec(&settings).expect("encode");let (restored,migrated)=migrate(serde_json::from_slice(&encoded).expect("json")).expect("canonical settings should round-trip");assert!(!migrated);assert_eq!(restored.memory_agent.enabled,settings.memory_agent.enabled);}
-    #[test]fn migrates_previous_schema_memory_agent(){let value=serde_json::json!({"schemaVersion":"1","apiVersion":"1","chat":{"automaticLongTermMemory":false},"context":{"availableContextTokens":4096,"reservedOutputTokens":1024,"safetyMarginTokens":128,"recentConversationMessages":8},"memory":{"candidateLimit":8},"retrieval":{"candidateLimit":32},"diagnostics":{"logLevel":"normal","keepRecentEntries":100},"ui":{"showDiagnosticsInChat":true}});let (settings,migrated)=migrate(value).expect("schema v1 should migrate");assert!(migrated);assert!(!settings.memory_agent.enabled);assert_eq!(settings.memory_agent.instructions,DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS);assert_eq!(settings.schema_version,SCHEMA_VERSION);}
+    #[test]fn migrates_previous_schema_memory_agent(){let value=serde_json::json!({"schemaVersion":"1","apiVersion":"1","chat":{"automaticLongTermMemory":false},"context":{"availableContextTokens":4096,"reservedOutputTokens":1024,"safetyMarginTokens":128,"recentConversationMessages":8},"memory":{"candidateLimit":8},"retrieval":{"candidateLimit":32},"diagnostics":{"logLevel":"normal","keepRecentEntries":100},"ui":{"showDiagnosticsInChat":true}});let (settings,migrated)=migrate(value).expect("schema v1 should migrate");assert!(migrated);assert!(!settings.memory_agent.enabled);assert_eq!(settings.memory_agent.prompt,DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS);assert_eq!(settings.schema_version,SCHEMA_VERSION);}
     #[test]fn migrates_schema_v2_instructions_and_preserves_binding(){let value=serde_json::json!({"schemaVersion":"2","apiVersion":"1","chat":{"automaticLongTermMemory":true},"memoryAgent":{"enabled":false,"providerPresetId":"preset.memory","model":"memory-model"},"context":{"availableContextTokens":4096,"reservedOutputTokens":1024,"safetyMarginTokens":128,"recentConversationMessages":8},"memory":{"candidateLimit":8},"retrieval":{"candidateLimit":32},"diagnostics":{"logLevel":"normal","keepRecentEntries":100},"ui":{"showDiagnosticsInChat":true}});let (settings,migrated)=migrate(value).expect("schema v2 should migrate");assert!(migrated);assert!(!settings.memory_agent.enabled);assert_eq!(settings.memory_agent.provider_preset_id.as_deref(),Some("preset.memory"));assert_eq!(settings.memory_agent.model,"memory-model");assert_eq!(settings.memory_agent.instructions,DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS);assert_eq!(settings.schema_version,SCHEMA_VERSION);}
+    #[test]fn migrates_schema_v3_prompt_fields(){
+        let value=serde_json::json!({
+            "schemaVersion":"3","apiVersion":"1",
+            "chat":{"automaticLongTermMemory":true},
+            "memoryAgent":{"enabled":true,"providerPresetId":"preset.memory","model":"memory-model","instructions":"legacy custom prompt"},
+            "context":{"availableContextTokens":4096,"reservedOutputTokens":1024,"safetyMarginTokens":128,"recentConversationMessages":8},
+            "memory":{"candidateLimit":8},"retrieval":{"candidateLimit":32},
+            "diagnostics":{"logLevel":"normal","keepRecentEntries":100},"ui":{"showDiagnosticsInChat":true}
+        });
+        let (settings,migrated)=migrate(value).expect("schema v3 should migrate");
+        assert!(migrated);
+        assert_eq!(settings.schema_version,SCHEMA_VERSION);
+        assert_eq!(settings.memory_agent.prompt,"legacy custom prompt");
+        assert_eq!(settings.memory_agent.output_mode,"auto");
+        assert!(settings.memory_agent.prompt_backup.is_none());
+        assert_eq!(settings.memory_agent.default_prompt_version,DEFAULT_MEMORY_AGENT_PROMPT_VERSION);
+    }
+    #[test]fn preserves_schema_v4_prompt_backup(){
+        let value=serde_json::json!({
+            "schemaVersion":"4","apiVersion":"1",
+            "chat":{"automaticLongTermMemory":true},
+            "memoryAgent":{"enabled":true,"providerPresetId":"preset.memory","model":"memory-model","outputMode":"structured","prompt":"custom","promptBackup":"previous","defaultPromptVersion":"1"},
+            "context":{"availableContextTokens":4096,"reservedOutputTokens":1024,"safetyMarginTokens":128,"recentConversationMessages":8},
+            "memory":{"candidateLimit":8},"retrieval":{"candidateLimit":32},
+            "diagnostics":{"logLevel":"normal","keepRecentEntries":100},"ui":{"showDiagnosticsInChat":true}
+        });
+        let (settings,migrated)=migrate(value).expect("schema v4 should round-trip");
+        assert!(!migrated);
+        assert_eq!(settings.memory_agent.output_mode,"structured");
+        assert_eq!(settings.memory_agent.prompt,"custom");
+        assert_eq!(settings.memory_agent.prompt_backup.as_deref(),Some("previous"));
+    }
+
 }
