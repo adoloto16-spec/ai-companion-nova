@@ -136,6 +136,11 @@
         null
       ]
     },
+    "supersededBy": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 200
+    },
     "metadata": {
       "type": "object",
       "maxProperties": 64,
