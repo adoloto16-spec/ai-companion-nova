@@ -207,6 +207,7 @@ fn validate_item(item:&MemoryItem,character_id:&str)->Result<(),String>{
     if let Some(value)=&item.valid_from{if value.trim().is_empty(){return Err("validFrom must not be empty when present".to_string());}}
     if let Some(value)=&item.valid_until{if value.trim().is_empty(){return Err("validUntil must not be empty when present".to_string());}}
     if let Some(reference)=&item.source_reference{if reference.len()>MAX_SOURCE_REFERENCE{return Err("memory sourceReference exceeds the v1 input limit".to_string());}}
+    if let Some(superseded_by)=&item.superseded_by{if superseded_by.trim().is_empty()||superseded_by.len()>200{return Err("memory supersededBy is invalid".to_string());}}
     match item.source{
         MemorySource::Conversation|MemorySource::File|MemorySource::Tool|MemorySource::Model=>{
             if item.source_reference.as_ref().map(|value|value.trim().is_empty()).unwrap_or(true){return Err("memory sourceReference is required for this provenance".to_string());}
@@ -439,6 +440,7 @@ pub fn supersede(app:&tauri::AppHandle,character_id:&str,previous_memory_id:&str
     let updated_at=replacement.updated_at.clone();
     state.items[index].status=MemoryStatus::Superseded;
     state.items[index].updated_at=updated_at;
+    state.items[index].superseded_by=Some(replacement.id.clone());
     state.items.push(replacement.clone());
     save_unlocked(app,&state)?;
     Ok(replacement)
