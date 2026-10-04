@@ -19,7 +19,9 @@ async function main(){
     characterStore,conversationStore,memoryStore,
     retriever:{async search(){throw new Error("generic retrieval unavailable")},async rebuild(){throw new Error("generic retrieval unavailable")},async rebuildAll(){throw new Error("generic retrieval unavailable")}}
   });
-  const character=await runtime.createCharacter({name:"Nova",description:""});
+  await runtime.start();
+  const character=await runtime.getActiveCharacter();
+  const startedCharacter=character;
   await runtime.setActiveCharacter(character.id);
   const conversationA=await runtime.createConversation(character.id,{id:"conversation.a",title:"A"});
   const conversationB=await runtime.createConversation(character.id,{id:"conversation.b",title:"B"});
@@ -32,7 +34,7 @@ async function main(){
   await runtime.deleteConversation(character.id,conversationA.id);
   equal((await runtime.searchMemory({characterId:character.id,query:"синий"}))[0]?.id,memory.id,"deleted origin conversation does not delete memory");
 
-  const other=await runtime.createCharacter({name:"Other",description:""});
+  const other=await runtime.createCharacter({name:"Other"});
   equal((await runtime.searchMemory({characterId:other.id,query:"синий"})).length,0,"character isolation blocks memory leakage");
 
   const session=new ConversationSession(conversationB.id,character.id);
@@ -52,7 +54,9 @@ async function main(){
   ok(serialized.includes("[Relevant long-term memory]"),"memory is explicitly marked as context");
   ok(!serialized.includes('"role":"user","content":"[Relevant long-term memory]'),"memory is not injected as a fresh user command");
 
+  await runtime.stop();
   const reloaded=await createFoundationRuntime({characterStore,conversationStore,memoryStore});
+  await reloaded.start();
   equal((await reloaded.listMemory(character.id)).length,1,"memory survives runtime reload");
   equal((await reloaded.searchMemory({characterId:character.id,query:"цвет"}))[0]?.id,memory.id,"reloaded memory is retrievable");
   console.log("PASS Dynamic Memory v3 integration tests");
