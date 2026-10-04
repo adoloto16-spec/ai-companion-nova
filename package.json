@@ -18,6 +18,7 @@
     "core",
     "modules/mock",
     "providers/mock",
+    "providers/embeddings/*",
     "host/ipc",
     "host/credentials",
     "runtime/bootstrap",
