@@ -19,7 +19,7 @@ async function main(){
     characterStore,conversationStore,memoryStore,
     retriever:{async search(){throw new Error("generic retrieval unavailable")},async rebuild(){throw new Error("generic retrieval unavailable")},async rebuildAll(){throw new Error("generic retrieval unavailable")}}
   });
-  const character=await runtime.createCharacter({id:"character.v3",name:"Nova",description:""});
+  const character=await runtime.createCharacter({name:"Nova",description:""});
   await runtime.setActiveCharacter(character.id);
   const conversationA=await runtime.createConversation(character.id,{id:"conversation.a",title:"A"});
   const conversationB=await runtime.createConversation(character.id,{id:"conversation.b",title:"B"});
@@ -32,7 +32,7 @@ async function main(){
   await runtime.deleteConversation(character.id,conversationA.id);
   equal((await runtime.searchMemory({characterId:character.id,query:"синий"}))[0]?.id,memory.id,"deleted origin conversation does not delete memory");
 
-  const other=await runtime.createCharacter({id:"character.other",name:"Other",description:""});
+  const other=await runtime.createCharacter({name:"Other",description:""});
   equal((await runtime.searchMemory({characterId:other.id,query:"синий"})).length,0,"character isolation blocks memory leakage");
 
   const session=new ConversationSession(conversationB.id,character.id);
