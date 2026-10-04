@@ -170,7 +170,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     return {
       streaming:true,
       toolCalling:false,
-      structuredOutput:false,
+      structuredOutput:true,
       reasoning:false
     };
   }
@@ -216,16 +216,6 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     if(!request.model.trim()){
       throw this.failure({code:"INVALID_REQUEST",message:"Requested model is not configured for this provider.",request,retryable:false,details:{category:"configuration"}});
     }
-    if(request.generation?.responseFormat?.type==="json"){
-      throw this.failure({
-        code:"UNSUPPORTED",
-        message:"Structured output is not supported by this provider.",
-        request,
-        retryable:false,
-        details:{category:"capability"}
-      });
-    }
-
     const messages=this.mapMessages(request.context.messages,request);
     const secret=await this.resolveCredential(request);
     const body=JSON.stringify(this.mapRequest(request,messages,true));
@@ -263,7 +253,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       });
 
       const durationMs=Date.now()-started;
-      if(response.status<200||response.status>=300)throw this.httpFailure(response.status,request,durationMs);
+      if(response.status<200||response.status>=300)throw this.httpFailure(response.status,request,durationMs,response.body);
 
       let buffer="";
       let finishReason:ChatResponse["finishReason"]="unknown";
@@ -616,6 +606,14 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     });
   }
 
+  private isStructuredUnsupportedResponse(body?:string):boolean{
+    if(!body)return false;
+    const normalized=body.toLocaleLowerCase();
+    const mentionsFormat=normalized.includes("response_format")||normalized.includes("json_schema")||normalized.includes("structured output")||normalized.includes("structured_output");
+    const mentionsUnsupported=normalized.includes("unsupported")||normalized.includes("not supported")||normalized.includes("does not support")||normalized.includes("unknown parameter")||normalized.includes("unrecognized parameter");
+    return mentionsFormat&&mentionsUnsupported;
+  }
+
   private mapRequest(request:ChatRequest,messages:readonly OpenAIChatMessage[],stream=false){
     const generation=request.generation;
     const payload:{
@@ -625,6 +623,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       temperature?:number;
       max_tokens?:number;
       top_p?:number;
+      response_format?:Record<string,unknown>;
     }={
       model:request.model,
       messages:[...messages],
@@ -633,6 +632,19 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     if(generation?.temperature!==undefined)payload.temperature=generation.temperature;
     if(generation?.maxTokens!==undefined)payload.max_tokens=generation.maxTokens;
     if(generation?.topP!==undefined)payload.top_p=generation.topP;
+    const responseFormat=generation?.responseFormat;
+    if(responseFormat?.type==="json"){
+      payload.response_format={type:"json_object"};
+    }else if(responseFormat?.type==="json-schema"){
+      payload.response_format={
+        type:"json_schema",
+        json_schema:{
+          name:responseFormat.name??"structured_output",
+          strict:responseFormat.strict??true,
+          schema:responseFormat.schema
+        }
+      };
+    }
     return payload;
   }
 
@@ -725,7 +737,10 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     }
   }
 
-  private httpFailure(status:number,request:ChatRequest,durationMs:number):OpenAICompatibleProviderError{
+  private httpFailure(status:number,request:ChatRequest,durationMs:number,body?:string):OpenAICompatibleProviderError{
+    if((status===400||status===422)&&request.generation?.responseFormat?.type==="json-schema"&&this.isStructuredUnsupportedResponse(body)){
+      return this.failure({code:"UNSUPPORTED",message:"OpenAI-compatible provider does not support the requested structured output.",request,retryable:false,details:{category:"capability",httpStatus:status,durationMs}});
+    }
     if(status===400)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rejected the chat request.",request,retryable:false,details:{category:"bad_request",httpStatus:status,durationMs}});
     if(status===401||status===403)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rejected authentication.",request,retryable:false,details:{category:"authentication",httpStatus:status,durationMs}});
     if(status===404)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible chat endpoint was not found.",request,retryable:false,details:{category:"endpoint",httpStatus:status,durationMs}});
