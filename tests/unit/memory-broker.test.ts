@@ -30,7 +30,7 @@ async function main(){
   const found=await broker.search({characterId:"character.a",query:"Berlin"});
   equal(found.map(item=>item.id),["memory.a.1"],"substring search finds memory");
 
-  const crossConversation=await broker.create("character.a",{id:"memory.a.cross",conversationId:"conversation.a",type:"fact",content:"Cross conversation memory",tags:["cross"],importance:80,confidence:80,source:"conversation",sourceReference:"conversation.a",mutationPolicy:"locked"},user);
+  const crossConversation=await broker.create("character.a",{id:"memory.a.cross",conversationId:"conversation.a",type:"observation",content:"Cross conversation memory",tags:["cross"],importance:80,confidence:80,source:"conversation",sourceReference:"conversation.a",mutationPolicy:"locked"},user);
   equal((await broker.search({characterId:"character.a",query:"Cross conversation"}))[0]?.id,crossConversation.id,"same-character memory is retrievable without conversation scope");
 
   const b=await broker.create("character.b",{id:"memory.b.1",conversationId:"conversation.b",type:"preference",content:"Likes tea",tags:["drink","tea"],importance:50,confidence:60,source:"user"},user);
