@@ -21,6 +21,7 @@
     "sourceReference",
     "mutationPolicy",
     "status",
+    "archiveReason",
     "metadata"
   ],
   "properties": {
@@ -120,6 +121,19 @@
         "active",
         "superseded",
         "archived"
+      ]
+    },
+    "archiveReason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "manual",
+        "duplicate",
+        "superseded",
+        "other",
+        null
       ]
     },
     "metadata": {
