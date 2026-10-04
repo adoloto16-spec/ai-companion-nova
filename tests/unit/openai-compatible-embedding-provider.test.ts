@@ -58,7 +58,7 @@ async function main(){
   try{await provider.embed(["x"]);}catch(error){malformed=error instanceof OpenAICompatibleEmbeddingProviderError&&error.code==="INVALID_RESPONSE";}
   ok(malformed,"invalid embedding vector is rejected");
 
-  http.next={status:429,body:"{"error":{"message":"rate limited"}}"};
+  http.next={status:429,body:'{"error":{"message":"rate limited"}}'};
   let rateLimited=false;
   try{await provider.embed(["x"]);}catch(error){rateLimited=error instanceof OpenAICompatibleEmbeddingProviderError&&error.code==="PROVIDER_ERROR";}
   ok(rateLimited,"rate limit is a provider failure");
