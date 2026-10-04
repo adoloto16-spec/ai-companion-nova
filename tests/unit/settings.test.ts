@@ -20,7 +20,8 @@ async function main(){
     memory:{...defaults.memory,candidateLimit:3},
     retrieval:{...defaults.retrieval,candidateLimit:7},
     diagnostics:{...defaults.diagnostics,logLevel:"verbose" as const,keepRecentEntries:25},
-    chat:{...defaults.chat,automaticLongTermMemory:false}
+    chat:{...defaults.chat,automaticLongTermMemory:false},
+    memoryAgent:{...defaults.memoryAgent,enabled:true,providerPresetId:"preset.memory",model:"memory-model",outputMode:"structured",prompt:"Custom full prompt",promptBackup:"Previous prompt",defaultPromptVersion:"1"}
   };
   const errors=validateAppSettings(custom);
   equal(errors,[],"valid custom settings pass semantic validation");
@@ -28,6 +29,9 @@ async function main(){
   equal((await manager.get()).context.availableContextTokens,8192,"custom context size persists in store");
   equal((await manager.get()).memory.candidateLimit,3,"custom memory candidate limit persists");
   equal((await manager.get()).chat.automaticLongTermMemory,false,"custom extraction toggle persists");
+  equal((await manager.get()).memoryAgent.outputMode,"structured","agent output mode persists");
+  equal((await manager.get()).memoryAgent.prompt,"Custom full prompt","full agent prompt persists");
+  equal((await manager.get()).memoryAgent.promptBackup,"Previous prompt","agent prompt backup persists");
   const reset=await manager.reset();
   equal(reset,defaultAppSettings(),"reset restores defaults");
   let rejected=false;
