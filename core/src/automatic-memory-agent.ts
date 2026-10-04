@@ -1,8 +1,9 @@
 import {AgentOutputRunner} from "./agent-output";
 import {DEFAULT_AUTOMATIC_MEMORY_PROMPT,DEFAULT_MEMORY_AGENT_PROMPT_VERSION} from "../../contracts/src/settings";
+import {STANDARD_SCHEMAS} from "../../contracts/src/index";
 import type {
   AutomaticMemoryAgentRequest,ChatMessage,ChatRequest,ChatResponse,ChatTurnTrace,DiagnosticsStore,MemoryBroker,MemoryItem,MemoryMutationAuthority,
-  SchemaValidator,AppSettings,MemoryArchiveReason
+  SchemaValidator,AppSettings
 } from "../../contracts/src/index";
 
 const SECRET_PATTERNS=[
@@ -13,15 +14,7 @@ const SECRET_PATTERNS=[
   /password\s*[:=]\s*\S+/i,
   /secret\s*[:=]\s*\S+/i
 ];
-const MEMORY_AGENT_SCHEMA={
-  type:"object",
-  additionalProperties:false,
-  properties:{
-    decision:{type:"string",enum:["remember","no_memory"]},
-    content:{type:"string",maxLength:32768}
-  },
-  required:["decision","content"]
-} as const;
+const MEMORY_AGENT_SCHEMA=STANDARD_SCHEMAS["memory-agent-decision"]!;
 const DEFAULT_IMPORTANCE=70;
 const DEFAULT_CONFIDENCE=80;
 
