@@ -20,7 +20,7 @@
       "const": "1"
     },
     "schemaVersion": {
-      "const": "3"
+      "const": "4"
     },
     "chat": {
       "type": "object",
