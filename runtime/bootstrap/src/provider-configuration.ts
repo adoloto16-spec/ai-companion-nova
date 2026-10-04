@@ -28,7 +28,6 @@ import {
 
 const validator=new StandardContractValidator();
 import {
-  OPENAI_COMPATIBLE_EMBEDDING_PROVIDER_ID,
   OpenAICompatibleEmbeddingProvider,
   type EmbeddingHttpClient,
   validateOpenAICompatibleEmbeddingProviderConfig
