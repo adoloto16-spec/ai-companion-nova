@@ -183,7 +183,7 @@ function validateCandidateDecisions(
   allowedIds:readonly string[]
 ):void{
   const allowed=new Set(allowedIds);
-  for(const decision of decisions)assertAgentCandidateId(decision.candidateId,allowed);
+  for(const decision of decisions)assertAgentCandidateId(decision.candidateId,allowedIds);
   if(decisions.length===0)return;
   if(decisions.length!==allowedIds.length)throw new Error("Memory Judge must decide every supplied candidate or return NO_ARCHIVE.");
   const actual=new Set(decisions.map(decision=>decision.candidateId));
@@ -218,6 +218,11 @@ function validIndexState(state:MemorySemanticIndexState|undefined,characterId:Ch
   }
   records.sort((a,b)=>a.memoryId.localeCompare(b.memoryId));
   return {apiVersion:MEMORY_SEMANTIC_INDEX_API_VERSION,schemaVersion:MEMORY_SEMANTIC_INDEX_SCHEMA_VERSION,characterId,records};
+}
+
+function makeIndexRecord(memory:MemoryItem,provider:EmbeddingProvider,model:string,vector:readonly number[],now:string):MemorySemanticVectorRecord{
+  if(!isFiniteVector(vector))throw new Error("Embedding provider returned an invalid vector.");
+  return {memoryId:memory.id,characterId:memory.characterId,contentHash:deterministicContentHash(memory.content),embeddingProviderId:provider.id,embeddingModel:model,dimensions:vector.length,vector:[...vector],updatedAt:now};
 }
 
 export class MemorySemanticDeduplicator{
