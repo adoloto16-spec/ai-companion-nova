@@ -16,6 +16,7 @@ import type {
   MemoryRetriever,
   Retriever
 } from "../../contracts/src/index";
+import {InProcessMemoryRetriever} from "./memory-retriever";
 import {
   CONTEXT_API_VERSION,
   CONTEXT_SCHEMA_VERSION,DEFAULT_APP_SETTINGS
