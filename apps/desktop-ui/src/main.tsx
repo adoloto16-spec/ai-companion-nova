@@ -1200,7 +1200,7 @@ function AppSettingsView({
         }} disabled={saving}>Reset to Default</button>
         <button type="button" onClick={()=>{
           if(settings.semanticDedup.judge.promptBackup){
-            onChange({...settings,semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,prompt:settings.semanticDedup.judge.promptBackup,promptBackup:settings.semanticDedup.judge.prompt}});
+            onChange({...settings,semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,prompt:settings.semanticDedup.judge.promptBackup,promptBackup:settings.semanticDedup.judge.prompt}}});
           }
         }} disabled={saving||!settings.semanticDedup.judge.promptBackup}>Restore Previous</button>
         <button type="button" onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save"}</button>
