@@ -95,12 +95,13 @@ export class MemoryBrokerImpl implements MemoryBroker{
   }
   async archive(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason):Promise<MemoryItem>;
   async archive(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason):Promise<MemoryItem>;
-  async archive(...args:[CharacterId,MemoryItemId,MemoryMutationAuthority,MemoryArchiveReason?]|[CharacterId,ConversationId,MemoryItemId,MemoryMutationAuthority,MemoryArchiveReason?]):Promise<MemoryItem>{
+  async archive(...args:[CharacterId,MemoryItemId,MemoryMutationAuthority,MemoryArchiveReason?,MemoryItemId|null?]|[CharacterId,ConversationId,MemoryItemId,MemoryMutationAuthority,MemoryArchiveReason?,MemoryItemId|null?]):Promise<MemoryItem>{
     const characterId=args[0];
     const legacy=typeof args[2]==="string";
     const memoryId=requireMemoryId((legacy?args[2]:args[1]) as string);
     const authority=(legacy?args[3]:args[2]) as MemoryMutationAuthority;
     const reason=(legacy?args[4]:args[3]) as MemoryArchiveReason|undefined;
+    const supersededBy=(legacy?args[5]:args[4]) as MemoryItemId|null|undefined;
     const effectiveReason=reason??"manual";
     const scope=await this.ensureCharacter(characterId);
     const state=await this.loadState(scope);
@@ -109,7 +110,7 @@ export class MemoryBrokerImpl implements MemoryBroker{
     const current=state.items[index]!;
     if(current.status!=="active")throw new Error("Only active memory items can be archived.");
     actorAllowed(current,authority);
-    const archived:MemoryItem={...current,status:"archived",archiveReason:effectiveReason,updatedAt:this.clock.now(),metadata:cloneMetadata(current.metadata)};
+    const archived:MemoryItem={...current,status:"archived",archiveReason:effectiveReason,updatedAt:this.clock.now(),metadata:cloneMetadata(current.metadata),...(supersededBy===undefined?{}:{supersededBy})};
     validateItemShape(archived,scope,this.deps.validator);
     state.items[index]=archived;
     await this.persist(scope,state);
