@@ -114,7 +114,7 @@ async function main(){
   }catch{unknownFieldSchema=false}
   ok(unknownFieldSchema,"memory schema rejects unknown fields");
 
-  equal(observed.sort(),["MemoryArchived","MemoryCreated","MemoryCreated","MemoryCreated","MemoryCreated","MemorySuperseded","MemoryUpdated","MemoryUpdated"].sort(),"lifecycle events emitted");
+  equal(observed.sort(),["MemoryArchived","MemoryCreated","MemoryCreated","MemoryCreated","MemoryCreated","MemoryCreated","MemorySuperseded","MemoryUpdated","MemoryUpdated"].sort(),"lifecycle events emitted");
   ok(audit.entries.some(entry=>entry.action==="memory.supersede"&&entry.actorId==="test-user"),"memory mutation audit is recorded");
   console.log("PASS Dynamic Memory broker unit tests");
 }
