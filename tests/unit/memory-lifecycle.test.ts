@@ -8,7 +8,10 @@ const authority={actorId:"local-user",actorType:"user" as const,trusted:true,cap
 
 async function main(){
   const store=new InMemoryMemoryStore();
-  const broker=new MemoryBrokerImpl({store,validator:new StandardContractValidator(),audit:new InMemoryAuditService(),events:new InMemoryEventBus(),clock:{now:()=> "2026-10-04T19:00:00.000Z"}});
+  const events=new InMemoryEventBus();
+  const seen:string[]=[];
+  for(const type of ["MemoryCreated","MemoryUpdated","MemoryArchived","MemoryRestored","MemoryDeleted"] as const)events.subscribe(type,()=>{seen.push(type)});
+  const broker=new MemoryBrokerImpl({store,validator:new StandardContractValidator(),audit:new InMemoryAuditService(),events,clock:{now:()=> "2026-10-04T19:00:00.000Z"}});
   const created=await broker.create("character.lifecycle",{
     id:"memory.lifecycle",type:"fact",content:"User prefers blue.",tags:["blue"],importance:60,confidence:70,
     validFrom:null,validUntil:null,source:"user",sourceReference:null,mutationPolicy:"locked",metadata:{test:true}
@@ -32,6 +35,11 @@ async function main(){
   equal(archivedAgain.archiveReason,"duplicate","archive reason is typed");
   await broker.delete("character.lifecycle",created.id,authority);
   equal(await broker.get("character.lifecycle",created.id),undefined,"permanent delete removes canonical record");
+  equal(seen.filter(type=>type==="MemoryCreated").length,1,"created lifecycle event");
+  equal(seen.filter(type=>type==="MemoryUpdated").length,1,"updated lifecycle event");
+  equal(seen.filter(type=>type==="MemoryArchived").length,2,"archive lifecycle events");
+  equal(seen.filter(type=>type==="MemoryRestored").length,1,"restore lifecycle event");
+  equal(seen.filter(type=>type==="MemoryDeleted").length,1,"delete lifecycle event");
   await broker.delete("character.lifecycle","memory.lifecycle",authority).catch(()=>{});
   console.log("PASS Memory lifecycle tests");
 }
