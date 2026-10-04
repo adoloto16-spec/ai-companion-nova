@@ -21,7 +21,16 @@ async function main(){
     retrieval:{...defaults.retrieval,candidateLimit:7},
     diagnostics:{...defaults.diagnostics,logLevel:"verbose" as const,keepRecentEntries:25},
     chat:{...defaults.chat,automaticLongTermMemory:false},
-    memoryAgent:{...defaults.memoryAgent,enabled:true,providerPresetId:"preset.memory",model:"memory-model",outputMode:"structured" as const,prompt:"Custom full prompt",promptBackup:"Previous prompt",defaultPromptVersion:"1"}
+    memoryAgent:{...defaults.memoryAgent,enabled:true,providerPresetId:"preset.memory",model:"memory-model",outputMode:"structured" as const,prompt:"Custom full prompt",promptBackup:"Previous prompt",defaultPromptVersion:"1"},
+    semanticDedup:{
+      ...defaults.semanticDedup,
+      enabled:true,
+      embeddingProviderPresetId:"preset.embedding",
+      embeddingModel:"mistral-embed",
+      candidateSimilarityThreshold:0.91,
+      candidateLimit:7,
+      judge:{...defaults.semanticDedup.judge,enabled:true,providerPresetId:"preset.judge",model:"judge-model",outputMode:"plain" as const,prompt:"Judge custom",promptBackup:"Judge previous",defaultPromptVersion:"2"}
+    }
   };
   const errors=validateAppSettings(custom);
   equal(errors,[],"valid custom settings pass semantic validation");
@@ -32,6 +41,12 @@ async function main(){
   equal((await manager.get()).memoryAgent.outputMode,"structured","agent output mode persists");
   equal((await manager.get()).memoryAgent.prompt,"Custom full prompt","full agent prompt persists");
   equal((await manager.get()).memoryAgent.promptBackup,"Previous prompt","agent prompt backup persists");
+  equal((await manager.get()).semanticDedup.candidateSimilarityThreshold,0.91,"semantic candidate threshold persists");
+  equal((await manager.get()).semanticDedup.candidateLimit,7,"semantic candidate limit persists");
+  equal((await manager.get()).semanticDedup.embeddingModel,"mistral-embed","semantic embedding model persists");
+  equal((await manager.get()).semanticDedup.judge.outputMode,"plain","Memory Judge output mode persists");
+  equal((await manager.get()).semanticDedup.judge.prompt,"Judge custom","Memory Judge prompt persists");
+  equal((await manager.get()).semanticDedup.judge.promptBackup,"Judge previous","Memory Judge prompt backup persists");
   const reset=await manager.reset();
   equal(reset,defaultAppSettings(),"reset restores defaults");
   let rejected=false;
