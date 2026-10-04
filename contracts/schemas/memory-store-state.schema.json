@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.ai-companion-nova.dev/memory-store-state/v2",
-  "title": "AI Companion Nova Dynamic Memory Store State v2",
+  "$id": "https://schemas.ai-companion-nova.dev/memory-store-state/v3",
+  "title": "AI Companion Nova Dynamic Memory Store State v3",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -18,7 +18,7 @@
     },
     "schemaVersion": {
       "enum": [
-        "2"
+        "3"
       ]
     },
     "characterId": {
@@ -28,7 +28,7 @@
     "items": {
       "type": "array",
       "items": {
-        "$ref": "https://schemas.ai-companion-nova.dev/memory-item/v2"
+        "$ref": "https://schemas.ai-companion-nova.dev/memory-item/v3"
       }
     }
   }

@@ -4,7 +4,7 @@ use std::{collections::HashSet,fs,io::Write,path::PathBuf,sync::Mutex};
 use tauri::Manager;
 
 const API_VERSION:&str="1";
-const SCHEMA_VERSION:&str="2";
+const SCHEMA_VERSION:&str="3";
 const LEGACY_SCHEMA_VERSION:&str="1";
 const MAX_CONTENT:usize=32768;
 const MAX_TAGS:usize=32;
@@ -35,8 +35,8 @@ pub struct MemoryItem{
     pub id:String,
     #[serde(rename="characterId")]
     pub character_id:String,
-    #[serde(rename="conversationId")]
-    pub conversation_id:String,
+    #[serde(rename="originConversationId")]
+    pub origin_conversation_id:Option<String>,
     #[serde(rename="type")]
     pub memory_type:MemoryType,
     pub content:String,
@@ -86,7 +86,8 @@ fn encoded_scope(character_id:&str)->String{
     for byte in character_id.as_bytes(){encoded.push_str(&format!("{byte:02x}"));}
     encoded
 }
-fn memory_file_name(character_id:&str)->String{format!("dynamic-memory-v2-{}.json",encoded_scope(character_id))}
+fn memory_file_name(character_id:&str)->String{format!("dynamic-memory-v3-{}.json",encoded_scope(character_id))}
+fn v2_memory_file_name(character_id:&str)->String{format!("dynamic-memory-v2-{}.json",encoded_scope(character_id))}
 fn legacy_memory_file_name(character_id:&str)->String{format!("dynamic-memory-v1-{}.json",encoded_scope(character_id))}
 
 pub fn config_path(app:&tauri::AppHandle,character_id:&str)->Result<PathBuf,String>{
@@ -97,7 +98,7 @@ pub fn config_path(app:&tauri::AppHandle,character_id:&str)->Result<PathBuf,Stri
 
 fn validate_item(item:&MemoryItem,character_id:&str)->Result<(),String>{
     if item.character_id!=character_id{return Err("memory item character scope mismatch".to_string());}
-    if item.conversation_id.trim().is_empty()||item.conversation_id.len()>200{return Err("memory conversation scope is invalid".to_string());}
+    if let Some(origin)=&item.origin_conversation_id{if origin.trim().is_empty()||origin.len()>200{return Err("memory originConversationId is invalid".to_string());}}
     if item.id.trim().is_empty()||item.id.len()>200{return Err("memory id must be non-empty and at most 200 characters".to_string());}
     if item.content.trim().is_empty()||item.content.len()>MAX_CONTENT{return Err("memory content exceeds the v2 input limits".to_string());}
     if item.tags.len()>MAX_TAGS{return Err("memory tags exceed the v2 input limit".to_string());}
@@ -189,7 +190,7 @@ fn legacy_config_path(app:&tauri::AppHandle,character_id:&str)->Result<PathBuf,S
     Ok(config_dir(app)?.join(legacy_memory_file_name(scope)))
 }
 
-fn legacy_to_v2(legacy:LegacyMemoryStoreState,conversation_id:&str)->MemoryStoreState{
+fn legacy_to_v3(legacy:LegacyMemoryStoreState,origin_conversation_id:&str)->MemoryStoreState{
     MemoryStoreState{
         api_version:API_VERSION.to_string(),
         schema_version:SCHEMA_VERSION.to_string(),
@@ -197,7 +198,7 @@ fn legacy_to_v2(legacy:LegacyMemoryStoreState,conversation_id:&str)->MemoryStore
         items:legacy.items.into_iter().map(|item|MemoryItem{
             id:item.id,
             character_id:item.character_id,
-            conversation_id:conversation_id.to_string(),
+            origin_conversation_id:Some(origin_conversation_id.to_string()),
             memory_type:item.memory_type,
             content:item.content,
             tags:item.tags,
@@ -216,7 +217,7 @@ fn legacy_to_v2(legacy:LegacyMemoryStoreState,conversation_id:&str)->MemoryStore
     }
 }
 
-fn migration_conversation_id(app:&tauri::AppHandle,character_id:&str)->Result<String,String>{
+fn migration_origin_conversation_id(app:&tauri::AppHandle,character_id:&str)->Result<String,String>{
     if let Some(active)=crate::conversations::get_active(app,character_id)?{
         if active.character_id!=character_id{return Err("active conversation character scope mismatch".to_string());}
         return Ok(active.id);
@@ -224,21 +225,62 @@ fn migration_conversation_id(app:&tauri::AppHandle,character_id:&str)->Result<St
     Ok(crate::conversations::default_conversation_id(character_id))
 }
 
+fn v2_config_path(app:&tauri::AppHandle,character_id:&str)->Result<PathBuf,String>{
+    let scope=character_id.trim();
+    if scope.is_empty(){return Err("character id must not be empty".to_string());}
+    Ok(config_dir(app)?.join(v2_memory_file_name(scope)))
+}
+
+fn migrate_v2_value(mut value:Value)->Result<MemoryStoreState,String>{
+    let object=value.as_object_mut().ok_or_else(||"dynamic memory v2 storage must be a JSON object".to_string())?;
+    if object.get("apiVersion").and_then(Value::as_str)!=Some(API_VERSION){return Err("unsupported dynamic memory v2 apiVersion".to_string());}
+    if object.get("schemaVersion").and_then(Value::as_str)!=Some("2"){return Err("unsupported dynamic memory v2 schemaVersion".to_string());}
+    let items=object.get_mut("items").and_then(Value::as_array_mut).ok_or_else(||"dynamic memory v2 items must be an array".to_string())?;
+    for item in items{
+        let item_object=item.as_object_mut().ok_or_else(||"dynamic memory v2 item must be an object".to_string())?;
+        if !item_object.contains_key("originConversationId"){
+            let origin=item_object.remove("conversationId").unwrap_or(Value::Null);
+            item_object.insert("originConversationId".to_string(),origin);
+        }else{
+            item_object.remove("conversationId");
+        }
+    }
+    object.insert("schemaVersion".to_string(),Value::String(SCHEMA_VERSION.to_string()));
+    serde_json::from_value(value).map_err(|e|format!("invalid migrated dynamic memory v2 storage: {e}"))
+}
+
 fn load_unlocked(app:&tauri::AppHandle,character_id:&str)->Result<Option<MemoryStoreState>,String>{
     let path=config_path(app,character_id)?;
     if path.exists(){
         let bytes=fs::read(&path).map_err(|e|format!("failed to read dynamic memory storage: {e}"))?;
-        let state:MemoryStoreState=serde_json::from_slice(&bytes).map_err(|e|format!("invalid dynamic memory storage file: {e}"))?;
+        let value:Value=serde_json::from_slice(&bytes).map_err(|e|format!("invalid dynamic memory storage file: {e}"))?;
+        let state=if value.get("schemaVersion").and_then(Value::as_str)==Some("2"){
+            migrate_v2_value(value)?
+        }else{
+            serde_json::from_value(value).map_err(|e|format!("invalid dynamic memory storage file: {e}"))?
+        };
         validate(&state,character_id)?;
+        if state.schema_version==SCHEMA_VERSION{
+            save_unlocked(app,&state)?;
+        }
         return Ok(Some(state));
+    }
+    let v2_path=v2_config_path(app,character_id)?;
+    if v2_path.exists(){
+        let bytes=fs::read(&v2_path).map_err(|e|format!("failed to read legacy v2 dynamic memory storage: {e}"))?;
+        let value:Value=serde_json::from_slice(&bytes).map_err(|e|format!("invalid legacy v2 dynamic memory storage file: {e}"))?;
+        let migrated=migrate_v2_value(value)?;
+        validate(&migrated,character_id)?;
+        save_unlocked(app,&migrated)?;
+        return Ok(Some(migrated));
     }
     let legacy_path=legacy_config_path(app,character_id)?;
     if !legacy_path.exists(){return Ok(None);}
     let bytes=fs::read(&legacy_path).map_err(|e|format!("failed to read legacy dynamic memory storage: {e}"))?;
     let legacy:LegacyMemoryStoreState=serde_json::from_slice(&bytes).map_err(|e|format!("invalid legacy dynamic memory storage file: {e}"))?;
     validate_legacy(&legacy,character_id)?;
-    let conversation_id=migration_conversation_id(app,character_id)?;
-    let migrated=legacy_to_v2(legacy,&conversation_id);
+    let origin=migration_origin_conversation_id(app,character_id)?;
+    let migrated=legacy_to_v3(legacy,&origin);
     validate(&migrated,character_id)?;
     save_unlocked(app,&migrated)?;
     Ok(Some(migrated))
@@ -268,7 +310,7 @@ pub fn save(app:&tauri::AppHandle,state:&MemoryStoreState,lock:&MemoryWriteLock)
     save_unlocked(app,state)
 }
 
-pub fn supersede(app:&tauri::AppHandle,character_id:&str,conversation_id:&str,previous_memory_id:&str,replacement:MemoryItem,lock:&MemoryWriteLock)->Result<MemoryItem,String>{
+pub fn supersede(app:&tauri::AppHandle,character_id:&str,previous_memory_id:&str,replacement:MemoryItem,lock:&MemoryWriteLock)->Result<MemoryItem,String>{
     let _guard=lock.0.lock().map_err(|_|"dynamic memory storage lock poisoned".to_string())?;
     let mut state=load_unlocked(app,character_id)?.unwrap_or_else(||MemoryStoreState{
         api_version:API_VERSION.to_string(),
@@ -278,8 +320,7 @@ pub fn supersede(app:&tauri::AppHandle,character_id:&str,conversation_id:&str,pr
     });
     let index=state.items.iter().position(|item|item.id==previous_memory_id).ok_or_else(||"memory item was not found".to_string())?;
     if !matches!(state.items[index].status,MemoryStatus::Active){return Err("only active memory items can be superseded".to_string());}
-    if state.items[index].conversation_id!=conversation_id{return Err("memory item conversation scope mismatch".to_string());}
-    if replacement.character_id!=character_id||replacement.conversation_id!=conversation_id{return Err("replacement memory scope mismatch".to_string());}
+    if replacement.character_id!=character_id{return Err("replacement memory scope mismatch".to_string());}
     if state.items.iter().any(|item|item.id==replacement.id){return Err("memory id already exists".to_string());}
     validate_item(&replacement,character_id)?;
     let updated_at=replacement.updated_at.clone();
@@ -295,7 +336,7 @@ mod tests{
     use super::*;
 
     #[test]
-    fn legacy_migration_is_lossless_and_scoped(){
+    fn legacy_migration_is_lossless_and_preserves_provenance(){
         let legacy=LegacyMemoryStoreState{
             api_version:API_VERSION.to_string(),
             schema_version:LEGACY_SCHEMA_VERSION.to_string(),
@@ -318,12 +359,32 @@ mod tests{
             ]
         };
         validate_legacy(&legacy,"character.a").expect("legacy state should validate");
-        let migrated=legacy_to_v2(legacy,"conversation:character.a:default.v2");
+        let migrated=legacy_to_v3(legacy,"conversation:character.a:default.v2");
         assert_eq!(migrated.schema_version,SCHEMA_VERSION);
         assert_eq!(migrated.character_id,"character.a");
         assert_eq!(migrated.items.len(),2);
-        assert!(migrated.items.iter().all(|item|item.character_id=="character.a"&&item.conversation_id=="conversation:character.a:default.v2"));
+        assert!(migrated.items.iter().all(|item|item.character_id=="character.a"&&item.origin_conversation_id.as_deref()==Some("conversation:character.a:default.v2")));
         assert_eq!(migrated.items[0].content,"User prefers aviation examples.");
         assert_eq!(migrated.items[1].content,"User moved to Nuremberg.");
+    }
+
+    #[test]
+    fn v2_migration_renames_conversation_to_provenance_without_data_loss(){
+        let value=serde_json::json!({
+            "apiVersion":"1","schemaVersion":"2","characterId":"character.a",
+            "items":[{
+                "id":"m1","characterId":"character.a","conversationId":"conversation.a","type":"fact",
+                "content":"The user likes blue.","tags":["color"],"importance":80,"confidence":90,
+                "createdAt":"2026-09-28T00:00:00.000Z","updatedAt":"2026-09-28T00:00:00.000Z",
+                "validFrom":null,"validUntil":null,"source":"conversation","sourceReference":"turn.a",
+                "mutationPolicy":"auto","status":"active","metadata":{}
+            }]
+        });
+        let migrated=migrate_v2_value(value).expect("v2 memory should migrate");
+        validate(&migrated,"character.a").expect("migrated v3 memory should validate");
+        assert_eq!(migrated.schema_version,SCHEMA_VERSION);
+        assert_eq!(migrated.items.len(),1);
+        assert_eq!(migrated.items[0].origin_conversation_id.as_deref(),Some("conversation.a"));
+        assert_eq!(migrated.items[0].content,"The user likes blue.");
     }
 }

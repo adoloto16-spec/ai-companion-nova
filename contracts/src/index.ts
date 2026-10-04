@@ -198,7 +198,7 @@ export interface CoreBookStore{
 }
 export type MemoryItemId=string;
 export const MEMORY_API_VERSION:ApiVersion="1";
-export const MEMORY_SCHEMA_VERSION="2";
+export const MEMORY_SCHEMA_VERSION="3";
 export const MEMORY_EXTRACTION_API_VERSION:ApiVersion="1";
 export const MEMORY_EXTRACTION_SCHEMA_VERSION="1";
 export type MemoryType="fact"|"preference"|"relationship"|"event"|"experience"|"goal"|"instruction"|"observation";
@@ -208,7 +208,7 @@ export type MemoryMutationPolicy="locked"|"suggest"|"auto";
 export interface MemoryItem{
   id:MemoryItemId;
   characterId:CharacterId;
-  conversationId:ConversationId;
+  originConversationId:ConversationId|null;
   type:MemoryType;
   content:string;
   tags:readonly string[];
@@ -226,7 +226,9 @@ export interface MemoryItem{
 }
 export interface MemoryCreateInput{
   id?:MemoryItemId;
-  conversationId:ConversationId;
+  originConversationId?:ConversationId|null;
+  /** @deprecated Use originConversationId; retained only as a migration/input compatibility field. */
+  conversationId?:ConversationId;
   type:MemoryType;
   content:string;
   tags?:readonly string[];
@@ -241,8 +243,11 @@ export interface MemoryCreateInput{
 }
 export interface MemorySearchQuery{
   characterId:CharacterId;
-  conversationId:ConversationId;
   query:string;
+  /** Optional administrative/provenance filter; never an implicit retrieval scope. */
+  originConversationId?:ConversationId;
+  /** @deprecated Legacy alias; never used as the retrieval scope. */
+  conversationId?:ConversationId;
   types?:readonly MemoryType[];
   tags?:readonly string[];
   status?:MemoryStatus;
@@ -276,6 +281,8 @@ export interface MemoryStoreState{
 export interface MemoryStore{
   load(characterId:CharacterId):Promise<MemoryStoreState|undefined>;
   save(state:MemoryStoreState):Promise<void>;
+  supersede(characterId:CharacterId,previousMemoryId:MemoryItemId,replacement:MemoryItem):Promise<MemoryItem>;
+  /** @deprecated Compatibility overload for legacy callers; conversationId is provenance only. */
   supersede(characterId:CharacterId,conversationId:ConversationId,previousMemoryId:MemoryItemId,replacement:MemoryItem):Promise<MemoryItem>;
 }
 export const RETRIEVAL_API_VERSION:ApiVersion="1";
@@ -290,15 +297,64 @@ export interface Retriever{search(query:RetrievalQuery):Promise<RetrievalResult>
 export interface RetrievalIndexDocument{apiVersion:ApiVersion;schemaVersion:string;characterId:CharacterId;conversationId?:ConversationId;source:RetrievalSource;sourceId:string;title:string;content:string;tags:readonly string[];status?:string;type?:string;updatedAt:string}
 export interface RetrievalIndexWriter{upsert(document:RetrievalIndexDocument):Promise<void>;remove(characterId:CharacterId,source:RetrievalSource,sourceId:string,conversationId?:ConversationId):Promise<void>;removeCharacter(characterId:CharacterId):Promise<void>}
 
+export interface MemoryRetrievalQuery{
+  characterId:CharacterId;
+  query:string;
+  status?:MemoryStatus;
+  types?:readonly MemoryType[];
+  tags?:readonly string[];
+  originConversationId?:ConversationId;
+  limit?:number;
+}
+export interface MemoryRetrievalCandidate{
+  memoryId:MemoryItemId;
+  score:number;
+  lexicalRelevance:number;
+  phraseRelevance:number;
+  tagRelevance:number;
+}
+export interface MemoryRetrievalResult{
+  characterId:CharacterId;
+  query:string;
+  candidates:readonly MemoryRetrievalCandidate[];
+}
+export interface MemoryRetriever{
+  search(query:MemoryRetrievalQuery):Promise<MemoryRetrievalResult>;
+}
 export interface MemoryBroker{
+  get(characterId:CharacterId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>;
+  /** @deprecated Compatibility overload; conversationId is provenance only. */
   get(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>;
+  list(characterId:CharacterId):Promise<readonly MemoryItem[]>;
   search(query:MemorySearchQuery):Promise<readonly MemoryItem[]>;
   create(characterId:CharacterId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  update(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryUpdateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  /** @deprecated Compatibility overload; conversationId is provenance only. */
   update(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryUpdateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  supersede(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  /** @deprecated Compatibility overload; conversationId is provenance only. */
   supersede(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  archive(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  /** @deprecated Compatibility overload; conversationId is provenance only. */
   archive(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>;
 }
-export interface MemoryExtractionRequest{
+export interface AutomaticMemoryAgentRequest{
+  apiVersion:ApiVersion;
+  schemaVersion:string;
+  characterId:CharacterId;
+  conversationId:ConversationId;
+  turnId:string;
+  model:string;
+  providerId?:string;
+  providerPresetId?:string;
+  userMessage:ChatMessage;
+  assistantMessage:ChatMessage;
+  contextMessages:readonly ChatMessage[];
+}
+export type MemoryExtractionRequest=AutomaticMemoryAgentRequest;
+
+/* legacy alias retained above */
+export interface LegacyMemoryExtractionRequest{
   apiVersion:ApiVersion;
   schemaVersion:string;
   characterId:CharacterId;
@@ -401,10 +457,10 @@ export interface EventPayloadMap{
   CoreBookEntryUpdated:{characterId:string;entryId:string};
   CoreBookEntryDeleted:{characterId:string;entryId:string};
   CoreBookEntryEnabledChanged:{characterId:string;entryId:string;enabled:boolean};
-  MemoryCreated:{characterId:string;conversationId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
-  MemoryUpdated:{characterId:string;conversationId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
-  MemorySuperseded:{characterId:string;conversationId:string;memoryId:string;previousMemoryId:string;status:MemoryStatus;updatedAt:string};
-  MemoryArchived:{characterId:string;conversationId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
+  MemoryCreated:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;status:MemoryStatus;updatedAt:string};
+  MemoryUpdated:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;status:MemoryStatus;updatedAt:string};
+  MemorySuperseded:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;previousMemoryId:string;status:MemoryStatus;updatedAt:string};
+  MemoryArchived:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;status:MemoryStatus;updatedAt:string};
   ChatResponseReceived:{requestId:string;conversationId:string;providerId:string;model:string;finishReason:ChatFinishReason};
   ConversationCreated:{characterId:string;conversationId:string};
   ConversationUpdated:{characterId:string;conversationId:string};
@@ -428,6 +484,21 @@ export interface ChatTurnTrace{
     omittedCandidates:readonly ContextCandidate[];
   };
   finalRequest?:ChatRequest;
+  automaticMemory?:{
+    started:boolean;
+    status?:"started"|"completed"|"failed"|"skipped";
+    requestId?:string;
+    providerPresetId?:string;
+    providerId?:string;
+    model?:string;
+    conversationId?:string;
+    contextMessageCount?:number;
+    userMessagePresent?:boolean;
+    assistantResponsePresent?:boolean;
+    result?:string;
+    persistence?:{status:"created"|"duplicate"|"rejected"|"none";memoryId?:string;reason?:string};
+    failed?:string;
+  };
   providerResponse?:{
     providerId:string;
     model:string;
@@ -453,9 +524,10 @@ export interface ChatTurnTrace{
     failed?:string;
   };
 }
-export type ChatTurnTracePatch=Partial<Omit<ChatTurnTrace,"turnId"|"requestId"|"characterId"|"conversationId"|"timestamp"|"memoryExtraction">>&{
+export type ChatTurnTracePatch=Partial<Omit<ChatTurnTrace,"turnId"|"requestId"|"characterId"|"conversationId"|"timestamp"|"memoryExtraction"|"automaticMemory">>&{
   contextBuild?:ChatTurnTrace["contextBuild"];
   memoryExtraction?:Partial<NonNullable<ChatTurnTrace["memoryExtraction"]>>;
+  automaticMemory?:Partial<NonNullable<ChatTurnTrace["automaticMemory"]>>;
 };
 
 export interface ChatTraceStore{

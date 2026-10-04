@@ -190,12 +190,11 @@ fn save_memory_state(app:tauri::AppHandle,state_value:memory::MemoryStoreState,s
 fn supersede_memory(
     app:tauri::AppHandle,
     character_id:String,
-    conversation_id:String,
     previous_memory_id:String,
     replacement:memory::MemoryItem,
     state:tauri::State<'_,memory::MemoryWriteLock>,
 )->Result<memory::MemoryItem,String>{
-    memory::supersede(&app,&character_id,&conversation_id,&previous_memory_id,replacement,&state)
+    memory::supersede(&app,&character_id,&previous_memory_id,replacement,&state)
 }
 
 #[cfg(feature="tauri-app")]

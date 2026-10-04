@@ -17,11 +17,9 @@ async function main(){
     events.subscribe(type,event=>{observed.push(event.type);});
   }
   const characters=new Set(["character.a","character.b"]);
-  const conversations=new Map([["character.a",new Set(["conversation.a"])],["character.b",new Set(["conversation.b"])] ]);
   const broker=new MemoryBrokerImpl({
     store,validator:new StandardContractValidator(),audit,events,clock,
-    characterExists:async id=>characters.has(id),
-    conversationExists:async (characterId,conversationId)=>conversations.get(characterId)?.has(conversationId)??false
+    characterExists:async id=>characters.has(id)
   });
   const user={actorId:"test-user",actorType:"user" as const,trusted:true,capabilities:[]};
 
@@ -29,11 +27,14 @@ async function main(){
     id:"memory.a.1",conversationId:"conversation.a",type:"fact",content:"Nova lives in Berlin",tags:["home"],importance:90,confidence:80,
     source:"conversation",sourceReference:"conversation/message-1",mutationPolicy:"locked",metadata:{origin:"test"}
   },user);
-  const found=await broker.search({characterId:"character.a",conversationId:"conversation.a",query:"Berlin"});
+  const found=await broker.search({characterId:"character.a",query:"Berlin"});
   equal(found.map(item=>item.id),["memory.a.1"],"substring search finds memory");
 
+  const crossConversation=await broker.create("character.a",{id:"memory.a.cross",conversationId:"conversation.a",type:"observation",content:"Cross conversation memory",tags:["cross"],importance:80,confidence:80,source:"conversation",sourceReference:"conversation.a",mutationPolicy:"locked"},user);
+  equal((await broker.search({characterId:"character.a",query:"Cross conversation"}))[0]?.id,crossConversation.id,"same-character memory is retrievable without conversation scope");
+
   const b=await broker.create("character.b",{id:"memory.b.1",conversationId:"conversation.b",type:"preference",content:"Likes tea",tags:["drink","tea"],importance:50,confidence:60,source:"user"},user);
-  equal(await broker.get("character.a","conversation.a",b.id),undefined,"character isolation prevents cross-scope get");
+  equal(await broker.get("character.a","conversation.a",b.id),undefined,"character isolation prevents cross-character get");
   let crossScope=false;
   try{await broker.update("character.a","conversation.a",b.id,{content:"leak"},user);}catch{crossScope=true}
   ok(crossScope,"character isolation rejects cross-scope mutation");
@@ -63,13 +64,13 @@ async function main(){
   equal(superseded.status,"active","replacement stays active");
   equal((await broker.get("character.a","conversation.a","memory.a.1"))?.status,"superseded","old memory is retained and superseded");
   equal((await broker.get("character.a","conversation.a","memory.a.1"))?.sourceReference,"conversation/message-1","old provenance remains preserved");
-  equal((await broker.search({characterId:"character.a",conversationId:"conversation.a",query:"",status:"active"})).filter(item=>item.type==="fact").length,1,"supersede leaves one active fact version");
-  equal((await broker.search({characterId:"character.a",conversationId:"conversation.a",query:"Berlin"})).length,0,"active search excludes superseded memory");
-  equal((await broker.search({characterId:"character.a",conversationId:"conversation.a",query:"Berlin",status:"superseded"})).length,1,"status filter finds superseded history");
+  equal((await broker.search({characterId:"character.a",query:"",status:"active"})).filter(item=>item.type==="fact").length,1,"supersede leaves one active fact version");
+  equal((await broker.search({characterId:"character.a",query:"Berlin"})).length,0,"active search excludes superseded memory");
+  equal((await broker.search({characterId:"character.a",query:"Berlin",status:"superseded"})).length,1,"status filter finds superseded history");
 
   const archived=await broker.archive("character.b","conversation.b",b.id,user);
   equal(archived.status,"archived","archive preserves memory data");
-  equal((await broker.search({characterId:"character.b",conversationId:"conversation.b",query:"tea"})).length,0,"ordinary search excludes archived memory");
+  equal((await broker.search({characterId:"character.b",query:"tea"})).length,0,"ordinary search excludes archived memory");
 
   let invalidTransition=false;
   try{await broker.update("character.a","conversation.a",locked.id,{content:"cannot edit superseded" },user);}catch{invalidTransition=true}
@@ -113,7 +114,7 @@ async function main(){
   }catch{unknownFieldSchema=false}
   ok(unknownFieldSchema,"memory schema rejects unknown fields");
 
-  equal(observed.sort(),["MemoryArchived","MemoryCreated","MemoryCreated","MemoryCreated","MemoryCreated","MemorySuperseded","MemoryUpdated","MemoryUpdated"].sort(),"lifecycle events emitted");
+  equal(observed.sort(),["MemoryArchived","MemoryCreated","MemoryCreated","MemoryCreated","MemoryCreated","MemoryCreated","MemorySuperseded","MemoryUpdated","MemoryUpdated"].sort(),"lifecycle events emitted");
   ok(audit.entries.some(entry=>entry.action==="memory.supersede"&&entry.actorId==="test-user"),"memory mutation audit is recorded");
   console.log("PASS Dynamic Memory broker unit tests");
 }

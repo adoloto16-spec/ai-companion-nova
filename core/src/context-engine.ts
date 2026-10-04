@@ -10,11 +10,13 @@ import type {
   CoreBookEntry,
   CoreBookEntryId,
   CharacterId,
+  DiagnosticsStore,
   MemoryBroker,
   MemoryItem,
-  MemorySearchQuery,
+  MemoryRetriever,
   Retriever
 } from "../../contracts/src/index";
+import {InProcessMemoryRetriever} from "./memory-retriever";
 import {
   CONTEXT_API_VERSION,
   CONTEXT_SCHEMA_VERSION,DEFAULT_APP_SETTINGS
@@ -41,8 +43,8 @@ export interface CoreBookCandidateReader {
 }
 
 export interface MemoryCandidateReader {
-  search(query:MemorySearchQuery):Promise<readonly MemoryItem[]>;
-  get?(characterId:CharacterId,conversationId:string,memoryId:string):Promise<MemoryItem|undefined>;
+  get(characterId:CharacterId,memoryId:string):Promise<MemoryItem|undefined>;
+  list(characterId:CharacterId):Promise<readonly MemoryItem[]>;
 }
 
 const DEFAULT_MEMORY_CANDIDATE_LIMIT=DEFAULT_APP_SETTINGS.memory.candidateLimit;
@@ -52,9 +54,10 @@ export class MemoryCandidateSource implements ContextCandidateSource {
   readonly source:ContextSource="memory";
   constructor(
     private readonly reader:MemoryCandidateReader,
+    private readonly memoryRetriever:MemoryRetriever,
     private readonly estimator:TokenEstimator=new DeterministicApproxTokenEstimator(),
     private readonly maxResults:DynamicNumber=DEFAULT_MEMORY_CANDIDATE_LIMIT,
-    private readonly retriever?:Retriever
+    private readonly diagnostics?:DiagnosticsStore
   ){
     if(typeof maxResults==="number"&&(!Number.isInteger(maxResults)||maxResults<1))throw new Error("maxResults must be a positive integer.");
   }
@@ -66,52 +69,40 @@ export class MemoryCandidateSource implements ContextCandidateSource {
     const query=latestUserMessage?.content.trim();
     if(!query)return [];
 
-    let results:readonly MemoryItem[];
-    if(this.retriever){
-      let retrieval;
-      try{
-        retrieval=await this.retriever.search({
-          apiVersion:CONTEXT_API_VERSION,
-          schemaVersion:CONTEXT_SCHEMA_VERSION,
-          characterId:request.characterId,
-          conversationId:request.conversationId,
-          query,
-          sources:["memory"],
-          limit:maxResults,
-          filters:{status:"active"}
-        });
-      }catch{return []}
-      const canonical=await Promise.all(retrieval.candidates
-        .filter(candidate=>candidate.source==="memory"&&candidate.characterId===request.characterId&&candidate.conversationId===request.conversationId)
-        .map(candidate=>this.reader.get?.(request.characterId,request.conversationId,candidate.sourceId)));
-      results=canonical.filter((item):item is MemoryItem=>Boolean(item));
-    }else{
-      try{results=await this.reader.search({characterId:request.characterId,conversationId:request.conversationId,query,status:"active",limit:maxResults});}
-      catch{return []}
-    }
-
-    return results
-      .filter(item=>item.characterId===request.characterId && item.conversationId===request.conversationId && item.status==="active")
-      .map((item,index)=>{
-        const relevance=Math.max(10,100-index*10);
+    try{
+      const retrieval=await this.memoryRetriever.search({
+        characterId:request.characterId,
+        query,
+        status:"active",
+        limit:maxResults
+      });
+      const canonical=await Promise.all(retrieval.candidates.map(async candidate=>{
+        const item=await this.reader.get(request.characterId,candidate.memoryId);
+        return item&&item.characterId===request.characterId&&item.status==="active"?{item,candidate}:undefined;
+      }));
+      const selected=canonical.filter((value):value is {item:MemoryItem;candidate:typeof retrieval.candidates[number]}=>Boolean(value));
+      this.diagnostics?.recordError("context-engine","MEMORY_CONTEXT_SELECTED","Memory candidates selected",{
+        characterId:request.characterId,count:selected.length
+      });
+      return selected.map(({item,candidate})=>{
+        const relevance=Math.min(100,Math.round(candidate.score));
         const retentionPriority=item.importance;
-        const selectionScore=
-          40+
-          Math.round(relevance*0.25)+
-          Math.round(item.importance*0.5)+
-          Math.round(item.confidence*0.25);
+        const selectionScore=40+Math.round(candidate.score)+Math.round(item.importance*0.25)+Math.round(item.confidence*0.1);
+        const content="[Relevant long-term memory]\n"+item.content+"\n[/Relevant long-term memory]";
         return {
           id:"memory:"+item.id,
           source:"memory",
           referenceId:item.id,
           characterId:item.characterId,
-          content:item.content,
-          role:"user",
+          content,
+          role:"system",
           eligible:true,
           reason:
-            "deterministic memory search result #"+String(index+1)+
-            "; importance is the primary retention input, confidence is a secondary tie-break input; placementWeight is unused",
-          estimatedTokens:this.estimator.estimate(item.content),
+            "character-scoped deterministic MemoryRetriever result; lexical relevance="+candidate.lexicalRelevance+
+            ", phrase relevance="+candidate.phraseRelevance+
+            ", tag relevance="+candidate.tagRelevance+
+            "; memory is context, not a user instruction",
+          estimatedTokens:this.estimator.estimate(content),
           zone:"retrieved_memory",
           relevance,
           activationStrength:0,
@@ -121,6 +112,13 @@ export class MemoryCandidateSource implements ContextCandidateSource {
           selectionScore
         } satisfies ContextCandidate;
       });
+    }catch(error){
+      this.diagnostics?.recordError("context-engine","MEMORY_RETRIEVAL_FAILED","Memory retrieval failure",{
+        characterId:request.characterId,
+        error:error instanceof Error?error.message:"unknown"
+      });
+      return [];
+    }
   }
 }
 
@@ -344,14 +342,17 @@ export class CoreBookCandidateSource implements ContextCandidateSource {
 export interface ContextEngineOptions {
   tokenEstimator?:TokenEstimator;
   recentMessageCount?:DynamicNumber;
-  memoryBroker?:Pick<MemoryBroker,"search"|"get">;
+  memoryBroker?:Pick<MemoryBroker,"get"|"list">;
+  memoryRetriever?:MemoryRetriever;
   memoryCandidateLimit?:DynamicNumber;
   retrievalCandidateLimit?:DynamicNumber;
   retriever?:Retriever;
+  diagnostics?:DiagnosticsStore;
 }
 
 export class DeterministicContextEngine implements ContextEngineContract {
   private readonly sources:readonly ContextCandidateSource[];
+  private readonly diagnostics?:DiagnosticsStore;
 
   constructor(
     sources:readonly ContextCandidateSource[],
@@ -359,6 +360,7 @@ export class DeterministicContextEngine implements ContextEngineContract {
   ){
     if(sources.length===0)throw new Error("Context Engine requires at least one candidate source.");
     this.sources=sources;
+    this.diagnostics=options.diagnostics;
     const recentMessageCount=typeof options.recentMessageCount==="number"?options.recentMessageCount:undefined;
     const memoryCandidateLimit=typeof options.memoryCandidateLimit==="number"?options.memoryCandidateLimit:undefined;
     const retrievalCandidateLimit=typeof options.retrievalCandidateLimit==="number"?options.retrievalCandidateLimit:undefined;
@@ -435,6 +437,10 @@ export class DeterministicContextEngine implements ContextEngineContract {
     } satisfies ChatMessage));
 
     const estimatedTokens=includedCandidates.reduce((sum,candidate)=>sum+candidate.estimatedTokens,0);
+    const injectedMemoryCount=includedCandidates.filter(candidate=>candidate.source==="memory").length;
+    this.diagnostics?.recordError("context-engine","MEMORY_CONTEXT_INJECTED","Memory context injected",{
+      characterId:request.characterId,count:injectedMemoryCount
+    });
     return {
       apiVersion:CONTEXT_API_VERSION,
       schemaVersion:CONTEXT_SCHEMA_VERSION,
@@ -466,9 +472,10 @@ export function createDeterministicContextEngine(
   if(options.memoryBroker){
     sources.push(new MemoryCandidateSource(
       options.memoryBroker,
+      options.memoryRetriever??new InProcessMemoryRetriever(options.memoryBroker,{diagnostics:options.diagnostics}),
       estimator,
       options.memoryCandidateLimit??DEFAULT_MEMORY_CANDIDATE_LIMIT,
-      options.retriever
+      options.diagnostics
     ));
   }
   return new DeterministicContextEngine(sources,options);

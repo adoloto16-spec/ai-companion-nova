@@ -1,12 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.ai-companion-nova.dev/memory-search-query/v2",
-  "title": "AI Companion Nova Dynamic Memory Search Query v2",
+  "$id": "https://schemas.ai-companion-nova.dev/memory-search-query/v3",
+  "title": "AI Companion Nova Dynamic Memory Search Query v3",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "characterId",
-    "conversationId",
     "query"
   ],
   "properties": {
@@ -55,7 +54,7 @@
       "minimum": 1,
       "maximum": 100
     },
-    "conversationId": {
+    "originConversationId": {
       "type": "string",
       "minLength": 1,
       "maxLength": 200

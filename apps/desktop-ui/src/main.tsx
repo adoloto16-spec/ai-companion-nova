@@ -19,7 +19,7 @@ import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
-  type Character, type CoreBookActivation, type CoreBookEntry,
+  type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem,
   defaultAppSettings, validateAppSettings, StandardContractValidator,
   type ProviderPreset, type ProviderPresetStoreState, type ModelInfo
 } from "../../../contracts/src/index";
@@ -351,6 +351,98 @@ function CharactersView({characters,activeCharacter,onSelect,onCreate,onRename,o
         <button onClick={()=>{if(window.confirm("Delete this character?"))void run(()=>onDelete(activeCharacter.id),"Character deleted.")}} disabled={busy}>Delete</button>
       </div>
       <div className="character-id">characterId: <code>{activeCharacter.id}</code></div>
+      {message&&<div className="notice" role="status">{message}</div>}
+    </div>
+  </section>;
+}
+
+function CharacterMemoryView({runtime,character,originConversationId}:{
+  runtime:FoundationRuntime;
+  character:Character;
+  originConversationId?:string;
+}){
+  const [items,setItems]=React.useState<readonly MemoryItem[]>([]);
+  const [content,setContent]=React.useState("");
+  const [type,setType]=React.useState<MemoryItem["type"]>("observation");
+  const [importance,setImportance]=React.useState(70);
+  const [confidence,setConfidence]=React.useState(80);
+  const [busy,setBusy]=React.useState(false);
+  const [message,setMessage]=React.useState("");
+
+  const refresh=React.useCallback(async()=>{
+    try{
+      const next=await runtime.listMemory(character.id);
+      setItems(next.filter(item=>item.status==="active"));
+    }catch(error){setMessage(error instanceof Error?error.message:"Character Memory could not be loaded.")}
+  },[runtime,character.id]);
+  React.useEffect(()=>{void refresh()},[refresh]);
+
+  const create=async()=>{
+    if(!content.trim())return;
+    setBusy(true);setMessage("");
+    try{
+      await runtime.createMemory(character.id,{
+        originConversationId:originConversationId??null,
+        type,
+        content:content.trim(),
+        tags:[],
+        importance,
+        confidence,
+        source:"user",
+        sourceReference:null,
+        mutationPolicy:"locked",
+        metadata:{origin:"character-memory-ui"}
+      });
+      setContent("");
+      setMessage("Memory created.");
+      await refresh();
+    }catch(error){setMessage(error instanceof Error?error.message:"Memory could not be created.")}
+    finally{setBusy(false)}
+  };
+
+  const archive=async(item:MemoryItem)=>{
+    setBusy(true);setMessage("");
+    try{
+      await runtime.archiveMemory(character.id,originConversationId??"",item.id);
+      setMessage("Memory archived.");
+      await refresh();
+    }catch(error){setMessage(error instanceof Error?error.message:"Memory could not be archived.")}
+    finally{setBusy(false)}
+  };
+
+  return <section className="characters-panel">
+    <div className="characters-toolbar">
+      <div><h2>Character Memory · {character.name}</h2><p className="chat-subtitle">Long-term memory owned by this Character. Conversation is provenance only.</p></div>
+      <button type="button" onClick={()=>void refresh()} disabled={busy}>Refresh</button>
+    </div>
+    <div className="character-list" role="listbox" aria-label="Character Memory">
+      {items.length===0&&<div className="core-book-empty">No active long-term memories.</div>}
+      {items.map(item=>
+        <div className="character-row" key={item.id}>
+          <div>
+            <strong>{item.content}</strong>
+            <small>{item.type} · importance {item.importance} · confidence {item.confidence}</small>
+            <small>Origin conversation: {item.originConversationId??"unknown / none"}</small>
+          </div>
+          <button type="button" onClick={()=>void archive(item)} disabled={busy}>Archive</button>
+        </div>
+      )}
+    </div>
+    <div className="character-actions">
+      <h3>Add long-term memory</h3>
+      <label>Type
+        <select value={type} onChange={event=>setType(event.target.value as MemoryItem["type"])} disabled={busy}>
+          <option value="observation">Observation</option><option value="fact">Fact</option><option value="preference">Preference</option>
+          <option value="relationship">Relationship</option><option value="event">Event</option><option value="experience">Experience</option>
+          <option value="goal">Goal</option><option value="instruction">Instruction</option>
+        </select>
+      </label>
+      <label>Content<textarea value={content} onChange={event=>setContent(event.target.value)} rows={5} disabled={busy}/></label>
+      <div className="core-book-grid">
+        <label>Importance<input type="number" min={0} max={100} value={importance} onChange={event=>setImportance(Number(event.target.value))} disabled={busy}/></label>
+        <label>Confidence<input type="number" min={0} max={100} value={confidence} onChange={event=>setConfidence(Number(event.target.value))} disabled={busy}/></label>
+      </div>
+      <div className="actions"><button type="button" onClick={()=>void create()} disabled={busy||!content.trim()}>Create Memory</button></div>
       {message&&<div className="notice" role="status">{message}</div>}
     </div>
   </section>;
@@ -860,7 +952,7 @@ function ModelProfileView({
 
 
 function AppSettingsView({
-  settings,onChange,onSave,onReset,saving,message
+  settings,onChange,onSave,onReset,saving,message,providerPresets,activePresetId
 }:{
   settings:AppSettings;
   onChange:(settings:AppSettings)=>void;
@@ -868,6 +960,8 @@ function AppSettingsView({
   onReset:()=>Promise<void>;
   saving:boolean;
   message:string;
+  providerPresets:readonly ProviderPreset[];
+  activePresetId:string|null;
 }){
   const setNumber=(section:"context"|"memory"|"retrieval"|"diagnostics",key:string,value:number)=>{
     onChange({
@@ -910,6 +1004,22 @@ function AppSettingsView({
       <label className="checkbox">Automatic long-term memory extraction
         <input type="checkbox" checked={settings.chat.automaticLongTermMemory}
           onChange={event=>onChange({...settings,chat:{...settings.chat,automaticLongTermMemory:event.target.checked}})} disabled={saving}/>
+      </label>
+      <label className="checkbox">Automatic Memory Agent
+        <input type="checkbox" checked={settings.memoryAgent.enabled}
+          onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,enabled:event.target.checked}})} disabled={saving}/>
+      </label>
+      <label>Memory Agent provider preset
+        <select value={settings.memoryAgent.providerPresetId??""}
+          onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,providerPresetId:event.target.value||null}})} disabled={saving}>
+          <option value="">Not configured</option>
+          {settings.memoryAgent.providerPresetId&&settings.memoryAgent.providerPresetId!==null&&!providerPresets.some(p=>p.id===settings.memoryAgent.providerPresetId)&&
+            <option value={settings.memoryAgent.providerPresetId} disabled>Unavailable: {settings.memoryAgent.providerPresetId}</option>}
+          {providerPresets.map(preset=><option key={preset.id} value={preset.id}>{preset.name||preset.id}{preset.id===activePresetId?" · active":""}</option>)}
+        </select>
+      </label>
+      <label>Memory Agent model override
+        <input value={settings.memoryAgent.model} onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,model:event.target.value}})} placeholder="Preset model / discovered model" disabled={saving}/>
       </label>
       <label>Memory items
         <input type="number" min={1} max={100} value={settings.memory.candidateLimit}
@@ -1059,6 +1169,24 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
         </div>
       </div>}
 
+      {selected.automaticMemory&&<div className="diagnostic-block">
+        <h3>Automatic Memory Agent</h3>
+        <div className="status-grid">
+          <span>Started</span><strong>{selected.automaticMemory.started?"yes":"no"}</strong>
+          <span>Status</span><strong>{selected.automaticMemory.status??"—"}</strong>
+          <span>Preset</span><strong>{selected.automaticMemory.providerPresetId??"—"}</strong>
+          <span>Provider</span><strong>{selected.automaticMemory.providerId??"—"}</strong>
+          <span>Model</span><strong>{selected.automaticMemory.model??"—"}</strong>
+          <span>Origin conversation</span><strong>{selected.automaticMemory.conversationId??"—"}</strong>
+          <span>Context messages</span><strong>{selected.automaticMemory.contextMessageCount??"—"}</strong>
+          <span>Persistence</span><strong>{selected.automaticMemory.persistence?.status??"—"}</strong>
+          <span>Memory id</span><strong>{selected.automaticMemory.persistence?.memoryId??"—"}</strong>
+        </div>
+        {selected.automaticMemory.result&&<pre className="diagnostic-json">{selected.automaticMemory.result}</pre>}
+        {selected.automaticMemory.failed&&<div className="error">{selected.automaticMemory.failed}</div>}
+        {selected.automaticMemory.persistence?.reason&&<div className="diagnostic-reason">{selected.automaticMemory.persistence.reason}</div>}
+      </div>}
+
       {selected.memoryExtraction&&<div className="diagnostic-block">
         <h3>Automatic Memory Extraction</h3>
         <p>Started: {selected.memoryExtraction.started?"yes":"no"}</p>
@@ -1149,7 +1277,7 @@ function SettingsContainerView({
     </div>
     {tab==="general"
       ?<ViewErrorBoundary key="settings-general" view="settings-general" onError={onError}>
-        <AppSettingsView settings={appSettings} onChange={onAppSettingsChange} onSave={onSaveSettings} onReset={onResetSettings} saving={settingsSaving} message={settingsLoadMessage}/>
+        <AppSettingsView settings={appSettings} onChange={onAppSettingsChange} onSave={onSaveSettings} onReset={onResetSettings} saving={settingsSaving} message={settingsLoadMessage} providerPresets={providerPresets} activePresetId={activePresetId}/>
       </ViewErrorBoundary>
       :<ViewErrorBoundary key="settings-provider-presets" view="settings-provider-presets" onError={onError}>
         <ProviderPresetsView presets={providerPresets} activePresetId={activePresetId} credentialProfiles={credentialProfiles} credentialSaved={credentialSavedMap}
@@ -1182,7 +1310,7 @@ function credentialSavedEntries(
 }
 
 function App(){
-  const [view,setView]=React.useState<"chat"|"characters"|"core-book"|"model-profile"|"settings"|"diagnostics">("chat");
+  const [view,setView]=React.useState<"chat"|"characters"|"memory"|"core-book"|"model-profile"|"settings"|"diagnostics">("chat");
   const [runtime,setRuntime]=React.useState<RuntimeDiagnostics>(preview);
   const [saving,setSaving]=React.useState(false);
   const [startupStatus,setStartupStatus]=React.useState<"initializing"|"ready"|"error">("initializing");
@@ -1692,6 +1820,7 @@ function App(){
       <nav className="app-nav" aria-label="Primary">
         <button className={view==="chat"?"nav-button active":"nav-button"} onClick={()=>setView("chat")}>Chat</button>
         <button className={view==="characters"?"nav-button active":"nav-button"} onClick={()=>setView("characters")}>Characters</button>
+        <button className={view==="memory"?"nav-button active":"nav-button"} onClick={()=>setView("memory")}>Character Memory</button>
         <button className={view==="core-book"?"nav-button active":"nav-button"} onClick={()=>setView("core-book")}>Core Book</button>
         <button className={view==="model-profile"?"nav-button active":"nav-button"} onClick={()=>setView("model-profile")}>Model Profile</button>
         <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Settings</button>
@@ -1741,6 +1870,8 @@ function App(){
       :view==="characters"&&activeCharacter
         ?<CharactersView characters={characters} activeCharacter={activeCharacter}
           onSelect={selectCharacter} onCreate={createCharacter} onRename={renameCharacter} onDelete={deleteCharacter}/>
+        :view==="memory"&&activeCharacter
+          ?<CharacterMemoryView runtime={foundationRef.current!} character={activeCharacter} originConversationId={activeConversation?.id}/>
         :view==="core-book"&&activeCharacter
           ?<CoreBookView runtime={foundationRef.current!} character={activeCharacter}/>
           :<section className="loading-panel">Initializing characters…</section>}

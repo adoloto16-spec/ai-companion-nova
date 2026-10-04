@@ -6,7 +6,7 @@ import {
   MemoryCandidateSource,
   calculateContextBudget
 } from "../../core/src";
-import type {ContextBuildRequest,CoreBookEntry,MemoryItem,MemorySearchQuery} from "../../contracts/src";
+import type {ContextBuildRequest,CoreBookEntry,MemoryItem,MemoryRetrievalResult} from "../../contracts/src";
 import type {TokenEstimator} from "../../core/src";
 
 function equal(actual:unknown,expected:unknown,label:string){
@@ -100,38 +100,41 @@ async function main(){
   let memorySearchCalls=0;
   const memoryItems:MemoryItem[]=[
     {
-      id:"memory-low",characterId:"character.a",conversationId:"conversation.a",type:"fact",content:"low value memory",tags:["tea"],importance:0,confidence:0,
+      id:"memory-low",characterId:"character.a",originConversationId:"conversation.a",type:"fact",content:"low value memory",tags:["tea"],importance:0,confidence:0,
       createdAt:"2026-09-26T12:00:00.000Z",updatedAt:"2026-09-26T12:00:00.000Z",
       validFrom:null,validUntil:null,source:"user",sourceReference:null,mutationPolicy:"locked",status:"active",metadata:{}
     },
     {
-      id:"memory-high",characterId:"character.a",conversationId:"conversation.a",type:"preference",content:"high value memory",tags:["tea"],importance:100,confidence:100,
+      id:"memory-high",characterId:"character.a",originConversationId:"conversation.a",type:"preference",content:"high value memory",tags:["tea"],importance:100,confidence:100,
       createdAt:"2026-09-26T12:00:00.000Z",updatedAt:"2026-09-26T12:00:00.000Z",
       validFrom:null,validUntil:null,source:"user",sourceReference:null,mutationPolicy:"locked",status:"active",metadata:{}
     },
     {
-      id:"memory-archived",characterId:"character.a",conversationId:"conversation.a",type:"fact",content:"archived memory",tags:["tea"],importance:100,confidence:100,
+      id:"memory-archived",characterId:"character.a",originConversationId:"conversation.a",type:"fact",content:"archived memory",tags:["tea"],importance:100,confidence:100,
       createdAt:"2026-09-26T12:00:00.000Z",updatedAt:"2026-09-26T12:00:00.000Z",
       validFrom:null,validUntil:null,source:"user",sourceReference:null,mutationPolicy:"locked",status:"archived",metadata:{}
     },
     {
-      id:"memory-other-character",characterId:"character.b",conversationId:"conversation.b",type:"fact",content:"other character memory",tags:["tea"],importance:100,confidence:100,
+      id:"memory-other-character",characterId:"character.b",originConversationId:"conversation.b",type:"fact",content:"other character memory",tags:["tea"],importance:100,confidence:100,
       createdAt:"2026-09-26T12:00:00.000Z",updatedAt:"2026-09-26T12:00:00.000Z",
       validFrom:null,validUntil:null,source:"user",sourceReference:null,mutationPolicy:"locked",status:"active",metadata:{}
     }
   ];
   const memoryReader={
-    async search(query:MemorySearchQuery){
+    async list(){return memoryItems;},
+    async get(_characterId:string,id:string){return memoryItems.find(item=>item.id===id);}
+  };
+  const memoryRetriever={
+    async search(query:any):Promise<MemoryRetrievalResult>{
       memorySearchCalls+=1;
       capturedMemoryQuery=query.query;
-      equal(query.characterId,"character.a","memory query is character scoped");
-      equal(query.conversationId,"conversation.a","memory query is conversation scoped");
+      equal(query.characterId,"character.a","memory retrieval is character scoped");
       equal(query.status,"active","automatic memory context searches active status only");
       equal(query.limit,8,"memory source uses one bounded deterministic search");
-      return memoryItems;
+      return {characterId:query.characterId,query:query.query,candidates:memoryItems.map(item=>({memoryId:item.id,score:item.importance+item.confidence,lexicalRelevance:50,phraseRelevance:0,tagRelevance:20}))};
     }
   };
-  const memorySource=new MemoryCandidateSource(memoryReader);
+  const memorySource=new MemoryCandidateSource(memoryReader,memoryRetriever);
   const memoryBuilt=await new DeterministicContextEngine([memorySource]).build(request({
     messages:[
       {id:"old-user",role:"user",content:"old topic"},
@@ -148,18 +151,20 @@ async function main(){
   const memoryCandidate=memoryBuilt.includedCandidates.find(candidate=>candidate.referenceId==="memory-high");
   equal(memoryCandidate?.source,"memory","memory provenance source");
   equal(memoryCandidate?.zone,"retrieved_memory","memory placement zone");
-  equal(memoryCandidate?.role,"user","memory remains data-role");
+  equal(memoryCandidate?.role,"system","memory is rendered as explicit system context");
   equal(memoryCandidate?.placementWeight,0,"memory does not use placementWeight");
 
   let noUserSearchCalls=0;
-  const noUserReader={async search(){noUserSearchCalls+=1;return memoryItems;}};
-  const noUserEngine=new DeterministicContextEngine([new MemoryCandidateSource(noUserReader)]);
+  const noUserReader={async list(){noUserSearchCalls+=1;return memoryItems;},async get(_characterId:string,id:string){return memoryItems.find(item=>item.id===id);}};
+  const noUserRetriever={async search(){noUserSearchCalls+=1;return {characterId:"character.a",query:"",candidates:[]};}};
+  const noUserEngine=new DeterministicContextEngine([new MemoryCandidateSource(noUserReader,noUserRetriever)]);
   await noUserEngine.build(request({messages:[{id:"a1",role:"assistant",content:"no user query"}]}));
   equal(noUserSearchCalls,0,"no user message skips memory search");
 
   const memoryPressure=await new DeterministicContextEngine([new MemoryCandidateSource({
-    async search(){return [memoryItems[0]!,memoryItems[1]!];}
-  },({estimate(){return 1}} as TokenEstimator))]).build(request({
+    async list(){return [memoryItems[0]!,memoryItems[1]!];},
+    async get(_characterId:string,id:string){return [memoryItems[0]!,memoryItems[1]!].find(item=>item.id===id);}
+  },{async search(query:any){return {characterId:query.characterId,query:query.query,candidates:[{memoryId:"memory-high",score:120,lexicalRelevance:100,phraseRelevance:0,tagRelevance:0},{memoryId:"memory-low",score:1,lexicalRelevance:100,phraseRelevance:0,tagRelevance:0}]}}},({estimate(){return 1}} as TokenEstimator))]).build(request({
     messages:[{id:"latest",role:"user",content:"tea"}],
     budget:{availableContextTokens:1,reservedOutputTokens:0,systemOverheadTokens:0,safetyMarginTokens:0}
   }));

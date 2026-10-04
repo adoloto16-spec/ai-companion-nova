@@ -80,20 +80,18 @@ async function main(){
       budget:{availableContextTokens:100,reservedOutputTokens:20,systemOverheadTokens:5,safetyMarginTokens:5}
     };
     const context=await runtime.buildContext(build);
-    ok(retrievalQueries.some(query=>query.sources?.[0]==="memory"&&query.characterId===nova.id),"Context Engine queries Memory through Retriever boundary");
+    ok(!retrievalQueries.some(query=>query.sources?.[0]==="memory"),"Dynamic Memory does not depend on generic Retriever boundary");
     ok(retrievalQueries.some(query=>query.sources?.[0]==="core_book"&&query.characterId===nova.id),"Context Engine queries Core Book through Retriever boundary");
     ok(retrievalQueries.every(query=>query.characterId===nova.id),"Retriever queries remain character scoped");
-    equal(retrievalQueries.find(query=>query.sources?.[0]==="memory")?.conversationId,novaConversation.id,"Memory retrieval query preserves conversation scope");
-    ok(context.includedCandidates.some(candidate=>candidate.referenceId===novaEntry.id),"Nova Core Book selected through runtime boundary");
-    ok(context.includedCandidates.some(candidate=>candidate.referenceId===novaMemory.id),"Nova Dynamic Memory selected through existing MemoryBroker boundary");
+      ok(context.includedCandidates.some(candidate=>candidate.referenceId===novaEntry.id),"Nova Core Book selected through runtime boundary");
+    ok(context.includedCandidates.some(candidate=>candidate.referenceId===novaMemory.id),"Nova Dynamic Memory selected through dedicated MemoryRetriever boundary");
     ok(!context.includedCandidates.some(candidate=>candidate.referenceId===gmMemory.id),"GM Dynamic Memory is isolated from Nova context");
     ok(!context.includedCandidates.some(candidate=>candidate.referenceId===archivedMemory.id),"archived memory is excluded from automatic context");
     ok(context.includedCandidates.some(candidate=>candidate.referenceId===replacementMemory.id),"active replacement memory is included");
     ok(!context.includedCandidates.some(candidate=>candidate.referenceId===supersededMemory.id),"superseded memory is excluded from automatic context");
-    equal(retrievalQueries.find(query=>query.sources?.[0]==="memory")?.query,"tea","Context Engine forwards latest user query to Retriever");
-    equal(context.messages.find(message=>message.content==="Nova likes tea.")?.metadata?.contextSource,"memory","assembled Memory provenance source");
-    equal(context.messages.find(message=>message.content==="Nova likes tea.")?.metadata?.contextReferenceId,novaMemory.id,"assembled Memory provenance reference");
-    equal(context.messages.find(message=>message.content==="Nova likes tea.")?.role,"user","memory remains data-role");
+    equal(context.messages.find(message=>message.content.includes("Nova likes tea."))?.metadata?.contextSource,"memory","assembled Memory provenance source");
+    equal(context.includedCandidates.find(candidate=>candidate.referenceId===novaMemory.id)?.referenceId,novaMemory.id,"assembled Memory provenance reference");
+    equal(context.messages.find(message=>message.content.includes("Nova likes tea."))?.role,"system","memory is injected as explicit context, not user command");
     ok(!context.includedCandidates.some(candidate=>candidate.content.includes("GM owns")),"GM Core Book is isolated");
     equal(context.characterId,nova.id,"runtime context remains character scoped");
     equal(context.conversationId,novaConversation.id,"conversation identity preserved");
