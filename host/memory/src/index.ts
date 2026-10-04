@@ -26,7 +26,8 @@ export class InMemoryMemoryStore implements MemoryStore{
   }
   async supersede(characterId:CharacterId,previousOrConversationId:ConversationId|string,previousMemoryIdOrReplacement:string|MemoryItem,replacementMaybe?:MemoryItem):Promise<MemoryItem>{
     const previousMemoryId=typeof previousMemoryIdOrReplacement==="string"?previousMemoryIdOrReplacement:previousOrConversationId;
-    const replacement=typeof previousMemoryIdOrReplacement==="string"?replacementMaybe!:previousMemoryIdOrReplacement;\n    const current=this.states.get(characterId);
+    const replacement=typeof previousMemoryIdOrReplacement==="string"?replacementMaybe!:previousMemoryIdOrReplacement;
+    const current=this.states.get(characterId);
     const state={apiVersion:current?.apiVersion??"1",schemaVersion:current?.schemaVersion??"3",characterId,items:current?current.items.map(cloneItem):[]};
     if(state.characterId!==characterId||replacement.characterId!==characterId)throw new Error("Memory storage scope mismatch.");
     const index=state.items.findIndex(item=>item.id===previousMemoryId);
