@@ -106,7 +106,15 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider{
     if(!Array.isArray(data)||data.length!==texts.length){
       throw new OpenAICompatibleEmbeddingProviderError({code:"INVALID_RESPONSE",message:"Embedding provider returned a vector count different from the input count.",category:"malformed_response"});
     }
-    const vectors=data.map((entry,index)=>this.parseVector(entry,index));
+    const indexed=data.map((entry,index)=>{
+      const item=entry&&typeof entry==="object"&&!Array.isArray(entry)?entry as Record<string,unknown>:undefined;
+      const order=item&&typeof item.index==="number"&&Number.isInteger(item.index)?item.index:index;
+      return {order,vector:this.parseVector(entry,index)};
+    }).sort((a,b)=>a.order-b.order);
+    if(indexed.some((entry,index)=>entry.order!==index)){
+      throw new OpenAICompatibleEmbeddingProviderError({code:"INVALID_RESPONSE",message:"Embedding provider returned invalid vector indexes.",category:"malformed_response"});
+    }
+    const vectors=indexed.map(entry=>entry.vector);
     const dimensions=vectors[0]?.length??0;
     if(dimensions===0||vectors.some(vector=>vector.length!==dimensions)){
       throw new OpenAICompatibleEmbeddingProviderError({code:"INVALID_RESPONSE",message:"Embedding provider returned inconsistent vector dimensions.",category:"malformed_response"});
