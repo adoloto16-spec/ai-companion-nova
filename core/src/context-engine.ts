@@ -435,6 +435,10 @@ export class DeterministicContextEngine implements ContextEngineContract {
     } satisfies ChatMessage));
 
     const estimatedTokens=includedCandidates.reduce((sum,candidate)=>sum+candidate.estimatedTokens,0);
+    const injectedMemoryCount=includedCandidates.filter(candidate=>candidate.source==="memory").length;
+    options.diagnostics?.recordError("context-engine","MEMORY_CONTEXT_INJECTED","Memory context injected",{
+      characterId:request.characterId,count:injectedMemoryCount
+    });
     return {
       apiVersion:CONTEXT_API_VERSION,
       schemaVersion:CONTEXT_SCHEMA_VERSION,
