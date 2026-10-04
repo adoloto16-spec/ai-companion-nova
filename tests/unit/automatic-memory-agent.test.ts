@@ -21,7 +21,7 @@ async function main(){
   const store=new InMemoryMemoryStore();
   const broker=new MemoryBrokerImpl({store,validator:new StandardContractValidator(),audit:new InMemoryAuditService(),events:new InMemoryEventBus()});
   const traces=new InMemoryChatTraceStore();
-  const settings={...defaultAppSettings(),memoryAgent:{...defaultAppSettings().memoryAgent,enabled:true,providerPresetId:"preset.memory",model:"memory-model",outputMode:"plain",prompt:"CUSTOM MEMORY PROMPT",promptBackup:"PREVIOUS",defaultPromptVersion:"1"}};
+  const settings={...defaultAppSettings(),memoryAgent:{...defaultAppSettings().memoryAgent,enabled:true,providerPresetId:"preset.memory",model:"memory-model",outputMode:"plain" as const,prompt:"CUSTOM MEMORY PROMPT",promptBackup:"PREVIOUS",defaultPromptVersion:"1"}};
   let calls=0;
   const runtime={async chat(req:ChatRequest){calls++;return response(req,"У пользователя любимый цвет — синий.")},async getChatModelForPreset(){return "memory-model"}};
   const agent=new AutomaticMemoryAgent({settings:()=>settings,broker,runtime,validator:new StandardContractValidator(),traceStore:traces});
@@ -36,7 +36,7 @@ async function main(){
   equal((await broker.list("character.a")).length,1,"duplicate protection is character scoped");
 
   const customHttpRequests:ChatRequest[]=[];
-  const customAgent=new AutomaticMemoryAgent({settings:()=>({...settings,memoryAgent:{...settings.memoryAgent,outputMode:"plain",prompt:"CUSTOM MEMORY PROMPT"}}),broker,runtime:{
+  const customAgent=new AutomaticMemoryAgent({settings:()=>({...settings,memoryAgent:{...settings.memoryAgent,outputMode:"plain" as const,prompt:"CUSTOM MEMORY PROMPT"}}),broker,runtime:{
     async chat(req:ChatRequest){customHttpRequests.push(req);return response(req,"NO_MEMORY")},
     async getChatModelForPreset(){return "memory-model"}
   },validator:new StandardContractValidator(),traceStore:traces});
@@ -44,7 +44,7 @@ async function main(){
   equal(customHttpRequests[0]?.context.messages[0]?.content,"CUSTOM MEMORY PROMPT","custom prompt is sent verbatim");
   equal(customHttpRequests[0]?.generation?.responseFormat,undefined,"plain agent request omits response format");
 
-  const structuredAgent=new AutomaticMemoryAgent({settings:()=>({...settings,memoryAgent:{...settings.memoryAgent,outputMode:"structured",prompt:"STRUCTURED"}}),broker,runtime:{
+  const structuredAgent=new AutomaticMemoryAgent({settings:()=>({...settings,memoryAgent:{...settings.memoryAgent,outputMode:"structured" as const,prompt:"STRUCTURED"}}),broker,runtime:{
     async chat(req:ChatRequest){return response(req,'{"decision":"remember","content":"Structured durable fact."}')},
     async getChatModelForPreset(){return "memory-model"}
   },validator:new StandardContractValidator(),traceStore:traces});
@@ -52,7 +52,7 @@ async function main(){
   ok(Boolean(structuredMemory),"structured remember creates memory");
   equal((await broker.list("character.a")).filter(item=>item.content==="Structured durable fact.").length,1,"structured remember persisted");
 
-  const noMemoryAgent=new AutomaticMemoryAgent({settings:()=>({...settings,memoryAgent:{...settings.memoryAgent,outputMode:"structured"}}),broker,runtime:{
+  const noMemoryAgent=new AutomaticMemoryAgent({settings:()=>({...settings,memoryAgent:{...settings.memoryAgent,outputMode:"structured" as const}}),broker,runtime:{
     async chat(req:ChatRequest){return response(req,'{"decision":"no_memory","content":""}')},
     async getChatModelForPreset(){return "memory-model"}
   },validator:new StandardContractValidator(),traceStore:traces});
@@ -70,7 +70,7 @@ async function main(){
 
   const autoStructuredCalls:ChatRequest[]=[];
   let autoCall=0;
-  const autoAgent=new AutomaticMemoryAgent({settings:()=>({...settings,memoryAgent:{...settings.memoryAgent,outputMode:"auto"}}),broker,runtime:{
+  const autoAgent=new AutomaticMemoryAgent({settings:()=>({...settings,memoryAgent:{...settings.memoryAgent,outputMode:"auto" as const}}),broker,runtime:{
     async chat(req:ChatRequest){
       autoStructuredCalls.push(req);autoCall++;
       if(autoCall===1)throw Object.assign(new Error("unsupported"),{chatError:{code:"UNSUPPORTED",details:{category:"capability"}}});
