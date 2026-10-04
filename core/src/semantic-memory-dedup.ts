@@ -200,29 +200,24 @@ function aggregateDecisions(decisions:readonly MemoryJudgeDecision[]):{action:"a
 }
 
 function validIndexState(state:MemorySemanticIndexState|undefined,characterId:CharacterId):MemorySemanticIndexState{
-  if(!state)return {
+  const empty={
     apiVersion:MEMORY_SEMANTIC_INDEX_API_VERSION,
     schemaVersion:MEMORY_SEMANTIC_INDEX_SCHEMA_VERSION,
     characterId,
     records:[]
   };
-  const result=thisValidateIndexState(state,characterId);
-  if(!result.valid)throw new Error(result.reason);
-  return {apiVersion:MEMORY_SEMANTIC_INDEX_API_VERSION,schemaVersion:MEMORY_SEMANTIC_INDEX_SCHEMA_VERSION,characterId,records:state.records.map(record=>({...record,vector:[...record.vector]}))};
-}
-
-function thisValidateIndexState(state:MemorySemanticIndexState,characterId:CharacterId):{valid:true}|{valid:false;reason:string}{
-  if(state.apiVersion!==MEMORY_SEMANTIC_INDEX_API_VERSION||state.schemaVersion!==MEMORY_SEMANTIC_INDEX_SCHEMA_VERSION)return {valid:false,reason:"Unsupported semantic index version."};
-  if(state.characterId!==characterId||!characterId.trim())return {valid:false,reason:"Semantic index character scope mismatch."};
+  if(!state||state.apiVersion!==MEMORY_SEMANTIC_INDEX_API_VERSION||state.schemaVersion!==MEMORY_SEMANTIC_INDEX_SCHEMA_VERSION||state.characterId!==characterId||!characterId.trim())return empty;
+  const records:MemorySemanticVectorRecord[]=[];
   const ids=new Set<string>();
   for(const record of state.records){
-    if(record.characterId!==characterId||!record.memoryId.trim())return {valid:false,reason:"Semantic index record character scope mismatch."};
-    if(ids.has(record.memoryId))return {valid:false,reason:"Semantic index contains duplicate memory ids."};
+    if(ids.has(record.memoryId))continue;
+    if(!record.characterId||record.characterId!==characterId||!record.memoryId.trim()||!record.contentHash||!record.embeddingProviderId||!record.embeddingModel||!record.updatedAt)continue;
+    if(!Number.isInteger(record.dimensions)||record.dimensions<=0||!isFiniteVector(record.vector)||record.vector.length!==record.dimensions)continue;
     ids.add(record.memoryId);
-    if(!record.contentHash||!record.embeddingProviderId||!record.embeddingModel||!record.updatedAt)return {valid:false,reason:"Semantic index record metadata is incomplete."};
-    if(!Number.isInteger(record.dimensions)||record.dimensions<=0||!isFiniteVector(record.vector)||record.vector.length!==record.dimensions)return {valid:false,reason:"Semantic index contains an invalid vector."};
+    records.push({...record,vector:[...record.vector]});
   }
-  return {valid:true};
+  records.sort((a,b)=>a.memoryId.localeCompare(b.memoryId));
+  return {apiVersion:MEMORY_SEMANTIC_INDEX_API_VERSION,schemaVersion:MEMORY_SEMANTIC_INDEX_SCHEMA_VERSION,characterId,records};
 }
 
 function cloneIndexState(state:MemorySemanticIndexState):MemorySemanticIndexState{
@@ -416,42 +411,61 @@ export class MemorySemanticDeduplicator{
     newMemory:MemoryItem
   ):Promise<{vectors:Map<string,readonly number[]>;staleOrMissing:number}>{
     const state=validIndexState(await this.options.indexStore.load(characterId),characterId);
-    const current=new Map(state.records.map(record=>[record.memoryId,record] as const));
     const active=memories.filter(memory=>memory.characterId===characterId&&memory.status==="active");
+    const existing=new Map(state.records.map(record=>[record.memoryId,record] as const));
+    const newHash=deterministicContentHash(newMemory.content);
+    let newRecord=existing.get(newMemory.id);
+    let newVector:newRecord extends never?never:readonly number[];
+    const cachedNewIsValid=Boolean(
+      newRecord
+      &&newRecord.characterId===characterId
+      &&newRecord.contentHash===newHash
+      &&newRecord.embeddingProviderId===provider.id
+      &&newRecord.embeddingModel===model
+      &&isFiniteVector(newRecord.vector)
+      &&newRecord.dimensions===newRecord.vector.length
+    );
+    if(cachedNewIsValid)newVector=newRecord!.vector;
+    else{
+      const vectors=await provider.embed([newMemory.content]);
+      if(vectors.length!==1||!isFiniteVector(vectors[0]))throw new Error("Embedding provider returned an invalid new-memory vector.");
+      newVector=vectors[0]!;
+      const now=this.options.clock?.now()??new Date().toISOString();
+      newRecord=makeIndexRecord(newMemory,provider,model,newVector,now);
+    }
+    const expectedDimensions=newVector.length;
     const stale=active.filter(memory=>{
-      const record=current.get(memory.id);
+      if(memory.id===newMemory.id)return false;
+      const record=existing.get(memory.id);
       return !record
         ||record.characterId!==characterId
         ||record.contentHash!==deterministicContentHash(memory.content)
         ||record.embeddingProviderId!==provider.id
         ||record.embeddingModel!==model
         ||!isFiniteVector(record.vector)
-        ||record.dimensions!==record.vector.length;
+        ||record.dimensions!==record.vector.length
+        ||record.dimensions!==expectedDimensions;
     });
-    let records=new Map<string,MemorySemanticVectorRecord>();
-    for(const record of state.records){
-      const memory=memories.find(item=>item.id===record.memoryId);
-      if(memory&&memory.characterId===characterId&&memory.status==="active"&&active.some(item=>item.id===memory.id)&&record.embeddingProviderId===provider.id&&record.embeddingModel===model&&record.contentHash===deterministicContentHash(memory.content)&&record.dimensions===record.vector.length&&isFiniteVector(record.vector)){
-        records.set(record.memoryId,record);
-      }
+    const records=new Map<string,MemorySemanticVectorRecord>();
+    if(newRecord)records.set(newMemory.id,newRecord);
+    for(const memory of active){
+      if(memory.id===newMemory.id)continue;
+      const record=existing.get(memory.id);
+      if(record
+        &&record.characterId===characterId
+        &&record.contentHash===deterministicContentHash(memory.content)
+        &&record.embeddingProviderId===provider.id
+        &&record.embeddingModel===model
+        &&isFiniteVector(record.vector)
+        &&record.dimensions===record.vector.length
+        &&record.dimensions===expectedDimensions
+      )records.set(memory.id,record);
     }
     if(stale.length>0){
-      const vectors=await provider.embed([newMemory.content,...stale.filter(memory=>memory.id!==newMemory.id).map(memory=>memory.content)]);
-      if(vectors.length!==1+stale.filter(memory=>memory.id!==newMemory.id).length)throw new Error("Embedding provider returned unexpected vector count.");
+      const vectors=await provider.embed(stale.map(memory=>memory.content));
+      if(vectors.length!==stale.length||vectors.some(vector=>!isFiniteVector(vector)||vector.length!==expectedDimensions))throw new Error("Embedding provider returned inconsistent cached vector dimensions.");
       const now=this.options.clock?.now()??new Date().toISOString();
-      records.set(newMemory.id,makeIndexRecord(newMemory,provider,model,vectors[0]!,now));
-      let vectorIndex=1;
-      for(const memory of stale){
-        if(memory.id===newMemory.id)continue;
-        records.set(memory.id,makeIndexRecord(memory,provider,model,vectors[vectorIndex]!,now));
-        vectorIndex++;
-      }
-    }else{
-      const currentNew=records.get(newMemory.id);
-      if(!currentNew){
-        const vectors=await provider.embed([newMemory.content]);
-        records.set(newMemory.id,makeIndexRecord(newMemory,provider,model,vectors[0]!,this.options.clock?.now()??new Date().toISOString()));
-      }
+      for(let i=0;i<stale.length;i++)records.set(stale[i]!.id,makeIndexRecord(stale[i]!,provider,model,vectors[i]!,now));
     }
     const nextState:MemorySemanticIndexState={
       apiVersion:MEMORY_SEMANTIC_INDEX_API_VERSION,
@@ -460,25 +474,41 @@ export class MemorySemanticDeduplicator{
       records:[...records.values()].sort((a,b)=>a.memoryId.localeCompare(b.memoryId))
     };
     await this.options.indexStore.save(nextState);
-    return {vectors:new Map(nextState.records.map(record=>[record.memoryId,record.vector] as const)),staleOrMissing:stale.length};
+    return {vectors:new Map(nextState.records.map(record=>[record.memoryId,record.vector] as const)),staleOrMissing:stale.length+(cachedNewIsValid?0:1)};
   }
 
   private async reconcileIndex(characterId:CharacterId,memories:readonly MemoryItem[],provider:EmbeddingProvider,model:string):Promise<void>{
     const active=memories.filter(memory=>memory.characterId===characterId&&memory.status==="active");
     const state=validIndexState(await this.options.indexStore.load(characterId),characterId);
     const existing=new Map(state.records.map(record=>[record.memoryId,record] as const));
+    const firstValid=active.map(memory=>existing.get(memory.id)).find(record=>Boolean(record&&record.embeddingProviderId===provider.id&&record.embeddingModel===model&&isFiniteVector(record.vector)&&record.dimensions===record.vector.length));
+    const expectedDimensions=firstValid?.dimensions;
     const stale=active.filter(memory=>{
       const record=existing.get(memory.id);
-      return !record||record.contentHash!==deterministicContentHash(memory.content)||record.embeddingProviderId!==provider.id||record.embeddingModel!==model||!isFiniteVector(record.vector)||record.dimensions!==record.vector.length;
+      return !record
+        ||record.contentHash!==deterministicContentHash(memory.content)
+        ||record.embeddingProviderId!==provider.id
+        ||record.embeddingModel!==model
+        ||!isFiniteVector(record.vector)
+        ||record.dimensions!==record.vector.length
+        ||(expectedDimensions!==undefined&&record.dimensions!==expectedDimensions);
     });
     const keep=active.filter(memory=>{
       const record=existing.get(memory.id);
-      return Boolean(record&&record.contentHash===deterministicContentHash(memory.content)&&record.embeddingProviderId===provider.id&&record.embeddingModel===model&&record.dimensions===record.vector.length&&isFiniteVector(record.vector));
+      return Boolean(record
+        &&record.contentHash===deterministicContentHash(memory.content)
+        &&record.embeddingProviderId===provider.id
+        &&record.embeddingModel===model
+        &&isFiniteVector(record.vector)
+        &&record.dimensions===record.vector.length
+        &&(expectedDimensions===undefined||record.dimensions===expectedDimensions));
     }).map(memory=>existing.get(memory.id)!);
-    const records=[...keep];
+    let records=[...keep];
     if(stale.length>0){
       const vectors=await provider.embed(stale.map(memory=>memory.content));
-      if(vectors.length!==stale.length)throw new Error("Embedding provider returned unexpected vector count.");
+      if(vectors.length!==stale.length||vectors.some(vector=>!isFiniteVector(vector)))throw new Error("Embedding provider returned invalid vectors during rebuild.");
+      const dimensions=vectors[0]?.length??expectedDimensions??0;
+      if(dimensions<=0||vectors.some(vector=>vector.length!==dimensions))throw new Error("Embedding provider returned inconsistent vector dimensions during rebuild.");
       const now=this.options.clock?.now()??new Date().toISOString();
       for(let i=0;i<stale.length;i++)records.push(makeIndexRecord(stale[i]!,provider,model,vectors[i]!,now));
     }
