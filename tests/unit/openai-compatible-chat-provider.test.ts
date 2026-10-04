@@ -318,11 +318,11 @@ async function credentialAndUnsupportedTest(){
     "unsupported tool message"
   );
 
-  await throwsAsync(
-    ()=>provider(new FakeHttpClient()).chat({...request(),generation:{responseFormat:{type:"json",schema:{type:"object"}}}}),
-    error=>error instanceof OpenAICompatibleProviderError&&error.chatError.code==="UNSUPPORTED",
-    "unsupported structured output"
-  );
+  const jsonModeHttp=new FakeHttpClient();
+  await provider(jsonModeHttp).chat({...request(),generation:{responseFormat:{type:"json",schema:{type:"object"}}}});
+  const jsonModeBody=jsonModeHttp.requests[0]?.body;
+  if(jsonModeBody===undefined)throw new Error("JSON mode request body missing");
+  equal((JSON.parse(jsonModeBody) as {response_format?:{type:string}}).response_format?.type,"json_object","legacy JSON mode mapping");
 }
 
 async function secretSafetyTest(){
