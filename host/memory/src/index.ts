@@ -1,11 +1,13 @@
-import type {CharacterId,ConversationId,MemoryItem,MemoryStore,MemoryStoreState} from "../../../contracts/src/index";
+import type {CharacterId,ConversationId,MemoryItem,MemorySemanticIndexState,MemorySemanticIndexStore,MemoryStore,MemoryStoreState} from "../../../contracts/src/index";
 
 export type MemoryStoreInvoke=(command:string,args?:Record<string,unknown>)=>Promise<unknown>;
 
 export const MEMORY_COMMANDS={
   get:"get_memory_state",
   save:"save_memory_state",
-  supersede:"supersede_memory"
+  supersede:"supersede_memory",
+  semanticGet:"get_memory_semantic_index",
+  semanticSave:"save_memory_semantic_index"
 } as const;
 
 function cloneItem(item:MemoryItem):MemoryItem{return {...item,tags:[...item.tags],metadata:{...item.metadata}}}
@@ -57,5 +59,39 @@ export class IpcMemoryStore implements MemoryStore{
     const replacement=typeof previousMemoryIdOrReplacement==="string"?replacementMaybe!:previousMemoryIdOrReplacement;
     const value=await this.invoke(MEMORY_COMMANDS.supersede,{characterId,previousMemoryId,replacement:cloneItem(replacement)});
     return value as MemoryItem;
+  }
+}
+
+
+function cloneSemanticState(state:MemorySemanticIndexState):MemorySemanticIndexState{
+  return {
+    apiVersion:state.apiVersion,
+    schemaVersion:state.schemaVersion,
+    characterId:state.characterId,
+    records:state.records.map(record=>({...record,vector:[...record.vector]}))
+  };
+}
+
+export class InMemoryMemorySemanticIndexStore implements MemorySemanticIndexStore{
+  private readonly states=new Map<CharacterId,MemorySemanticIndexState>();
+  async load(characterId:CharacterId):Promise<MemorySemanticIndexState|undefined>{
+    const state=this.states.get(characterId);
+    return state?cloneSemanticState(state):undefined;
+  }
+  async save(state:MemorySemanticIndexState):Promise<void>{
+    if(state.characterId.trim().length===0)throw new Error("Semantic index character scope must not be empty.");
+    if(state.records.some(record=>record.characterId!==state.characterId))throw new Error("Semantic index character scope mismatch.");
+    this.states.set(state.characterId,cloneSemanticState(state));
+  }
+}
+
+export class IpcMemorySemanticIndexStore implements MemorySemanticIndexStore{
+  constructor(private readonly invoke:MemoryStoreInvoke){}
+  async load(characterId:CharacterId):Promise<MemorySemanticIndexState|undefined>{
+    const value=await this.invoke(MEMORY_COMMANDS.semanticGet,{characterId});
+    return value===null||value===undefined?undefined:value as MemorySemanticIndexState;
+  }
+  async save(state:MemorySemanticIndexState):Promise<void>{
+    await this.invoke(MEMORY_COMMANDS.semanticSave,{stateValue:cloneSemanticState(state)});
   }
 }
