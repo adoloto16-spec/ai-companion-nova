@@ -108,7 +108,7 @@ export class InProcessMemoryRetriever implements MemoryRetriever{
         .filter(item=>requiredTags.every(tag=>item.tags.some(itemTag=>normalize(itemTag)===tag)))
         .filter(item=>!query.originConversationId||item.originConversationId===query.originConversationId)
         .map(item=>({...score(item,normalizedQuery.split(" ").filter(Boolean)),item}))
-        .filter(candidate=>candidate.score>0||normalizedQuery.length===0)
+        .filter(candidate=>normalizedQuery.length===0 || candidate.lexicalRelevance>0 || candidate.phraseRelevance>0 || candidate.tagRelevance>0)
         .sort(compare)
         .slice(0,limit);
       this.diagnostics?.recordError(this.source,"MEMORY_CANDIDATES_FOUND","Memory candidates found",{characterId,count:ranked.length,durationMs:Date.now()-started});
