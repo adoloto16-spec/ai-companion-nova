@@ -3,7 +3,7 @@ import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore} from "../../../contracts/src/index";
 import type {Conversation,ConversationCreateInput,ConversationId,ConversationStore,ConversationUpdateInput} from "../../../contracts/src/index";
 import {
-  AiRuntime,CharacterManager,ConversationManager,CoreBookManager,MemoryBrokerImpl,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,
+  AiRuntime,AutomaticMemoryAgent,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,
   InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,
   DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
   InMemoryActorIdentityResolver,createMemoryConfig,SettingsManager,InMemoryChatTraceStore
@@ -25,7 +25,7 @@ import {InMemoryMemoryStore} from "../../../host/memory/src/index";
 import type {CoreBookCreateInput,CoreBookUpdateInput} from "../../../core/src/core-book-manager";
 import {activeProviderId,buildConfiguredProvider,buildProviderForDiscovery,buildProviderForPreset,testProviderConfiguration} from "./provider-configuration";
 import {RetrievalEventIndexer} from "../../../core/src/retrieval-indexer";
-import {MemoryExtractionService} from "../../../core/src/memory-extraction";
+
 
 export interface OpenAICompatibleRuntimeConfig{
   config:OpenAICompatibleProviderConfig;
@@ -98,6 +98,7 @@ export interface FoundationRuntime{
   extractMemory(request:import("../../../contracts/src/index").MemoryExtractionRequest):Promise<readonly MemoryItem[]>;
   getMemory(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>;
   searchMemory(query:MemorySearchQuery):Promise<readonly MemoryItem[]>;
+  listMemory(characterId:CharacterId):Promise<readonly MemoryItem[]>;
   createMemory(characterId:CharacterId,input:MemoryCreateInput):Promise<MemoryItem>;
   updateMemory(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryUpdateInput):Promise<MemoryItem>;
   supersedeMemory(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryCreateInput):Promise<MemoryItem>;
@@ -138,8 +139,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     audit,
     events,
     clock:{now:()=>new Date().toISOString()},
-    characterExists:async characterId=>Boolean(await characterManager.getCharacter(characterId)),
-    conversationExists:async (characterId,conversationId)=>Boolean(await conversationManager.getConversation(characterId,conversationId))
+    characterExists:async characterId=>Boolean(await characterManager.getCharacter(characterId))
   });
   const userMemoryAuthority:MemoryMutationAuthority={
     actorId:"local-user",
@@ -147,9 +147,10 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     trusted:true,
     capabilities:[]
   };
+  const memoryRetriever=new InProcessMemoryRetriever(memoryBroker,{diagnostics:diagnosticsStore});
   const contextEngine=options.contextEngine??createDeterministicContextEngine(
     {listCoreBookEntries:characterId=>coreBookManager.listCoreBookEntries(characterId)},
-    {memoryBroker,retriever:options.retriever,recentMessageCount:()=>settingsManager.get().context.recentConversationMessages,memoryCandidateLimit:()=>settingsManager.get().memory.candidateLimit,retrievalCandidateLimit:()=>settingsManager.get().retrieval.candidateLimit}
+    {memoryBroker,memoryRetriever,retriever:options.retriever,recentMessageCount:()=>settingsManager.get().context.recentConversationMessages,memoryCandidateLimit:()=>settingsManager.get().memory.candidateLimit,retrievalCandidateLimit:()=>settingsManager.get().retrieval.candidateLimit,diagnostics:diagnosticsStore}
   );
   const retrievalIndexer=options.retrievalIndexWriter
     ? new RetrievalEventIndexer({events,coreBook:coreBookManager,memory:memoryBroker,writer:options.retrievalIndexWriter})
@@ -202,7 +203,25 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       return aiRuntime.generate(request.providerId?request:{...request,providerId:activeProviderId(providerConfiguration)});
     }
   };
-  const memoryExtractionService=new MemoryExtractionService(extractionChatRuntime,memoryBroker,{validator:contractValidator,diagnostics:diagnosticsStore,traceStore});
+  const resolveChatModelForPreset=async(providerPresetId:string):Promise<string>=>{
+    const configuration=providerPresetConfigurations.get(providerPresetId);
+    if(!configuration)return "fake-chat";
+    const provider=buildProviderForDiscovery(configuration,credentialStore,options.httpClient);
+    if(!provider)return configuration.model||"fake-chat";
+    try{
+      const models=await provider.listModels();
+      return models[0]?.id??(configuration.model||"fake-chat");
+    }catch{
+      return configuration.model||"fake-chat";
+    }
+  };
+  const automaticMemoryAgent=new AutomaticMemoryAgent({
+    settings:()=>settingsManager.get(),
+    broker:memoryBroker,
+    runtime:{chat:extractionChatRuntime.chat,getChatModelForPreset:resolveChatModelForPreset},
+    diagnostics:diagnosticsStore,
+    traceStore
+  });
 
   const moduleCapabilities:Record<string,readonly string[]>={
     "character.fake":["character.expression","character.speech"],
@@ -357,18 +376,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       }
     },
     getActiveProviderPresetId:()=>activeProviderPresetId,
-    getChatModelForPreset:async(providerPresetId)=>{
-      const configuration=providerPresetConfigurations.get(providerPresetId);
-      if(!configuration)return "fake-chat";
-      const provider=buildProviderForDiscovery(configuration,credentialStore,options.httpClient);
-      if(!provider)return configuration.model||"fake-chat";
-      try{
-        const models=await provider.listModels();
-        return models[0]?.id??(configuration.model||"fake-chat");
-      }catch{
-        return configuration.model||"fake-chat";
-      }
-    },
+    getChatModelForPreset:resolveChatModelForPreset,
     applyProviderConfiguration:async(configuration)=>{await applyProvider(configuration);},
     getSettings:()=>settingsManager.get(),
     updateSettings:async(settings)=>{
@@ -417,9 +425,10 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     deleteCoreBookEntry:(characterId,entryId)=>coreBookManager.deleteCoreBookEntry(characterId,entryId),
     setCoreBookEntryEnabled:(characterId,entryId,enabled)=>coreBookManager.setCoreBookEntryEnabled(characterId,entryId,enabled),
     buildContext:request=>contextEngine.build(request),
-    extractMemory:request=>memoryExtractionService.process(request),
+    extractMemory:request=>automaticMemoryAgent.process(request),
     getMemory:(characterId,conversationId,memoryId)=>memoryBroker.get(characterId,conversationId,memoryId),
     searchMemory:query=>memoryBroker.search(query),
+    listMemory:characterId=>memoryBroker.list(characterId),
     createMemory:(characterId,input)=>memoryBroker.create(characterId,input,userMemoryAuthority),
     updateMemory:(characterId,conversationId,memoryId,input)=>memoryBroker.update(characterId,conversationId,memoryId,input,userMemoryAuthority),
     supersedeMemory:(characterId,conversationId,memoryId,input)=>memoryBroker.supersede(characterId,conversationId,memoryId,input,userMemoryAuthority),
