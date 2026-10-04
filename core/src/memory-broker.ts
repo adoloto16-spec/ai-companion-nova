@@ -27,6 +27,10 @@ function defaultClock():Clock{return {now:()=>new Date().toISOString()}}
 function defaultIdFactory(prefix:string):()=>string{let sequence=0;return ()=>{sequence+=1;return prefix+"."+Date.now().toString(36)+"."+sequence.toString(36)}}
 const idFactory=defaultIdFactory("memory");
 function isRecord(value:unknown):value is Record<string,unknown>{return !!value&&typeof value==="object"&&!Array.isArray(value)}
+type MemoryArchiveArgs =
+  | [characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason,supersededBy?:MemoryItemId|null]
+  | [characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason,supersededBy?:MemoryItemId|null];
+
 function cloneMetadata(metadata:Record<string,unknown>):Record<string,unknown>{return {...metadata}}
 function cloneItem(item:MemoryItem):MemoryItem{return {...item,tags:[...item.tags],metadata:cloneMetadata(item.metadata)}}
 type MutableMemoryStoreState={apiVersion:"1";schemaVersion:string;characterId:CharacterId;items:MemoryItem[]};
@@ -95,7 +99,7 @@ export class MemoryBrokerImpl implements MemoryBroker{
   }
   async archive(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason,supersededBy?:MemoryItemId|null):Promise<MemoryItem>;
   async archive(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason,supersededBy?:MemoryItemId|null):Promise<MemoryItem>;
-  async archive(...args:[CharacterId,MemoryItemId,MemoryMutationAuthority,MemoryArchiveReason?,(MemoryItemId|null)?]|[CharacterId,ConversationId,MemoryItemId,MemoryMutationAuthority,MemoryArchiveReason?,MemoryItemId|null?]):Promise<MemoryItem>{
+  async archive(...args:MemoryArchiveArgs):Promise<MemoryItem>{
     const characterId=args[0];
     const legacy=typeof args[2]==="string";
     const memoryId=requireMemoryId((legacy?args[2]:args[1]) as string);
