@@ -495,16 +495,6 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     if(!request.model.trim()){
       throw this.failure({code:"INVALID_REQUEST",message:"Requested model is not configured for this provider.",request,retryable:false,details:{category:"configuration"}});
     }
-    if(request.generation?.responseFormat?.type==="json"){
-      throw this.failure({
-        code:"UNSUPPORTED",
-        message:"Structured output is not supported by this provider.",
-        request,
-        retryable:false,
-        details:{category:"capability"}
-      });
-    }
-
     const messages=this.mapMessages(request.context.messages,request);
     const secret=await this.resolveCredential(request);
     const body=JSON.stringify(this.mapRequest(request,messages));
