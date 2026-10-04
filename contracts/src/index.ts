@@ -457,10 +457,10 @@ export interface EventPayloadMap{
   CoreBookEntryUpdated:{characterId:string;entryId:string};
   CoreBookEntryDeleted:{characterId:string;entryId:string};
   CoreBookEntryEnabledChanged:{characterId:string;entryId:string;enabled:boolean};
-  MemoryCreated:{characterId:string;conversationId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
-  MemoryUpdated:{characterId:string;conversationId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
-  MemorySuperseded:{characterId:string;conversationId:string;memoryId:string;previousMemoryId:string;status:MemoryStatus;updatedAt:string};
-  MemoryArchived:{characterId:string;conversationId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
+  MemoryCreated:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;status:MemoryStatus;updatedAt:string};
+  MemoryUpdated:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;status:MemoryStatus;updatedAt:string};
+  MemorySuperseded:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;previousMemoryId:string;status:MemoryStatus;updatedAt:string};
+  MemoryArchived:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;status:MemoryStatus;updatedAt:string};
   ChatResponseReceived:{requestId:string;conversationId:string;providerId:string;model:string;finishReason:ChatFinishReason};
   ConversationCreated:{characterId:string;conversationId:string};
   ConversationUpdated:{characterId:string;conversationId:string};
