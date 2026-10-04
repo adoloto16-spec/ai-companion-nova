@@ -19,7 +19,7 @@ const MAX_RETRIEVAL_CANDIDATES:i64=100;
 const MAX_DIAGNOSTICS_ENTRIES:i64=500;
 const MAX_MEMORY_AGENT_PROMPT:usize=12000;
 const DEFAULT_MEMORY_AGENT_PROMPT_VERSION:&str="1";
-const DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS:&str="Review the relevant conversation context, user message, and assistant response.\nDecide whether there is durable information worth remembering after this conversation ends.\nKeep information only when it is useful beyond the current turn.\nExamples: stable user preferences, persistent user facts, important relationships, long-term goals, commitments or decisions, durable instructions, meaningful experiences, and important assistant commitments or decisions.";
+const DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS:&str="You are a long-term memory agent.\nDecide whether the exchange contains durable information worth remembering after this conversation ends.\nReturn only the requested output.\nGood memories are brief, self-contained, durable, and understandable without the original conversation.\nDo not invent ids or metadata; the application supplies all internal state.";
 
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(deny_unknown_fields)]
