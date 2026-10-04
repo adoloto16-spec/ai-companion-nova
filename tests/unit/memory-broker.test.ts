@@ -32,7 +32,8 @@ async function main(){
 
   const crossConversation=await broker.create("character.a",{id:"memory.a.cross",conversationId:"conversation.a",type:"fact",content:"Cross conversation memory",tags:["cross"],importance:80,confidence:80,source:"conversation",sourceReference:"conversation.a",mutationPolicy:"locked"},user);
   equal((await broker.search({characterId:"character.a",query:"Cross conversation"}))[0]?.id,crossConversation.id,"same-character memory is retrievable without conversation scope");
-\n  const b=await broker.create("character.b",{id:"memory.b.1",conversationId:"conversation.b",type:"preference",content:"Likes tea",tags:["drink","tea"],importance:50,confidence:60,source:"user"},user);
+
+  const b=await broker.create("character.b",{id:"memory.b.1",conversationId:"conversation.b",type:"preference",content:"Likes tea",tags:["drink","tea"],importance:50,confidence:60,source:"user"},user);
   equal(await broker.get("character.a","conversation.a",b.id),undefined,"character isolation prevents cross-character get");
   let crossScope=false;
   try{await broker.update("character.a","conversation.a",b.id,{content:"leak"},user);}catch{crossScope=true}
