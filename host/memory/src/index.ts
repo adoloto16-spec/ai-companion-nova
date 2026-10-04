@@ -25,8 +25,9 @@ export class InMemoryMemoryStore implements MemoryStore{
     this.states.set(state.characterId,cloneState(state));
   }
   async supersede(characterId:CharacterId,previousOrConversationId:ConversationId|string,previousMemoryIdOrReplacement:string|MemoryItem,replacementMaybe?:MemoryItem):Promise<MemoryItem>{
-    const previousMemoryId=typeof previousMemoryIdOrReplacement==="string"?previousMemoryIdOrReplacement:previousOrConversationId;\n    const replacement=typeof previousMemoryIdOrReplacement==="string"?replacementMaybe!:previousMemoryIdOrReplacement;\n    const current=this.states.get(characterId);
-    const state={apiVersion:current?.apiVersion??"1",schemaVersion:current?.schemaVersion??"2",characterId,items:current?current.items.map(cloneItem):[]};
+    const previousMemoryId=typeof previousMemoryIdOrReplacement==="string"?previousMemoryIdOrReplacement:previousOrConversationId;
+    const replacement=typeof previousMemoryIdOrReplacement==="string"?replacementMaybe!:previousMemoryIdOrReplacement;\n    const current=this.states.get(characterId);
+    const state={apiVersion:current?.apiVersion??"1",schemaVersion:current?.schemaVersion??"3",characterId,items:current?current.items.map(cloneItem):[]};
     if(state.characterId!==characterId||replacement.characterId!==characterId)throw new Error("Memory storage scope mismatch.");
     const index=state.items.findIndex(item=>item.id===previousMemoryId);
     if(index<0)throw new Error("Memory item was not found.");
@@ -50,8 +51,10 @@ export class IpcMemoryStore implements MemoryStore{
   async save(state:MemoryStoreState):Promise<void>{
     await this.invoke(MEMORY_COMMANDS.save,{stateValue:cloneState(state)});
   }
-  async supersede(characterId:CharacterId,conversationId:ConversationId,previousMemoryId:string,replacement:MemoryItem):Promise<MemoryItem>{
-    const value=await this.invoke(MEMORY_COMMANDS.supersede,{characterId,conversationId,previousMemoryId,replacement:cloneItem(replacement)});
+  async supersede(characterId:CharacterId,previousOrConversationId:ConversationId|string,previousMemoryIdOrReplacement:string|MemoryItem,replacementMaybe?:MemoryItem):Promise<MemoryItem>{
+    const previousMemoryId=typeof previousMemoryIdOrReplacement==="string"?previousMemoryIdOrReplacement:previousOrConversationId;
+    const replacement=typeof previousMemoryIdOrReplacement==="string"?replacementMaybe!:previousMemoryIdOrReplacement;
+    const value=await this.invoke(MEMORY_COMMANDS.supersede,{characterId,previousMemoryId,replacement:cloneItem(replacement)});
     return value as MemoryItem;
   }
 }
