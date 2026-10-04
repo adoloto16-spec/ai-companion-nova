@@ -11,7 +11,7 @@ import {IpcProviderPresetStore,InMemoryProviderPresetStore,materializeProviderCo
 import {IpcProviderConfigurationStore,loadProviderConfigurationSafely} from "../../../host/config/src/index";
 import {IpcCharacterStore} from "../../../host/characters/src/index";
 import {IpcCoreBookStore,InMemoryCoreBookStore} from "../../../host/core-book/src/index";
-import {IpcMemoryStore,InMemoryMemoryStore} from "../../../host/memory/src/index";
+import {IpcMemorySemanticIndexStore,IpcMemoryStore,InMemoryMemoryStore} from "../../../host/memory/src/index";
 import {IpcConversationStore,InMemoryConversationStore} from "../../../host/conversations/src/index";
 import {IpcModelProfileStore,InMemoryModelProfileStore} from "../../../host/model-profiles/src/index";
 import {IpcSettingsStore,InMemorySettingsStore} from "../../../host/settings/src/index";
@@ -1124,6 +1124,91 @@ function AppSettingsView({
     </section>
 
     <section>
+      <h3>Semantic Memory Deduplication</h3>
+      <label className="checkbox">Enabled
+        <input type="checkbox" checked={settings.semanticDedup.enabled}
+          onChange={event=>onChange({...settings,semanticDedup:{...settings.semanticDedup,enabled:event.target.checked}})} disabled={saving}/>
+      </label>
+      <label>Embedding Provider Preset
+        <select value={settings.semanticDedup.embeddingProviderPresetId??""}
+          onChange={event=>onChange({...settings,semanticDedup:{...settings.semanticDedup,embeddingProviderPresetId:event.target.value||null}})} disabled={saving}>
+          <option value="">Not configured</option>
+          {settings.semanticDedup.embeddingProviderPresetId&&!providerPresets.some(p=>p.id===settings.semanticDedup.embeddingProviderPresetId)&&
+            <option value={settings.semanticDedup.embeddingProviderPresetId} disabled>Unavailable: {settings.semanticDedup.embeddingProviderPresetId}</option>}
+          {providerPresets.map(preset=><option key={preset.id} value={preset.id}>{preset.name||preset.id}</option>)}
+        </select>
+      </label>
+      <label>Embedding Model
+        <input value={settings.semanticDedup.embeddingModel}
+          onChange={event=>onChange({...settings,semanticDedup:{...settings.semanticDedup,embeddingModel:event.target.value}})}
+          placeholder="Explicit embedding model, e.g. mistral-embed" disabled={saving}/>
+      </label>
+      <div className="core-book-grid">
+        <label>Candidate Similarity Threshold
+          <input type="number" min="0" max="1" step="0.01" value={settings.semanticDedup.candidateSimilarityThreshold}
+            onChange={event=>onChange({...settings,semanticDedup:{...settings.semanticDedup,candidateSimilarityThreshold:Number(event.target.value)}})} disabled={saving}/>
+          <small>Default: {defaults.semanticDedup.candidateSimilarityThreshold}. Heuristic candidate filter only; it is not a duplicate decision.</small>
+        </label>
+        <label>Candidate Limit
+          <input type="number" min="1" max="100" step="1" value={settings.semanticDedup.candidateLimit}
+            onChange={event=>onChange({...settings,semanticDedup:{...settings.semanticDedup,candidateLimit:Number(event.target.value)}})} disabled={saving}/>
+          <small>Default: {defaults.semanticDedup.candidateLimit}. Only the top candidates are sent to the Judge.</small>
+        </label>
+      </div>
+      <p className="hint">Embeddings detect potentially similar active memories for the same character. They are not used for normal Chat memory retrieval.</p>
+    </section>
+
+    <section>
+      <h3>Memory Judge</h3>
+      <label className="checkbox">Enabled
+        <input type="checkbox" checked={settings.semanticDedup.judge.enabled}
+          onChange={event=>onChange({...settings,semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,enabled:event.target.checked}}})} disabled={saving}/>
+      </label>
+      <label>Judge Provider Preset
+        <select value={settings.semanticDedup.judge.providerPresetId??""}
+          onChange={event=>onChange({...settings,semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,providerPresetId:event.target.value||null}}})} disabled={saving}>
+          <option value="">Not configured</option>
+          {settings.semanticDedup.judge.providerPresetId&&!providerPresets.some(p=>p.id===settings.semanticDedup.judge.providerPresetId)&&
+            <option value={settings.semanticDedup.judge.providerPresetId} disabled>Unavailable: {settings.semanticDedup.judge.providerPresetId}</option>}
+          {providerPresets.map(preset=><option key={preset.id} value={preset.id}>{preset.name||preset.id}</option>)}
+        </select>
+      </label>
+      <label>Judge Model
+        <input value={settings.semanticDedup.judge.model}
+          onChange={event=>onChange({...settings,semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,model:event.target.value}}})}
+          placeholder="Explicit judge model" disabled={saving}/>
+      </label>
+      <label>Judge Output Mode
+        <select value={settings.semanticDedup.judge.outputMode}
+          onChange={event=>onChange({...settings,semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,outputMode:event.target.value as AppSettings["semanticDedup"]["judge"]["outputMode"]}}})} disabled={saving}>
+          <option value="auto">Auto</option>
+          <option value="structured">Structured</option>
+          <option value="plain">Plain</option>
+        </select>
+        <small>{settings.semanticDedup.judge.outputMode==="auto"?"Structured first; Plain only on explicit capability/unsupported failure.":settings.semanticDedup.judge.outputMode==="structured"?"Structured is explicit; unsupported is terminal.":"Plain text only; no response format is sent."}</small>
+      </label>
+      <label>Judge Prompt
+        <textarea value={settings.semanticDedup.judge.prompt}
+          onChange={event=>onChange({...settings,semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,prompt:event.target.value}}})}
+          rows={10} maxLength={12000} disabled={saving}/>
+        <small>{settings.semanticDedup.judge.prompt===defaults.semanticDedup.judge.prompt?"Default prompt":"Custom prompt"} · default version {settings.semanticDedup.judge.defaultPromptVersion}</small>
+      </label>
+      <div className="actions">
+        <button type="button" onClick={()=>{
+          const previous=settings.semanticDedup.judge.prompt===defaults.semanticDedup.judge.prompt?settings.semanticDedup.judge.promptBackup:settings.semanticDedup.judge.prompt;
+          onChange({...settings,semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,prompt:defaults.semanticDedup.judge.prompt,promptBackup:previous||settings.semanticDedup.judge.promptBackup}}});
+        }} disabled={saving}>Reset to Default</button>
+        <button type="button" onClick={()=>{
+          if(settings.semanticDedup.judge.promptBackup){
+            onChange({...settings,semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,prompt:settings.semanticDedup.judge.promptBackup,promptBackup:settings.semanticDedup.judge.prompt}});
+          }
+        }} disabled={saving||!settings.semanticDedup.judge.promptBackup}>Restore Previous</button>
+        <button type="button" onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save"}</button>
+      </div>
+      <p className="hint">The Judge receives only the real candidate IDs and their canonical text. The Judge never archives or edits Memory; deterministic Core validation does.</p>
+    </section>
+
+    <section>
       <h3>Diagnostics</h3>
       <label>Log level
         <select value={settings.diagnostics.logLevel as DiagnosticsLogLevel}
@@ -1430,6 +1515,7 @@ function App(){
   const [providerPresets,setProviderPresets]=React.useState<readonly ProviderPreset[]>([]);
   const [activePresetId,setActivePresetId]=React.useState<string|null>(null);
   const [appSettings,setAppSettings]=React.useState<AppSettings>(()=>defaultAppSettings());
+  const semanticIndexStore=React.useMemo(()=>isTauriRuntime()?new IpcMemorySemanticIndexStore(invoke):undefined,[]);
   const [settingsLoadMessage,setSettingsLoadMessage]=React.useState("");
   const credentialProfileStateRef=React.useRef<CredentialProfileStoreState>(emptyCredentialProfileState());
   const providerPresetStateRef=React.useRef<ProviderPresetStoreState>(emptyProviderPresetState());
@@ -1633,7 +1719,7 @@ function App(){
     setChatController(null);
     await foundationRef.current?.stop();
     const next=await startFoundationRuntime({
-      providerConfiguration:config,credentialStore,characterStore,coreBookStore,memoryStore,conversationStore,retriever,retrievalIndexWriter:retriever,
+      providerConfiguration:config,credentialStore,characterStore,coreBookStore,memoryStore,semanticIndexStore,conversationStore,retriever,retrievalIndexWriter:retriever,
       providerPresetConfigurations:materializePresetConfigurations(presetState.presets,credentialState.profiles),
       settingsStore,
       activeProviderPresetId:presetState.activePresetId??undefined
@@ -1644,7 +1730,7 @@ function App(){
     setRuntime(await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(await next.diagnostics())));
     setStartupStatus("ready");
     setStartupError("");
-  },[addConfigurationLoadError,characterStore,coreBookStore,memoryStore,credentialStore,retriever,conversationStore,syncCharacters]);
+  },[addConfigurationLoadError,characterStore,coreBookStore,memoryStore,semanticIndexStore,credentialStore,retriever,conversationStore,syncCharacters]);
 
   React.useEffect(()=>{
     let active=true;
