@@ -1,8 +1,9 @@
 export type DiagnosticsLogLevel="off"|"errors"|"normal"|"verbose"|"debug";
 
 export const APP_SETTINGS_API_VERSION:"1"="1";
-export const APP_SETTINGS_SCHEMA_VERSION:"3"="3";
-export const DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS="Review the relevant conversation context, user message, and assistant response.\nDecide whether there is durable information worth remembering after this conversation ends.\nKeep information only when it is useful beyond the current turn.\nExamples: stable user preferences, persistent user facts, important relationships, long-term goals, commitments or decisions, durable instructions, meaningful experiences, and important assistant commitments or decisions.";
+export const APP_SETTINGS_SCHEMA_VERSION:"4"="4";
+export const DEFAULT_MEMORY_AGENT_PROMPT_VERSION="1";
+export const DEFAULT_AUTOMATIC_MEMORY_PROMPT="You are a long-term memory agent.\nDecide whether the exchange contains durable information worth remembering after this conversation ends.\nReturn only the requested output.\nGood memories are brief, self-contained, durable, and understandable without the original conversation.\nDo not invent ids or metadata; the application supplies all internal state.";
 
 export interface AppSettings{
   apiVersion:"1";
@@ -14,7 +15,10 @@ export interface AppSettings{
     enabled:boolean;
     providerPresetId:string|null;
     model:string;
-    instructions:string;
+    outputMode:"auto"|"structured"|"plain";
+    prompt:string;
+    promptBackup:string|null;
+    defaultPromptVersion:string;
   };
   context:{
     availableContextTokens:number;
@@ -41,7 +45,7 @@ export const DEFAULT_APP_SETTINGS:AppSettings={
   apiVersion:APP_SETTINGS_API_VERSION,
   schemaVersion:APP_SETTINGS_SCHEMA_VERSION,
   chat:{automaticLongTermMemory:true},
-  memoryAgent:{enabled:true,providerPresetId:null,model:"",instructions:DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS},
+  memoryAgent:{enabled:true,providerPresetId:null,model:"",outputMode:"auto",prompt:DEFAULT_AUTOMATIC_MEMORY_PROMPT,promptBackup:null,defaultPromptVersion:DEFAULT_MEMORY_AGENT_PROMPT_VERSION},
   context:{
     availableContextTokens:4096,
     reservedOutputTokens:1024,
@@ -108,7 +112,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const input=value as Record<string,unknown>;
   const legacy=input.schemaVersion==="0"||input.schemaVersion===undefined||input.schemaVersion==="1";
   if(input.apiVersion!==undefined&&input.apiVersion!=="1"&&!legacy)throw new Error("Unsupported AppSettings apiVersion.");
-  if(input.schemaVersion!==undefined&&!["0","1","2","3"].includes(String(input.schemaVersion)))throw new Error("Unsupported AppSettings schemaVersion.");
+  if(input.schemaVersion!==undefined&&!["0","1","2","3","4"].includes(String(input.schemaVersion)))throw new Error("Unsupported AppSettings schemaVersion.");
   const root=value as Record<string,any>;
   const context=root.context&&typeof root.context==="object"?root.context:{};
   const memory=root.memory&&typeof root.memory==="object"?root.memory:{};
@@ -125,16 +129,18 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const legacyEnabled=typeof chat.automaticLongTermMemory==="boolean"?chat.automaticLongTermMemory:defaults.chat.automaticLongTermMemory;
   const currentSchema=input.schemaVersion==="3";
   const previousSchema=input.schemaVersion==="2";
-  const memoryAgentEnabled=(currentSchema||previousSchema)&&typeof memoryAgent.enabled==="boolean"?memoryAgent.enabled:legacyEnabled;
-  const memoryAgentPreset=(currentSchema||previousSchema)&&typeof memoryAgent.providerPresetId==="string"&&memoryAgent.providerPresetId.trim()?memoryAgent.providerPresetId.trim():null;
-  const memoryAgentModel=(currentSchema||previousSchema)&&typeof memoryAgent.model==="string"?memoryAgent.model.trim():"";
-  const memoryAgentInstructions=currentSchema&&typeof memoryAgent.instructions==="string"&&memoryAgent.instructions.trim()
-    ?memoryAgent.instructions.trim()
-    :DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS;
+  const memoryAgentEnabled=(["3","4"].includes(String(input.schemaVersion))||previousSchema)&&typeof memoryAgent.enabled==="boolean"?memoryAgent.enabled:legacyEnabled;
+  const memoryAgentPreset=(["3","4"].includes(String(input.schemaVersion))||previousSchema)&&typeof memoryAgent.providerPresetId==="string"&&memoryAgent.providerPresetId.trim()?memoryAgent.providerPresetId.trim():null;
+  const memoryAgentModel=(["3","4"].includes(String(input.schemaVersion))||previousSchema)&&typeof memoryAgent.model==="string"?memoryAgent.model.trim():"";
+  const legacyPrompt=typeof memoryAgent.instructions==="string"?memoryAgent.instructions.trim():"";
+  const currentPrompt=typeof memoryAgent.prompt==="string"&&memoryAgent.prompt.trim()?memoryAgent.prompt.trim():(legacyPrompt||DEFAULT_AUTOMATIC_MEMORY_PROMPT);
+  const currentBackup=typeof memoryAgent.promptBackup==="string"&&memoryAgent.promptBackup.length>0?memoryAgent.promptBackup:null;
+  const outputMode=memoryAgent.outputMode==="structured"||memoryAgent.outputMode==="plain"||memoryAgent.outputMode==="auto"?memoryAgent.outputMode:"auto";
+  const defaultPromptVersion=typeof memoryAgent.defaultPromptVersion==="string"&&memoryAgent.defaultPromptVersion.trim()?memoryAgent.defaultPromptVersion.trim():DEFAULT_MEMORY_AGENT_PROMPT_VERSION;
   const next:AppSettings={
-    apiVersion:"1",schemaVersion:"3",
+    apiVersion:"1",schemaVersion:"4",
     chat:{automaticLongTermMemory:legacyEnabled},
-    memoryAgent:{enabled:memoryAgentEnabled,providerPresetId:memoryAgentPreset,model:memoryAgentModel,instructions:memoryAgentInstructions},
+    memoryAgent:{enabled:memoryAgentEnabled,providerPresetId:memoryAgentPreset,model:memoryAgentModel,outputMode,prompt:currentPrompt,promptBackup:currentBackup,defaultPromptVersion},
     context:{
       availableContextTokens:typeof context.availableContextTokens==="number"?context.availableContextTokens:(legacyContextBudget??defaults.context.availableContextTokens),
       reservedOutputTokens:typeof context.reservedOutputTokens==="number"?context.reservedOutputTokens:defaults.context.reservedOutputTokens,
