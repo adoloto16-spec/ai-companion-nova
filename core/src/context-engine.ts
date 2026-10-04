@@ -352,6 +352,7 @@ export interface ContextEngineOptions {
 
 export class DeterministicContextEngine implements ContextEngineContract {
   private readonly sources:readonly ContextCandidateSource[];
+  private readonly diagnostics?:DiagnosticsStore;
 
   constructor(
     sources:readonly ContextCandidateSource[],
@@ -359,6 +360,7 @@ export class DeterministicContextEngine implements ContextEngineContract {
   ){
     if(sources.length===0)throw new Error("Context Engine requires at least one candidate source.");
     this.sources=sources;
+    this.diagnostics=options.diagnostics;
     const recentMessageCount=typeof options.recentMessageCount==="number"?options.recentMessageCount:undefined;
     const memoryCandidateLimit=typeof options.memoryCandidateLimit==="number"?options.memoryCandidateLimit:undefined;
     const retrievalCandidateLimit=typeof options.retrievalCandidateLimit==="number"?options.retrievalCandidateLimit:undefined;
@@ -436,7 +438,7 @@ export class DeterministicContextEngine implements ContextEngineContract {
 
     const estimatedTokens=includedCandidates.reduce((sum,candidate)=>sum+candidate.estimatedTokens,0);
     const injectedMemoryCount=includedCandidates.filter(candidate=>candidate.source==="memory").length;
-    options.diagnostics?.recordError("context-engine","MEMORY_CONTEXT_INJECTED","Memory context injected",{
+    this.diagnostics?.recordError("context-engine","MEMORY_CONTEXT_INJECTED","Memory context injected",{
       characterId:request.characterId,count:injectedMemoryCount
     });
     return {
