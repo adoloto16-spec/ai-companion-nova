@@ -151,27 +151,41 @@ fn migrate_memory_agent_object(root:&mut serde_json::Map<String,Value>){
 fn migrate(value:Value)->Result<(AppSettings,bool),String>{
     let schema=value.get("schemaVersion").and_then(Value::as_str);
     let legacy=schema.map(|v|v==LEGACY_SCHEMA_VERSION).unwrap_or(true);
-    let previous=schema==Some(PREVIOUS_SCHEMA_VERSION)||schema==Some(LEGACY_PREVIOUS_SCHEMA_VERSION);
-    if schema==Some(PREVIOUS_SCHEMA_VERSION){
+    if schema==Some("3"){
         let mut normalized=value.clone();
         if let Some(root)=normalized.as_object_mut(){
             root.insert("schemaVersion".into(),Value::String(SCHEMA_VERSION.into()));
-            if let Some(memory_agent)=root.get_mut("memoryAgent").and_then(Value::as_object_mut){
-                memory_agent.entry("instructions").or_insert_with(||Value::String(DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS.into()));
-            }else{
-                let mut memory_agent=serde_json::Map::new();
-                memory_agent.insert("enabled".into(),Value::Bool(true));
-                memory_agent.insert("providerPresetId".into(),Value::Null);
-                memory_agent.insert("model".into(),Value::String(String::new()));
-                memory_agent.insert("instructions".into(),Value::String(DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS.into()));
-                root.insert("memoryAgent".into(),Value::Object(memory_agent));
-            }
+            migrate_memory_agent_object(root);
         }
-        let settings:AppSettings=serde_json::from_value(normalized).map_err(|e|format!("invalid AppSettings schema v2: {e}"))?;
+        let settings:AppSettings=serde_json::from_value(normalized).map_err(|e|format!("invalid AppSettings schema v3: {e}"))?;
         validate(&settings)?;
         return Ok((settings,true));
     }
-    if !legacy && !previous{
+    if schema==Some(PREVIOUS_SCHEMA_VERSION)||schema==Some(LEGACY_MEMORY_AGENT_SCHEMA_VERSION){
+        let defaults=default_settings();
+        let mut normalized=value.clone();
+        if let Some(root)=normalized.as_object_mut(){
+            root.insert("schemaVersion".into(),Value::String(SCHEMA_VERSION.into()));
+            if root.get("memoryAgent").is_none(){
+                root.insert("memoryAgent".into(),serde_json::json!({
+                    "enabled": true,
+                    "providerPresetId": null,
+                    "model": "",
+                    "outputMode": "auto",
+                    "prompt": DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS,
+                    "promptBackup": null,
+                    "defaultPromptVersion": DEFAULT_MEMORY_AGENT_PROMPT_VERSION
+                }));
+            }else{
+                migrate_memory_agent_object(root);
+            }
+        }
+        let mut settings:AppSettings=serde_json::from_value(normalized).map_err(|e|format!("invalid AppSettings legacy schema: {e}"))?;
+        if settings.memory_agent.prompt.is_empty(){settings.memory_agent.prompt=defaults.memory_agent.prompt;}
+        validate(&settings)?;
+        return Ok((settings,true));
+    }
+    if !legacy{
         let settings:AppSettings=serde_json::from_value(value).map_err(|e|format!("invalid AppSettings: {e}"))?;
         validate(&settings)?;
         return Ok((settings,false));
@@ -202,9 +216,7 @@ fn migrate(value:Value)->Result<(AppSettings,bool),String>{
         if let Some(v)=memory_agent.get("enabled").and_then(Value::as_bool){result.memory_agent.enabled=v;}
         if let Some(v)=memory_agent.get("providerPresetId").and_then(Value::as_str){result.memory_agent.provider_preset_id=Some(v.to_string());}
         if let Some(v)=memory_agent.get("model").and_then(Value::as_str){result.memory_agent.model=v.to_string();}
-        if schema==Some(PREVIOUS_SCHEMA_VERSION) || schema==Some(LEGACY_PREVIOUS_SCHEMA_VERSION){
-            if let Some(v)=memory_agent.get("instructions").and_then(Value::as_str){result.memory_agent.instructions=v.to_string();}
-        }
+        if let Some(v)=memory_agent.get("instructions").and_then(Value::as_str){result.memory_agent.prompt=v.to_string();}
     }
     validate(&result)?;
     Ok((result,true))
