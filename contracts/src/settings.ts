@@ -7,7 +7,7 @@ export const DEFAULT_AUTOMATIC_MEMORY_PROMPT="You are a long-term memory agent.\
 
 export interface AppSettings{
   apiVersion:"1";
-  schemaVersion:"3";
+  schemaVersion:"4";
   chat:{
     automaticLongTermMemory:boolean;
   };
@@ -92,7 +92,10 @@ export function validateAppSettings(settings:AppSettings):string[]{
   if(typeof settings.memoryAgent.enabled!=="boolean")errors.push("Automatic Memory Agent enabled must be boolean.");
   if(settings.memoryAgent.providerPresetId!==null&&(typeof settings.memoryAgent.providerPresetId!=="string"||settings.memoryAgent.providerPresetId.trim().length===0))errors.push("Automatic Memory Agent provider preset must be empty or a non-empty string.");
   if(typeof settings.memoryAgent.model!=="string")errors.push("Automatic Memory Agent model must be a string.");
-  if(typeof settings.memoryAgent.instructions!=="string"||settings.memoryAgent.instructions.length>12000)errors.push("Automatic Memory Agent instructions must be a string up to 12000 characters.");
+  if(!["auto","structured","plain"].includes(settings.memoryAgent.outputMode))errors.push("Unsupported Automatic Memory Agent output mode.");
+  if(typeof settings.memoryAgent.prompt!=="string"||settings.memoryAgent.prompt.length>12000)errors.push("Automatic Memory Agent prompt must be a string up to 12000 characters.");
+  if(settings.memoryAgent.promptBackup!==null&&(typeof settings.memoryAgent.promptBackup!=="string"||settings.memoryAgent.promptBackup.length>12000))errors.push("Automatic Memory Agent prompt backup must be null or a string up to 12000 characters.");
+  if(typeof settings.memoryAgent.defaultPromptVersion!=="string"||settings.memoryAgent.defaultPromptVersion.trim().length===0)errors.push("Automatic Memory Agent default prompt version must be a non-empty string.");
   integer(settings.context.availableContextTokens,"Context size",256,SECURITY_MAX.availableContextTokens);
   integer(settings.context.reservedOutputTokens,"Reserved response tokens",0,SECURITY_MAX.reservedOutputTokens);
   integer(settings.context.safetyMarginTokens,"Safety margin",0,SECURITY_MAX.safetyMarginTokens);
