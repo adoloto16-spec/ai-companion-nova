@@ -93,10 +93,11 @@ async function main(){
       async getChatModelForPreset(){return "memory-model"}
     },validator:new StandardContractValidator(),traceStore:traces
   });
+  const beforeFailure=(await broker.list("character.a")).length;
   const failed=await failing.process(request("conversation.c","turn-c"));
   equal(failed,undefined,"provider failure is isolated");
   equal(failedCalls,1,"failing provider called once");
-  equal((await broker.list("character.a")).length,1,"provider failure does not corrupt canonical memory");
+  equal((await broker.list("character.a")).length,beforeFailure,"provider failure does not corrupt canonical memory");
   console.log("PASS Automatic Memory Agent unit tests");
 }
 void main().catch(error=>{console.error(error);process.exitCode=1});
