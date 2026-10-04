@@ -198,7 +198,7 @@ export interface CoreBookStore{
 }
 export type MemoryItemId=string;
 export const MEMORY_API_VERSION:ApiVersion="1";
-export const MEMORY_SCHEMA_VERSION="2";
+export const MEMORY_SCHEMA_VERSION="3";
 export const MEMORY_EXTRACTION_API_VERSION:ApiVersion="1";
 export const MEMORY_EXTRACTION_SCHEMA_VERSION="1";
 export type MemoryType="fact"|"preference"|"relationship"|"event"|"experience"|"goal"|"instruction"|"observation";
@@ -208,7 +208,7 @@ export type MemoryMutationPolicy="locked"|"suggest"|"auto";
 export interface MemoryItem{
   id:MemoryItemId;
   characterId:CharacterId;
-  conversationId:ConversationId;
+  originConversationId:ConversationId|null;
   type:MemoryType;
   content:string;
   tags:readonly string[];
@@ -226,7 +226,9 @@ export interface MemoryItem{
 }
 export interface MemoryCreateInput{
   id?:MemoryItemId;
-  conversationId:ConversationId;
+  originConversationId?:ConversationId|null;
+  /** @deprecated Use originConversationId; retained only as a migration/input compatibility field. */
+  conversationId?:ConversationId;
   type:MemoryType;
   content:string;
   tags?:readonly string[];
@@ -241,8 +243,11 @@ export interface MemoryCreateInput{
 }
 export interface MemorySearchQuery{
   characterId:CharacterId;
-  conversationId:ConversationId;
   query:string;
+  /** Optional administrative/provenance filter; never an implicit retrieval scope. */
+  originConversationId?:ConversationId;
+  /** @deprecated Legacy alias; never used as the retrieval scope. */
+  conversationId?:ConversationId;
   types?:readonly MemoryType[];
   tags?:readonly string[];
   status?:MemoryStatus;
@@ -276,6 +281,8 @@ export interface MemoryStoreState{
 export interface MemoryStore{
   load(characterId:CharacterId):Promise<MemoryStoreState|undefined>;
   save(state:MemoryStoreState):Promise<void>;
+  supersede(characterId:CharacterId,previousMemoryId:MemoryItemId,replacement:MemoryItem):Promise<MemoryItem>;
+  /** @deprecated Compatibility overload for legacy callers; conversationId is provenance only. */
   supersede(characterId:CharacterId,conversationId:ConversationId,previousMemoryId:MemoryItemId,replacement:MemoryItem):Promise<MemoryItem>;
 }
 export const RETRIEVAL_API_VERSION:ApiVersion="1";
@@ -290,15 +297,62 @@ export interface Retriever{search(query:RetrievalQuery):Promise<RetrievalResult>
 export interface RetrievalIndexDocument{apiVersion:ApiVersion;schemaVersion:string;characterId:CharacterId;conversationId?:ConversationId;source:RetrievalSource;sourceId:string;title:string;content:string;tags:readonly string[];status?:string;type?:string;updatedAt:string}
 export interface RetrievalIndexWriter{upsert(document:RetrievalIndexDocument):Promise<void>;remove(characterId:CharacterId,source:RetrievalSource,sourceId:string,conversationId?:ConversationId):Promise<void>;removeCharacter(characterId:CharacterId):Promise<void>}
 
+export interface MemoryRetrievalQuery{
+  characterId:CharacterId;
+  query:string;
+  status?:MemoryStatus;
+  types?:readonly MemoryType[];
+  tags?:readonly string[];
+  originConversationId?:ConversationId;
+  limit?:number;
+}
+export interface MemoryRetrievalCandidate{
+  memoryId:MemoryItemId;
+  score:number;
+  lexicalRelevance:number;
+  phraseRelevance:number;
+  tagRelevance:number;
+}
+export interface MemoryRetrievalResult{
+  characterId:CharacterId;
+  query:string;
+  candidates:readonly MemoryRetrievalCandidate[];
+}
+export interface MemoryRetriever{
+  search(query:MemoryRetrievalQuery):Promise<MemoryRetrievalResult>;
+}
 export interface MemoryBroker{
+  get(characterId:CharacterId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>;
+  /** @deprecated Compatibility overload; conversationId is provenance only. */
   get(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>;
+  list(characterId:CharacterId):Promise<readonly MemoryItem[]>;
   search(query:MemorySearchQuery):Promise<readonly MemoryItem[]>;
   create(characterId:CharacterId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  update(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryUpdateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  /** @deprecated Compatibility overload; conversationId is provenance only. */
   update(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryUpdateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  supersede(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  /** @deprecated Compatibility overload; conversationId is provenance only. */
   supersede(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  archive(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  /** @deprecated Compatibility overload; conversationId is provenance only. */
   archive(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>;
 }
-export interface MemoryExtractionRequest{
+export interface AutomaticMemoryAgentRequest{
+  characterId:CharacterId;
+  conversationId:ConversationId;
+  turnId:string;
+  model:string;
+  providerId?:string;
+  providerPresetId?:string;
+  userMessage:ChatMessage;
+  assistantMessage:ChatMessage;
+  contextMessages:readonly ChatMessage[];
+}
+export type MemoryExtractionRequest=AutomaticMemoryAgentRequest;
+
+/* legacy alias retained above */
+export interface LegacyMemoryExtractionRequest{
   apiVersion:ApiVersion;
   schemaVersion:string;
   characterId:CharacterId;
