@@ -79,10 +79,10 @@ async function main(){
     equal(count,1,"auto never retries non-capability failure");
   }
 
-  await Promise.resolve().then(()=>assertAgentCandidateId("memory-2",["memory-1","memory-2"]));
-  await Promise.resolve().then(()=>assertAgentCandidateId("memory-999",["memory-1","memory-2"]))
-    .then(()=>{throw new Error("unknown agent ID was accepted")})
-    .catch(()=>{});
+  assertAgentCandidateId("memory-2",["memory-1","memory-2"]);
+  let unknownRejected=false;
+  try{assertAgentCandidateId("memory-999",["memory-1","memory-2"])}catch{unknownRejected=true}
+  equal(unknownRejected,true,"unknown agent ID is rejected before mutation");
   console.log("PASS Agent Output runner tests");
 }
 void main().catch(error=>{console.error(error);process.exitCode=1});
