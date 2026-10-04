@@ -1,5 +1,5 @@
 import {AgentOutputRunner} from "./agent-output";
-import {DEFAULT_AUTOMATIC_MEMORY_PROMPT,DEFAULT_MEMORY_AGENT_PROMPT_VERSION} from "../../contracts/src/settings";
+import {DEFAULT_AUTOMATIC_MEMORY_PROMPT} from "../../contracts/src/settings";
 import {STANDARD_SCHEMAS} from "../../contracts/src/index";
 import type {
   AutomaticMemoryAgentRequest,ChatMessage,ChatRequest,ChatResponse,ChatTurnTrace,DiagnosticsStore,MemoryBroker,MemoryItem,MemoryMutationAuthority,
