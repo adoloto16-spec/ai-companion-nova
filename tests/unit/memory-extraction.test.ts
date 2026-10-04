@@ -53,8 +53,7 @@ async function newService(
     validator:new StandardContractValidator(),
     audit:new InMemoryAuditService(),
     events:new InMemoryEventBus(),
-    characterExists:async id=>id==="character.a",
-    conversationExists:async (characterId,conversationId)=>characterId==="character.a"&&conversationId==="conversation.a"
+    characterExists:async id=>id==="character.a"
   });
   const traceStore=options.traceStore??new InMemoryChatTraceStore();
   const diagnostics=options.diagnostics??new InMemoryDiagnosticsStore();
