@@ -464,7 +464,9 @@ export interface EventPayloadMap{
   MemoryCreated:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;status:MemoryStatus;updatedAt:string};
   MemoryUpdated:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;status:MemoryStatus;updatedAt:string};
   MemorySuperseded:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;previousMemoryId:string;status:MemoryStatus;updatedAt:string};
-  MemoryArchived:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;status:MemoryStatus;updatedAt:string};
+  MemoryArchived:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;status:MemoryStatus;updatedAt:string;archiveReason?:MemoryArchiveReason};
+  MemoryRestored:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;status:MemoryStatus;updatedAt:string};
+  MemoryDeleted:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string};
   ChatResponseReceived:{requestId:string;conversationId:string;providerId:string;model:string;finishReason:ChatFinishReason};
   ConversationCreated:{characterId:string;conversationId:string};
   ConversationUpdated:{characterId:string;conversationId:string};
@@ -501,6 +503,13 @@ export interface ChatTurnTrace{
     assistantResponsePresent?:boolean;
     result?:string;
     persistence?:{status:"created"|"duplicate"|"rejected"|"none";memoryId?:string;reason?:string};
+    configuredOutputMode?:"auto"|"structured"|"plain";
+    effectiveOutputMode?:"structured"|"plain";
+    structuredAttempt?:boolean;
+    fallback?:boolean;
+    fallbackReason?:string;
+    schemaName?:string;
+    defaultPromptVersion?:string;
     failed?:string;
   };
   providerResponse?:{
