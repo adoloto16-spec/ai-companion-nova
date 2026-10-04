@@ -220,24 +220,6 @@ function validIndexState(state:MemorySemanticIndexState|undefined,characterId:Ch
   return {apiVersion:MEMORY_SEMANTIC_INDEX_API_VERSION,schemaVersion:MEMORY_SEMANTIC_INDEX_SCHEMA_VERSION,characterId,records};
 }
 
-function cloneIndexState(state:MemorySemanticIndexState):MemorySemanticIndexState{
-  return {...state,records:state.records.map(record=>({...record,vector:[...record.vector]}))};
-}
-
-function makeIndexRecord(memory:MemoryItem,provider:EmbeddingProvider,model:string,vector:readonly number[],now:string):MemorySemanticVectorRecord{
-  if(!isFiniteVector(vector))throw new Error("Embedding provider returned an invalid vector.");
-  return {
-    memoryId:memory.id,
-    characterId:memory.characterId,
-    contentHash:deterministicContentHash(memory.content),
-    embeddingProviderId:provider.id,
-    embeddingModel:model,
-    dimensions:vector.length,
-    vector:[...vector],
-    updatedAt:now
-  };
-}
-
 export class MemorySemanticDeduplicator{
   private readonly outputRunner:AgentOutputRunner;
   private readonly unsubs:(()=>void)[]=[];
@@ -248,12 +230,12 @@ export class MemorySemanticDeduplicator{
 
   start():void{
     if(!this.options.events)return;
-    this.unsubs.push(this.options.events.subscribe("MemoryCreated",event=>this.onMemoryCreated(event.payload)));
-    this.unsubs.push(this.options.events.subscribe("MemoryUpdated",event=>this.onMemoryUpdated(event.payload)));
-    this.unsubs.push(this.options.events.subscribe("MemoryArchived",event=>this.onMemoryArchived(event.payload)));
-    this.unsubs.push(this.options.events.subscribe("MemoryRestored",event=>this.onMemoryRestored(event.payload)));
-    this.unsubs.push(this.options.events.subscribe("MemoryDeleted",event=>this.onMemoryDeleted(event.payload)));
-    this.unsubs.push(this.options.events.subscribe("MemorySuperseded",event=>this.onMemorySuperseded(event.payload)));
+    this.unsubs.push(this.options.events.subscribe<{characterId:string;memoryId:string}>("MemoryCreated",event=>this.onMemoryCreated(event.payload)));
+    this.unsubs.push(this.options.events.subscribe<{characterId:string;memoryId:string}>("MemoryUpdated",event=>this.onMemoryUpdated(event.payload)));
+    this.unsubs.push(this.options.events.subscribe<{characterId:string;memoryId:string}>("MemoryArchived",event=>this.onMemoryArchived(event.payload)));
+    this.unsubs.push(this.options.events.subscribe<{characterId:string;memoryId:string}>("MemoryRestored",event=>this.onMemoryRestored(event.payload)));
+    this.unsubs.push(this.options.events.subscribe<{characterId:string;memoryId:string}>("MemoryDeleted",event=>this.onMemoryDeleted(event.payload)));
+    this.unsubs.push(this.options.events.subscribe<{characterId:string;memoryId:string;previousMemoryId:string}>("MemorySuperseded",event=>this.onMemorySuperseded(event.payload)));
   }
 
   stop():void{while(this.unsubs.length)this.unsubs.pop()!();this.inFlight.clear();}
