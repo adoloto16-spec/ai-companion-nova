@@ -34,6 +34,12 @@ At minimum, use the existing project commands when applicable:
 
 If a check is not run, say so explicitly. For Windows packaging changes, verify the Windows NSIS workflow/artifact separately.
 
+## CI feedback loop
+- Treat failed CI checks as actionable development feedback. Read the failing step and its logs before changing code.
+- Fix the smallest root cause; do not disable, weaken, or bypass a check merely to make CI green.
+- Do not reformat or rewrite unrelated existing code only because a new advisory check reports it, unless the task explicitly includes that cleanup.
+- Keep advisory diagnostics (such as Rust formatting or Clippy) separate from blocking correctness checks.
+
 ## Pull requests
 Every PR should state:
 - exact base and head branch;
