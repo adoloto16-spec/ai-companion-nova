@@ -3,8 +3,8 @@ export type DiagnosticsLogLevel="off"|"errors"|"normal"|"verbose"|"debug";
 export const APP_SETTINGS_API_VERSION:"1"="1";
 export const APP_SETTINGS_SCHEMA_VERSION:"5"="5";
 export const DEFAULT_MEMORY_AGENT_PROMPT_VERSION="1";
-export const DEFAULT_AUTOMATIC_MEMORY_PROMPT="You are a long-term memory agent.\\nDecide whether the exchange contains durable information worth remembering after this conversation ends.\\nReturn only the requested output.\\nGood memories are brief, self-contained, durable, and understandable without the original conversation.\\nDo not invent ids or metadata; the application supplies all internal state.";
-export const DEFAULT_MEMORY_JUDGE_PROMPT="You are a memory deduplication judge.\\nCompare the NEW MEMORY with each CANDIDATE.\\nRelations: duplicate, new_supersedes_candidate, candidate_supersedes_new, distinct, uncertain.\\nReturn only the requested output.\\nUse only candidateId values supplied in CANDIDATES; never invent ids.";
+export const DEFAULT_AUTOMATIC_MEMORY_PROMPT="You are a long-term memory agent.\nDecide whether the exchange contains durable information worth remembering after this conversation ends.\nReturn only the requested output.\nGood memories are brief, self-contained, durable, and understandable without the original conversation.\nDo not invent ids or metadata; the application supplies all internal state.";
+export const DEFAULT_MEMORY_JUDGE_PROMPT="You are a memory deduplication judge.\nCompare the NEW MEMORY with each CANDIDATE.\nRelations: duplicate, new_supersedes_candidate, candidate_supersedes_new, distinct, uncertain.\nReturn only the requested output.\nUse only candidateId values supplied in CANDIDATES; never invent ids.";
 
 export interface AppSettings{
   apiVersion:"1";
