@@ -126,18 +126,12 @@ async function duplicateEventIntegrationTest(){
   await fixtureValue.broker.create("character.a",{id:"old",type:"fact",content:"User likes blue.",source:"user",mutationPolicy:"auto"},{
     actorId:"user",actorType:"user",trusted:true,capabilities:[]
   });
-  const created=await fixtureValue.broker.create("character.a",{id:"new",type:"fact",content:"User prefers blue.",source:"user",mutationPolicy:"auto"},{
+  await fixtureValue.broker.create("character.a",{id:"new",type:"fact",content:"User prefers blue.",source:"user",mutationPolicy:"auto"},{
     actorId:"user",actorType:"user",trusted:true,capabilities:[]
   });
-  if(created.status==="active"){
-    console.error("semantic duplicate diagnostic:",JSON.stringify({
-      diagnostics:fixtureValue.diagnostics.recentErrors(),
-      judgeCalls:fixtureValue.judge.calls,
-      index:await fixtureValue.indexStore.load("character.a")
-    }));
-  }
-  equal(created.status,"archived","duplicate archives NEW only");
-  equal(created.archiveReason,"duplicate","duplicate archive reason");
+  const created=await fixtureValue.broker.get("character.a","new");
+  equal(created?.status,"archived","duplicate archives NEW only");
+  equal(created?.archiveReason,"duplicate","duplicate archive reason");
   equal((await fixtureValue.broker.get("character.a","old"))?.status,"active","duplicate keeps OLD active");
   equal((await fixtureValue.broker.get("character.a","new"))?.status,"archived","canonical new remains recoverable");
   equal((await fixtureValue.indexStore.load("character.a"))?.records.map(record=>record.memoryId),["old"],"archived memory vector is removed");
@@ -147,7 +141,7 @@ async function supersessionIntegrationTest(){
   const f=await fixture(()=>JSON.stringify({decisions:[{candidateId:"old",relation:"new_supersedes_candidate"}]}));
   await f.broker.create("character.a",{id:"old",type:"fact",content:"User likes blue.",source:"user",mutationPolicy:"auto"},{actorId:"user",actorType:"user",trusted:true,capabilities:[]});
   const created=await f.broker.create("character.a",{id:"new",type:"fact",content:"User likes blue and especially prefers dark-blue.",source:"user",mutationPolicy:"auto"},{actorId:"user",actorType:"user",trusted:true,capabilities:[]});
-  equal(created.status,"active","superset keeps NEW active");
+  equal((await f.broker.get("character.a","new"))?.status,"active","superset keeps NEW active");
   const old=await f.broker.get("character.a","old");
   equal(old?.status,"archived","superset archives OLD");
   equal(old?.archiveReason,"superseded","superset archive reason");
@@ -197,7 +191,7 @@ async function plainJudgeTest(){
   f.settings.semanticDedup={...f.settings.semanticDedup,judge:{...f.settings.semanticDedup.judge,outputMode:"plain"}};
   await f.broker.create("character.a",{id:"old",type:"fact",content:"User likes blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   const newer=await f.broker.create("character.a",{id:"new",type:"fact",content:"User likes blue and prefers dark-blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  equal(newer.status,"active","plain Judge output is parsed");
+  equal((await f.broker.get("character.a","new"))?.status,"active","plain Judge output is parsed");
   equal((await f.broker.get("character.a","old"))?.status,"archived","plain Judge relation archives OLD");
   equal((await f.broker.get("character.a","old"))?.supersededBy,"new","plain Judge provenance");
 }
@@ -207,7 +201,7 @@ async function malformedPlainNoMutationTest(){
   f.settings.semanticDedup={...f.settings.semanticDedup,judge:{...f.settings.semanticDedup.judge,outputMode:"plain"}};
   await f.broker.create("character.a",{id:"old",type:"fact",content:"User likes blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   const newer=await f.broker.create("character.a",{id:"new",type:"fact",content:"User prefers blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  equal(newer.status,"active","malformed plain output is non-mutating");
+  equal((await f.broker.get("character.a","new"))?.status,"active","malformed plain output is non-mutating");
   equal((await f.broker.get("character.a","old"))?.status,"active","malformed plain output keeps candidate");
 }
 
@@ -242,7 +236,7 @@ async function multipleCandidateTest(){
   await f.broker.create("character.a",{id:"old2",type:"fact",content:"User prefers dark-blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   await f.broker.create("character.a",{id:"old3",type:"fact",content:"User loves aviation.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   const newer=await f.broker.create("character.a",{id:"new",type:"fact",content:"User likes blue and prefers dark-blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  equal(newer.status,"active","multiple candidate superset keeps new");
+  equal((await f.broker.get("character.a","new"))?.status,"active","multiple candidate superset keeps new");
   equal((await f.broker.get("character.a","old1"))?.status,"archived","multiple candidate archives first old");
   equal((await f.broker.get("character.a","old2"))?.status,"archived","multiple candidate archives second old");
   equal((await f.broker.get("character.a","old3"))?.status,"active","distinct candidate remains active");
