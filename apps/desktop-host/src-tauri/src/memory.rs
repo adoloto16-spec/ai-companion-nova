@@ -366,6 +366,7 @@ mod tests{
         assert!(migrated.items.iter().all(|item|item.character_id=="character.a"&&item.origin_conversation_id.as_deref()==Some("conversation:character.a:default.v2")));
         assert_eq!(migrated.items[0].content,"User prefers aviation examples.");
         assert_eq!(migrated.items[1].content,"User moved to Nuremberg.");
+    }
 
     #[test]
     fn v2_migration_renames_conversation_to_provenance_without_data_loss(){
