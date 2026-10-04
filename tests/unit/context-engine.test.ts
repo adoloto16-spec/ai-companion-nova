@@ -34,7 +34,7 @@ function entry(overrides:Partial<CoreBookEntry>):CoreBookEntry{
 
 function request(overrides:Partial<ContextBuildRequest>):ContextBuildRequest{
   return {
-    apiVersion:"1",schemaVersion:"1",characterId:"character.a",originConversationId:"conversation.a",
+    apiVersion:"1",schemaVersion:"1",characterId:"character.a",conversationId:"conversation.a",
     messages:[],budget:{availableContextTokens:100,reservedOutputTokens:10,systemOverheadTokens:5,safetyMarginTokens:5},
     ...overrides
   };
@@ -115,7 +115,7 @@ async function main(){
       validFrom:null,validUntil:null,source:"user",sourceReference:null,mutationPolicy:"locked",status:"archived",metadata:{}
     },
     {
-      id:"memory-other-character",characterId:"character.b",originConversationId:"conversation.a",type:"fact",content:"other character memory",tags:["tea"],importance:100,confidence:100,
+      id:"memory-other-character",characterId:"character.b",originConversationId:"conversation.b",type:"fact",content:"other character memory",tags:["tea"],importance:100,confidence:100,
       createdAt:"2026-09-26T12:00:00.000Z",updatedAt:"2026-09-26T12:00:00.000Z",
       validFrom:null,validUntil:null,source:"user",sourceReference:null,mutationPolicy:"locked",status:"active",metadata:{}
     }
