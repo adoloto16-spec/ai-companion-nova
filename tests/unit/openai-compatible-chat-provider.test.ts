@@ -188,6 +188,38 @@ async function plainRequestOmitsResponseFormatTest(){
   const sent=JSON.parse(body) as {response_format?:unknown};
   equal(sent.response_format,undefined,"plain request has no response_format");
 }
+async function http400ResponseBodyPropagationTest(){
+  const http=new FakeHttpClient();
+  http.next={
+    status:400,
+    body:JSON.stringify({
+      message:"Invalid JSON schema: keyword pattern is not supported",
+      type:"invalid_request",
+      code:"invalid_request_json_schema",
+      param:"response_format",
+      internalSecret:"unit-test-secret-value"
+    })
+  };
+  await throwsAsync(
+    ()=>provider(http).chat({...request(),generation:{responseFormat:{type:"json-schema",schema:{type:"object",properties:{value:{type:"string",pattern:"x"}}}}}}),
+    error=>{
+      if(!(error instanceof OpenAICompatibleProviderError))return false;
+      const details=error.chatError.details;
+      const response=details?.providerResponse;
+      return error.chatError.code==="PROVIDER_ERROR"&&
+        details?.category==="bad_request"&&
+        details?.httpStatus===400&&
+        typeof details?.durationMs==="number"&&
+        !!response&&
+        JSON.stringify(response).includes("invalid_request_json_schema")&&
+        JSON.stringify(response).includes("pattern is not supported")&&
+        !JSON.stringify(response).includes("unit-test-secret-value")&&
+        !JSON.stringify(response).includes("internalSecret");
+    },
+    "HTTP 400 preserves safe provider response details"
+  );
+}
+
 async function structuredUnsupportedClassificationTest(){
   const http=new FakeHttpClient();
   http.next={status:400,body:'{"error":{"message":"response_format json_schema is not supported"}}'};
@@ -537,6 +569,7 @@ void (async()=>{
     ["Finish reasons",finishReasonTest],
     ["Malformed response",malformedResponseTest],
     ["HTTP status normalization",httpStatusTest],
+    ["HTTP 400 provider response diagnostics",http400ResponseBodyPropagationTest],
     ["Timeout and connection",timeoutAndConnectionTest],
     ["Credential and unsupported inputs",credentialAndUnsupportedTest],
     ["Secret safety",secretSafetyTest],
