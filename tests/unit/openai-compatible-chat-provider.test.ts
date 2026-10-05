@@ -201,7 +201,7 @@ async function http400ResponseBodyPropagationTest(){
     })
   };
   await throwsAsync(
-    ()=>provider(http).chat({...request(),generation:{responseFormat:{type:"json-schema",schema:{type:"object",properties:{value:{type:"string",pattern:"x"}}}}}}),
+    ()=>provider(http).chat({...request(),generation:{responseFormat:{type:"json-schema",schema:{type:"object",properties:{value:{type:"string"}},required:["value"],additionalProperties:false}}}}),
     error=>{
       if(!(error instanceof OpenAICompatibleProviderError))return false;
       const details=error.chatError.details;
