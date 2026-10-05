@@ -1311,6 +1311,18 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
 
     <section>
       <h2>Memory Deduplication</h2>
+      {(()=>{
+        const configEntry=semanticDiagnostics.find(entry=>entry.code==="SEMANTIC_DEDUP_SETTINGS_APPLIED"||entry.code==="SEMANTIC_DEDUP_RUNTIME_READY");
+        const metadata=configEntry?.metadata??{};
+        return configEntry&&<div className="status-grid">
+          <span>Semantic Dedup enabled</span><strong>{metadata.semanticDedupEnabled===true?"true":metadata.semanticDedupEnabled===false?"false":"—"}</strong>
+          <span>Judge enabled</span><strong>{metadata.judgeEnabled===true?"true":metadata.judgeEnabled===false?"false":"—"}</strong>
+          <span>Judge preset</span><strong>{String(metadata.judgeProviderPresetId??"—")}</strong>
+          <span>Judge model</span><strong>{String(metadata.judgeModel??"—")||"—"}</strong>
+          <span>Judge output mode</span><strong>{String(metadata.judgeOutputMode??"—")}</strong>
+          <span>MemoryCreated subscribers</span><strong>{String(metadata.memoryCreatedSubscribers??"—")}</strong>
+        </div>;
+      })()}
       <div className="status-grid">
         <span>Status</span><strong>{semanticDiagnostics[0]?.code??"No events yet"}</strong>
         <span>Events</span><strong>{semanticDiagnostics.length}</strong>
