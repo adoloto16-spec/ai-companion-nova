@@ -459,6 +459,7 @@ async function productionRuntimeSmokePathTest(){
     ok(codes.includes("SEMANTIC_DEDUP_JUDGE_OUTPUT_PARSED"),"diagnostics records parsed Judge output");
     ok(codes.includes("SEMANTIC_DEDUP_MUTATION_APPLIED"),"diagnostics records applied mutation");
     const combined=JSON.stringify(diagnostics);
+    ok(!combined.includes("Chat request failed contract validation."),"diagnostics contain no contract validation failure");
     ok(combined.includes('"containmentMatch":true'),"diagnostics record containment match");
     ok(combined.includes('"judgeSelections":["1"]'),"diagnostics record Judge selection");
     ok(combined.includes('"selection":"1"')&&combined.includes('"memoryId":"old-real-id"'),"diagnostics record number-to-real-ID mapping");
