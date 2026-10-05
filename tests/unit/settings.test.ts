@@ -14,6 +14,9 @@ async function main(){
   const defaults=await manager.initialize();
   equal(defaults,defaultAppSettings(),"missing settings resolve to deterministic defaults");
   equal(DEFAULT_APP_SETTINGS.context.availableContextTokens,4096,"default context size");
+  ok(defaults.semanticDedup.judge.prompt.includes("In structured mode, return only:"),"default Judge prompt declares structured output");
+  ok(defaults.semanticDedup.judge.prompt.includes("In plain mode, return only:"),"default Judge prompt declares plain output");
+  equal(defaults.semanticDedup.judge.defaultPromptVersion,"2","default Judge prompt version");
   const custom={
     ...defaults,
     context:{...defaults.context,availableContextTokens:8192,reservedOutputTokens:2048,safetyMarginTokens:256,recentConversationMessages:4},
