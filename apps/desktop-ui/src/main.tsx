@@ -19,7 +19,7 @@ import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
-  type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem,
+  type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem, type ErrorDiagnostic,
   defaultAppSettings, validateAppSettings, StandardContractValidator,
   type ProviderPreset, type ProviderPresetStoreState, type ModelInfo
 } from "../../../contracts/src/index";
@@ -1261,17 +1261,24 @@ function TraceCandidate({candidate}:{candidate:any}){
 
 function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:AppSettings}){
   const [traces,setTraces]=React.useState<readonly ChatTurnTrace[]>([]);
+  const [semanticDiagnostics,setSemanticDiagnostics]=React.useState<readonly ErrorDiagnostic[]>([]);
   const [selectedId,setSelectedId]=React.useState<string|undefined>();
   const [message,setMessage]=React.useState("");
   const [showRaw,setShowRaw]=React.useState(false);
 
+  // Bridge the runtime DiagnosticsStore into the existing Diagnostics screen so semantic-memory events are visible with turn traces.
   const refresh=React.useCallback(()=>{
     try{
       const next=runtime.listChatTraces(50);
       setTraces(next);
       setSelectedId(current=>current&&next.some(trace=>trace.turnId===current)?current:next[0]?.turnId);
       setMessage("");
-    }catch(error){setMessage(error instanceof Error?error.message:"Diagnostics could not be loaded.")}
+    }catch(error){setMessage(error instanceof Error?error.message:"Diagnostics could not be loaded.");}
+    void runtime.diagnostics().then(snapshot=>{
+      setSemanticDiagnostics(snapshot.recentErrors.filter(entry=>entry.source==="memory-semantic-deduplication"));
+    }).catch(error=>{
+      setMessage(error instanceof Error?error.message:"Semantic diagnostics could not be loaded.");
+    });
   },[runtime]);
 
   React.useEffect(()=>{
@@ -1285,12 +1292,12 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
   return <div className="settings-grid">
     <section>
       <div className="section-header">
-        <div><h2>Diagnostics</h2><p className="chat-subtitle">Technical turn traces only; no model chain-of-thought is recorded.</p></div>
+        <div><h2>Diagnostics</h2><p className="chat-subtitle">Technical turn traces and semantic-memory diagnostics; no model chain-of-thought is recorded.</p></div>
         <button type="button" onClick={()=>{runtime.clearChatTraces();refresh()}}>Clear Logs</button>
       </div>
       <div className="status-grid">
         <span>Log level</span><strong>{settings.diagnostics.logLevel}</strong>
-        <span>Retained</span><strong>{traces.length}</strong>
+        <span>Retained turn traces</span><strong>{traces.length}</strong>
       </div>
       {traces.length===0
         ?<div>No chat traces yet.</div>
@@ -1300,6 +1307,49 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
           </button>
         )}
       {message&&<div className="error">{message}</div>}
+    </section>
+
+    <section>
+      <h2>Memory Deduplication</h2>
+      <div className="status-grid">
+        <span>Status</span><strong>{semanticDiagnostics[0]?.code??"No events yet"}</strong>
+        <span>Events</span><strong>{semanticDiagnostics.length}</strong>
+        <span>Last message</span><strong>{semanticDiagnostics[0]?.message??"Create a Memory to observe the production deduplication path."}</strong>
+      </div>
+      {semanticDiagnostics.length===0
+        ?<div>No semantic-memory diagnostics yet.</div>
+        :semanticDiagnostics.map((entry,index)=>{
+          const metadata=entry.metadata??{};
+          const candidates=Array.isArray(metadata.candidateDiagnostics)?metadata.candidateDiagnostics as Array<Record<string,unknown>>:[];
+          const selections=Array.isArray(metadata.judgeSelections)?metadata.judgeSelections as string[]:[];
+          const mapping=Array.isArray(metadata.archiveMapping)?metadata.archiveMapping as Array<Record<string,unknown>>:[];
+          return <div className="diagnostic-block" key={entry.timestamp+"-"+entry.code+"-"+index}>
+            <div className="section-header">
+              <strong>{entry.code}</strong>
+              <small>{entry.timestamp}</small>
+            </div>
+            <div>{entry.message}</div>
+            {candidates.length>0&&<div>
+              <h4>Candidates</h4>
+              {candidates.map((candidate,candidateIndex)=>
+                <div className="diagnostic-candidate" key={String(candidate.memoryId??candidateIndex)}>
+                  <div className="diagnostic-candidate-header">
+                    <strong>#{String(candidate.number??candidateIndex+1)}</strong>
+                    <span>{candidate.containmentMatch===true?"containment match":"semantic match"}</span>
+                    <span>similarity {typeof candidate.similarity==="number"?candidate.similarity.toFixed(3):"—"}</span>
+                  </div>
+                  <div className="diagnostic-candidate-content">{String(candidate.content??"")}</div>
+                  <div className="diagnostic-candidate-meta">memory {String(candidate.memoryId??"—")}</div>
+                </div>
+              )}
+            </div>}
+            {selections.length>0&&<div className="diagnostic-reason">Judge output: {selections.join(", ")}</div>}
+            {mapping.length>0&&<div className="diagnostic-reason">Mapped archive IDs: {mapping.map(item=>String(item.selection)+" → "+String(item.memoryId)).join(", ")}</div>}
+            {typeof metadata.mutationResult==="string"&&<div className="diagnostic-reason">Mutation result: {metadata.mutationResult}</div>}
+            {typeof metadata.reason==="string"&&<div className="diagnostic-reason">Reason: {metadata.reason}</div>}
+            {typeof metadata.fallbackReason==="string"&&<div className="diagnostic-reason">Fallback: {metadata.fallbackReason}</div>}
+          </div>;
+        })}
     </section>
 
     {selected&&<section>
@@ -1389,6 +1439,7 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
     </section>}
   </div>;
 }
+
 
 class ViewErrorBoundary extends React.Component<{
   view:string;
