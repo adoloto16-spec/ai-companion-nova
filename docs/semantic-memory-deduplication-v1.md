@@ -5,15 +5,28 @@ Semantic deduplication is an optional post-persistence path. `MemoryBroker` rema
     MemoryBroker.create
       -> derived embedding cache
       -> same-character active candidate scan
-      -> deterministic top-K similarity filter
-      -> Memory Judge (structured/plain through Agent Output)
-      -> deterministic validation and aggregation
+      -> cosine similarity OR token-set containment
+      -> shared candidate limit with containment priority
+      -> Memory Judge (structured/plain)
+      -> deterministic ID validation
       -> MemoryBroker.archive
 
-Embeddings are used only for candidate discovery in this release. Normal Chat memory retrieval remains lexical.
+Embeddings remain candidate discovery only. Normal Chat memory retrieval remains lexical.
 
-The derived index stores memory id, character id, deterministic content hash, embedding provider/model, dimensions, vector, and update time. It can be rebuilt from canonical Memory records and is invalidated by provider/model/dimension/content changes.
+Deterministic containment normalizes text with NFKC, lowercases it, tokenizes Unicode letters/numbers, removes duplicate tokens, and requires at least four unique meaningful tokens in the subset. Word order and punctuation do not affect the set comparison. Containment only adds candidates; it never archives memory by itself.
 
-The Judge receives only the newly persisted Memory and deterministic candidate records. Candidate ids are authoritative input data; an id absent from the candidate list is invalid and produces no mutation.
+The Judge receives only the canonical NEW MEMORY and deterministic CANDIDATES:
 
-Automatic semantic deduplication can only archive records. Permanent deletion and restore remain explicit user-controlled MemoryBroker operations.
+    NEW MEMORY
+    id: <real id>
+    content: <text>
+
+    CANDIDATES
+    1. id: <real id>
+       content: <text>
+
+The Judge returns only `{"archiveIds":["real-id"]}` / `{"archiveIds":[]}` in structured mode, or `NO_ARCHIVE` / one real ID per line in plain mode. Relations, summaries, replacement text, explanations, ranking metadata, and other decision fields are not part of the protocol.
+
+All returned IDs are validated against the exact NEW/CANDIDATE IDs supplied to the Judge. An attempt to archive every supplied record is blocked before mutation. Otherwise Core archives exactly the returned active IDs through `MemoryBroker`; records are never physically deleted.
+
+Explicit content containment preserves the more informative record by archiving its smaller content subset. Equal-information ties are valid: the single ID chosen by the Judge is used, leaving the other record active.

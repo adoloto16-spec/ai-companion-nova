@@ -22,7 +22,7 @@ const MAX_DIAGNOSTICS_ENTRIES:i64=500;
 const MAX_MEMORY_AGENT_PROMPT:usize=12000;
 const DEFAULT_MEMORY_AGENT_PROMPT_VERSION:&str="1";
 const DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS:&str="You are a long-term memory agent.\nDecide whether the exchange contains durable information worth remembering after this conversation ends.\nReturn only the requested output.\nGood memories are brief, self-contained, durable, and understandable without the original conversation.\nDo not invent ids or metadata; the application supplies all internal state.";
-const DEFAULT_MEMORY_JUDGE_INSTRUCTIONS:&str="You are a memory deduplication judge.\nCompare the NEW MEMORY with each CANDIDATE.\nRelations: duplicate, new_supersedes_candidate, candidate_supersedes_new, distinct, uncertain.\nReturn only the requested output.\nUse only candidateId values supplied in CANDIDATES; never invent ids.";
+const DEFAULT_MEMORY_JUDGE_INSTRUCTIONS:&str="You are a memory deduplication judge.\n\nCompare NEW MEMORY with CANDIDATES.\n\nKeep the most complete and informative record of the same underlying information.\n\nIf NEW MEMORY is a subset of a candidate, archive NEW MEMORY.\n\nIf a candidate is a subset of NEW MEMORY, archive that candidate.\n\nIf two records contain essentially the same information, archive one of them.\n\nIf records contain different useful information, archive nothing.\n\nDo not archive records only because they share a topic, entity, or a few words.\n\nReturn only IDs to archive.\nUse only IDs supplied in NEW MEMORY or CANDIDATES.\nNever invent IDs.";
 
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(deny_unknown_fields)]
@@ -378,6 +378,7 @@ mod tests{
         assert!(!migrated);
         assert_eq!(restored.semantic_dedup.candidate_similarity_threshold,0.88);
         assert_eq!(restored.semantic_dedup.judge.default_prompt_version,"1");
+        assert_eq!(restored.semantic_dedup.judge.prompt,DEFAULT_MEMORY_JUDGE_INSTRUCTIONS);
     }
 
 }

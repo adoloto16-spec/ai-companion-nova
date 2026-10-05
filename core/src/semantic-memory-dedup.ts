@@ -3,19 +3,13 @@ import type {
   MemoryBroker,MemoryItem,MemorySemanticIndexState,MemorySemanticIndexStore,MemorySemanticVectorRecord,SchemaValidator
 } from "../../contracts/src/index";
 import {MEMORY_SEMANTIC_INDEX_API_VERSION,MEMORY_SEMANTIC_INDEX_SCHEMA_VERSION,STANDARD_SCHEMAS} from "../../contracts/src/index";
-import {AgentOutputRunner,assertAgentCandidateId} from "./agent-output";
+import {AgentOutputRunner} from "./agent-output";
 
-export const MEMORY_JUDGE_RELATIONS=[
-  "duplicate",
-  "new_supersedes_candidate",
-  "candidate_supersedes_new",
-  "distinct",
-  "uncertain"
-] as const;
-export type MemoryJudgeRelation=typeof MEMORY_JUDGE_RELATIONS[number];
-
-export interface MemoryJudgeDecision{candidateId:string;relation:MemoryJudgeRelation;}
-export interface SemanticMemoryCandidate{memory:MemoryItem;similarity:number;}
+export interface SemanticMemoryCandidate{
+  memory:MemoryItem;
+  similarity:number;
+  containmentMatch:boolean;
+}
 export interface SemanticMemorySelection{
   candidates:readonly SemanticMemoryCandidate[];
   staleOrMissingRecordCount:number;
@@ -28,8 +22,8 @@ export interface SemanticDedupExecution{
   similarityScores:Readonly<Record<string,number>>;
   configuredMode?:AgentOutputMode;
   effectiveMode?:"structured"|"plain";
-  decisions?:readonly MemoryJudgeDecision[];
-  mutation?:{action:"archive_new"|"archive_candidates"|"none";memoryIds:readonly string[];result:"applied"|"blocked"|"none"};
+  archiveIds?:readonly string[];
+  mutation?:{archiveIds:readonly string[];result:"applied"|"blocked"|"none"};
 }
 
 export interface MemorySemanticDeduplicationOptions{
@@ -53,6 +47,7 @@ export const DEFAULT_SEMANTIC_DEDUP_LIMIT=5;
 function isFiniteVector(value:unknown):value is readonly number[]{
   return Array.isArray(value)&&value.length>0&&value.every(item=>typeof item==="number"&&Number.isFinite(item));
 }
+
 export function cosineSimilarity(vectorA:readonly number[],vectorB:readonly number[]):number|undefined{
   if(!isFiniteVector(vectorA)||!isFiniteVector(vectorB)||vectorA.length!==vectorB.length)return undefined;
   let dot=0;
@@ -70,6 +65,22 @@ export function cosineSimilarity(vectorA:readonly number[],vectorB:readonly numb
   return Number.isFinite(result)?Math.min(1,Math.max(-1,result)):undefined;
 }
 
+/** Normalize text into deterministic meaningful Unicode tokens before comparing content sets. */
+export function normalizeMemoryContentTokens(content:string):readonly string[]{
+  const normalized=content.normalize("NFKC").toLowerCase();
+  // Unicode letters/numbers preserve Russian and English words while punctuation becomes a separator.
+  const tokens=normalized.match(/[\p{L}\p{N}]+/gu)??[];
+  return [...new Set(tokens)];
+}
+
+/** Check content containment using unique token sets; fewer than four meaningful tokens never qualify as a subset. */
+export function isContentTokenSubset(subset:string,container:string):boolean{
+  const subsetTokens=normalizeMemoryContentTokens(subset);
+  if(subsetTokens.length<4)return false;
+  const containerTokens=new Set(normalizeMemoryContentTokens(container));
+  return subsetTokens.every(token=>containerTokens.has(token));
+}
+
 export function normalizeMemoryContentForHash(content:string):string{
   return content.normalize("NFKC").replace(/\s+/gu," ").trim();
 }
@@ -85,10 +96,12 @@ export function deterministicContentHash(content:string):string{
   return hash.toString(16).padStart(16,"0");
 }
 
+/** Stable ordering makes containment candidates consume the existing shared candidate limit first. */
 export function compareSemanticCandidates(a:SemanticMemoryCandidate,b:SemanticMemoryCandidate):number{
-  return b.similarity-a.similarity||a.memory.id.localeCompare(b.memory.id);
+  return Number(b.containmentMatch)-Number(a.containmentMatch)||b.similarity-a.similarity||a.memory.id.localeCompare(b.memory.id);
 }
 
+/** Select candidates by cosine OR bidirectional containment; containment only affects candidate selection and never archives directly. */
 export function selectTopSemanticCandidates(
   newMemory:MemoryItem,
   memories:readonly MemoryItem[],
@@ -100,14 +113,14 @@ export function selectTopSemanticCandidates(
   if(nextLimit===0)return [];
   const result:SemanticMemoryCandidate[]=[];
   const newVector=vectors.get(newMemory.id);
-  if(!newVector)return [];
   for(const memory of memories){
     if(memory.id===newMemory.id||memory.characterId!==newMemory.characterId||memory.status!=="active")continue;
     const candidateVector=vectors.get(memory.id);
-    if(!candidateVector)continue;
-    const similarity=cosineSimilarity(newVector,candidateVector);
-    if(similarity===undefined||similarity<threshold)continue;
-    result.push({memory,similarity});
+    const similarity=candidateVector&&newVector?cosineSimilarity(newVector,candidateVector):undefined;
+    const semanticMatch=similarity!==undefined&&similarity>=threshold;
+    const containmentMatch=isContentTokenSubset(newMemory.content,memory.content)||isContentTokenSubset(memory.content,newMemory.content);
+    if(!semanticMatch&&!containmentMatch)continue;
+    result.push({memory,similarity:similarity??0,containmentMatch});
   }
   result.sort(compareSemanticCandidates);
   return result.slice(0,nextLimit);
@@ -123,80 +136,67 @@ function safeText(value:string):string{
     .replace(/secret\s*[:=]\s*\S+/gi,"secret=[REDACTED]");
 }
 
-function parseStructuredJudge(value:unknown):{decisions:MemoryJudgeDecision[]}|never{
+/** Parse only the structured Judge contract: archiveIds is the complete mutation decision. */
+function parseStructuredJudge(value:unknown):{archiveIds:string[]}{
   if(!value||typeof value!=="object"||Array.isArray(value))throw new Error("Memory Judge structured response is not an object.");
-  const decisions=(value as Record<string,unknown>).decisions;
-  if(!Array.isArray(decisions))throw new Error("Memory Judge structured response is missing decisions.");
-  const parsed:MemoryJudgeDecision[]=[];
+  const archiveIds=(value as Record<string,unknown>).archiveIds;
+  if(!Array.isArray(archiveIds))throw new Error("Memory Judge structured response is missing archiveIds.");
+  const parsed:string[]=[];
   const seen=new Set<string>();
-  for(const item of decisions){
-    if(!item||typeof item!=="object"||Array.isArray(item))throw new Error("Memory Judge decision is invalid.");
-    const candidateId=(item as Record<string,unknown>).candidateId;
-    const relation=(item as Record<string,unknown>).relation;
-    if(typeof candidateId!=="string"||!candidateId.trim())throw new Error("Memory Judge candidateId is invalid.");
-    if(!MEMORY_JUDGE_RELATIONS.includes(relation as MemoryJudgeRelation))throw new Error("Memory Judge relation is invalid.");
-    const id=candidateId.trim();
-    if(seen.has(id))throw new Error("Memory Judge returned duplicate candidate ids.");
+  for(const item of archiveIds){
+    if(typeof item!=="string"||!item.trim())throw new Error("Memory Judge archive id is invalid.");
+    const id=item.trim();
+    if(seen.has(id))throw new Error("Memory Judge returned duplicate archive ids.");
     seen.add(id);
-    parsed.push({candidateId:id,relation:relation as MemoryJudgeRelation});
+    parsed.push(id);
   }
-  return {decisions:parsed};
+  return {archiveIds:parsed};
 }
 
-function parsePlainJudge(content:string):{decisions:MemoryJudgeDecision[]}|never{
+/** Parse only NO_ARCHIVE or one real archive ID per plain-text line; relation syntax is deliberately rejected. */
+function parsePlainJudge(content:string):{archiveIds:string[]}{
   const trimmed=content.trim();
-  if(!trimmed||trimmed.toLocaleUpperCase()==="NO_ARCHIVE")return {decisions:[]};
-  const lines=trimmed.split(/\r?\n/gu).map(line=>line.trim()).filter(Boolean);
-  const parsed:MemoryJudgeDecision[]=[];
+  if(trimmed==="NO_ARCHIVE")return {archiveIds:[]};
+  if(!trimmed)throw new Error("Memory Judge plain response is empty.");
+  const lines=trimmed.split(/\r?\n/gu);
+  const archiveIds:string[]=[];
   const seen=new Set<string>();
   for(const line of lines){
-    const parts=line.split("|");
-    if(parts.length!==2)throw new Error("Memory Judge plain response must use 'candidateId | relation' lines.");
-    const candidateId=parts[0]!.trim();
-    const relation=parts[1]!.trim();
-    if(!candidateId||!MEMORY_JUDGE_RELATIONS.includes(relation as MemoryJudgeRelation))throw new Error("Memory Judge plain response contains an invalid decision.");
-    if(seen.has(candidateId))throw new Error("Memory Judge returned duplicate candidate ids.");
-    seen.add(candidateId);
-    parsed.push({candidateId,relation:relation as MemoryJudgeRelation});
+    const id=line.trim();
+    if(!id)throw new Error("Memory Judge plain response contains an empty line.");
+    if(seen.has(id))throw new Error("Memory Judge returned duplicate archive ids.");
+    seen.add(id);
+    archiveIds.push(id);
   }
-  return {decisions:parsed};
+  return {archiveIds};
 }
 
-function redactJudgeInput(value:string):string{return safeText(value);}
-
+/** Build the exact production Judge request format from canonical NEW MEMORY and candidate IDs/text. */
 function buildJudgeInput(newMemory:MemoryItem,candidates:readonly SemanticMemoryCandidate[]):string{
   return [
     "NEW MEMORY",
     "id: "+safeText(newMemory.id),
-    "content: "+redactJudgeInput(newMemory.content),
+    "content: "+safeText(newMemory.content),
     "",
     "CANDIDATES",
-    ...candidates.map(candidate=>[
-      "candidateId: "+safeText(candidate.memory.id),
-      "content: "+redactJudgeInput(candidate.memory.content)
-    ].join("\n\n"))
+    ...candidates.map((candidate,index)=>[
+      (index+1)+". id: "+safeText(candidate.memory.id),
+      "   content: "+safeText(candidate.memory.content)
+    ].join("\n"))
   ].join("\n");
 }
 
-function validateCandidateDecisions(
-  decisions:readonly MemoryJudgeDecision[],
-  allowedIds:readonly string[]
-):void{
+/** Validate every Judge archive ID against NEW MEMORY plus supplied candidates and block an all-record mutation. */
+function validateJudgeArchiveIds(archiveIds:readonly string[],allowedIds:readonly string[]):void{
   const allowed=new Set(allowedIds);
-  for(const decision of decisions)assertAgentCandidateId(decision.candidateId,allowedIds);
-  if(decisions.length===0)return;
-  if(decisions.length!==allowedIds.length)throw new Error("Memory Judge must decide every supplied candidate or return NO_ARCHIVE.");
-  const actual=new Set(decisions.map(decision=>decision.candidateId));
-  if(actual.size!==allowedIds.length||allowedIds.some(id=>!actual.has(id)))throw new Error("Memory Judge candidate decisions do not exactly match the supplied candidate ids.");
-}
-
-function aggregateDecisions(decisions:readonly MemoryJudgeDecision[]):{action:"archive_new"|"archive_candidates"|"none";ids:string[];reason?:string}{
-  const hasArchiveNew=decisions.some(item=>item.relation==="duplicate"||item.relation==="candidate_supersedes_new");
-  const oldIds=decisions.filter(item=>item.relation==="new_supersedes_candidate").map(item=>item.candidateId);
-  if(hasArchiveNew&&oldIds.length>0)return {action:"none",ids:[],reason:"conflicting_judge_decisions"};
-  if(hasArchiveNew)return {action:"archive_new",ids:[]};
-  if(oldIds.length>0)return {action:"archive_candidates",ids:[...oldIds]};
-  return {action:"none",ids:[]};
+  const seen=new Set<string>();
+  for(const id of archiveIds){
+    if(!allowed.has(id))throw new Error("Memory Judge referenced an ID outside NEW MEMORY or CANDIDATES.");
+    if(!id.trim())throw new Error("Memory Judge archive id is empty.");
+    if(seen.has(id))throw new Error("Memory Judge returned duplicate archive ids.");
+    seen.add(id);
+  }
+  if(archiveIds.length>0&&archiveIds.length===allowedIds.length)throw new Error("Memory Judge attempted to archive every supplied record.");
 }
 
 function validIndexState(state:MemorySemanticIndexState|undefined,characterId:CharacterId):MemorySemanticIndexState{
@@ -287,9 +287,18 @@ export class MemorySemanticDeduplicator{
         settings.semanticDedup.candidateLimit
       );
       const scores=Object.fromEntries(selected.map(candidate=>[candidate.memory.id,candidate.similarity]));
+      const containmentCandidates=selected.filter(candidate=>candidate.containmentMatch).map(candidate=>candidate.memory.id);
       this.recordDiagnostic("SEMANTIC_DEDUP_STARTED","semantic deduplication candidate scan",{
-        characterId,embeddingProvider:provider.id,embeddingModel:model,candidateCount:selected.length,candidateIds:selected.map(item=>item.memory.id),similarityScores:scores,
-        staleOrMissingRecordCount:staleOrMissing,threshold:settings.semanticDedup.candidateSimilarityThreshold,candidateLimit:settings.semanticDedup.candidateLimit
+        characterId,
+        embeddingProvider:provider.id,
+        embeddingModel:model,
+        candidateCount:selected.length,
+        candidateIds:selected.map(item=>item.memory.id),
+        containmentCandidates,
+        similarityScores:scores,
+        staleOrMissingRecordCount:staleOrMissing,
+        threshold:settings.semanticDedup.candidateSimilarityThreshold,
+        candidateLimit:settings.semanticDedup.candidateLimit
       });
       if(selected.length===0)return {status:"completed",candidateCount:0,candidateIds:[],similarityScores:scores};
       const judge=this.options.settings().semanticDedup.judge;
@@ -311,6 +320,9 @@ export class MemorySemanticDeduplicator{
           ]
         }
       };
+      this.recordDiagnostic("SEMANTIC_DEDUP_JUDGE_STARTED","memory judge started",{
+        characterId,candidateIds:selected.map(item=>item.memory.id),containmentCandidates,similarityScores:scores
+      });
       const schema=STANDARD_SCHEMAS["memory-judge-decision"]!;
       const execution=await this.outputRunner.run({
         outputMode:judge.outputMode,
@@ -324,30 +336,71 @@ export class MemorySemanticDeduplicator{
         diagnostics:this.options.diagnostics,
         source:this.options.source??"memory-semantic-deduplication"
       });
-      const decisions=execution.value.decisions;
-      validateCandidateDecisions(decisions,selected.map(candidate=>candidate.memory.id));
-      const plan=aggregateDecisions(decisions);
-      this.recordDiagnostic("SEMANTIC_DEDUP_JUDGE_RESULT","memory judge result",{
-        characterId,
-        embeddingProvider:provider.id,
-        embeddingModel:model,
-        candidateCount:selected.length,
-        candidateIds:selected.map(item=>item.memory.id),
-        similarityScores:scores,
-        judgeProvider:execution.response.providerId,
-        judgeModel:execution.response.model,
-        configuredMode:judge.outputMode,
-        effectiveMode:execution.metadata.effectiveOutputMode,
-        decisions,
-        mutationPlan:plan
-      });
-      if(plan.reason){
-        this.recordFailure("conflicting_judge_decisions",plan.reason,characterId,{decisions});
-        return {status:"completed",reason:plan.reason,candidateCount:selected.length,candidateIds:selected.map(item=>item.memory.id),similarityScores:scores,configuredMode:judge.outputMode,effectiveMode:execution.metadata.effectiveOutputMode,decisions,mutation:{action:"none",memoryIds:[],result:"none"}};
+      const archiveIds=execution.value.archiveIds;
+      const allowedIds=[newMemory.id,...selected.map(candidate=>candidate.memory.id)];
+      let validationError:unknown;
+      try{
+        validateJudgeArchiveIds(archiveIds,allowedIds);
+      }catch(error){
+        validationError=error;
       }
-      if(plan.action==="none")return {status:"completed",candidateCount:selected.length,candidateIds:selected.map(item=>item.memory.id),similarityScores:scores,configuredMode:judge.outputMode,effectiveMode:execution.metadata.effectiveOutputMode,decisions,mutation:{action:"none",memoryIds:[],result:"none"}};
-      const freshNew=await this.options.broker.get(characterId,memoryId);
-      if(!freshNew||freshNew.status!=="active")return this.skip("canonical_new_memory_changed_before_mutation",characterId,selected,scores);
+      this.recordDiagnostic("SEMANTIC_DEDUP_JUDGE_COMPLETED","memory judge completed",{
+        characterId,
+        candidateIds:selected.map(item=>item.memory.id),
+        containmentCandidates,
+        similarityScores:scores,
+        archiveIds,
+        configuredMode:judge.outputMode,
+        effectiveMode:execution.metadata.effectiveOutputMode
+      });
+      if(validationError){
+        this.recordFailure("MUTATION_BLOCKED",validationError,characterId,{archiveIds,allowedIds});
+        this.recordDiagnostic("SEMANTIC_DEDUP_MUTATION_BLOCKED","semantic Judge archive mutation blocked",{
+          characterId,archiveIds
+        });
+        return {
+          status:"completed",
+          reason:"mutation_blocked",
+          candidateCount:selected.length,
+          candidateIds:selected.map(item=>item.memory.id),
+          similarityScores:scores,
+          configuredMode:judge.outputMode,
+          effectiveMode:execution.metadata.effectiveOutputMode,
+          archiveIds,
+          mutation:{archiveIds,result:"blocked"}
+        };
+      }
+      if(archiveIds.length===0){
+        return {
+          status:"completed",
+          candidateCount:selected.length,
+          candidateIds:selected.map(item=>item.memory.id),
+          similarityScores:scores,
+          configuredMode:judge.outputMode,
+          effectiveMode:execution.metadata.effectiveOutputMode,
+          archiveIds:[],
+          mutation:{archiveIds:[],result:"none"}
+        };
+      }
+      const freshRecords:MemoryItem[]=[];
+      for(const archiveId of archiveIds){
+        const current=await this.options.broker.get(characterId,archiveId);
+        if(!current||current.status!=="active"){
+          this.recordFailure("MUTATION_BLOCKED","Judge archive target changed or is no longer active.",characterId,{archiveId});
+          return {
+            status:"completed",
+            reason:"mutation_blocked",
+            candidateCount:selected.length,
+            candidateIds:selected.map(item=>item.memory.id),
+            similarityScores:scores,
+            configuredMode:judge.outputMode,
+            effectiveMode:execution.metadata.effectiveOutputMode,
+            archiveIds,
+            mutation:{archiveIds,result:"blocked"}
+          };
+        }
+        freshRecords.push(current);
+      }
       const authority={
         actorId:"memory-semantic-deduplication",
         actorType:"system" as const,
@@ -355,32 +408,38 @@ export class MemorySemanticDeduplicator{
         capabilities:["memory.write.auto","memory.write.suggest.apply","memory.archive.semantic"],
         moduleId:"memory-semantic-deduplication"
       };
-      if(plan.action==="archive_new"){
-        try{
-          await this.options.broker.archive(characterId,memoryId,authority,"duplicate");
-          return {status:"completed",candidateCount:selected.length,candidateIds:selected.map(item=>item.memory.id),similarityScores:scores,configuredMode:judge.outputMode,effectiveMode:execution.metadata.effectiveOutputMode,decisions,mutation:{action:"archive_new",memoryIds:[memoryId],result:"applied"}};
-        }catch(error){
-          this.recordFailure("MUTATION_BLOCKED",error,characterId,{memoryId,action:"archive_new",reason:"duplicate"});
-          return {status:"completed",reason:"mutation_blocked",candidateCount:selected.length,candidateIds:selected.map(item=>item.memory.id),similarityScores:scores,configuredMode:judge.outputMode,effectiveMode:execution.metadata.effectiveOutputMode,decisions,mutation:{action:"archive_new",memoryIds:[memoryId],result:"blocked"}};
-        }
-      }
-      const freshCandidates:MemoryItem[]=[];
-      for(const candidateId of plan.ids){
-        const candidate=await this.options.broker.get(characterId,candidateId);
-        if(!candidate||candidate.status!=="active"){
-          this.recordFailure("MUTATION_BLOCKED","Semantic Judge candidate changed or is no longer active.",characterId,{candidateId});
-          return {status:"completed",reason:"canonical_candidate_changed_before_mutation",candidateCount:selected.length,candidateIds:selected.map(item=>item.memory.id),similarityScores:scores,configuredMode:judge.outputMode,effectiveMode:execution.metadata.effectiveOutputMode,decisions,mutation:{action:"archive_candidates",memoryIds:plan.ids,result:"blocked"}};
-        }
-        freshCandidates.push(candidate);
-      }
       try{
-        for(const candidate of freshCandidates){
-          await this.options.broker.archive(characterId,candidate.id,authority,"superseded",memoryId);
-        }
-        return {status:"completed",candidateCount:selected.length,candidateIds:selected.map(item=>item.memory.id),similarityScores:scores,configuredMode:judge.outputMode,effectiveMode:execution.metadata.effectiveOutputMode,decisions,mutation:{action:"archive_candidates",memoryIds:freshCandidates.map(item=>item.id),result:"applied"}};
+        // Core archives exactly the Judge-selected active IDs; it does not infer relations, rank records, or delete data.
+        for(const record of freshRecords)await this.options.broker.archive(characterId,record.id,authority,"other");
+        this.recordDiagnostic("SEMANTIC_DEDUP_MUTATION_APPLIED","semantic Judge archive mutation applied",{
+          characterId,archiveIds
+        });
+        return {
+          status:"completed",
+          candidateCount:selected.length,
+          candidateIds:selected.map(item=>item.memory.id),
+          similarityScores:scores,
+          configuredMode:judge.outputMode,
+          effectiveMode:execution.metadata.effectiveOutputMode,
+          archiveIds,
+          mutation:{archiveIds,result:"applied"}
+        };
       }catch(error){
-        this.recordFailure("MUTATION_BLOCKED",error,characterId,{candidateIds:plan.ids,action:"archive_candidates"});
-        return {status:"completed",reason:"mutation_blocked",candidateCount:selected.length,candidateIds:selected.map(item=>item.memory.id),similarityScores:scores,configuredMode:judge.outputMode,effectiveMode:execution.metadata.effectiveOutputMode,decisions,mutation:{action:"archive_candidates",memoryIds:plan.ids,result:"blocked"}};
+        this.recordFailure("MUTATION_BLOCKED",error,characterId,{archiveIds});
+        this.recordDiagnostic("SEMANTIC_DEDUP_MUTATION_BLOCKED","semantic Judge archive mutation blocked",{
+          characterId,archiveIds
+        });
+        return {
+          status:"completed",
+          reason:"mutation_blocked",
+          candidateCount:selected.length,
+          candidateIds:selected.map(item=>item.memory.id),
+          similarityScores:scores,
+          configuredMode:judge.outputMode,
+          effectiveMode:execution.metadata.effectiveOutputMode,
+          archiveIds,
+          mutation:{archiveIds,result:"blocked"}
+        };
       }
     }catch(error){
       this.recordFailure("SEMANTIC_DEDUP_FAILED",error,characterId,{memoryId});

@@ -15,6 +15,7 @@ function blockBetween(startMarker:string,endMarker:string):string{
 
 const providerPresets=blockBetween("function ProviderPresetsView(","function ModelProfileView(");
 const settingsContainer=blockBetween("function SettingsContainerView(","function isTauriRuntime():boolean");
+const appSettingsView=blockBetween("function AppSettingsView(","function TraceCandidate(");
 const syncCharacters=blockBetween("const syncCharacters=React.useCallback","const addConfigurationLoadError=React.useCallback");
 const refreshRuntime=blockBetween("const refreshRuntime=React.useCallback","React.useEffect(()=>{");
 const app=source.slice(source.indexOf("function App(){"));
@@ -38,6 +39,10 @@ for(const label of ["General","Provider Presets"]){
 assert.ok(settingsContainer.includes('tab==="general"'),"Settings must have a General tab");
 assert.ok(settingsContainer.includes('tab==="provider-presets"'),"Settings must have a Provider Presets tab");
 assert.ok(settingsContainer.includes("<AppSettingsView "), "General tab must render AppSettingsView");
+assert.ok(appSettingsView.includes("value={settings.memoryAgent.providerPresetId??\"\"}"),"Settings UI must bind Memory Agent provider preset");
+assert.ok(appSettingsView.includes("providerPresetId:event.target.value||null"),"Memory Agent provider preset selection updates app settings");
+assert.ok(appSettingsView.includes("value={settings.memoryAgent.model}"),"Settings UI must bind Memory Agent model");
+assert.ok(appSettingsView.includes("onClick={()=>void onSave()}"),"Settings UI exposes the existing Save Settings persistence path");
 assert.ok(settingsContainer.includes("<ProviderPresetsView "), "Provider Presets tab must render the existing ProviderPresetsView");
 
 for(const forbidden of ["appSettings","saveAppSettings","resetAppSettings","foundationRef","setSettingsLoadMessage","setSaving"]){

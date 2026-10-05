@@ -1,17 +1,18 @@
 import {
   cosineSimilarity,
   deterministicContentHash,
+  isContentTokenSubset,
   MemorySemanticDeduplicator,
+  normalizeMemoryContentTokens,
   selectTopSemanticCandidates
 } from "../../core/src";
 import type {
   AppSettings,ChatRequest,ChatResponse,EmbeddingProvider,HealthStatus,MemoryItem,ProviderCapabilities
 } from "../../contracts/src";
-import {StandardContractValidator,defaultAppSettings} from "../../contracts/src";
-import {
-  InMemoryAuditService,InMemoryDiagnosticsStore,InMemoryEventBus,MemoryBrokerImpl
-} from "../../core/src";
+import {StandardContractValidator,defaultAppSettings,migrateAppSettings} from "../../contracts/src";
+import {InMemoryAuditService,InMemoryDiagnosticsStore,InMemoryEventBus,MemoryBrokerImpl,SettingsManager} from "../../core/src";
 import {InMemoryMemorySemanticIndexStore,InMemoryMemoryStore} from "../../host/memory/src";
+import {InMemorySettingsStore} from "../../host/settings/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error(label+" expected "+JSON.stringify(expected)+" got "+JSON.stringify(actual));}
 function ok(value:unknown,label:string){if(!value)throw new Error(label);}
@@ -28,13 +29,13 @@ class FakeEmbeddingProvider implements EmbeddingProvider{
 }
 class FakeJudgeRuntime{
   calls:ChatRequest[]=[];
-  constructor(private output:()=>string){}
+  constructor(private readonly output:(request:ChatRequest)=>string){}
   async chat(request:ChatRequest):Promise<ChatResponse>{
     this.calls.push(request);
     return {
       apiVersion:"1",schemaVersion:"1",requestId:request.requestId,
       conversationId:request.context.conversationId,providerId:"fake.judge",model:request.model,
-      message:{role:"assistant",content:this.output()},
+      message:{role:"assistant",content:this.output(request)},
       finishReason:"stop"
     };
   }
@@ -67,7 +68,7 @@ function memory(id:string,content:string,characterId="character.a",status:"activ
     archiveReason:status==="archived"?"manual":null,metadata:{}
   };
 }
-async function fixture(output:()=>string,vectorFor?:(text:string)=>readonly number[]){
+async function fixture(output:(request:ChatRequest)=>string,vectorFor?:(text:string)=>readonly number[]){
   const store=new InMemoryMemoryStore();
   const audit=new InMemoryAuditService();
   const events=new InMemoryEventBus();
@@ -105,181 +106,224 @@ async function vectorMathTest(){
   equal(cosineSimilarity([NaN,0],[1,0]),undefined,"NaN is invalid");
   equal(cosineSimilarity([Infinity,0],[1,0]),undefined,"Infinity is invalid");
   equal(cosineSimilarity([],[]),undefined,"empty vector is invalid");
-  ok(deterministicContentHash(" User   likes blue.\n")===deterministicContentHash("User likes blue."),"content hash normalizes only cache whitespace");
+  equal(deterministicContentHash(" User   likes blue.\n"),deterministicContentHash("User likes blue."),"content hash normalizes cache whitespace");
+}
+
+async function containmentUnitTest(){
+  equal(normalizeMemoryContentTokens("Пользователь живет, в Берлине. Пользователь"),["пользователь","живет","в","берлине"],"Russian token normalization and duplicate removal");
+  ok(isContentTokenSubset("Пользователь живет в Берлине.","Пользователь живет в Берлине и увлекается программированием."),"short NEW is subset of long candidate");
+  ok(!isContentTokenSubset("Пользователь живет в Берлине и увлекается программированием.","Пользователь живет в Берлине."),"long record is not subset of short record");
+  ok(isContentTokenSubset("Пользователь живет в Берлине.","В Берлине живет пользователь, который увлекается программированием."),"word-order differences do not break set containment");
+  ok(!isContentTokenSubset("User likes blue.","User likes blue in Berlin and codes."),"one-to-three meaningful tokens never qualify as containment");
+  ok(!isContentTokenSubset("User studies aviation in Berlin.","User studies programming in Berlin."),"same topic with distinct useful information is not containment");
+  ok(isContentTokenSubset("User lives in Berlin. Berlin Berlin.","User lives in Berlin and codes in Berlin."),"duplicate tokens do not change containment");
 }
 
 async function candidateSelectionTest(){
-  const newMemory=memory("new","new");
-  const memories=[
-    memory("b","b"),memory("a","a"),memory("other","other","character.b"),memory("archived","archived","character.a","archived"),newMemory
-  ];
+  const newMemory=memory("new","User lives in Berlin and enjoys programming.");
+  const containment=memory("containment","User lives in Berlin.");
+  const semantic=memory("semantic","User enjoys software development and tooling today.");
+  const distinct=memory("distinct","User studies aviation.");
   const vectors=new Map<string,readonly number[]>([
-    ["new",[1,0,0]],["b",[0.8,0.6,0]],["a",[0.8,0.6,0]],["other",[0.99,0.01,0]],["archived",[0.99,0.01,0]]
+    ["new",[1,0,0]],["containment",[0,1,0]],["semantic",[0.9,0.43,0]],["distinct",[0,0.1,0]]
   ]);
-  const selected=selectTopSemanticCandidates(newMemory,memories,vectors,0.7,2);
-  equal(selected.map(item=>item.memory.id),["a","b"],"candidate ordering and top-k are deterministic");
-  ok(selected.every(item=>item.memory.characterId==="character.a"),"character isolation");
+  const selected=selectTopSemanticCandidates(newMemory,[containment,semantic,distinct,newMemory],vectors,0.88,1);
+  equal(selected.map(item=>item.memory.id),["containment"],"containment candidate has priority over semantic candidate at shared candidate limit");
+  ok(selected[0]?.containmentMatch===true,"selected candidate is marked as containment");
+  const duplicate=selectTopSemanticCandidates(newMemory,[containment],new Map([
+    ["new",[1,0,0]],["containment",[1,0,0]]
+  ]),0.88,5);
+  equal(duplicate.map(item=>item.memory.id),["containment"],"candidate matching cosine and containment appears once");
+  equal(selectTopSemanticCandidates(newMemory,[containment,semantic],vectors,0.88,1).length,1,"existing candidate limit remains enforced");
 }
 
-async function duplicateEventIntegrationTest(){
-  const fixtureValue=await fixture(()=>JSON.stringify({decisions:[{candidateId:"old",relation:"duplicate"}]}));
-  await fixtureValue.broker.create("character.a",{id:"old",type:"fact",content:"User likes blue.",source:"user",mutationPolicy:"auto"},{
-    actorId:"user",actorType:"user",trusted:true,capabilities:[]
-  });
-  await fixtureValue.broker.create("character.a",{id:"new",type:"fact",content:"User prefers blue.",source:"user",mutationPolicy:"auto"},{
-    actorId:"user",actorType:"user",trusted:true,capabilities:[]
-  });
-  const created=await fixtureValue.broker.get("character.a","new");
-  equal(created?.status,"archived","duplicate archives NEW only");
-  equal(created?.archiveReason,"duplicate","duplicate archive reason");
-  equal((await fixtureValue.broker.get("character.a","old"))?.status,"active","duplicate keeps OLD active");
-  equal((await fixtureValue.broker.get("character.a","new"))?.status,"archived","canonical new remains recoverable");
-  equal((await fixtureValue.indexStore.load("character.a"))?.records.map(record=>record.memoryId),["old"],"archived memory vector is removed");
+async function belowThresholdContainmentReachesJudgeTest(){
+  const f=await fixture(()=>JSON.stringify({archiveIds:["old"]}),text=>text.includes("extended")?[1,0,0]:[0,1,0]);
+  await f.broker.create("character.a",{id:"old",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  const newer=await f.broker.create("character.a",{id:"new",type:"fact",content:"User lives in Berlin and extended programming work.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  equal(newer.status,"active","containment-selected NEW remains active when Judge archives candidate");
+  equal((await f.broker.get("character.a","old"))?.status,"archived","below-threshold cosine plus containment still reaches Judge");
+  equal(f.judge.calls.length,1,"Judge was called for containment-only candidate");
+  ok(f.judge.calls[0]?.context.messages[1]?.content.includes("1. id: old"),"Judge request uses the production candidate numbering format");
+  ok(f.diagnostics.recentErrors().some(error=>error.code==="SEMANTIC_DEDUP_JUDGE_STARTED"),"Judge started diagnostic is emitted");
+  ok(f.diagnostics.recentErrors().some(error=>error.code==="SEMANTIC_DEDUP_JUDGE_COMPLETED"),"Judge completed diagnostic is emitted");
 }
 
-async function supersessionIntegrationTest(){
-  const f=await fixture(()=>JSON.stringify({decisions:[{candidateId:"old",relation:"new_supersedes_candidate"}]}));
-  await f.broker.create("character.a",{id:"old",type:"fact",content:"User likes blue.",source:"user",mutationPolicy:"auto"},{actorId:"user",actorType:"user",trusted:true,capabilities:[]});
-  const created=await f.broker.create("character.a",{id:"new",type:"fact",content:"User likes blue and especially prefers dark-blue.",source:"user",mutationPolicy:"auto"},{actorId:"user",actorType:"user",trusted:true,capabilities:[]});
-  equal((await f.broker.get("character.a","new"))?.status,"active","superset keeps NEW active");
-  const old=await f.broker.get("character.a","old");
-  equal(old?.status,"archived","superset archives OLD");
-  equal(old?.archiveReason,"superseded","superset archive reason");
-  equal(old?.supersededBy,"new","supersededBy is real NEW id");
+async function structuredArchiveTest(){
+  const f=await fixture(()=>JSON.stringify({archiveIds:["candidate"]}));
+  await f.broker.create("character.a",{id:"candidate",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  await f.broker.create("character.a",{id:"new",type:"fact",content:"User lives in Berlin and programming.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  equal((await f.broker.get("character.a","candidate"))?.status,"archived","structured archiveIds archives candidate");
+  equal((await f.broker.get("character.a","new"))?.status,"active","structured archiveIds leaves new active");
 }
 
-async function distinctAndUncertainTest(){
-  const f=await fixture(()=>JSON.stringify({decisions:[{candidateId:"old",relation:"distinct"}]}));
-  await f.broker.create("character.a",{id:"old",type:"fact",content:"User studies aviation.",source:"user",mutationPolicy:"auto"},{actorId:"user",actorType:"user",trusted:true,capabilities:[]});
-  let newer=await f.broker.create("character.a",{id:"new",type:"fact",content:"User studies programming.",source:"user",mutationPolicy:"auto"},{actorId:"user",actorType:"user",trusted:true,capabilities:[]});
-  equal(newer.status,"active","distinct keeps NEW active");
-  equal((await f.broker.get("character.a","old"))?.status,"active","distinct keeps OLD active");
-
-  f.service.stop();
-  const g=await fixture(()=>JSON.stringify({decisions:[{candidateId:"old",relation:"uncertain"}]}));
-  await g.broker.create("character.a",{id:"old",type:"fact",content:"User likes dark-blue.",source:"user",mutationPolicy:"auto"},{actorId:"user",actorType:"user",trusted:true,capabilities:[]});
-  newer=await g.broker.create("character.a",{id:"new",type:"fact",content:"User prefers dark-blue.",source:"user",mutationPolicy:"auto"},{actorId:"user",actorType:"user",trusted:true,capabilities:[]});
-  equal(newer.status,"active","uncertain keeps NEW active");
-  equal((await g.broker.get("character.a","old"))?.status,"active","uncertain keeps OLD active");
+async function structuredNoArchiveTest(){
+  const f=await fixture(()=>JSON.stringify({archiveIds:[]}));
+  await f.broker.create("character.a",{id:"candidate",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  await f.broker.create("character.a",{id:"new",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  equal((await f.broker.get("character.a","candidate"))?.status,"active","empty structured archiveIds does nothing");
+  equal((await f.broker.get("character.a","new"))?.status,"active","empty structured archiveIds leaves new active");
+  equal(f.judge.calls.length,1,"empty structured decision is parsed");
 }
 
-async function conflictNoMutationTest(){
-  const f=await fixture(()=>JSON.stringify({decisions:[
-    {candidateId:"old1",relation:"new_supersedes_candidate"},
-    {candidateId:"old2",relation:"candidate_supersedes_new"}
-  ]}));
-  await f.broker.create("character.a",{id:"old1",type:"fact",content:"User likes blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  await f.broker.create("character.a",{id:"old2",type:"fact",content:"User lives in Nuremberg.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  const created=await f.broker.create("character.a",{id:"new",type:"fact",content:"User likes dark-blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  equal(created.status,"active","conflicting judge decisions perform no mutation");
-  equal((await f.broker.get("character.a","old1"))?.status,"active","conflict keeps old1");
-  equal((await f.broker.get("character.a","old2"))?.status,"active","conflict keeps old2");
-  ok(f.diagnostics.recentErrors().some(error=>error.code==="conflicting_judge_decisions"),"conflicting decision diagnostic");
-}
-
-async function invalidJudgeOutputTest(){
-  const f=await fixture(()=>JSON.stringify({decisions:[{candidateId:"memory-999",relation:"duplicate"}]}));
-  await f.broker.create("character.a",{id:"old",type:"fact",content:"User likes blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  const newMemory=await f.broker.create("character.a",{id:"new",type:"fact",content:"User prefers blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  equal(newMemory.status,"active","invalid judge id causes no mutation");
-  equal((await f.broker.get("character.a","old"))?.status,"active","invalid judge id keeps candidate active");
-  ok(f.diagnostics.recentErrors().some(error=>error.code==="SEMANTIC_DEDUP_FAILED"),"invalid judge id diagnostic");
-}
-
-async function plainJudgeTest(){
-  const f=await fixture(()=> "old | new_supersedes_candidate");
+async function plainArchiveTest(){
+  const f=await fixture(()=> "candidate");
   f.settings.semanticDedup={...f.settings.semanticDedup,judge:{...f.settings.semanticDedup.judge,outputMode:"plain"}};
-  await f.broker.create("character.a",{id:"old",type:"fact",content:"User likes blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  const newer=await f.broker.create("character.a",{id:"new",type:"fact",content:"User likes blue and prefers dark-blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  equal((await f.broker.get("character.a","new"))?.status,"active","plain Judge output is parsed");
-  equal((await f.broker.get("character.a","old"))?.status,"archived","plain Judge relation archives OLD");
-  equal((await f.broker.get("character.a","old"))?.supersededBy,"new","plain Judge provenance");
+  await f.broker.create("character.a",{id:"candidate",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  await f.broker.create("character.a",{id:"new",type:"fact",content:"User lives in Berlin and programming.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  equal((await f.broker.get("character.a","candidate"))?.status,"archived","plain ID archives candidate");
+  equal((await f.broker.get("character.a","new"))?.status,"active","plain ID leaves new active");
 }
 
-async function malformedPlainNoMutationTest(){
-  const f=await fixture(()=> "some random text");
+async function plainNoArchiveTest(){
+  const f=await fixture(()=> "NO_ARCHIVE");
   f.settings.semanticDedup={...f.settings.semanticDedup,judge:{...f.settings.semanticDedup.judge,outputMode:"plain"}};
-  await f.broker.create("character.a",{id:"old",type:"fact",content:"User likes blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  const newer=await f.broker.create("character.a",{id:"new",type:"fact",content:"User prefers blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  equal((await f.broker.get("character.a","new"))?.status,"active","malformed plain output is non-mutating");
-  equal((await f.broker.get("character.a","old"))?.status,"active","malformed plain output keeps candidate");
+  await f.broker.create("character.a",{id:"candidate",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  await f.broker.create("character.a",{id:"new",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  equal((await f.broker.get("character.a","candidate"))?.status,"active","plain NO_ARCHIVE does nothing");
+  equal((await f.broker.get("character.a","new"))?.status,"active","plain NO_ARCHIVE leaves new active");
+  equal(f.judge.calls.length,1,"plain NO_ARCHIVE is parsed");
 }
 
-async function invalidEmbeddingIsBestEffortTest(){
+async function invalidIdNoMutationTest(){
+  const f=await fixture(()=>JSON.stringify({archiveIds:["memory-999"]}));
+  await f.broker.create("character.a",{id:"old",type:"fact",content:"User likes blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  const newer=await f.broker.create("character.a",{id:"new",type:"fact",content:"User likes blue and programming.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  equal(newer.status,"active","invalid Judge ID blocks mutation of new memory");
+  equal((await f.broker.get("character.a","old"))?.status,"active","invalid Judge ID keeps candidate active");
+  ok(f.diagnostics.recentErrors().some(error=>error.code==="MUTATION_BLOCKED"),"invalid Judge ID is diagnosed as blocked mutation");
+}
+
+async function malformedOutputNoMutationTest(){
   const f=await fixture(()=>JSON.stringify({decisions:[{candidateId:"old",relation:"duplicate"}]}));
-  const failing={...f,service:f.service};
-  f.service.stop();
-  const broken=await fixture(()=>JSON.stringify({decisions:[]}),()=>{throw new Error("network down")});
-  const created=await broken.broker.create("character.a",{id:"new",type:"fact",content:"User likes blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  equal(created.status,"active","embedding failure never blocks canonical create");
-  ok(broken.diagnostics.recentErrors().some(error=>error.code==="SEMANTIC_DEDUP_FAILED"),"embedding failure diagnostic");
-  void failing;
-}
-
-async function cacheInvalidationTest(){
-  const f=await fixture(()=>JSON.stringify({decisions:[]}));
   await f.broker.create("character.a",{id:"old",type:"fact",content:"User likes blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  const afterCreate=f.embeddings.calls.length;
-  await f.broker.update("character.a","old",{metadata:{edited:true}},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  equal(f.embeddings.calls.length,afterCreate,"metadata-only edit reuses content embedding");
-  await f.broker.update("character.a","old",{content:"User likes dark-blue."},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  ok(f.embeddings.calls.length>afterCreate,"content edit regenerates embedding");
+  const newer=await f.broker.create("character.a",{id:"new",type:"fact",content:"User likes blue and programming.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  equal(newer.status,"active","old relation structured output is rejected");
+  equal((await f.broker.get("character.a","old"))?.status,"active","malformed old relation output performs no mutation");
+  ok(f.diagnostics.recentErrors().some(error=>error.code==="SEMANTIC_DEDUP_FAILED"||error.code==="AGENT_STRUCTURED_SCHEMA_INVALID"),"malformed relation output is diagnosed");
 }
 
-async function multipleCandidateTest(){
-  const f=await fixture(()=>JSON.stringify({decisions:[
-    {candidateId:"old1",relation:"new_supersedes_candidate"},
-    {candidateId:"old2",relation:"new_supersedes_candidate"},
-    {candidateId:"old3",relation:"distinct"}
-  ]}),text=>text.includes("aviation")?[0.6,0.8,0]:text.includes("dark-blue")?[0.98,0.2,0]:[1,0,0]);
-  await f.broker.create("character.a",{id:"old1",type:"fact",content:"User likes blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  await f.broker.create("character.a",{id:"old2",type:"fact",content:"User prefers dark-blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  await f.broker.create("character.a",{id:"old3",type:"fact",content:"User loves aviation.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  const newer=await f.broker.create("character.a",{id:"new",type:"fact",content:"User likes blue and prefers dark-blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  equal((await f.broker.get("character.a","new"))?.status,"active","multiple candidate superset keeps new");
-  equal((await f.broker.get("character.a","old1"))?.status,"archived","multiple candidate archives first old");
-  equal((await f.broker.get("character.a","old2"))?.status,"archived","multiple candidate archives second old");
-  equal((await f.broker.get("character.a","old3"))?.status,"active","distinct candidate remains active");
+async function allRecordsMutationBlockedTest(){
+  const f=await fixture(()=>JSON.stringify({archiveIds:["old","new"]}));
+  await f.broker.create("character.a",{id:"old",type:"fact",content:"User likes blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  const newer=await f.broker.create("character.a",{id:"new",type:"fact",content:"User likes blue and programming.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  equal(newer.status,"active","Judge cannot archive every supplied record");
+  equal((await f.broker.get("character.a","old"))?.status,"active","all-record archive attempt leaves candidate active");
+  ok(f.diagnostics.recentErrors().some(error=>error.code==="MUTATION_BLOCKED"),"all-record archive attempt is blocked");
 }
 
-async function malformedIndexRebuildTest(){
-  const f=await fixture(()=>JSON.stringify({decisions:[]}));
-  await f.indexStore.save({
-    apiVersion:"1",schemaVersion:"1",characterId:"character.a",
-    records:[{
-      memoryId:"bad",characterId:"character.a",contentHash:"h",embeddingProviderId:"fake.embeddings",embeddingModel:"fake-embedding",
-      dimensions:99,vector:[1,0,0],updatedAt:"t"
-    }]
+async function equalInformationTest(){
+  const f=await fixture(()=>JSON.stringify({archiveIds:["candidate"]}));
+  await f.broker.create("character.a",{id:"candidate",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  const newer=await f.broker.create("character.a",{id:"new",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  equal(newer.status,"active","equal information leaves the Judge-selected record active");
+  equal((await f.broker.get("character.a","candidate"))?.status,"archived","equal information can archive either one by Judge choice");
+  equal((await f.broker.list("character.a")).filter(item=>item.status==="active").length,1,"equal information leaves exactly one active");
+}
+
+async function subsetDirectionTest(){
+  const first=await fixture(()=>JSON.stringify({archiveIds:["new"]}));
+  await first.broker.create("character.a",{id:"long",type:"fact",content:"User lives in Berlin and works remotely from home.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  await first.broker.create("character.a",{id:"new",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  equal((await first.broker.get("character.a","new"))?.status,"archived","when NEW is a subset of candidate, NEW is archived");
+  equal((await first.broker.get("character.a","long"))?.status,"active","larger candidate remains active");
+
+  const second=await fixture(()=>JSON.stringify({archiveIds:["candidate"]}));
+  await second.broker.create("character.a",{id:"candidate",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  await second.broker.create("character.a",{id:"new",type:"fact",content:"User lives in Berlin and works remotely from home.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  equal((await second.broker.get("character.a","candidate"))?.status,"archived","when candidate is a subset of NEW, candidate is archived");
+  equal((await second.broker.get("character.a","new"))?.status,"active","larger NEW remains active");
+}
+
+async function manualLikeSequentialScenarioTest(){
+  const f=await fixture(request=>{
+    const input=request.context.messages[1]?.content??"";
+    const lines=input.split(/\r?\n/gu);
+    const newId=lines[1]?.slice("id: ".length);
+    const newContent=lines[2]?.slice("content: ".length)??"";
+    const candidates:ReadonlyArray<{id:string;content:string}>=lines.reduce<Array<{id:string;content:string}>>((acc,line,index)=>{
+      if(/^\d+\. id: /.test(line)){
+        const id=line.replace(/^\d+\. id: /,"");
+        const content=(lines[index+1]??"").replace(/^\s+content: /,"");
+        acc.push({id,content});
+      }
+      return acc;
+    },[]);
+    const archiveIds=candidates.flatMap(candidate=>{
+      if(isContentTokenSubset(newContent,candidate.content))return [newId!];
+      if(isContentTokenSubset(candidate.content,newContent))return [candidate.id];
+      return [];
+    });
+    return JSON.stringify({archiveIds});
   });
-  await f.broker.create("character.a",{id:"good",type:"fact",content:"User likes blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  ok((await f.indexStore.load("character.a"))?.records.some(record=>record.memoryId==="good"),"invalid vector record does not poison rebuild");
-  ok(!(await f.indexStore.load("character.a"))?.records.some(record=>record.memoryId==="bad"),"invalid dimension record is rebuildable");
+  await f.broker.create("character.a",{id:"1",type:"fact",content:"Пользователь живет в Берлине.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  equal((await f.broker.list("character.a")).filter(item=>item.status==="active").map(item=>item.id),["1"],"after step 1 one record is active");
+  await f.broker.create("character.a",{id:"2",type:"fact",content:"Пользователь живет в Берлине и увлекается программированием.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  equal((await f.broker.list("character.a")).filter(item=>item.status==="active").map(item=>item.id),["2"],"after step 2 the more complete record is active");
+  equal((await f.broker.get("character.a","1"))?.status,"archived","after step 2 record 1 is archived");
+  await f.broker.create("character.a",{id:"3",type:"fact",content:"Пользователь живет в Берлине и увлекается программированием. Ему интересны IT-компании, стартапы и митапы в Берлине.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  equal((await f.broker.list("character.a")).filter(item=>item.status==="active").map(item=>item.id),["3"],"after step 3 the most complete record is active");
+  equal((await f.broker.get("character.a","2"))?.status,"archived","after step 3 record 2 is archived");
+  equal((await f.broker.get("character.a","1"))?.status,"archived","after step 3 record 1 stays archived");
+  ok(f.judge.calls.every(call=>call.context.messages.some(message=>message.role==="system"&&message.content===baseSettings().semanticDedup.judge.prompt)),"Fake Judge uses the production Judge prompt");
 }
 
-async function archivedRestoreLifecycleTest(){
-  const f=await fixture(()=>JSON.stringify({decisions:[]}));
-  const old=await f.broker.create("character.a",{id:"old",type:"fact",content:"User likes blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  await f.broker.archive("character.a",old.id,{actorId:"u",actorType:"user",trusted:true,capabilities:[]},"manual");
-  equal((await f.indexStore.load("character.a"))?.records.some(r=>r.memoryId==="old")??false,false,"archive removes derived vector");
-  await f.broker.restore("character.a",old.id,{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  ok((await f.indexStore.load("character.a"))?.records.some(r=>r.memoryId==="old"),"restore regenerates derived vector");
+async function settingsV5PersistenceTest(){
+  const validator=new StandardContractValidator();
+  const store=new InMemorySettingsStore(validator);
+  const manager=new SettingsManager(store,validator);
+  await manager.initialize();
+  const settings=defaultAppSettings();
+  settings.memoryAgent={
+    ...settings.memoryAgent,
+    enabled:false,
+    providerPresetId:"preset.memory",
+    model:"ministral-3b-2512",
+    outputMode:"plain",
+    prompt:"custom prompt",
+    promptBackup:"previous prompt",
+    defaultPromptVersion:"7"
+  };
+  const migrated=migrateAppSettings(JSON.parse(JSON.stringify(settings)));
+  equal(migrated.memoryAgent.providerPresetId,"preset.memory","schema v5 migration preserves provider preset");
+  equal(migrated.memoryAgent.model,"ministral-3b-2512","schema v5 migration preserves model");
+  equal(migrated.memoryAgent.enabled,false,"schema v5 migration preserves enabled flag");
+  equal(migrated.memoryAgent.outputMode,"plain","schema v5 migration preserves output mode");
+  equal(migrated.memoryAgent.prompt,"custom prompt","schema v5 migration preserves prompt");
+  equal(migrated.memoryAgent.promptBackup,"previous prompt","schema v5 migration preserves prompt backup");
+  equal(migrated.memoryAgent.defaultPromptVersion,"7","schema v5 migration preserves prompt version");
+  await manager.set(settings);
+  const reloadedManager=new SettingsManager(store,validator);
+  const reloaded=await reloadedManager.initialize();
+  equal(reloaded.memoryAgent.providerPresetId,"preset.memory","SettingsManager save/reload preserves provider preset");
+  equal(reloaded.memoryAgent.model,"ministral-3b-2512","SettingsManager save/reload preserves model");
+}
+
+async function legacySettingsMigrationTest(){
+  const migrated=migrateAppSettings({schemaVersion:"0",contextBudget:8192,recentMessages:12,memoryCandidateLimit:5,diagnosticsLevel:"debug"});
+  equal(migrated.context.availableContextTokens,8192,"legacy context budget migrates");
+  equal(migrated.context.recentConversationMessages,12,"legacy recent message count migrates");
+  equal(migrated.memory.candidateLimit,5,"legacy memory limit migrates");
+  equal(migrated.diagnostics.logLevel,"debug","legacy diagnostics level migrates");
 }
 
 async function main(){
   await vectorMathTest();
+  await containmentUnitTest();
   await candidateSelectionTest();
-  await duplicateEventIntegrationTest();
-  await supersessionIntegrationTest();
-  await distinctAndUncertainTest();
-  await conflictNoMutationTest();
-  await invalidJudgeOutputTest();
-  await plainJudgeTest();
-  await malformedPlainNoMutationTest();
-  await invalidEmbeddingIsBestEffortTest();
-  await cacheInvalidationTest();
-  await multipleCandidateTest();
-  await malformedIndexRebuildTest();
-  await archivedRestoreLifecycleTest();
-  console.log("PASS Semantic memory deduplication tests");
+  await belowThresholdContainmentReachesJudgeTest();
+  await structuredArchiveTest();
+  await structuredNoArchiveTest();
+  await plainArchiveTest();
+  await plainNoArchiveTest();
+  await invalidIdNoMutationTest();
+  await malformedOutputNoMutationTest();
+  await allRecordsMutationBlockedTest();
+  await equalInformationTest();
+  await subsetDirectionTest();
+  await manualLikeSequentialScenarioTest();
+  await settingsV5PersistenceTest();
+  await legacySettingsMigrationTest();
+  console.log("PASS Semantic memory deduplication and settings regression tests");
 }
 void main().catch(error=>{console.error(error);process.exitCode=1});

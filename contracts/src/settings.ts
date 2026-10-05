@@ -4,7 +4,7 @@ export const APP_SETTINGS_API_VERSION:"1"="1";
 export const APP_SETTINGS_SCHEMA_VERSION:"5"="5";
 export const DEFAULT_MEMORY_AGENT_PROMPT_VERSION="1";
 export const DEFAULT_AUTOMATIC_MEMORY_PROMPT="You are a long-term memory agent.\nDecide whether the exchange contains durable information worth remembering after this conversation ends.\nReturn only the requested output.\nGood memories are brief, self-contained, durable, and understandable without the original conversation.\nDo not invent ids or metadata; the application supplies all internal state.";
-export const DEFAULT_MEMORY_JUDGE_PROMPT="You are a memory deduplication judge.\nCompare the NEW MEMORY with each CANDIDATE.\nRelations: duplicate, new_supersedes_candidate, candidate_supersedes_new, distinct, uncertain.\nReturn only the requested output.\nUse only candidateId values supplied in CANDIDATES; never invent ids.";
+export const DEFAULT_MEMORY_JUDGE_PROMPT="You are a memory deduplication judge.\n\nCompare NEW MEMORY with CANDIDATES.\n\nKeep the most complete and informative record of the same underlying information.\n\nIf NEW MEMORY is a subset of a candidate, archive NEW MEMORY.\n\nIf a candidate is a subset of NEW MEMORY, archive that candidate.\n\nIf two records contain essentially the same information, archive one of them.\n\nIf records contain different useful information, archive nothing.\n\nDo not archive records only because they share a topic, entity, or a few words.\n\nReturn only IDs to archive.\nUse only IDs supplied in NEW MEMORY or CANDIDATES.\nNever invent IDs.";
 
 export interface AppSettings{
   apiVersion:"1";
@@ -164,10 +164,12 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const logLevelValue=(typeof diagnostics.logLevel==="string"?diagnostics.logLevel:legacyLog)??defaults.diagnostics.logLevel;
   if(!["off","errors","normal","verbose","debug"].includes(logLevelValue))throw new Error("Unsupported diagnostics log level.");
   const legacyEnabled=typeof chat.automaticLongTermMemory==="boolean"?chat.automaticLongTermMemory:defaults.chat.automaticLongTermMemory;
+  // Schema v5 is canonical, so Memory Agent persistence fields must survive migration unchanged; legacy schemas keep their historical gates.
+  const preservesMemoryAgentBinding=["2","3","4","5"].includes(String(input.schemaVersion));
   const previousSchema=input.schemaVersion==="2";
-  const memoryAgentEnabled=(["3","4"].includes(String(input.schemaVersion))||previousSchema)&&typeof memoryAgent.enabled==="boolean"?memoryAgent.enabled:legacyEnabled;
-  const memoryAgentPreset=(["3","4"].includes(String(input.schemaVersion))||previousSchema)&&typeof memoryAgent.providerPresetId==="string"&&memoryAgent.providerPresetId.trim()?memoryAgent.providerPresetId.trim():null;
-  const memoryAgentModel=(["3","4"].includes(String(input.schemaVersion))||previousSchema)&&typeof memoryAgent.model==="string"?memoryAgent.model.trim():"";
+  const memoryAgentEnabled=preservesMemoryAgentBinding&&typeof memoryAgent.enabled==="boolean"?memoryAgent.enabled:legacyEnabled;
+  const memoryAgentPreset=preservesMemoryAgentBinding&&typeof memoryAgent.providerPresetId==="string"&&memoryAgent.providerPresetId.trim()?memoryAgent.providerPresetId.trim():null;
+  const memoryAgentModel=preservesMemoryAgentBinding&&typeof memoryAgent.model==="string"?memoryAgent.model.trim():"";
   const legacyPrompt=typeof memoryAgent.instructions==="string"?memoryAgent.instructions.trim():"";
   const currentPrompt=typeof memoryAgent.prompt==="string"&&memoryAgent.prompt.trim()?memoryAgent.prompt.trim():(legacyPrompt||DEFAULT_AUTOMATIC_MEMORY_PROMPT);
   const currentBackup=typeof memoryAgent.promptBackup==="string"&&memoryAgent.promptBackup.length>0?memoryAgent.promptBackup:null;
