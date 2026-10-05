@@ -1,6 +1,6 @@
 import {AiRuntime,AiRuntimeError,InMemoryDiagnosticsStore,InMemoryEventBus,ProviderRegistry,createChatContext} from "../../core/src";
 import {FakeChatProvider,FakeStreamingChatProvider} from "../../providers/mock/src";
-import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,ChatRequest} from "../../contracts/src";
+import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,ChatRequest,STANDARD_SCHEMAS} from "../../contracts/src";
 
 function ok(value:unknown,label:string){if(!value)throw new Error(label);}
 function equal(actual:unknown,expected:unknown,label:string){if(actual!==expected)throw new Error(label+" expected "+String(expected)+" got "+String(actual));}
@@ -9,7 +9,65 @@ const makeRequest=(providerId?:string):ChatRequest=>({
   ...(providerId?{providerId}:{}),model:"fake-chat",
   context:createChatContext({conversationId:"conv-1",messages:[{role:"user",content:"hello"}]})
 });
+async function jsonSchemaResponseFormatRuntimeTest(){
+  class CapturingProvider extends FakeChatProvider{
+    request?:ChatRequest;
+    override async chat(request:ChatRequest):Promise<import("../../contracts/src").ChatResponse>{
+      this.request=request;
+      return super.chat(request);
+    }
+  }
+  const provider=new CapturingProvider();
+  const providers=new ProviderRegistry();
+  const diagnostics=new InMemoryDiagnosticsStore();
+  providers.register(provider,["chat"]);
+  const runtime=new AiRuntime(providers,{diagnostics});
+  const request:ChatRequest={
+    apiVersion:"1",
+    schemaVersion:"1",
+    requestId:"test",
+    model:"test-model",
+    context:{
+      conversationId:"test",
+      messages:[
+        {role:"system",content:"test"},
+        {role:"user",content:"test"}
+      ]
+    },
+    generation:{
+      responseFormat:{
+        type:"json-schema",
+        schema:STANDARD_SCHEMAS["memory-judge-decision"],
+        name:"memory-judge-decision",
+        strict:true
+      }
+    }
+  };
+  let response:import("../../contracts/src").ChatResponse|undefined;
+  let runtimeError:unknown;
+  try{
+    response=await runtime.generate(request);
+  }catch(error){
+    runtimeError=error;
+  }
+  ok(runtimeError===undefined,"AiRuntime accepts json-schema ChatRequest before provider invocation");
+  ok(response!==undefined,"json-schema ChatRequest returns a provider response");
+  ok(provider.request!==undefined,"mock provider receives validated json-schema request");
+  equal(provider.request?.generation?.responseFormat?.type,"json-schema","provider receives responseFormat.type json-schema");
+  equal(
+    (provider.request?.generation?.responseFormat?.type==="json-schema"?provider.request.generation.responseFormat.schema.properties?.archive?.items?.pattern:undefined),
+    "^(?:NEW|[1-9][0-9]*)$",
+    "provider receives the memory Judge response schema"
+  );
+  equal(
+    diagnostics.recentErrors().some(error=>error.code==="INVALID_REQUEST"&&error.message==="Chat request failed contract validation."),
+    false,
+    "json-schema request does not produce contract validation failure"
+  );
+}
+
 async function main(){
+  await jsonSchemaResponseFormatRuntimeTest();
   const diagnostics=new InMemoryDiagnosticsStore(),events=new InMemoryEventBus(diagnostics),providers=new ProviderRegistry();
   providers.register(new FakeChatProvider(),["chat"]);
   const seen:string[]=[];
