@@ -4,16 +4,15 @@
   "title":"AI Companion Nova Memory Judge Decision v1",
   "type":"object",
   "additionalProperties":false,
-  "required":["archiveIds"],
+  "required":["archive"],
   "properties":{
-    "archiveIds":{
+    "archive":{
       "type":"array",
       "maxItems":100,
       "uniqueItems":true,
       "items":{
         "type":"string",
-        "minLength":1,
-        "maxLength":200
+        "pattern":"^(?:NEW|[1-9][0-9]*)$"
       }
     }
   }
