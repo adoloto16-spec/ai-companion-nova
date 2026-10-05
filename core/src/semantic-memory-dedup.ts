@@ -467,7 +467,7 @@ export class MemorySemanticDeduplicator{
         // Core archives exactly the validated Judge-selected active IDs; all mutation stays behind MemoryBroker.
         for(const record of freshRecords)await this.options.broker.archive(characterId,record.id,authority,"other");
         this.recordDiagnostic("SEMANTIC_DEDUP_MUTATION_APPLIED","semantic Judge archive mutation applied",{
-          characterId,judgeSelections,archiveMapping,archiveIds
+          characterId,judgeSelections,archiveMapping,archiveIds,mutationResult:"applied"
         });
         return {
           status:"completed",
