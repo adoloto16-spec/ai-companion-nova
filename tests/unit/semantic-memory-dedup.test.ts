@@ -380,20 +380,21 @@ async function productionRuntimeSmokePathTest(){
     providerPresetConfigurations:[judgePreset],
     activeProviderPresetId:"preset.judge"
   });
-  const enabledSettings={
-    ...runtime.getSettings(),
+  const currentSettings=runtime.getSettings();
+  const enabledSettings:AppSettings={
+    ...currentSettings,
     semanticDedup:{
-      ...runtime.getSettings().semanticDedup,
+      ...currentSettings.semanticDedup,
       enabled:true,
       embeddingProviderPresetId:null,
       embeddingModel:"",
       judge:{
-        ...runtime.getSettings().semanticDedup.judge,
+        ...currentSettings.semanticDedup.judge,
         enabled:true,
         providerPresetId:"preset.judge",
         model:"fake-judge",
         outputMode:"structured",
-        prompt:runtime.getSettings().semanticDedup.judge.prompt
+        prompt:currentSettings.semanticDedup.judge.prompt
       }
     }
   };
