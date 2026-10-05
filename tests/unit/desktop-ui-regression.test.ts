@@ -44,6 +44,7 @@ assert.ok(diagnosticsView.includes("runtime.diagnostics()"),"DiagnosticsView mus
 assert.ok(diagnosticsView.includes('entry.source==="memory-semantic-deduplication"'),"DiagnosticsView must display semantic-memory diagnostics");
 assert.ok(diagnosticsView.includes("Memory Deduplication"),"DiagnosticsView must expose the Memory Deduplication section");
 assert.ok(diagnosticsView.includes("candidateDiagnostics")&&diagnosticsView.includes("archiveMapping")&&diagnosticsView.includes("mutationResult"),"DiagnosticsView must display dedup candidate/mutation diagnostics");
+assert.ok(diagnosticsView.includes("semanticDedupEnabled")&&diagnosticsView.includes("judgeProviderPresetId")&&diagnosticsView.includes("memoryCreatedSubscribers"),"DiagnosticsView must display effective runtime semantic settings");
 assert.ok(appSettingsView.includes("value={settings.memoryAgent.providerPresetId??\"\"}"),"Settings UI must bind Memory Agent provider preset");
 assert.ok(appSettingsView.includes("providerPresetId:event.target.value||null"),"Memory Agent provider preset selection updates app settings");
 assert.ok(appSettingsView.includes("value={settings.memoryAgent.model}"),"Settings UI must bind Memory Agent model");
