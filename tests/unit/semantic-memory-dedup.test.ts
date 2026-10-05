@@ -345,6 +345,7 @@ async function legacySettingsMigrationTest(){
 // Exercise the real MemoryCreated subscriber path with containment as the only candidate source.
 class FakeJudgeHttpClient implements HttpClient{
   calls:{url:string;body?:string}[]=[];
+  // Emulate the existing OpenAI-compatible transport while capturing the real Judge request.
   async request(request:{url:string;method:"GET"|"POST";headers:Readonly<Record<string,string>>;body?:string;signal?:AbortSignal}):Promise<{status:number;body:string}>{
     this.calls.push({url:request.url,body:request.body});
     if(request.method==="POST"&&request.url.endsWith("/chat/completions")){
@@ -396,6 +397,11 @@ async function productionRuntimeSmokePathTest(){
       }
     }
   };
+  const initialDiagnostics=(await runtime.diagnostics()).recentErrors;
+  const initialRuntimeReady=initialDiagnostics.find(entry=>entry.code==="SEMANTIC_DEDUP_RUNTIME_READY");
+  equal(initialRuntimeReady?.metadata?.semanticDedupEnabled,false,"production runtime diagnostics expose the default disabled state");
+  equal(initialRuntimeReady?.metadata?.memoryCreatedSubscribers,1,"production runtime diagnostics prove one MemoryCreated subscriber");
+  await runtime.start();
   const applied=await runtime.updateSettings(enabledSettings);
   equal(applied.semanticDedup.enabled,true,"runtime SettingsManager sees Semantic Dedup enabled immediately after save");
   equal(applied.semanticDedup.judge.providerPresetId,"preset.judge","runtime settings preserve Judge preset");
@@ -406,7 +412,6 @@ async function productionRuntimeSmokePathTest(){
   equal(persisted.semanticDedup.enabled,true,"settings store round-trip preserves Semantic Dedup enabled");
   equal(persisted.semanticDedup.judge.providerPresetId,"preset.judge","settings store round-trip preserves Judge preset");
 
-  await runtime.start();
   try{
     const character=await runtime.getActiveCharacter();
     const oldMemory=await runtime.createMemory(character.id,{
