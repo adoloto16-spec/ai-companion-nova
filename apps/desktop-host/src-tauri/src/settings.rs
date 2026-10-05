@@ -188,6 +188,7 @@ fn validate(settings:&AppSettings)->Result<(),String>{
     Ok(())
 }
 
+// Migrate only the persisted v5 built-in Judge prompt; custom prompts remain untouched.
 fn migrate_memory_judge_default_prompt(root:&mut serde_json::Map<String,Value>)->bool{
     let Some(semantic_dedup)=root.get_mut("semanticDedup").and_then(Value::as_object_mut) else{return false};
     let Some(judge)=semantic_dedup.get_mut("judge").and_then(Value::as_object_mut) else{return false};
