@@ -61,7 +61,10 @@ function captureProviderResponse(body?:string):unknown{
   try{
     const payload:unknown=JSON.parse(trimmed);
     const safe=sanitizeProviderResponseValue(payload);
-    if(safe!==undefined&&JSON.stringify(safe).length<=MAX_PROVIDER_RESPONSE_CHARS)return safe;
+    if(safe!==undefined){
+      const serialized=JSON.stringify(safe);
+      return serialized.length<=MAX_PROVIDER_RESPONSE_CHARS?safe:serialized.slice(0,MAX_PROVIDER_RESPONSE_CHARS);
+    }
   }catch{
     // Preserve non-JSON provider diagnostics as redacted bounded text below.
   }
