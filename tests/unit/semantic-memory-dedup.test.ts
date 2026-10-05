@@ -420,16 +420,19 @@ async function productionRuntimeSmokePathTest(){
 
   try{
     const character=await runtime.getActiveCharacter();
+    const exactDuplicateContent="Личность проживает в Берлине и увлекается программированием.";
     const oldMemory=await runtime.createMemory(character.id,{
-      id:"old-real-id",originConversationId:null,type:"fact",content:"Пользователь живет в Берлине.",
+      id:"old-real-id",originConversationId:null,type:"fact",content:exactDuplicateContent,
       tags:[],importance:70,confidence:80,validFrom:null,validUntil:null,
       source:"user",sourceReference:null,mutationPolicy:"auto",metadata:{}
     });
     const newMemory=await runtime.createMemory(character.id,{
-      id:"new-real-id",originConversationId:null,type:"fact",content:"Пользователь живет в Берлине.",
+      id:"new-real-id",originConversationId:null,type:"fact",content:exactDuplicateContent,
       tags:[],importance:70,confidence:80,validFrom:null,validUntil:null,
       source:"user",sourceReference:null,mutationPolicy:"auto",metadata:{}
     });
+    equal(oldMemory.content,exactDuplicateContent,"OLD uses the required exact duplicate content");
+    equal(newMemory.content,exactDuplicateContent,"NEW uses the required exact duplicate content");
     const oldAfter=await runtime.getMemory(character.id,oldMemory.id);
     const newAfter=await runtime.getMemory(character.id,newMemory.id);
     const active=await runtime.listMemory(character.id);
@@ -439,7 +442,7 @@ async function productionRuntimeSmokePathTest(){
     equal(httpClient.calls.length,1,"FoundationRuntime production path invokes Judge provider exactly once");
     const request=JSON.parse(httpClient.calls[0]?.body??"{}") as {messages?:Array<{role:string;content:string}>;model?:string;response_format?:unknown};
     equal(request.model,"fake-judge","FoundationRuntime passes configured Judge model to provider");
-    ok(request.messages?.some(message=>message.role==="user"&&message.content==="NEW MEMORY\ncontent: Личность проживает в Берлине и увлекается программированием.\n\nCANDIDATES\n1. content: Личность проживает в Берлине и увлекается программированием."),"FoundationRuntime sends exact numbered candidate input");
+    ok(request.messages?.some(message=>message.role==="user"&&message.content.includes("NEW MEMORY")&&message.content.includes("content: Личность проживает в Берлине и увлекается программированием.")&&message.content.includes("1. content: Личность проживает в Берлине и увлекается программированием.")),"FoundationRuntime sends the exact duplicate content as NEW and candidate 1");
     ok(!JSON.stringify(request.messages).includes("old-real-id"),"FoundationRuntime Judge request does not expose real memory IDs");
     const persistedAfter=await runtime.listMemory(character.id);
     equal(persistedAfter.filter(item=>item.status==="active").map(item=>item.id),["new-real-id"],"FoundationRuntime canonical list confirms OLD archived and NEW active");
