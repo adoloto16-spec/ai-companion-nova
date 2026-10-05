@@ -281,7 +281,7 @@ async function manualLikeSequentialScenarioTest(){
     });
     return JSON.stringify({archive});
   });
-  await f.broker.create("character.a",{id:"real-memory-1",type:"fact",content:"Личность проживает в Берлине и увлекается программированием.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  await f.broker.create("character.a",{id:"real-memory-1",type:"fact",content:"Пользователь живет в Берлине.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   equal((await f.broker.list("character.a")).filter(item=>item.status==="active").map(item=>item.id),["real-memory-1"],"after step 1 one record is active");
   await f.broker.create("character.a",{id:"real-memory-2",type:"fact",content:"Пользователь живет в Берлине и увлекается программированием.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   equal((await f.broker.list("character.a")).filter(item=>item.status==="active").map(item=>item.id),["real-memory-2"],"after step 2 the more complete record is active");
@@ -473,6 +473,7 @@ async function main(){
   await vectorMathTest();
   await containmentUnitTest();
   await candidateSelectionTest();
+  await productionRuntimeSmokePathTest();
   await belowThresholdContainmentReachesJudgeTest();
   await structuredArchiveTest();
   await structuredNoArchiveTest();
@@ -484,8 +485,6 @@ async function main(){
   await equalInformationTest();
   await subsetDirectionTest();
   await manualLikeSequentialScenarioTest();
-  await manualLikeSequentialScenarioTest();
-  await productionRuntimeSmokePathTest();
   await judgeModelFallsBackToPresetTest();
   await settingsV5PersistenceTest();
   await legacySettingsMigrationTest();
