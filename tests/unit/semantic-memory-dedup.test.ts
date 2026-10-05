@@ -485,6 +485,7 @@ async function main(){
   await subsetDirectionTest();
   await manualLikeSequentialScenarioTest();
   await manualLikeSequentialScenarioTest();
+  await productionRuntimeSmokePathTest();
   await judgeModelFallsBackToPresetTest();
   await settingsV5PersistenceTest();
   await legacySettingsMigrationTest();
