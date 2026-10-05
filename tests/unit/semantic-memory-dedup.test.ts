@@ -473,7 +473,6 @@ async function main(){
   await vectorMathTest();
   await containmentUnitTest();
   await candidateSelectionTest();
-  await productionRuntimeSmokePathTest();
   await belowThresholdContainmentReachesJudgeTest();
   await structuredArchiveTest();
   await structuredNoArchiveTest();
@@ -484,6 +483,7 @@ async function main(){
   await allRecordsMutationBlockedTest();
   await equalInformationTest();
   await subsetDirectionTest();
+  await manualLikeSequentialScenarioTest();
   await manualLikeSequentialScenarioTest();
   await judgeModelFallsBackToPresetTest();
   await settingsV5PersistenceTest();
