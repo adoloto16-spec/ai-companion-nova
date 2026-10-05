@@ -72,7 +72,7 @@ function memory(id:string,content:string,characterId="character.a",status:"activ
     archiveReason:status==="archived"?"manual":null,metadata:{}
   };
 }
-async function fixture(output:(request:ChatRequest)=>string,vectorFor?:(text:string)=>readonly number[]){
+async function fixture(output:(request:ChatRequest)=>string,vectorFor?:(text:string)=>readonly number[],withEmbeddings=true){
   const store=new InMemoryMemoryStore();
   const audit=new InMemoryAuditService();
   const events=new InMemoryEventBus();
@@ -90,7 +90,7 @@ async function fixture(output:(request:ChatRequest)=>string,vectorFor?:(text:str
     settings:()=>settings,
     broker,
     indexStore,
-    embeddingProvider:async()=>embeddings,
+    embeddingProvider:async()=>withEmbeddings?embeddings:undefined,
     judgeRuntime:judge,
     getChatModelForPreset:async()=> "fake-judge",
     validator:new StandardContractValidator(),
@@ -340,11 +340,36 @@ async function legacySettingsMigrationTest(){
   equal(migrated.diagnostics.logLevel,"debug","legacy diagnostics level migrates");
 }
 
+async function productionEventPathWithoutEmbeddingsTest(){
+  const f=await fixture(()=>JSON.stringify({archive:["1"]}),undefined,false);
+  await f.broker.create("character.a",{id:"old-real-id",type:"fact",content:"Пользователь живет в Берлине.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  const newer=await f.broker.create("character.a",{id:"new-real-id",type:"fact",content:"Пользователь живет в Берлине.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  equal(newer.status,"active","production event path keeps the NEW exact duplicate active");
+  equal((await f.broker.get("character.a","old-real-id"))?.status,"archived","production event path archives the exact duplicate candidate without embeddings");
+  equal((await f.broker.list("character.a")).filter(item=>item.status==="active").map(item=>item.id),["new-real-id"],"production event path leaves exactly one active exact duplicate");
+  equal(f.judge.calls.length,1,"production event path invokes Judge after containment-only candidate selection");
+  const judgeInput=f.judge.calls[0]!;
+  ok(judgeInput.context.messages.some(message=>message.role==="system"&&message.content===f.settings.semanticDedup.judge.prompt),"production event path uses the configured Judge system prompt");
+  ok(!judgeInput.context.messages[1]?.content.includes("old-real-id"),"production Judge request does not expose real candidate IDs");
+  const entries=f.diagnostics.recentErrors();
+  const codes=entries.map(entry=>entry.code);
+  ok(codes.includes("SEMANTIC_DEDUP_STARTED"),"production event path records candidate selection");
+  ok(codes.includes("SEMANTIC_DEDUP_JUDGE_STARTED"),"production event path records Judge start");
+  ok(codes.includes("SEMANTIC_DEDUP_JUDGE_COMPLETED"),"production event path records Judge completion");
+  ok(codes.includes("SEMANTIC_DEDUP_JUDGE_OUTPUT_PARSED"),"production event path records parsed Judge output");
+  ok(codes.includes("SEMANTIC_DEDUP_MUTATION_APPLIED"),"production event path records applied mutation");
+  const combined=JSON.stringify(entries);
+  ok(combined.includes('"number":1')&&combined.includes('"memoryId":"old-real-id"')&&combined.includes('"containmentMatch":true'),"production diagnostics contain candidate number, mapping ID, and containment");
+  ok(combined.includes('"judgeSelections":["1"]'),"production diagnostics contain Judge output selection");
+  ok(combined.includes('"mutationResult":"applied"'),"production diagnostics contain mutation result");
+}
+
 async function main(){
   await judgeParserProtocolTest();
   await vectorMathTest();
   await containmentUnitTest();
   await candidateSelectionTest();
+  await productionEventPathWithoutEmbeddingsTest();
   await belowThresholdContainmentReachesJudgeTest();
   await structuredArchiveTest();
   await structuredNoArchiveTest();
