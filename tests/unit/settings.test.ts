@@ -2,13 +2,19 @@ import {
   SettingsManager,InMemoryDiagnosticsStore,InMemoryChatTraceStore
 } from "../../core/src";
 import {StandardContractValidator,DEFAULT_APP_SETTINGS,defaultAppSettings,migrateAppSettings,validateAppSettings} from "../../contracts/src";
-import {InMemorySettingsStore} from "../../host/settings/src";
+import {IpcSettingsStore,InMemorySettingsStore} from "../../host/settings/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error(label+" expected "+String(expected)+" got "+String(actual))}
 function ok(value:unknown,label:string){if(!value)throw new Error(label)}
 
 async function main(){
   const validator=new StandardContractValidator();
+  let persistedIpc:unknown;
+  const ipcStore=new IpcSettingsStore(async(command,args)=>{
+    if(command==="get_app_settings")return persistedIpc??null;
+    if(command==="save_app_settings"){persistedIpc=(args as {settings:unknown}).settings;return null;}
+    throw new Error("unexpected settings command: "+command);
+  },validator);
   const store=new InMemorySettingsStore(validator);
   const manager=new SettingsManager(store,validator);
   const defaults=await manager.initialize();
@@ -38,6 +44,13 @@ async function main(){
   const errors=validateAppSettings(custom);
   equal(errors,[],"valid custom settings pass semantic validation");
   await manager.set(custom);
+  await ipcStore.save(custom);
+  const persistedIpcSettings=await ipcStore.load();
+  equal(persistedIpcSettings?.semanticDedup.enabled,true,"IpcSettingsStore save/load preserves Semantic Dedup enabled");
+  equal(persistedIpcSettings?.semanticDedup.judge.enabled,true,"IpcSettingsStore save/load preserves Judge enabled");
+  equal(persistedIpcSettings?.semanticDedup.judge.providerPresetId,"preset.judge","IpcSettingsStore save/load preserves Judge preset");
+  equal(persistedIpcSettings?.semanticDedup.judge.model,"judge-model","IpcSettingsStore save/load preserves Judge model");
+  equal(persistedIpcSettings?.semanticDedup.judge.outputMode,"plain","IpcSettingsStore save/load preserves Judge output mode");
   equal((await manager.get()).context.availableContextTokens,8192,"custom context size persists in store");
   equal((await manager.get()).memory.candidateLimit,3,"custom memory candidate limit persists");
   equal((await manager.get()).chat.automaticLongTermMemory,false,"custom extraction toggle persists");
