@@ -340,6 +340,7 @@ async function legacySettingsMigrationTest(){
   equal(migrated.diagnostics.logLevel,"debug","legacy diagnostics level migrates");
 }
 
+// Exercise the real MemoryCreated subscriber path with containment as the only candidate source.
 async function productionEventPathWithoutEmbeddingsTest(){
   const f=await fixture(()=>JSON.stringify({archive:["1"]}),undefined,false);
   await f.broker.create("character.a",{id:"old-real-id",type:"fact",content:"Пользователь живет в Берлине.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
