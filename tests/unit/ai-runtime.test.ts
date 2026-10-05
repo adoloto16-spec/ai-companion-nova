@@ -37,7 +37,7 @@ async function jsonSchemaResponseFormatRuntimeTest(){
     generation:{
       responseFormat:{
         type:"json-schema",
-        schema:STANDARD_SCHEMAS["memory-judge-decision"],
+        schema:STANDARD_SCHEMAS["memory-judge-decision"]!,
         name:"memory-judge-decision",
         strict:true
       }
@@ -55,8 +55,10 @@ async function jsonSchemaResponseFormatRuntimeTest(){
   ok(provider.request!==undefined,"mock provider receives validated json-schema request");
   equal(provider.request?.generation?.responseFormat?.type,"json-schema","provider receives responseFormat.type json-schema");
   equal(
-    (provider.request?.generation?.responseFormat?.type==="json-schema"?provider.request.generation.responseFormat.schema.properties?.archive?.items?.pattern:undefined),
-    "^(?:NEW|[1-9][0-9]*)$",
+    provider.request?.generation?.responseFormat?.type==="json-schema"
+      ? provider.request.generation.responseFormat.schema
+      : undefined,
+    STANDARD_SCHEMAS["memory-judge-decision"],
     "provider receives the memory Judge response schema"
   );
   equal(
