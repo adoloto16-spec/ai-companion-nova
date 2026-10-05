@@ -19,6 +19,61 @@ import type {
 export const OPENAI_COMPATIBLE_PROVIDER_ID="openai-compatible";
 const DEFAULT_TIMEOUT_MS=30000;
 
+const MAX_PROVIDER_RESPONSE_CHARS=4000;
+const MAX_PROVIDER_RESPONSE_VALUE_CHARS=2000;
+const PROVIDER_RESPONSE_SAFE_KEYS=["message","type","code","param","error"] as const;
+
+function redactProviderResponseText(value:string):string{
+  return value
+    .replace(/authorization\s*:\s*bearer\s+\S+/gi,"Authorization: Bearer [REDACTED]")
+    .replace(/\bbearer\s+[A-Za-z0-9._-]{16,}\b/gi,"Bearer [REDACTED]")
+    .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/gi,"[REDACTED]")
+    .replace(/api[_ -]?key\s*[:=]\s*\S+/gi,"api-key=[REDACTED]")
+    .replace(/password\s*[:=]\s*\S+/gi,"password=[REDACTED]")
+    .replace(/secret\s*[:=]\s*\S+/gi,"secret=[REDACTED]");
+}
+
+function sanitizeProviderResponseValue(value:unknown,depth=0):unknown{
+  if(depth>3)return undefined;
+  if(typeof value==="string")return redactProviderResponseText(value).slice(0,MAX_PROVIDER_RESPONSE_VALUE_CHARS);
+  if(typeof value==="number"||typeof value==="boolean"||value===null)return value;
+  if(Array.isArray(value)){
+    return value.slice(0,20).map(item=>sanitizeProviderResponseValue(item,depth+1)).filter(item=>item!==undefined);
+  }
+  if(typeof value==="object"){
+    const record=value as Record<string,unknown>;
+    const safe:Record<string,unknown>={};
+    for(const key of PROVIDER_RESPONSE_SAFE_KEYS){
+      if(key in record){
+        const sanitized=sanitizeProviderResponseValue(record[key],depth+1);
+        if(sanitized!==undefined)safe[key]=sanitized;
+      }
+    }
+    return Object.keys(safe).length>0?safe:undefined;
+  }
+  return undefined;
+}
+
+function captureProviderResponse(body?:string):unknown{
+  if(!body)return undefined;
+  const trimmed=body.trim();
+  if(!trimmed)return undefined;
+  try{
+    const payload:unknown=JSON.parse(trimmed);
+    const safe=sanitizeProviderResponseValue(payload);
+    if(safe!==undefined&&JSON.stringify(safe).length<=MAX_PROVIDER_RESPONSE_CHARS)return safe;
+  }catch{
+    // Preserve non-JSON provider diagnostics as redacted bounded text below.
+  }
+  return redactProviderResponseText(trimmed).slice(0,MAX_PROVIDER_RESPONSE_CHARS);
+}
+
+function withProviderResponse(details:Record<string,unknown>,body?:string):Record<string,unknown>{
+  const providerResponse=captureProviderResponse(body);
+  return providerResponse===undefined?details:{...details,providerResponse};
+}
+
+
 export interface HttpClientRequest{
   url:string;
   method:"GET"|"POST";
@@ -729,14 +784,14 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
 
   private httpFailure(status:number,request:ChatRequest,durationMs:number,body?:string):OpenAICompatibleProviderError{
     if((status===400||status===422)&&request.generation?.responseFormat?.type==="json-schema"&&this.isStructuredUnsupportedResponse(body)){
-      return this.failure({code:"UNSUPPORTED",message:"OpenAI-compatible provider does not support the requested structured output.",request,retryable:false,details:{category:"capability",httpStatus:status,durationMs}});
+      return this.failure({code:"UNSUPPORTED",message:"OpenAI-compatible provider does not support the requested structured output.",request,retryable:false,details:withProviderResponse({category:"capability",httpStatus:status,durationMs},body)});
     }
-    if(status===400)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rejected the chat request.",request,retryable:false,details:{category:"bad_request",httpStatus:status,durationMs}});
-    if(status===401||status===403)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rejected authentication.",request,retryable:false,details:{category:"authentication",httpStatus:status,durationMs}});
-    if(status===404)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible chat endpoint was not found.",request,retryable:false,details:{category:"endpoint",httpStatus:status,durationMs}});
-    if(status===429)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rate limit was reached.",request,retryable:true,details:{category:"rate_limit",httpStatus:status,durationMs}});
-    if(status>=500)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider returned a server error.",request,retryable:true,details:{category:"server",httpStatus:status,durationMs}});
-    return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider returned an unexpected HTTP status.",request,retryable:false,details:{category:"http",httpStatus:status,durationMs}});
+    if(status===400)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rejected the chat request.",request,retryable:false,details:withProviderResponse({category:"bad_request",httpStatus:status,durationMs},body)});
+    if(status===401||status===403)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rejected authentication.",request,retryable:false,details:withProviderResponse({category:"authentication",httpStatus:status,durationMs},body)});
+    if(status===404)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible chat endpoint was not found.",request,retryable:false,details:withProviderResponse({category:"endpoint",httpStatus:status,durationMs},body)});
+    if(status===429)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rate limit was reached.",request,retryable:true,details:withProviderResponse({category:"rate_limit",httpStatus:status,durationMs},body)});
+    if(status>=500)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider returned a server error.",request,retryable:true,details:withProviderResponse({category:"server",httpStatus:status,durationMs},body)});
+    return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider returned an unexpected HTTP status.",request,retryable:false,details:withProviderResponse({category:"http",httpStatus:status,durationMs},body)});
   }
 
   private mapResponse(payload:unknown,request:ChatRequest,durationMs:number):ChatResponse{
