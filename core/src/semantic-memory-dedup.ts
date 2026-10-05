@@ -288,15 +288,28 @@ export class MemorySemanticDeduplicator{
     try{
       const settings=this.options.settings();
       if(!settings.semanticDedup.enabled)return {status:"skipped",reason:"semantic_deduplication_disabled",candidateCount:0,candidateIds:[],similarityScores:{}};
-      const provider=await this.options.embeddingProvider();
-      const model=settings.semanticDedup.embeddingModel.trim();
-      if(!provider)return this.skip("embedding_provider_not_configured",characterId);
-      if(!model)return this.skip("embedding_model_not_configured",characterId);
       const newMemory=await this.options.broker.get(characterId,memoryId);
       if(!newMemory)return this.skip("new_memory_not_found",characterId);
       if(newMemory.status!=="active")return this.skip("new_memory_not_active",characterId);
       const memories=await this.options.broker.list(characterId);
-      const {vectors,staleOrMissing}=await this.ensureVectors(characterId,memories,provider,model,newMemory);
+
+      // Embeddings are an optional semantic candidate source; deterministic containment must still run without them.
+      let provider:EmbeddingProvider|undefined;
+      try{provider=await this.options.embeddingProvider();}
+      catch(error){this.recordFailure("EMBEDDING_PROVIDER_RESOLUTION_FAILED",error,characterId,{memoryId});}
+      const model=settings.semanticDedup.embeddingModel.trim();
+      let vectors:ReadonlyMap<string,readonly number[]>=new Map();
+      let staleOrMissing=0;
+      if(provider&&model){
+        try{
+          const indexed=await this.ensureVectors(characterId,memories,provider,model,newMemory);
+          vectors=indexed.vectors;
+          staleOrMissing=indexed.staleOrMissing;
+        }catch(error){
+          // A semantic index failure must not suppress the deterministic containment candidate path.
+          this.recordFailure("EMBEDDING_CANDIDATE_DISCOVERY_FAILED",error,characterId,{memoryId});
+        }
+      }
       const selected=selectTopSemanticCandidates(
         newMemory,
         memories,
@@ -309,13 +322,14 @@ export class MemorySemanticDeduplicator{
       const candidateDiagnostics=selected.map((candidate,index)=>({
         number:index+1,
         memoryId:candidate.memory.id,
+        content:safeText(candidate.memory.content).slice(0,240),
         containmentMatch:candidate.containmentMatch,
         similarity:candidate.similarity
       }));
       this.recordDiagnostic("SEMANTIC_DEDUP_STARTED","semantic deduplication candidate scan",{
         characterId,
-        embeddingProvider:provider.id,
-        embeddingModel:model,
+        embeddingProvider:provider?.id??null,
+        embeddingModel:model||null,
         candidateCount:selected.length,
         candidateIds:selected.map(item=>item.memory.id),
         candidateDiagnostics,
@@ -346,7 +360,12 @@ export class MemorySemanticDeduplicator{
         }
       };
       this.recordDiagnostic("SEMANTIC_DEDUP_JUDGE_STARTED","memory judge started",{
-        characterId,candidateDiagnostics,containmentCandidates,similarityScores:scores
+        characterId,
+        candidateDiagnostics,
+        containmentCandidates,
+        similarityScores:scores,
+        judgePresetId:presetId,
+        model:modelName
       });
       const schema=STANDARD_SCHEMAS["memory-judge-decision"]!;
       const execution=await this.outputRunner.run({
@@ -367,7 +386,9 @@ export class MemorySemanticDeduplicator{
         candidateDiagnostics,
         judgeSelections,
         configuredMode:judge.outputMode,
-        effectiveMode:execution.metadata.effectiveOutputMode
+        effectiveMode:execution.metadata.effectiveOutputMode,
+        judgePresetId:presetId,
+        model:modelName
       });
       let validationError:unknown;
       let archiveIds:string[]=[];
@@ -384,12 +405,13 @@ export class MemorySemanticDeduplicator{
         candidateDiagnostics,
         judgeSelections,
         archiveMapping,
-        archiveIds
+        archiveIds,
+        mutationResult:validationError?"blocked":archiveIds.length===0?"none":"pending"
       });
       if(validationError){
         this.recordFailure("MUTATION_BLOCKED",validationError,characterId,{judgeSelections,archiveIds});
         this.recordDiagnostic("SEMANTIC_DEDUP_MUTATION_BLOCKED","semantic Judge archive mutation blocked",{
-          characterId,judgeSelections,archiveIds
+          characterId,judgeSelections,archiveIds,mutationResult:"blocked"
         });
         return {
           status:"completed",
@@ -460,7 +482,7 @@ export class MemorySemanticDeduplicator{
       }catch(error){
         this.recordFailure("MUTATION_BLOCKED",error,characterId,{archiveIds});
         this.recordDiagnostic("SEMANTIC_DEDUP_MUTATION_BLOCKED","semantic Judge archive mutation blocked",{
-          characterId,archiveIds
+          characterId,archiveIds,mutationResult:"blocked"
         });
         return {
           status:"completed",
