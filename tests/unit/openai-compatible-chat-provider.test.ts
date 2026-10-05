@@ -206,8 +206,8 @@ async function http400ResponseBodyPropagationTest(){
       if(!(error instanceof OpenAICompatibleProviderError))return false;
       const details=error.chatError.details;
       const response=details?.providerResponse;
-      return error.chatError.code==="PROVIDER_ERROR"&&
-        details?.category==="bad_request"&&
+      return error.chatError.code==="UNSUPPORTED"&&
+        details?.category==="capability"&&
         details?.httpStatus===400&&
         typeof details?.durationMs==="number"&&
         !!response&&
