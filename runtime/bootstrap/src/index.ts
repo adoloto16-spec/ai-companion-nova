@@ -257,6 +257,15 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     source:"memory-semantic-deduplication"
   });
   semanticMemoryDeduplicator.start();
+  // Record the effective production wiring and settings so disabled or unwired dedup is observable without exposing secrets.
+  diagnosticsStore.recordError("memory-semantic-deduplication","SEMANTIC_DEDUP_RUNTIME_READY","semantic memory deduplication runtime ready",{
+    semanticDedupEnabled:appSettings.semanticDedup.enabled,
+    judgeEnabled:appSettings.semanticDedup.judge.enabled,
+    judgeProviderPresetId:appSettings.semanticDedup.judge.providerPresetId??null,
+    judgeModel:appSettings.semanticDedup.judge.model,
+    judgeOutputMode:appSettings.semanticDedup.judge.outputMode,
+    memoryCreatedSubscribers:events.subscriberCount("MemoryCreated")
+  });
 
   const moduleCapabilities:Record<string,readonly string[]>={
     "character.fake":["character.expression","character.speech"],
@@ -420,6 +429,14 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       const next=await settingsManager.set(settings);
       diagnosticsStore.setMaxEntries(next.diagnostics.keepRecentEntries);
       traceStore.configure(next.diagnostics.logLevel,next.diagnostics.keepRecentEntries);
+      // Record the values the already-running runtime will use after a Settings Save.
+      diagnosticsStore.recordError("memory-semantic-deduplication","SEMANTIC_DEDUP_SETTINGS_APPLIED","semantic memory deduplication settings applied",{
+        semanticDedupEnabled:next.semanticDedup.enabled,
+        judgeEnabled:next.semanticDedup.judge.enabled,
+        judgeProviderPresetId:next.semanticDedup.judge.providerPresetId??null,
+        judgeModel:next.semanticDedup.judge.model,
+        judgeOutputMode:next.semanticDedup.judge.outputMode
+      });
       return next;
     },
     resetSettings:async()=>{
