@@ -1510,6 +1510,28 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "description": "Validated at runtime by the JSON-RPC boundary. Request, response and notification share the jsonrpc marker."
   },
+  "memory-judge-decision": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.ai-companion-nova.dev/memory-judge-decision/v1",
+    "title": "AI Companion Nova Memory Judge Decision v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "archiveIds"
+    ],
+    "properties": {
+      "archiveIds": {
+        "type": "array",
+        "maxItems": 100,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      }
+    }
+  },
   "memory-item": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://schemas.ai-companion-nova.dev/memory-item/v2",
