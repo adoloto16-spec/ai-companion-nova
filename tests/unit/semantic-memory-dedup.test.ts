@@ -17,7 +17,7 @@ import {InMemoryAuditService,InMemoryDiagnosticsStore,InMemoryEventBus,MemoryBro
 import {createFoundationRuntime} from "../../runtime/bootstrap/src/index";
 import type {HttpClient} from "../../providers/chat/openai-compatible/src/index";
 import {InMemoryMemorySemanticIndexStore,InMemoryMemoryStore} from "../../host/memory/src";
-import {InMemorySettingsStore} from "../../host/settings/src";
+import {IpcSettingsStore,InMemorySettingsStore} from "../../host/settings/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error(label+" expected "+JSON.stringify(expected)+" got "+JSON.stringify(actual));}
 function ok(value:unknown,label:string){if(!value)throw new Error(label);}
@@ -365,7 +365,12 @@ class FakeJudgeHttpClient implements HttpClient{
 // Exercise the FoundationRuntime wiring, persistence-backed settings interface, public Memory API, provider adapter, and event lifecycle.
 async function productionRuntimeSmokePathTest(){
   const validator=new StandardContractValidator();
-  const settingsStore=new InMemorySettingsStore(validator);
+  let persistedSettings:AppSettings|undefined;
+  const settingsStore=new IpcSettingsStore(async(command,args)=>{
+    if(command==="get_app_settings")return persistedSettings;
+    if(command==="save_app_settings"){persistedSettings=(args as {settings:AppSettings}).settings;return undefined;}
+    throw new Error("unexpected settings command: "+command);
+  },validator);
   const httpClient=new FakeJudgeHttpClient();
   const judgePreset={
     presetId:"preset.judge",
