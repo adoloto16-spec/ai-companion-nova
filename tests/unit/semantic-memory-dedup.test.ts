@@ -14,6 +14,8 @@ import type {
 } from "../../contracts/src";
 import {StandardContractValidator,defaultAppSettings,migrateAppSettings} from "../../contracts/src";
 import {InMemoryAuditService,InMemoryDiagnosticsStore,InMemoryEventBus,MemoryBrokerImpl,SettingsManager} from "../../core/src";
+import {createFoundationRuntime} from "../../runtime/bootstrap/src/index";
+import type {HttpClient} from "../../providers/chat/openai-compatible/src/index";
 import {InMemoryMemorySemanticIndexStore,InMemoryMemoryStore} from "../../host/memory/src";
 import {InMemorySettingsStore} from "../../host/settings/src";
 
@@ -341,28 +343,115 @@ async function legacySettingsMigrationTest(){
 }
 
 // Exercise the real MemoryCreated subscriber path with containment as the only candidate source.
-async function productionEventPathWithoutEmbeddingsTest(){
-  const f=await fixture(()=>JSON.stringify({archive:["1"]}),undefined,false);
-  await f.broker.create("character.a",{id:"old-real-id",type:"fact",content:"Пользователь живет в Берлине.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  const newer=await f.broker.create("character.a",{id:"new-real-id",type:"fact",content:"Пользователь живет в Берлине.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  equal(newer.status,"active","production event path keeps the NEW exact duplicate active");
-  equal((await f.broker.get("character.a","old-real-id"))?.status,"archived","production event path archives the exact duplicate candidate without embeddings");
-  equal((await f.broker.list("character.a")).filter(item=>item.status==="active").map(item=>item.id),["new-real-id"],"production event path leaves exactly one active exact duplicate");
-  equal(f.judge.calls.length,1,"production event path invokes Judge after containment-only candidate selection");
-  const judgeInput=f.judge.calls[0]!;
-  ok(judgeInput.context.messages.some(message=>message.role==="system"&&message.content===f.settings.semanticDedup.judge.prompt),"production event path uses the configured Judge system prompt");
-  ok(!judgeInput.context.messages[1]?.content.includes("old-real-id"),"production Judge request does not expose real candidate IDs");
-  const entries=f.diagnostics.recentErrors();
-  const codes=entries.map(entry=>entry.code);
-  ok(codes.includes("SEMANTIC_DEDUP_STARTED"),"production event path records candidate selection");
-  ok(codes.includes("SEMANTIC_DEDUP_JUDGE_STARTED"),"production event path records Judge start");
-  ok(codes.includes("SEMANTIC_DEDUP_JUDGE_COMPLETED"),"production event path records Judge completion");
-  ok(codes.includes("SEMANTIC_DEDUP_JUDGE_OUTPUT_PARSED"),"production event path records parsed Judge output");
-  ok(codes.includes("SEMANTIC_DEDUP_MUTATION_APPLIED"),"production event path records applied mutation");
-  const combined=JSON.stringify(entries);
-  ok(combined.includes('"number":1')&&combined.includes('"memoryId":"old-real-id"')&&combined.includes('"containmentMatch":true'),"production diagnostics contain candidate number, mapping ID, and containment");
-  ok(combined.includes('"judgeSelections":["1"]'),"production diagnostics contain Judge output selection");
-  ok(combined.includes('"mutationResult":"applied"'),"production diagnostics contain mutation result");
+class FakeJudgeHttpClient implements HttpClient{
+  calls:{url:string;body?:string}[]=[];
+  async request(request:{url:string;method:"GET"|"POST";headers:Readonly<Record<string,string>>;body?:string;signal?:AbortSignal}):Promise<{status:number;body:string}>{
+    this.calls.push({url:request.url,body:request.body});
+    if(request.method==="POST"&&request.url.endsWith("/chat/completions")){
+      return {
+        status:200,
+        body:JSON.stringify({
+          id:"fake-judge-response",
+          model:"fake-judge",
+          choices:[{message:{role:"assistant",content:JSON.stringify({archive:["1"]})},finish_reason:"stop"}]
+        })
+      };
+    }
+    return {status:404,body:""};
+  }
+}
+
+// Exercise the FoundationRuntime wiring, persistence-backed settings interface, public Memory API, provider adapter, and event lifecycle.
+async function productionRuntimeSmokePathTest(){
+  const validator=new StandardContractValidator();
+  const settingsStore=new InMemorySettingsStore(validator);
+  const httpClient=new FakeJudgeHttpClient();
+  const judgePreset={
+    presetId:"preset.judge",
+    configuration:{
+      apiVersion:"1",schemaVersion:"1",providerId:"openai-compatible",enabled:true,
+      baseUrl:"https://judge.invalid/v1",model:"fake-judge",credentialReference:null
+    }
+  } as const;
+  const runtime=await createFoundationRuntime({
+    settingsStore,
+    httpClient,
+    providerPresetConfigurations:[judgePreset],
+    activeProviderPresetId:"preset.judge"
+  });
+  const enabledSettings={
+    ...runtime.getSettings(),
+    semanticDedup:{
+      ...runtime.getSettings().semanticDedup,
+      enabled:true,
+      embeddingProviderPresetId:null,
+      embeddingModel:"",
+      judge:{
+        ...runtime.getSettings().semanticDedup.judge,
+        enabled:true,
+        providerPresetId:"preset.judge",
+        model:"fake-judge",
+        outputMode:"structured",
+        prompt:runtime.getSettings().semanticDedup.judge.prompt
+      }
+    }
+  };
+  const applied=await runtime.updateSettings(enabledSettings);
+  equal(applied.semanticDedup.enabled,true,"runtime SettingsManager sees Semantic Dedup enabled immediately after save");
+  equal(applied.semanticDedup.judge.providerPresetId,"preset.judge","runtime settings preserve Judge preset");
+  equal(applied.semanticDedup.judge.model,"fake-judge","runtime settings preserve Judge model");
+  equal(applied.semanticDedup.judge.outputMode,"structured","runtime settings preserve Judge output mode");
+  const reloaded=new SettingsManager(settingsStore,validator);
+  const persisted=await reloaded.initialize();
+  equal(persisted.semanticDedup.enabled,true,"settings store round-trip preserves Semantic Dedup enabled");
+  equal(persisted.semanticDedup.judge.providerPresetId,"preset.judge","settings store round-trip preserves Judge preset");
+
+  await runtime.start();
+  try{
+    const character=await runtime.getActiveCharacter();
+    const oldMemory=await runtime.createMemory(character.id,{
+      id:"old-real-id",originConversationId:null,type:"fact",content:"Пользователь живет в Берлине.",
+      tags:[],importance:70,confidence:80,validFrom:null,validUntil:null,
+      source:"user",sourceReference:null,mutationPolicy:"auto",metadata:{}
+    });
+    const newMemory=await runtime.createMemory(character.id,{
+      id:"new-real-id",originConversationId:null,type:"fact",content:"Пользователь живет в Берлине.",
+      tags:[],importance:70,confidence:80,validFrom:null,validUntil:null,
+      source:"user",sourceReference:null,mutationPolicy:"auto",metadata:{}
+    });
+    const oldAfter=await runtime.getMemory(character.id,oldMemory.id);
+    const newAfter=await runtime.getMemory(character.id,newMemory.id);
+    const active=await runtime.listMemory(character.id);
+    equal(oldAfter?.status,"archived","FoundationRuntime production path archives OLD");
+    equal(newAfter?.status,"active","FoundationRuntime production path keeps NEW active");
+    equal(active.filter(item=>item.status==="active").length,1,"FoundationRuntime production path leaves one active memory");
+    equal(httpClient.calls.length,1,"FoundationRuntime production path invokes Judge provider exactly once");
+    const request=JSON.parse(httpClient.calls[0]?.body??"{}") as {messages?:Array<{role:string;content:string}>;model?:string;response_format?:unknown};
+    equal(request.model,"fake-judge","FoundationRuntime passes configured Judge model to provider");
+    ok(request.messages?.some(message=>message.role==="user"&&message.content==="NEW MEMORY\ncontent: Пользователь живет в Берлине.\n\nCANDIDATES\n1. content: Пользователь живет в Берлине."),"FoundationRuntime sends exact numbered candidate input");
+    ok(!JSON.stringify(request.messages).includes("old-real-id"),"FoundationRuntime Judge request does not expose real memory IDs");
+    const persistedAfter=await runtime.listMemory(character.id);
+    equal(persistedAfter.filter(item=>item.status==="active").map(item=>item.id),["new-real-id"],"FoundationRuntime canonical list confirms OLD archived and NEW active");
+
+    const diagnostics=(await runtime.diagnostics()).recentErrors;
+    const codes=diagnostics.map(entry=>entry.code);
+    ok(codes.includes("SEMANTIC_DEDUP_RUNTIME_READY"),"diagnostics records semantic dedup runtime wiring");
+    ok(codes.includes("SEMANTIC_DEDUP_SETTINGS_APPLIED"),"diagnostics records runtime settings after save");
+    ok(codes.includes("SEMANTIC_DEDUP_EVENT_RECEIVED"),"diagnostics proves MemoryCreated reached the deduplicator");
+    ok(codes.includes("SEMANTIC_DEDUP_STARTED"),"diagnostics records dedup start");
+    ok(codes.includes("SEMANTIC_DEDUP_CANDIDATES_SELECTED"),"diagnostics records candidate selection");
+    ok(codes.includes("SEMANTIC_DEDUP_JUDGE_STARTED"),"diagnostics records Judge start");
+    ok(codes.includes("SEMANTIC_DEDUP_JUDGE_COMPLETED"),"diagnostics records Judge completion");
+    ok(codes.includes("SEMANTIC_DEDUP_JUDGE_OUTPUT_PARSED"),"diagnostics records parsed Judge output");
+    ok(codes.includes("SEMANTIC_DEDUP_MUTATION_APPLIED"),"diagnostics records applied mutation");
+    const combined=JSON.stringify(diagnostics);
+    ok(combined.includes('"containmentMatch":true'),"diagnostics record containment match");
+    ok(combined.includes('"judgeSelections":["1"]'),"diagnostics record Judge selection");
+    ok(combined.includes('"selection":"1"')&&combined.includes('"memoryId":"old-real-id"'),"diagnostics record number-to-real-ID mapping");
+    ok(combined.includes('"mutationResult":"applied"'),"diagnostics record mutation result");
+  }finally{
+    await runtime.stop();
+  }
 }
 
 async function main(){
@@ -370,7 +459,7 @@ async function main(){
   await vectorMathTest();
   await containmentUnitTest();
   await candidateSelectionTest();
-  await productionEventPathWithoutEmbeddingsTest();
+  await productionRuntimeSmokePathTest();
   await belowThresholdContainmentReachesJudgeTest();
   await structuredArchiveTest();
   await structuredNoArchiveTest();
