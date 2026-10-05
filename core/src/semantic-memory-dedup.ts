@@ -136,67 +136,85 @@ function safeText(value:string):string{
     .replace(/secret\s*[:=]\s*\S+/gi,"secret=[REDACTED]");
 }
 
-/** Parse only the structured Judge contract: archiveIds is the complete mutation decision. */
-function parseStructuredJudge(value:unknown):{archiveIds:string[]}{
+/** Parse the structured Judge contract: archive contains only NEW or candidate position strings. */
+export function parseStructuredJudge(value:unknown):{archive:string[]}{
   if(!value||typeof value!=="object"||Array.isArray(value))throw new Error("Memory Judge structured response is not an object.");
-  const archiveIds=(value as Record<string,unknown>).archiveIds;
-  if(!Array.isArray(archiveIds))throw new Error("Memory Judge structured response is missing archiveIds.");
+  const archive=(value as Record<string,unknown>).archive;
+  if(!Array.isArray(archive))throw new Error("Memory Judge structured response is missing archive.");
   const parsed:string[]=[];
   const seen=new Set<string>();
-  for(const item of archiveIds){
-    if(typeof item!=="string"||!item.trim())throw new Error("Memory Judge archive id is invalid.");
-    const id=item.trim();
-    if(seen.has(id))throw new Error("Memory Judge returned duplicate archive ids.");
-    seen.add(id);
-    parsed.push(id);
+  for(const item of archive){
+    if(typeof item!=="string")throw new Error("Memory Judge archive selection is invalid.");
+    const selection=item.trim();
+    if(selection!=="NEW"&&!/^\d+$/u.test(selection))throw new Error("Memory Judge archive selection is invalid.");
+    if(seen.has(selection))throw new Error("Memory Judge returned duplicate archive selections.");
+    seen.add(selection);
+    parsed.push(selection);
   }
-  return {archiveIds:parsed};
+  return {archive:parsed};
 }
 
-/** Parse only NO_ARCHIVE or one real archive ID per plain-text line; relation syntax is deliberately rejected. */
-function parsePlainJudge(content:string):{archiveIds:string[]}{
-  const trimmed=content.trim();
-  if(trimmed==="NO_ARCHIVE")return {archiveIds:[]};
-  if(!trimmed)throw new Error("Memory Judge plain response is empty.");
-  const lines=trimmed.split(/\r?\n/gu);
-  const archiveIds:string[]=[];
+/** Parse only NO_ARCHIVE or one NEW/candidate position per non-empty line; all other prose is rejected. */
+export function parsePlainJudge(content:string):{archive:string[]}{
+  const lines=content.split(/\r?\n/gu).map(line=>line.trim()).filter(Boolean);
+  if(lines.length===0)throw new Error("Memory Judge plain response is empty.");
+  if(lines.length===1&&lines[0]==="NO_ARCHIVE")return {archive:[]};
+  const parsed:string[]=[];
   const seen=new Set<string>();
-  for(const line of lines){
-    const id=line.trim();
-    if(!id)throw new Error("Memory Judge plain response contains an empty line.");
-    if(seen.has(id))throw new Error("Memory Judge returned duplicate archive ids.");
-    seen.add(id);
-    archiveIds.push(id);
+  for(const selection of lines){
+    if(selection==="NO_ARCHIVE"||selection==="")throw new Error("Memory Judge plain response contains an invalid command.");
+    if(selection!=="NEW"&&!/^\d+$/u.test(selection))throw new Error("Memory Judge plain response contains invalid output.");
+    if(seen.has(selection))throw new Error("Memory Judge returned duplicate archive selections.");
+    seen.add(selection);
+    parsed.push(selection);
   }
-  return {archiveIds};
+  return {archive:parsed};
 }
 
-/** Build the exact production Judge request format from canonical NEW MEMORY and candidate IDs/text. */
+/** Build the compact Judge request using candidate positions so the model never has to reproduce real memory IDs. */
 function buildJudgeInput(newMemory:MemoryItem,candidates:readonly SemanticMemoryCandidate[]):string{
   return [
     "NEW MEMORY",
-    "id: "+safeText(newMemory.id),
     "content: "+safeText(newMemory.content),
     "",
     "CANDIDATES",
     ...candidates.map((candidate,index)=>[
-      (index+1)+". id: "+safeText(candidate.memory.id),
-      "   content: "+safeText(candidate.memory.content)
+      (index+1)+". content: "+safeText(candidate.memory.content)
     ].join("\n"))
   ].join("\n");
 }
 
-/** Validate every Judge archive ID against NEW MEMORY plus supplied candidates and block an all-record mutation. */
-function validateJudgeArchiveIds(archiveIds:readonly string[],allowedIds:readonly string[]):void{
-  const allowed=new Set(allowedIds);
+/** Validate Judge positions before mapping them to real memory IDs and block an all-record mutation. */
+export function validateJudgeArchiveSelections(selections:readonly string[],candidateCount:number):void{
   const seen=new Set<string>();
-  for(const id of archiveIds){
-    if(!allowed.has(id))throw new Error("Memory Judge referenced an ID outside NEW MEMORY or CANDIDATES.");
-    if(!id.trim())throw new Error("Memory Judge archive id is empty.");
-    if(seen.has(id))throw new Error("Memory Judge returned duplicate archive ids.");
-    seen.add(id);
+  for(const selection of selections){
+    if(seen.has(selection))throw new Error("Memory Judge returned duplicate archive selections.");
+    seen.add(selection);
+    if(selection==="NEW")continue;
+    if(!/^\d+$/u.test(selection))throw new Error("Memory Judge returned an invalid archive selection.");
+    const candidateNumber=Number(selection);
+    if(!Number.isSafeInteger(candidateNumber)||candidateNumber<1||candidateNumber>candidateCount){
+      throw new Error("Memory Judge referenced a candidate number outside the provided range.");
+    }
   }
-  if(archiveIds.length>0&&archiveIds.length===allowedIds.length)throw new Error("Memory Judge attempted to archive every supplied record.");
+  if(selections.includes("NEW")&&selections.length===candidateCount+1){
+    throw new Error("Memory Judge attempted to archive every supplied record.");
+  }
+}
+
+/** Convert validated Judge positions to the real IDs owned by Core; the model never receives this mapping. */
+export function mapJudgeArchiveSelections(
+  selections:readonly string[],
+  newMemoryId:string,
+  candidates:readonly SemanticMemoryCandidate[]
+):string[]{
+  return selections.map(selection=>{
+    if(selection==="NEW")return newMemoryId;
+    const candidateNumber=Number(selection);
+    const candidate=candidates[candidateNumber-1];
+    if(!candidate)throw new Error("Memory Judge candidate mapping failed after validation.");
+    return candidate.memory.id;
+  });
 }
 
 function validIndexState(state:MemorySemanticIndexState|undefined,characterId:CharacterId):MemorySemanticIndexState{
@@ -288,12 +306,19 @@ export class MemorySemanticDeduplicator{
       );
       const scores=Object.fromEntries(selected.map(candidate=>[candidate.memory.id,candidate.similarity]));
       const containmentCandidates=selected.filter(candidate=>candidate.containmentMatch).map(candidate=>candidate.memory.id);
+      const candidateDiagnostics=selected.map((candidate,index)=>({
+        number:index+1,
+        memoryId:candidate.memory.id,
+        containmentMatch:candidate.containmentMatch,
+        similarity:candidate.similarity
+      }));
       this.recordDiagnostic("SEMANTIC_DEDUP_STARTED","semantic deduplication candidate scan",{
         characterId,
         embeddingProvider:provider.id,
         embeddingModel:model,
         candidateCount:selected.length,
         candidateIds:selected.map(item=>item.memory.id),
+        candidateDiagnostics,
         containmentCandidates,
         similarityScores:scores,
         staleOrMissingRecordCount:staleOrMissing,
@@ -305,8 +330,8 @@ export class MemorySemanticDeduplicator{
       if(!judge.enabled)return this.skip("memory_judge_disabled",characterId,selected,scores);
       const presetId=judge.providerPresetId?.trim()??"";
       if(!presetId)return this.skip("memory_judge_provider_not_configured",characterId,selected,scores);
-      const modelName=judge.model.trim();
-      if(!modelName)return this.skip("memory_judge_model_not_configured",characterId,selected,scores);
+      const modelName=judge.model.trim()||await this.options.getChatModelForPreset(presetId);
+      if(!modelName.trim())return this.skip("memory_judge_model_not_configured",characterId,selected,scores);
       const chatRequest:ChatRequest={
         apiVersion:"1",
         schemaVersion:"1",
@@ -321,7 +346,7 @@ export class MemorySemanticDeduplicator{
         }
       };
       this.recordDiagnostic("SEMANTIC_DEDUP_JUDGE_STARTED","memory judge started",{
-        characterId,candidateIds:selected.map(item=>item.memory.id),containmentCandidates,similarityScores:scores
+        characterId,candidateDiagnostics,containmentCandidates,similarityScores:scores
       });
       const schema=STANDARD_SCHEMAS["memory-judge-decision"]!;
       const execution=await this.outputRunner.run({
@@ -336,27 +361,35 @@ export class MemorySemanticDeduplicator{
         diagnostics:this.options.diagnostics,
         source:this.options.source??"memory-semantic-deduplication"
       });
-      const archiveIds=execution.value.archiveIds;
-      const allowedIds=[newMemory.id,...selected.map(candidate=>candidate.memory.id)];
-      let validationError:unknown;
-      try{
-        validateJudgeArchiveIds(archiveIds,allowedIds);
-      }catch(error){
-        validationError=error;
-      }
+      const judgeSelections=execution.value.archive;
       this.recordDiagnostic("SEMANTIC_DEDUP_JUDGE_COMPLETED","memory judge completed",{
         characterId,
-        candidateIds:selected.map(item=>item.memory.id),
-        containmentCandidates,
-        similarityScores:scores,
-        archiveIds,
+        candidateDiagnostics,
+        judgeSelections,
         configuredMode:judge.outputMode,
         effectiveMode:execution.metadata.effectiveOutputMode
       });
+      let validationError:unknown;
+      let archiveIds:string[]=[];
+      let archiveMapping:{selection:string;memoryId:string}[]=[];
+      try{
+        validateJudgeArchiveSelections(judgeSelections,selected.length);
+        archiveIds=mapJudgeArchiveSelections(judgeSelections,newMemory.id,selected);
+        archiveMapping=judgeSelections.map((selection,index)=>({selection,memoryId:archiveIds[index]!}));
+      }catch(error){
+        validationError=error;
+      }
+      this.recordDiagnostic("SEMANTIC_DEDUP_JUDGE_OUTPUT_PARSED","memory judge output parsed",{
+        characterId,
+        candidateDiagnostics,
+        judgeSelections,
+        archiveMapping,
+        archiveIds
+      });
       if(validationError){
-        this.recordFailure("MUTATION_BLOCKED",validationError,characterId,{archiveIds,allowedIds});
+        this.recordFailure("MUTATION_BLOCKED",validationError,characterId,{judgeSelections,archiveIds});
         this.recordDiagnostic("SEMANTIC_DEDUP_MUTATION_BLOCKED","semantic Judge archive mutation blocked",{
-          characterId,archiveIds
+          characterId,judgeSelections,archiveIds
         });
         return {
           status:"completed",
@@ -366,8 +399,8 @@ export class MemorySemanticDeduplicator{
           similarityScores:scores,
           configuredMode:judge.outputMode,
           effectiveMode:execution.metadata.effectiveOutputMode,
-          archiveIds,
-          mutation:{archiveIds,result:"blocked"}
+          archiveIds:[],
+          mutation:{archiveIds:[],result:"blocked"}
         };
       }
       if(archiveIds.length===0){
@@ -409,10 +442,10 @@ export class MemorySemanticDeduplicator{
         moduleId:"memory-semantic-deduplication"
       };
       try{
-        // Core archives exactly the Judge-selected active IDs; it does not infer relations, rank records, or delete data.
+        // Core archives exactly the validated Judge-selected active IDs; all mutation stays behind MemoryBroker.
         for(const record of freshRecords)await this.options.broker.archive(characterId,record.id,authority,"other");
         this.recordDiagnostic("SEMANTIC_DEDUP_MUTATION_APPLIED","semantic Judge archive mutation applied",{
-          characterId,archiveIds
+          characterId,judgeSelections,archiveMapping,archiveIds
         });
         return {
           status:"completed",
