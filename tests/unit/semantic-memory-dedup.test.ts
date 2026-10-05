@@ -281,7 +281,7 @@ async function manualLikeSequentialScenarioTest(){
     });
     return JSON.stringify({archive});
   });
-  await f.broker.create("character.a",{id:"real-memory-1",type:"fact",content:"Пользователь живет в Берлине.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  await f.broker.create("character.a",{id:"real-memory-1",type:"fact",content:"Личность проживает в Берлине и увлекается программированием.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   equal((await f.broker.list("character.a")).filter(item=>item.status==="active").map(item=>item.id),["real-memory-1"],"after step 1 one record is active");
   await f.broker.create("character.a",{id:"real-memory-2",type:"fact",content:"Пользователь живет в Берлине и увлекается программированием.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   equal((await f.broker.list("character.a")).filter(item=>item.status==="active").map(item=>item.id),["real-memory-2"],"after step 2 the more complete record is active");
@@ -439,7 +439,7 @@ async function productionRuntimeSmokePathTest(){
     equal(httpClient.calls.length,1,"FoundationRuntime production path invokes Judge provider exactly once");
     const request=JSON.parse(httpClient.calls[0]?.body??"{}") as {messages?:Array<{role:string;content:string}>;model?:string;response_format?:unknown};
     equal(request.model,"fake-judge","FoundationRuntime passes configured Judge model to provider");
-    ok(request.messages?.some(message=>message.role==="user"&&message.content==="NEW MEMORY\ncontent: Пользователь живет в Берлине.\n\nCANDIDATES\n1. content: Пользователь живет в Берлине."),"FoundationRuntime sends exact numbered candidate input");
+    ok(request.messages?.some(message=>message.role==="user"&&message.content==="NEW MEMORY\ncontent: Личность проживает в Берлине и увлекается программированием.\n\nCANDIDATES\n1. content: Личность проживает в Берлине и увлекается программированием."),"FoundationRuntime sends exact numbered candidate input");
     ok(!JSON.stringify(request.messages).includes("old-real-id"),"FoundationRuntime Judge request does not expose real memory IDs");
     const persistedAfter=await runtime.listMemory(character.id);
     equal(persistedAfter.filter(item=>item.status==="active").map(item=>item.id),["new-real-id"],"FoundationRuntime canonical list confirms OLD archived and NEW active");
