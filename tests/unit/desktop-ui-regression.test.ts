@@ -16,6 +16,7 @@ function blockBetween(startMarker:string,endMarker:string):string{
 const providerPresets=blockBetween("function ProviderPresetsView(","function ModelProfileView(");
 const settingsContainer=blockBetween("function SettingsContainerView(","function isTauriRuntime():boolean");
 const appSettingsView=blockBetween("function AppSettingsView(","function TraceCandidate(");
+const diagnosticsView=blockBetween("function DiagnosticsView(","class ViewErrorBoundary");
 const syncCharacters=blockBetween("const syncCharacters=React.useCallback","const addConfigurationLoadError=React.useCallback");
 const refreshRuntime=blockBetween("const refreshRuntime=React.useCallback","React.useEffect(()=>{");
 const app=source.slice(source.indexOf("function App(){"));
