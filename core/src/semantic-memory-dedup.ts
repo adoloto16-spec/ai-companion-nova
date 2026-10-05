@@ -126,6 +126,25 @@ export function selectTopSemanticCandidates(
   return result.slice(0,nextLimit);
 }
 
+const PROVIDER_FAILURE_DETAIL_KEYS=["httpStatus","durationMs","category","providerResponse"] as const;
+
+function extractProviderFailureDetails(error:unknown):Record<string,unknown>|undefined{
+  if(!error||typeof error!=="object")return undefined;
+  const record=error as Record<string,unknown>;
+  const chatError=record.chatError;
+  const source=chatError&&typeof chatError==="object"&&!Array.isArray(chatError)
+    ?chatError as Record<string,unknown>
+    :record;
+  const details=source.details;
+  if(!details||typeof details!=="object"||Array.isArray(details))return undefined;
+  const safe:Record<string,unknown>={};
+  const detailRecord=details as Record<string,unknown>;
+  for(const key of PROVIDER_FAILURE_DETAIL_KEYS){
+    if(detailRecord[key]!==undefined)safe[key]=detailRecord[key];
+  }
+  return Object.keys(safe).length>0?safe:undefined;
+}
+
 function safeText(value:string):string{
   return value
     .replace(/authorization\s*:\s*bearer\s+\S+/gi,"Authorization: Bearer [REDACTED]")
@@ -697,6 +716,11 @@ export class MemorySemanticDeduplicator{
   }
   private recordFailure(code:string,error:unknown,characterId:CharacterId,metadata?:Record<string,unknown>):void{
     const message=error instanceof Error?error.message:String(error);
-    this.options.diagnostics?.recordError(this.options.source??"memory-semantic-deduplication",code,message,{characterId,...metadata});
+    const providerDetails=extractProviderFailureDetails(error);
+    this.options.diagnostics?.recordError(this.options.source??"memory-semantic-deduplication",code,message,{
+      characterId,
+      ...(providerDetails??{}),
+      ...metadata
+    });
   }
 }
