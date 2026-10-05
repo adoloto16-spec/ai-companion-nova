@@ -146,7 +146,7 @@ export function parseStructuredJudge(value:unknown):{archive:string[]}{
   for(const item of archive){
     if(typeof item!=="string")throw new Error("Memory Judge archive selection is invalid.");
     const selection=item.trim();
-    if(selection!=="NEW"&&!/^\d+$/u.test(selection))throw new Error("Memory Judge archive selection is invalid.");
+    if(selection!=="NEW"&&!/^[1-9]\d*$/u.test(selection))throw new Error("Memory Judge archive selection is invalid.");
     if(seen.has(selection))throw new Error("Memory Judge returned duplicate archive selections.");
     seen.add(selection);
     parsed.push(selection);
@@ -191,7 +191,7 @@ export function validateJudgeArchiveSelections(selections:readonly string[],cand
     if(seen.has(selection))throw new Error("Memory Judge returned duplicate archive selections.");
     seen.add(selection);
     if(selection==="NEW")continue;
-    if(!/^\d+$/u.test(selection))throw new Error("Memory Judge returned an invalid archive selection.");
+    if(!/^[1-9]\d*$/u.test(selection))throw new Error("Memory Judge returned an invalid archive selection.");
     const candidateNumber=Number(selection);
     if(!Number.isSafeInteger(candidateNumber)||candidateNumber<1||candidateNumber>candidateCount){
       throw new Error("Memory Judge referenced a candidate number outside the provided range.");
