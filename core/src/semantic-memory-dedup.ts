@@ -259,6 +259,7 @@ export class MemorySemanticDeduplicator{
     this.unsubs.push(this.options.events.subscribe<{characterId:string;memoryId:string}>("MemoryRestored",event=>this.onMemoryRestored(event.payload)));
     this.unsubs.push(this.options.events.subscribe<{characterId:string;memoryId:string}>("MemoryDeleted",event=>this.onMemoryDeleted(event.payload)));
     this.unsubs.push(this.options.events.subscribe<{characterId:string;memoryId:string;previousMemoryId:string}>("MemorySuperseded",event=>this.onMemorySuperseded(event.payload)));
+    this.recordDiagnostic("SEMANTIC_DEDUP_SUBSCRIBED","semantic memory deduplication subscribed to MemoryCreated",{memoryCreated:true});
   }
 
   stop():void{while(this.unsubs.length)this.unsubs.pop()!();this.inFlight.clear();}
@@ -283,11 +284,23 @@ export class MemorySemanticDeduplicator{
 
   async deduplicateMemory(memoryId:string,characterId:CharacterId):Promise<SemanticDedupExecution>{
     const key=characterId+"\0"+memoryId;
-    if(this.inFlight.has(key))return {status:"skipped",reason:"deduplication_already_in_flight",candidateCount:0,candidateIds:[],similarityScores:{}};
+    if(this.inFlight.has(key)){
+      this.recordDiagnostic("SEMANTIC_DEDUP_SKIPPED","deduplication_already_in_flight",{characterId,memoryId});
+      return {status:"skipped",reason:"deduplication_already_in_flight",candidateCount:0,candidateIds:[],similarityScores:{}};
+    }
     this.inFlight.add(key);
     try{
       const settings=this.options.settings();
-      if(!settings.semanticDedup.enabled)return {status:"skipped",reason:"semantic_deduplication_disabled",candidateCount:0,candidateIds:[],similarityScores:{}};
+      this.recordDiagnostic("SEMANTIC_DEDUP_STARTED","semantic memory deduplication started",{
+        characterId,
+        memoryId,
+        semanticDedupEnabled:settings.semanticDedup.enabled,
+        judgeEnabled:settings.semanticDedup.judge.enabled,
+        judgeProviderPresetId:settings.semanticDedup.judge.providerPresetId??null,
+        judgeModel:settings.semanticDedup.judge.model,
+        judgeOutputMode:settings.semanticDedup.judge.outputMode
+      });
+      if(!settings.semanticDedup.enabled)return this.skip("semantic_deduplication_disabled",characterId);
       const newMemory=await this.options.broker.get(characterId,memoryId);
       if(!newMemory)return this.skip("new_memory_not_found",characterId);
       if(newMemory.status!=="active")return this.skip("new_memory_not_active",characterId);
@@ -326,7 +339,7 @@ export class MemorySemanticDeduplicator{
         containmentMatch:candidate.containmentMatch,
         similarity:candidate.similarity
       }));
-      this.recordDiagnostic("SEMANTIC_DEDUP_STARTED","semantic deduplication candidate scan",{
+      this.recordDiagnostic("SEMANTIC_DEDUP_CANDIDATES_SELECTED","semantic deduplication candidate scan",{
         characterId,
         embeddingProvider:provider?.id??null,
         embeddingModel:model||null,
@@ -622,6 +635,7 @@ export class MemorySemanticDeduplicator{
   }
 
   private async onMemoryCreated(payload:{characterId:string;memoryId:string}):Promise<void>{
+    this.recordDiagnostic("SEMANTIC_DEDUP_EVENT_RECEIVED","MemoryCreated received by semantic deduplicator",{characterId:payload.characterId,memoryId:payload.memoryId});
     await this.deduplicateMemory(payload.memoryId,payload.characterId);
   }
   private async onMemoryUpdated(payload:{characterId:string;memoryId:string}):Promise<void>{
