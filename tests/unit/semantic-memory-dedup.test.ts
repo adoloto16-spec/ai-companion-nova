@@ -3,6 +3,9 @@ import {
   deterministicContentHash,
   isContentTokenSubset,
   MemorySemanticDeduplicator,
+  parsePlainJudge,
+  parseStructuredJudge,
+  validateJudgeArchiveSelections,
   normalizeMemoryContentTokens,
   selectTopSemanticCandidates
 } from "../../core/src";
@@ -16,6 +19,7 @@ import {InMemorySettingsStore} from "../../host/settings/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error(label+" expected "+JSON.stringify(expected)+" got "+JSON.stringify(actual));}
 function ok(value:unknown,label:string){if(!value)throw new Error(label);}
+function throws(fn:()=>unknown,label:string){let threw=false;try{fn()}catch{threw=true}ok(threw,label)}
 function close(actual:number|undefined,expected:number,label:string){if(actual===undefined||Math.abs(actual-expected)>1e-9)throw new Error(label+" expected "+expected+" got "+String(actual));}
 
 class FakeEmbeddingProvider implements EmbeddingProvider{
@@ -99,6 +103,25 @@ async function fixture(output:(request:ChatRequest)=>string,vectorFor?:(text:str
   return {store,broker,events,diagnostics,embeddings,judge,indexStore,settings,service};
 }
 
+async function judgeParserProtocolTest(){
+  equal(parsePlainJudge(" \n NO_ARCHIVE \n "),{archive:[]},"plain NO_ARCHIVE");
+  equal(parsePlainJudge(" \n 1 \n\n 3 \n "),{archive:["1","3"]},"plain candidate positions");
+  equal(parsePlainJudge(" NEW \n 1 \n "),{archive:["NEW","1"]},"plain NEW plus candidate position");
+  equal(parseStructuredJudge({archive:["NEW","1","3"]}),{archive:["NEW","1","3"]},"structured archive selections");
+  equal(parseStructuredJudge({archive:[]}),{archive:[]},"structured empty archive");
+  throws(()=>parsePlainJudge("1, 2"),"reject comma-separated output");
+  throws(()=>parsePlainJudge("Archive 1"),"reject explanation prefix");
+  throws(()=>parsePlainJudge("Candidate 1"),"reject candidate prose");
+  throws(()=>parsePlainJudge("I choose 1"),"reject explanation text");
+  throws(()=>parsePlainJudge("1. archive"),"reject decorated number");
+  throws(()=>parsePlainJudge("NO_ARCHIVE\n1"),"reject mixed NO_ARCHIVE output");
+  throws(()=>parsePlainJudge("1\n1"),"reject duplicate plain selection");
+  throws(()=>parsePlainJudge("NEW\nNEW"),"reject duplicate NEW");
+  throws(()=>parseStructuredJudge({archive:["1","1"]}),"reject duplicate structured selection");
+  throws(()=>parseStructuredJudge({archive:["candidate-1"]}),"reject non-position structured selection");
+  throws(()=>validateJudgeArchiveSelections(["99"],2),"reject out-of-range candidate number");
+}
+
 async function vectorMathTest(){
   close(cosineSimilarity([1,0],[1,0]),1,"identical vector similarity");
   close(cosineSimilarity([1,0],[0,1]),0,"orthogonal vector similarity");
@@ -138,19 +161,23 @@ async function candidateSelectionTest(){
 }
 
 async function belowThresholdContainmentReachesJudgeTest(){
-  const f=await fixture(()=>JSON.stringify({archiveIds:["old"]}),text=>text.includes("extended")?[1,0,0]:[0,1,0]);
+  const f=await fixture(()=>JSON.stringify({archive:["1"]}),text=>text.includes("extended")?[1,0,0]:[0,1,0]);
   await f.broker.create("character.a",{id:"old",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   const newer=await f.broker.create("character.a",{id:"new",type:"fact",content:"User lives in Berlin and extended programming work.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   equal(newer.status,"active","containment-selected NEW remains active when Judge archives candidate");
   equal((await f.broker.get("character.a","old"))?.status,"archived","below-threshold cosine plus containment still reaches Judge");
   equal(f.judge.calls.length,1,"Judge was called for containment-only candidate");
-  ok(f.judge.calls[0]?.context.messages[1]?.content.includes("1. id: old"),"Judge request uses the production candidate numbering format");
+  ok(f.judge.calls[0]?.context.messages[1]?.content.includes("1. content: User lives in Berlin."),"Judge request uses the production candidate numbering format");
+  ok(!f.judge.calls[0]?.context.messages[1]?.content.includes("id: old"),"Judge request does not expose real memory IDs");
+  const diagnostics=JSON.stringify(f.diagnostics.recentErrors());
+  ok(diagnostics.includes('"number":1')&&diagnostics.includes('"memoryId":"old"')&&diagnostics.includes('"containmentMatch":true')&&diagnostics.includes('"judgeSelections":["1"]'),"Judge diagnostics contain candidate number, real ID, containment, and selection");
+  ok(diagnostics.includes('"archiveMapping"'),"Judge diagnostics contain number-to-real-ID mapping");
   ok(f.diagnostics.recentErrors().some(error=>error.code==="SEMANTIC_DEDUP_JUDGE_STARTED"),"Judge started diagnostic is emitted");
   ok(f.diagnostics.recentErrors().some(error=>error.code==="SEMANTIC_DEDUP_JUDGE_COMPLETED"),"Judge completed diagnostic is emitted");
 }
 
 async function structuredArchiveTest(){
-  const f=await fixture(()=>JSON.stringify({archiveIds:["candidate"]}));
+  const f=await fixture(()=>JSON.stringify({archive:["1"]}));
   await f.broker.create("character.a",{id:"candidate",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   await f.broker.create("character.a",{id:"new",type:"fact",content:"User lives in Berlin and programming.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   equal((await f.broker.get("character.a","candidate"))?.status,"archived","structured archiveIds archives candidate");
@@ -158,7 +185,7 @@ async function structuredArchiveTest(){
 }
 
 async function structuredNoArchiveTest(){
-  const f=await fixture(()=>JSON.stringify({archiveIds:[]}));
+  const f=await fixture(()=>JSON.stringify({archive:[]}));
   await f.broker.create("character.a",{id:"candidate",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   await f.broker.create("character.a",{id:"new",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   equal((await f.broker.get("character.a","candidate"))?.status,"active","empty structured archiveIds does nothing");
@@ -167,7 +194,7 @@ async function structuredNoArchiveTest(){
 }
 
 async function plainArchiveTest(){
-  const f=await fixture(()=> "candidate");
+  const f=await fixture(()=> "1");
   f.settings.semanticDedup={...f.settings.semanticDedup,judge:{...f.settings.semanticDedup.judge,outputMode:"plain"}};
   await f.broker.create("character.a",{id:"candidate",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   await f.broker.create("character.a",{id:"new",type:"fact",content:"User lives in Berlin and programming.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
@@ -186,7 +213,7 @@ async function plainNoArchiveTest(){
 }
 
 async function invalidIdNoMutationTest(){
-  const f=await fixture(()=>JSON.stringify({archiveIds:["memory-999"]}));
+  const f=await fixture(()=>JSON.stringify({archive:["99"]}));
   await f.broker.create("character.a",{id:"old",type:"fact",content:"User likes blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   const newer=await f.broker.create("character.a",{id:"new",type:"fact",content:"User likes blue and programming.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   equal(newer.status,"active","invalid Judge ID blocks mutation of new memory");
@@ -204,7 +231,7 @@ async function malformedOutputNoMutationTest(){
 }
 
 async function allRecordsMutationBlockedTest(){
-  const f=await fixture(()=>JSON.stringify({archiveIds:["old","new"]}));
+  const f=await fixture(()=>JSON.stringify({archive:["1","NEW"]}));
   await f.broker.create("character.a",{id:"old",type:"fact",content:"User likes blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   const newer=await f.broker.create("character.a",{id:"new",type:"fact",content:"User likes blue and programming.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   equal(newer.status,"active","Judge cannot archive every supplied record");
@@ -213,7 +240,7 @@ async function allRecordsMutationBlockedTest(){
 }
 
 async function equalInformationTest(){
-  const f=await fixture(()=>JSON.stringify({archiveIds:["candidate"]}));
+  const f=await fixture(()=>JSON.stringify({archive:["1"]}));
   await f.broker.create("character.a",{id:"candidate",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   const newer=await f.broker.create("character.a",{id:"new",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   equal(newer.status,"active","equal information leaves the Judge-selected record active");
@@ -222,13 +249,13 @@ async function equalInformationTest(){
 }
 
 async function subsetDirectionTest(){
-  const first=await fixture(()=>JSON.stringify({archiveIds:["new"]}));
+  const first=await fixture(()=>JSON.stringify({archive:["NEW"]}));
   await first.broker.create("character.a",{id:"long",type:"fact",content:"User lives in Berlin and works remotely from home.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   await first.broker.create("character.a",{id:"new",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   equal((await first.broker.get("character.a","new"))?.status,"archived","when NEW is a subset of candidate, NEW is archived");
   equal((await first.broker.get("character.a","long"))?.status,"active","larger candidate remains active");
 
-  const second=await fixture(()=>JSON.stringify({archiveIds:["candidate"]}));
+  const second=await fixture(()=>JSON.stringify({archive:["1"]}));
   await second.broker.create("character.a",{id:"candidate",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   await second.broker.create("character.a",{id:"new",type:"fact",content:"User lives in Berlin and works remotely from home.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   equal((await second.broker.get("character.a","candidate"))?.status,"archived","when candidate is a subset of NEW, candidate is archived");
@@ -239,33 +266,39 @@ async function manualLikeSequentialScenarioTest(){
   const f=await fixture(request=>{
     const input=request.context.messages[1]?.content??"";
     const lines=input.split(/\r?\n/gu);
-    const newId=lines[1]?.slice("id: ".length);
-    const newContent=lines[2]?.slice("content: ".length)??"";
-    const candidates:ReadonlyArray<{id:string;content:string}>=lines.reduce<Array<{id:string;content:string}>>((acc,line,index)=>{
-      if(/^\d+\. id: /.test(line)){
-        const id=line.replace(/^\d+\. id: /,"");
-        const content=(lines[index+1]??"").replace(/^\s+content: /,"");
-        acc.push({id,content});
-      }
+    const newContent=lines.find(line=>line.startsWith("content: "))?.slice("content: ".length)??"";
+    const candidates:ReadonlyArray<{number:string;content:string}>=lines.reduce<Array<{number:string;content:string}>>((acc,line)=>{
+      const match=line.match(/^(\d+)\. content: (.*)$/u);
+      if(match)acc.push({number:match[1]!,content:match[2]??""});
       return acc;
     },[]);
-    const archiveIds=candidates.flatMap(candidate=>{
-      if(isContentTokenSubset(newContent,candidate.content))return [newId!];
-      if(isContentTokenSubset(candidate.content,newContent))return [candidate.id];
+    const archive=candidates.flatMap(candidate=>{
+      if(isContentTokenSubset(newContent,candidate.content))return ["NEW"];
+      if(isContentTokenSubset(candidate.content,newContent))return [candidate.number];
       return [];
     });
-    return JSON.stringify({archiveIds});
+    return JSON.stringify({archive});
   });
-  await f.broker.create("character.a",{id:"1",type:"fact",content:"Пользователь живет в Берлине.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  equal((await f.broker.list("character.a")).filter(item=>item.status==="active").map(item=>item.id),["1"],"after step 1 one record is active");
-  await f.broker.create("character.a",{id:"2",type:"fact",content:"Пользователь живет в Берлине и увлекается программированием.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  equal((await f.broker.list("character.a")).filter(item=>item.status==="active").map(item=>item.id),["2"],"after step 2 the more complete record is active");
-  equal((await f.broker.get("character.a","1"))?.status,"archived","after step 2 record 1 is archived");
-  await f.broker.create("character.a",{id:"3",type:"fact",content:"Пользователь живет в Берлине и увлекается программированием. Ему интересны IT-компании, стартапы и митапы в Берлине.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  equal((await f.broker.list("character.a")).filter(item=>item.status==="active").map(item=>item.id),["3"],"after step 3 the most complete record is active");
-  equal((await f.broker.get("character.a","2"))?.status,"archived","after step 3 record 2 is archived");
-  equal((await f.broker.get("character.a","1"))?.status,"archived","after step 3 record 1 stays archived");
+  await f.broker.create("character.a",{id:"real-memory-1",type:"fact",content:"Пользователь живет в Берлине.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  equal((await f.broker.list("character.a")).filter(item=>item.status==="active").map(item=>item.id),["real-memory-1"],"after step 1 one record is active");
+  await f.broker.create("character.a",{id:"real-memory-2",type:"fact",content:"Пользователь живет в Берлине и увлекается программированием.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  equal((await f.broker.list("character.a")).filter(item=>item.status==="active").map(item=>item.id),["real-memory-2"],"after step 2 the more complete record is active");
+  equal((await f.broker.get("character.a","real-memory-1"))?.status,"archived","after step 2 real memory 1 is archived");
+  await f.broker.create("character.a",{id:"real-memory-3",type:"fact",content:"Пользователь живет в Берлине и увлекается программированием. Ему интересны IT-компании, стартапы и митапы в Берлине.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  equal((await f.broker.list("character.a")).filter(item=>item.status==="active").map(item=>item.id),["real-memory-3"],"after step 3 the most complete record is active");
+  equal((await f.broker.get("character.a","real-memory-2"))?.status,"archived","after step 3 real memory 2 is archived");
+  equal((await f.broker.get("character.a","real-memory-1"))?.status,"archived","after step 3 real memory 1 stays archived");
   ok(f.judge.calls.every(call=>call.context.messages.some(message=>message.role==="system"&&message.content===baseSettings().semanticDedup.judge.prompt)),"Fake Judge uses the production Judge prompt");
+}
+
+
+async function judgeModelFallsBackToPresetTest(){
+  const f=await fixture(()=>JSON.stringify({archive:["1"]}));
+  f.settings.semanticDedup={...f.settings.semanticDedup,judge:{...f.settings.semanticDedup.judge,model:""}};
+  await f.broker.create("character.a",{id:"candidate-real-id",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  await f.broker.create("character.a",{id:"new-real-id",type:"fact",content:"User lives in Berlin and programming.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  equal(f.judge.calls[0]?.model,"fake-judge","Judge resolves model from configured preset when local model is blank");
+  equal((await f.broker.get("character.a","candidate-real-id"))?.status,"archived","resolved Judge still applies archive mutation");
 }
 
 async function settingsV5PersistenceTest(){
@@ -308,6 +341,7 @@ async function legacySettingsMigrationTest(){
 }
 
 async function main(){
+  await judgeParserProtocolTest();
   await vectorMathTest();
   await containmentUnitTest();
   await candidateSelectionTest();
@@ -322,6 +356,7 @@ async function main(){
   await equalInformationTest();
   await subsetDirectionTest();
   await manualLikeSequentialScenarioTest();
+  await judgeModelFallsBackToPresetTest();
   await settingsV5PersistenceTest();
   await legacySettingsMigrationTest();
   console.log("PASS Semantic memory deduplication and settings regression tests");
