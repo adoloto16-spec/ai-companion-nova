@@ -180,16 +180,16 @@ async function structuredArchiveTest(){
   const f=await fixture(()=>JSON.stringify({archive:["1"]}));
   await f.broker.create("character.a",{id:"candidate",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   await f.broker.create("character.a",{id:"new",type:"fact",content:"User lives in Berlin and programming.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  equal((await f.broker.get("character.a","candidate"))?.status,"archived","structured archiveIds archives candidate");
-  equal((await f.broker.get("character.a","new"))?.status,"active","structured archiveIds leaves new active");
+  equal((await f.broker.get("character.a","candidate"))?.status,"archived","structured candidate position archives candidate");
+  equal((await f.broker.get("character.a","new"))?.status,"active","structured candidate position leaves new active");
 }
 
 async function structuredNoArchiveTest(){
   const f=await fixture(()=>JSON.stringify({archive:[]}));
   await f.broker.create("character.a",{id:"candidate",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   await f.broker.create("character.a",{id:"new",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  equal((await f.broker.get("character.a","candidate"))?.status,"active","empty structured archiveIds does nothing");
-  equal((await f.broker.get("character.a","new"))?.status,"active","empty structured archiveIds leaves new active");
+  equal((await f.broker.get("character.a","candidate"))?.status,"active","empty structured archive does nothing");
+  equal((await f.broker.get("character.a","new"))?.status,"active","empty structured candidate position leaves new active");
   equal(f.judge.calls.length,1,"empty structured decision is parsed");
 }
 
@@ -198,8 +198,8 @@ async function plainArchiveTest(){
   f.settings.semanticDedup={...f.settings.semanticDedup,judge:{...f.settings.semanticDedup.judge,outputMode:"plain"}};
   await f.broker.create("character.a",{id:"candidate",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   await f.broker.create("character.a",{id:"new",type:"fact",content:"User lives in Berlin and programming.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  equal((await f.broker.get("character.a","candidate"))?.status,"archived","plain ID archives candidate");
-  equal((await f.broker.get("character.a","new"))?.status,"active","plain ID leaves new active");
+  equal((await f.broker.get("character.a","candidate"))?.status,"archived","plain candidate position archives candidate");
+  equal((await f.broker.get("character.a","new"))?.status,"active","plain candidate position leaves new active");
 }
 
 async function plainNoArchiveTest(){
@@ -212,13 +212,13 @@ async function plainNoArchiveTest(){
   equal(f.judge.calls.length,1,"plain NO_ARCHIVE is parsed");
 }
 
-async function invalidIdNoMutationTest(){
+async function invalidCandidateNumberNoMutationTest(){
   const f=await fixture(()=>JSON.stringify({archive:["99"]}));
   await f.broker.create("character.a",{id:"old",type:"fact",content:"User likes blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   const newer=await f.broker.create("character.a",{id:"new",type:"fact",content:"User likes blue and programming.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
-  equal(newer.status,"active","invalid Judge ID blocks mutation of new memory");
-  equal((await f.broker.get("character.a","old"))?.status,"active","invalid Judge ID keeps candidate active");
-  ok(f.diagnostics.recentErrors().some(error=>error.code==="MUTATION_BLOCKED"),"invalid Judge ID is diagnosed as blocked mutation");
+  equal(newer.status,"active","invalid Judge number blocks mutation of new memory");
+  equal((await f.broker.get("character.a","old"))?.status,"active","invalid Judge number keeps candidate active");
+  ok(f.diagnostics.recentErrors().some(error=>error.code==="MUTATION_BLOCKED"),"invalid Judge number is diagnosed as blocked mutation");
 }
 
 async function malformedOutputNoMutationTest(){
@@ -350,7 +350,7 @@ async function main(){
   await structuredNoArchiveTest();
   await plainArchiveTest();
   await plainNoArchiveTest();
-  await invalidIdNoMutationTest();
+  await invalidCandidateNumberNoMutationTest();
   await malformedOutputNoMutationTest();
   await allRecordsMutationBlockedTest();
   await equalInformationTest();
