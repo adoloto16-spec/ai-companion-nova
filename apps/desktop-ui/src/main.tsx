@@ -1360,6 +1360,21 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
             {typeof metadata.mutationResult==="string"&&<div className="diagnostic-reason">Mutation result: {metadata.mutationResult}</div>}
             {typeof metadata.reason==="string"&&<div className="diagnostic-reason">Reason: {metadata.reason}</div>}
             {typeof metadata.fallbackReason==="string"&&<div className="diagnostic-reason">Fallback: {metadata.fallbackReason}</div>}
+            {(metadata.providerId!==undefined||metadata.providerPresetId!==undefined||metadata.model!==undefined||metadata.baseUrlHost!==undefined||metadata.chatTransport!==undefined||metadata.httpStatus!==undefined||metadata.category!==undefined||metadata.timeoutMs!==undefined||metadata.providerResponse!==undefined)&&<div className="diagnostic-block">
+              <h4>Provider Failure Details</h4>
+              <div className="status-grid">
+                {metadata.providerId!==undefined&&<><span>Provider</span><strong>{String(metadata.providerId)}</strong></>}
+                {metadata.providerPresetId!==undefined&&<><span>Preset</span><strong>{String(metadata.providerPresetId)}</strong></>}
+                {metadata.model!==undefined&&<><span>Model</span><strong>{String(metadata.model)}</strong></>}
+                {metadata.baseUrlHost!==undefined&&<><span>Base URL host</span><strong>{String(metadata.baseUrlHost)}</strong></>}
+                {metadata.chatTransport!==undefined&&<><span>Transport</span><strong>{String(metadata.chatTransport)}</strong></>}
+                {metadata.category!==undefined&&<><span>Category</span><strong>{String(metadata.category)}</strong></>}
+                {metadata.httpStatus!==undefined&&<><span>HTTP status</span><strong>{String(metadata.httpStatus)}</strong></>}
+                {metadata.timeoutMs!==undefined&&<><span>Timeout</span><strong>{String(metadata.timeoutMs)} ms</strong></>}
+                {metadata.durationMs!==undefined&&<><span>Duration</span><strong>{String(metadata.durationMs)} ms</strong></>}
+              </div>
+              {metadata.providerResponse!==undefined&&<pre className="diagnostic-json">{JSON.stringify(metadata.providerResponse,null,2)}</pre>}
+            </div>}
           </div>;
         })}
     </section>
