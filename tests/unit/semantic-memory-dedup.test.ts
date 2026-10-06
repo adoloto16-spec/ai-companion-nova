@@ -229,8 +229,11 @@ async function invalidCandidateNumberNoMutationTest(){
 async function canonicalStructuredValidationTest(){
   const validator=new StandardContractValidator();
   const schema=STANDARD_SCHEMAS["memory-judge-decision"]!;
-  ok(!validator.validate({archive:["INVALID"]},schema).valid,"canonical schema rejects INVALID archive selection");
-  ok(!validator.validate({archive:["2","2"]},schema).valid,"canonical schema rejects duplicate archive selection");
+  ok(validator.validate({archive:["INVALID"]},schema).valid,"canonical schema accepts the structural archive shape before semantic Judge validation");
+  ok(validator.validate({archive:["2","2"]},schema).valid,"canonical schema accepts the structural array shape before duplicate-selection validation");
+  throws(()=>parseStructuredJudge({archive:["INVALID"]}),"application parser rejects INVALID archive selection");
+  throws(()=>parseStructuredJudge({archive:["2","2"]}),"application parser rejects duplicate archive selection");
+  throws(()=>validateJudgeArchiveSelections(["999"],3),"deterministic validation rejects out-of-range archive selection");
 }
 
 async function invalidStructuredValueNoMutationTest(){
