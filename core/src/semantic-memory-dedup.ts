@@ -126,7 +126,7 @@ export function selectTopSemanticCandidates(
   return result.slice(0,nextLimit);
 }
 
-const PROVIDER_FAILURE_DETAIL_KEYS=["httpStatus","durationMs","category","providerResponse"] as const;
+const PROVIDER_FAILURE_DETAIL_KEYS=["providerId","providerPresetId","model","baseUrlHost","chatTransport","httpStatus","durationMs","category","timeoutMs","providerResponse"] as const;
 
 function extractProviderFailureDetails(error:unknown):Record<string,unknown>|undefined{
   if(!error||typeof error!=="object")return undefined;
