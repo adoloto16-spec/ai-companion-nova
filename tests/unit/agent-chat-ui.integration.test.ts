@@ -89,6 +89,8 @@ async function main(){
 
   const waitingRuntime=new FakeAgentRuntime();
   waitingRuntime.startAgentRun=async(input)=>{
+    waitingRuntime.starts.push(input.id!);
+    waitingRuntime.inputs.push(input);
     const waiting=run({id:input.id!,characterId:input.characterId,task:input.task,state:"waiting",status:"waiting",stepCount:1,lastAction:"ask_user",lastOutcome:"waiting:What should I use?"});
     waitingRuntime.runs.set(input.id!,waiting);
     return waiting;
