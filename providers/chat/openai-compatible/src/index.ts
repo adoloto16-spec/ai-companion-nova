@@ -855,7 +855,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       durationMs
     };
     if((status===400||status===422)&&(request.generation?.responseFormat?.type==="json"||request.generation?.responseFormat?.type==="json-schema")&&this.isStructuredUnsupportedResponse(body)){
-      return this.failure({code:"UNSUPPORTED",message:"OpenAI-compatible provider does not support the requested structured output.",request,retryable:false,details:withProviderResponse({...diagnosticDetails,category:"capability"},body)});
+      return this.failure({code:"UNSUPPORTED",message:"OpenAI-compatible provider does not support the requested structured output.",request,retryable:false,details:withProviderResponse({...diagnosticDetails,category:"capability",structuredOutputUnsupported:true},body)});
     }
     if(status===400)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rejected the chat request.",request,retryable:false,details:withProviderResponse({...diagnosticDetails,category:"bad_request"},body)});
     if(status===401||status===403)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rejected authentication.",request,retryable:false,details:withProviderResponse({...diagnosticDetails,category:"authentication"},body)});
