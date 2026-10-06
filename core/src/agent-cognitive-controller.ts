@@ -1,4 +1,4 @@
-import type {AgentDecision,AgentOutputMode,ChatRequestOptions,DiagnosticsStore,SchemaValidator} from "../../contracts/src/index";
+import type {AgentDecision,AgentDecisionOutputMode,ChatRequestOptions,DiagnosticsStore,SchemaValidator} from "../../contracts/src/index";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,STANDARD_SCHEMAS,StandardContractValidator} from "../../contracts/src/index";
 import {AiRuntime,AiRuntimeError} from "./ai-runtime";
 import {parseStructuredDecision,parseTaggedDecision} from "./agent-protocol";
@@ -7,7 +7,7 @@ export interface AgentCognitiveContext{
   runId:string;characterId:string;goal:string;task:string;state:string;stepIndex:number;
   workingSummary?:string;lastAction?:string;lastOutcome?:string;providerId?:string;model:string;
 }
-export interface AgentDecisionResult{decision:AgentDecision;outputMode:AgentOutputMode;}
+export interface AgentDecisionResult{decision:AgentDecision;outputMode:AgentDecisionOutputMode;}
 export interface AgentCognitiveDecisionProvider{
   decide(context:AgentCognitiveContext,options?:ChatRequestOptions):Promise<AgentDecisionResult>;
 }
