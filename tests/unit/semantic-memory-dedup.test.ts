@@ -121,7 +121,9 @@ async function judgeParserProtocolTest(){
   throws(()=>parsePlainJudge("NEW\nNEW"),"reject duplicate NEW");
   throws(()=>parseStructuredJudge({archive:["1","1"]}),"reject duplicate structured selection");
   throws(()=>parseStructuredJudge({archive:["candidate-1"]}),"reject non-position structured selection");
-  throws(()=>validateJudgeArchiveSelections(["99"],2),"reject out-of-range candidate number");
+  throws(()=>parseStructuredJudge({archive:["INVALID"]}),"reject invalid structured selection");
+  throws(()=>parseStructuredJudge({archive:["2","2"]}),"reject duplicate structured selection before mutation");
+  throws(()=>validateJudgeArchiveSelections(["999"],3),"reject out-of-range candidate number");
 }
 
 async function vectorMathTest(){
@@ -215,7 +217,8 @@ async function plainNoArchiveTest(){
 }
 
 async function invalidCandidateNumberNoMutationTest(){
-  const f=await fixture(()=>JSON.stringify({archive:["99"]}));
+  throws(()=>validateJudgeArchiveSelections(["999"],3),"reject candidate 999 when only three candidates exist");
+  const f=await fixture(()=>JSON.stringify({archive:["999"]}));
   await f.broker.create("character.a",{id:"old",type:"fact",content:"User likes blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   const newer=await f.broker.create("character.a",{id:"new",type:"fact",content:"User likes blue and programming.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   equal(newer.status,"active","invalid Judge number blocks mutation of new memory");
@@ -433,6 +436,38 @@ async function productionRuntimeSmokePathTest(){
     });
     equal(oldMemory.content,exactDuplicateContent,"OLD uses the required exact duplicate content");
     equal(newMemory.content,exactDuplicateContent,"NEW uses the required exact duplicate content");
+    const judgeRequest=httpClient.calls.find(call=>call.url.endsWith("/chat/completions"));
+    if(!judgeRequest?.body)throw new Error("Judge HTTP request body was not captured");
+    const judgeBody=JSON.parse(judgeRequest.body) as {
+      model?:string;
+      stream?:boolean;
+      response_format?:{
+        type?:string;
+        json_schema?:{
+          name?:string;
+          strict?:boolean;
+          schema?:Record<string,unknown>;
+        };
+      };
+    };
+    const providerSchema=judgeBody.response_format?.json_schema?.schema;
+    equal(judgeBody.model,"fake-judge","Judge provider request uses configured model");
+    equal(judgeBody.stream,false,"Judge provider request is non-streaming");
+    equal(judgeBody.response_format?.type,"json_schema","Judge uses Mistral json_schema response format");
+    equal(judgeBody.response_format?.json_schema?.name,"memory-judge-decision","Judge schema name is stable");
+    equal(judgeBody.response_format?.json_schema?.strict,true,"Judge structured output is strict");
+    equal(JSON.stringify(providerSchema),JSON.stringify({
+      type:"object",
+      additionalProperties:false,
+      required:["archive"],
+      properties:{archive:{type:"array",items:{type:"string"}}}
+    }),"Judge sends provider-compatible minimal schema");
+    ok(providerSchema!==undefined&&!("$schema" in providerSchema)&&!("$id" in providerSchema),"provider schema omits JSON Schema metadata keywords");
+    const providerArchive=providerSchema?.properties as Record<string,unknown>|undefined;
+    const providerArchiveSchema=providerArchive?.archive as Record<string,unknown>|undefined;
+    ok(providerArchiveSchema!==undefined&&!('maxItems' in providerArchiveSchema)&&!('uniqueItems' in providerArchiveSchema),"provider schema omits collection constraints");
+    const providerItems=providerArchiveSchema?.items as Record<string,unknown>|undefined;
+    ok(providerItems!==undefined&&!('pattern' in providerItems),"provider schema omits regex pattern");
     const oldAfter=await runtime.getMemory(character.id,oldMemory.id);
     const newAfter=await runtime.getMemory(character.id,newMemory.id);
     const active=await runtime.listMemory(character.id);
