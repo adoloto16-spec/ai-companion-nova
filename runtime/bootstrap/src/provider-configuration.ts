@@ -2,6 +2,7 @@ import {
   AiRuntime,
   AiRuntimeError,
   InMemoryDiagnosticsStore,
+  InMemoryDiagnosticsStore as CoreDiagnosticsStore,
   ProviderRegistry
 } from "../../../core/src";
 import {
@@ -130,11 +131,19 @@ export function buildEmbeddingProviderForPreset(
   return new OpenAICompatibleEmbeddingProvider(effective,credentialStore,httpClient);
 }
 
-export function buildProviderForPreset(configuration:ProviderConfiguration,credentialStore:CredentialStore,httpClient?:HttpClient):ChatProvider|undefined{
+export function buildProviderForPreset(
+  configuration:ProviderConfiguration,
+  credentialStore:CredentialStore,
+  httpClient?:HttpClient,
+  diagnostics?:CoreDiagnosticsStore,
+  providerPresetId?:string
+):ChatProvider|undefined{
   const validation=validateProviderPresetConfiguration(configuration);
   if(!validation.valid)return undefined;
   return new OpenAICompatibleChatProvider({
-    baseUrl:configuration.baseUrl,model:configuration.model,credential:configuration.credentialReference,timeoutMs:configuration.timeoutMs
+    baseUrl:configuration.baseUrl,model:configuration.model,credential:configuration.credentialReference,timeoutMs:configuration.timeoutMs,
+    ...(diagnostics?{diagnostics}:{}),
+    ...(providerPresetId?{providerPresetId}:{})
   },credentialStore,httpClient);
 }
 
