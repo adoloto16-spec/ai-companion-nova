@@ -3,11 +3,17 @@ import fs from "node:fs";
 import path from "node:path";
 import {AgentChatController} from "../../apps/desktop-ui/src/agent-chat";
 import {ConversationSession,ChatSessionController} from "../../core/src/chat-session";
+import type {AgentChatActionResult} from "../../apps/desktop-ui/src/agent-chat";
 import type {AgentRun,ChatMessage,Conversation} from "../../contracts/src/index";
 
 function equal(actual:unknown,expected:unknown,label:string){assert.equal(actual,expected,label)}
 function ok(value:unknown,label:string){assert.ok(value,label)}
 function wait(ms:number){return new Promise(resolve=>setTimeout(resolve,ms))}
+
+function runOf(result:AgentChatActionResult):AgentRun{
+  if(result.status==="rejected")throw new Error("Expected an executed Agent Run result.");
+  return result.run;
+}
 
 function conversation(messages:readonly ChatMessage[]=[]):Conversation{
   const now=new Date().toISOString();
@@ -67,7 +73,7 @@ async function main(){
   equal(runtime.starts.length,1,"startAgentRun called exactly once");
   equal((runtime.inputs[0] as {providerId?:string}).providerId,"provider.test","provider-neutral provider id is passed through");
   equal((runtime.inputs[0] as {model?:string}).model,"model.test","model is passed through");
-  equal((completed.run as AgentRun).stepCount,3,"multi-step run reaches the final step");
+  equal(runOf(completed).stepCount,3,"multi-step run reaches the final step");
   equal(persisted[0]!.messages.filter(message=>message.role==="user").length,1,"agent user message is persisted");
   equal(persisted[0]!.messages.filter(message=>message.role==="assistant").length,1,"completed result becomes assistant message");
   equal(persisted[0]!.messages.at(-1)?.content,"Agent result","final AgentRun result is saved as normal assistant content");
@@ -106,7 +112,7 @@ async function main(){
   const resumed=await waitingController.resume("Use option B");
   equal(resumed.status,"completed","resumeAgentRun continues the waiting run");
   equal(waitingRuntime.starts.length,1,"resume does not create a second Agent Run");
-  equal(waitingRuntime.runs.get((waiting.run as AgentRun).id)?.state,"completed","existing Agent Run is resumed");
+  equal(waitingRuntime.runs.get(runOf(waiting).id)?.state,"completed","existing Agent Run is resumed");
   equal(waitingPersisted[0]!.messages.at(-2)?.content,"Use option B","user answer is persisted in Conversation");
   equal(waitingPersisted[0]!.messages.at(-1)?.content,"Resumed answer","resumed result is appended as assistant message");
 
