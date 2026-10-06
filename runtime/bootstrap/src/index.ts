@@ -66,6 +66,12 @@ export interface FoundationRuntime{
   getChatModel(providerId?:string):Promise<string>;
   getChatModelForPreset(providerPresetId:string):Promise<string>;
   getActiveProviderPresetId():string|undefined;
+  getChatProviderDiagnostics(providerPresetId?:string):{
+    providerPresetId?:string;
+    providerId:string;
+    baseUrlHost?:string;
+    timeoutMs?:number;
+  };
   applyProviderConfiguration(configuration:ProviderConfiguration|undefined):Promise<void>;
   testConfiguredProvider():Promise<import("../../../contracts/src/index").ProviderConnectionTestResult>;
   getSettings():AppSettings;
@@ -116,6 +122,44 @@ export interface FoundationRuntime{
   searchRetrieval(query:RetrievalQuery):Promise<RetrievalResult>;
   rebuildRetrieval(characterId:CharacterId):Promise<void>;
   rebuildAllRetrieval():Promise<void>;
+}
+
+function safeBaseUrlHost(baseUrl:string):string|undefined{
+  try{return new URL(baseUrl).host||undefined}catch{return undefined}
+}
+
+function safeProviderConfigMetadata(configuration:ProviderConfiguration|undefined):Record<string,unknown>|undefined{
+  if(!configuration)return undefined;
+  return {
+    providerId:configuration.providerId,
+    ...(safeBaseUrlHost(configuration.baseUrl)?{baseUrlHost:safeBaseUrlHost(configuration.baseUrl)}:{}),
+    ...(configuration.timeoutMs!==undefined?{timeoutMs:configuration.timeoutMs}:{}),
+  };
+}
+
+function recordChatProviderFailure(
+  diagnostics:InMemoryDiagnosticsStore,
+  error:unknown,
+  request:ChatRequest,
+  providerPresetId:string|undefined,
+  chatTransport:"stream"|"chat"
+):void{
+  const chatError=error&&typeof error==="object"&&"chatError" in error
+    ?(error as {chatError?:{providerId?:unknown;details?:Record<string,unknown>}}).chatError
+    :undefined;
+  const details=chatError?.details;
+  diagnostics.recordError("chat-provider","CHAT_PROVIDER_REQUEST_FAILED","Chat provider request failed",{
+    requestId:request.requestId,
+    ...(typeof chatError?.providerId==="string"?{providerId:chatError.providerId}:{}),
+    ...(providerPresetId?{providerPresetId}:{}),
+    model:request.model,
+    ...(typeof details?.category==="string"?{category:details.category}:{}),
+    ...(typeof details?.httpStatus==="number"?{httpStatus:details.httpStatus}:{}),
+    ...(typeof details?.durationMs==="number"?{durationMs:details.durationMs}:{}),
+    ...(typeof details?.timeoutMs==="number"?{timeoutMs:details.timeoutMs}:{}),
+    ...(details?.providerResponse!==undefined?{providerResponse:details.providerResponse}:{}),
+    chatTransport,
+  });
 }
 
 export async function createFoundationRuntime(options:FoundationRuntimeOptions={}):Promise<FoundationRuntime>{
@@ -385,13 +429,33 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
         const effectiveConfiguration=configuration?{...configuration,model:request.model}:undefined;
         const scopedProviders=new ProviderRegistry();
         if(effectiveConfiguration){
-          const configured=buildProviderForPreset(effectiveConfiguration,credentialStore,options.httpClient);
+          const configured=buildProviderForPreset(effectiveConfiguration,credentialStore,options.httpClient,diagnosticsStore,providerPresetId);
           if(configured)scopedProviders.register(configured,["chat"]);
         }
+        diagnosticsStore.recordError("chat-provider","CHAT_PROVIDER_REQUEST_STARTED","Chat provider stream request started",{
+          requestId:request.requestId,providerId:"openai-compatible",providerPresetId,model:request.model,
+          ...(safeProviderConfigMetadata(effectiveConfiguration)?{...safeProviderConfigMetadata(effectiveConfiguration)}:{}),
+          chatTransport:"stream"
+        });
         const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
-        return scopedRuntime.stream({...request,providerId:"openai-compatible"},handlers,streamOptions);
+        try{
+          return await scopedRuntime.stream({...request,providerId:"openai-compatible"},handlers,streamOptions);
+        }catch(error){
+          recordChatProviderFailure(diagnosticsStore,error,request,providerPresetId,"stream");
+          throw error;
+        }
       }
-      return aiRuntime.stream(request,handlers,streamOptions);
+      diagnosticsStore.recordError("chat-provider","CHAT_PROVIDER_REQUEST_STARTED","Chat provider stream request started",{
+        requestId:request.requestId,providerId:request.providerId??activeProviderId(providerConfiguration),model:request.model,
+        ...(safeProviderConfigMetadata(providerConfiguration)?{...safeProviderConfigMetadata(providerConfiguration)}:{}),
+        chatTransport:"stream"
+      });
+      try{
+        return await aiRuntime.stream(request,handlers,streamOptions);
+      }catch(error){
+        recordChatProviderFailure(diagnosticsStore,error,request,undefined,"stream");
+        throw error;
+      }
     },
     chat:async(request,providerPresetId)=>{
       if(providerPresetId){
@@ -422,6 +486,16 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       }
     },
     getActiveProviderPresetId:()=>activeProviderPresetId,
+    getChatProviderDiagnostics:providerPresetId=>{
+      const effectiveId=providerPresetId??activeProviderPresetId;
+      const configuration=effectiveId?providerPresetConfigurations.get(effectiveId):providerConfiguration;
+      return {
+        ...(effectiveId?{providerPresetId:effectiveId}:{}),
+        providerId:configuration?.providerId??activeProviderId(providerConfiguration),
+        ...(configuration?{baseUrlHost:safeBaseUrlHost(configuration.baseUrl)}:{}),
+        ...(configuration?.timeoutMs!==undefined?{timeoutMs:configuration.timeoutMs}:{}),
+      };
+    },
     getChatModelForPreset:resolveChatModelForPreset,
     applyProviderConfiguration:async(configuration)=>{await applyProvider(configuration);},
     getSettings:()=>settingsManager.get(),
