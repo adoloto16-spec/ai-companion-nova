@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import {
   AgentCognitiveController,
-  AgentChatController,
   AiRuntime,
   ProviderRegistry,
 } from "../../core/src/index";
+import {AgentChatController} from "../../apps/desktop-ui/src/agent-chat";
 import {createFoundationRuntime} from "../../runtime/bootstrap/src/index";
 import type {
   ChatMessage,
