@@ -404,6 +404,46 @@ async function streamingTest(){
   equal((JSON.parse(body) as {stream:boolean}).stream,true,"stream request body sets stream=true");
 }
 
+
+async function streamingTimeoutStageTest(){
+  const http=new FakeHttpClient();
+  http.streamNext={
+    status:200,
+    headers:{"content-type":"text/event-stream"},
+    body:{
+      async *[Symbol.asyncIterator](){
+        await new Promise<void>(()=>{});
+      }
+    }
+  };
+  const diagnostics=new InMemoryDiagnosticsStore();
+  const providerInstance=new OpenAICompatibleChatProvider({
+    baseUrl:"https://provider.example.test/v1",
+    model:"openai-compatible-test-model",
+    credential:credentialReference,
+    timeoutMs:25,
+    diagnostics,
+    providerPresetId:"preset.main"
+  },new FakeCredentialStore(),http);
+  const started=Date.now();
+  await throwsAsync(
+    ()=>providerInstance.stream(request(),{onEvent:()=>{}}),
+    error=>error instanceof OpenAICompatibleProviderError&&
+      error.chatError.details?.category==="timeout"&&
+      error.chatError.details?.stage==="stream_body"&&
+      error.chatError.details?.timeoutMs===25&&
+      typeof error.chatError.details?.durationMs==="number"&&
+      error.chatError.details?.durationMs>=20,
+    "stream body timeout exposes stage and configured timeout"
+  );
+  ok(Date.now()-started<500,"stream body timeout is bounded");
+  const timeoutDiagnostic=diagnostics.recentErrors().find(entry=>entry.code==="CHAT_PROVIDER_TIMEOUT");
+  ok(timeoutDiagnostic,"stream timeout diagnostic is recorded");
+  equal(timeoutDiagnostic?.metadata?.providerPresetId,"preset.main","stream timeout diagnostic records provider preset");
+  equal(timeoutDiagnostic?.metadata?.stage,"stream_body","stream timeout diagnostic records body stage");
+  equal(timeoutDiagnostic?.metadata?.timeoutMs,25,"stream timeout diagnostic records configured timeout");
+}
+
 async function streamingUsageTest(){
   const http=new FakeHttpClient();
   http.streamNext={
@@ -574,6 +614,7 @@ void (async()=>{
     ["Credential and unsupported inputs",credentialAndUnsupportedTest],
     ["Secret safety",secretSafetyTest],
     ["Streaming",streamingTest],
+    ["Streaming timeout stage",streamingTimeoutStageTest],
     ["Streaming usage",streamingUsageTest],
     ["Malformed streaming event",malformedStreamingEventTest],
     ["Streaming abort",streamingAbortTest],
