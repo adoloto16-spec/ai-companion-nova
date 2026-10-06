@@ -71,6 +71,13 @@ async function main(){
   equal(persisted[0]!.messages.filter(message=>message.role==="user").length,1,"agent user message is persisted");
   equal(persisted[0]!.messages.filter(message=>message.role==="assistant").length,1,"completed result becomes assistant message");
   equal(persisted[0]!.messages.at(-1)?.content,"Agent result","final AgentRun result is saved as normal assistant content");
+  const postAgentSession=new ConversationSession(persisted[0]!.id,persisted[0]!.characterId);
+  for(const message of persisted[0]!.messages)postAgentSession.addMessage(message);
+  const postAgentChat=new ChatSessionController(postAgentSession,{
+    async chat(request:any){return {apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"provider.test",model:"model.test",message:{id:request.requestId,role:"assistant",content:"ordinary chat after agent success"},finishReason:"stop"};}
+  });
+  equal((await postAgentChat.submit("normal chat after successful agent","model.test")).status,"sent","ordinary Chat remains usable after a completed Agent Run");
+  equal(postAgentSession.getMessages().at(-1)?.content,"ordinary chat after agent success","ordinary Chat still appends its assistant reply");
   ok(seen.includes("thinking"),"UI bridge observes thinking state");
   ok(seen.includes("completed"),"UI bridge observes completion state");
 
