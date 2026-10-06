@@ -25,6 +25,8 @@ import {InMemoryMemorySemanticIndexStore,InMemoryMemoryStore} from "../../../hos
 import type {CoreBookCreateInput,CoreBookUpdateInput} from "../../../core/src/core-book-manager";
 import {activeProviderId,buildConfiguredProvider,buildEmbeddingProviderForPreset,buildProviderForDiscovery,buildProviderForPreset,testProviderConfiguration} from "./provider-configuration";
 import {RetrievalEventIndexer} from "../../../core/src/retrieval-indexer";
+import type {AgentCognitiveDecisionProvider} from "../../../core/src/agent-cognitive-controller";
+import type {AgentActionExecutor} from "../../../core/src/agent-action-executor";
 
 
 export interface OpenAICompatibleRuntimeConfig{
