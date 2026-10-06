@@ -106,7 +106,7 @@ function provider(
   http:FakeHttpClient,
   credentialStore:CredentialStore=new FakeCredentialStore(),
   timeoutMs=1000,
-  structuredOutput=true
+  structuredOutput=false
 ){
   return new OpenAICompatibleChatProvider({
     baseUrl:"https://provider.example.test/v1",
@@ -118,7 +118,7 @@ function provider(
 }
 
 async function metadataAndCapabilitiesTest(){
-  const p=provider(new FakeHttpClient());
+  const p=provider(new FakeHttpClient(),new FakeCredentialStore(),1000,true);
   const metadata=p.metadata();
   equal(metadata.id,OPENAI_COMPATIBLE_PROVIDER_ID,"provider metadata id");
   equal(metadata.kind,"chat","provider metadata kind");
