@@ -229,7 +229,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const applyProvider=async(configuration:ProviderConfiguration|undefined)=>{
     providerConfiguration=configuration;
     providers.unregister("openai-compatible");
-    const configured=configuration?buildConfiguredProvider(configuration,credentialStore,options.httpClient):undefined;
+    const configured=configuration?buildConfiguredProvider(configuration,credentialStore,options.httpClient,diagnosticsStore,activeProviderPresetId):undefined;
     if(configured)providers.register(configured,["chat"]);
   };
   if(options.openAICompatible){
