@@ -493,7 +493,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
         ...(effectiveId?{providerPresetId:effectiveId}:{}),
         providerId:configuration?.providerId??activeProviderId(providerConfiguration),
         ...(configuration?{baseUrlHost:safeBaseUrlHost(configuration.baseUrl)}:{}),
-        ...(configuration?.timeoutMs!==undefined?{timeoutMs:configuration.timeoutMs}:{}),
+        ...(configuration?{timeoutMs:configuration.timeoutMs??30000}:{}),
       };
     },
     getChatModelForPreset:resolveChatModelForPreset,
