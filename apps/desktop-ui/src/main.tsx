@@ -1394,6 +1394,31 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
         <pre className="diagnostic-json">{JSON.stringify(selected.finalRequest.context.messages,null,2)}</pre>
       </div>}
 
+      {selected.provider&&<div className="diagnostic-block">
+        <h3>Effective Chat Provider</h3>
+        <div className="status-grid">
+          <span>Preset</span><strong>{selected.provider.chatProviderPresetId??"—"}</strong>
+          <span>Provider</span><strong>{selected.provider.chatProviderId}</strong>
+          <span>Model</span><strong>{selected.provider.chatModel}</strong>
+          <span>Base URL host</span><strong>{selected.provider.chatProviderBaseUrlHost??"—"}</strong>
+          <span>Timeout</span><strong>{selected.provider.chatProviderTimeoutMs===undefined?"—":selected.provider.chatProviderTimeoutMs+" ms"}</strong>
+          <span>Transport</span><strong>{selected.provider.chatTransport}</strong>
+        </div>
+      </div>}
+
+      {selected.providerError&&<div className="diagnostic-block">
+        <h3>Provider Failure Details</h3>
+        <div className="status-grid">
+          <span>Preset</span><strong>{selected.providerError.providerPresetId??"—"}</strong>
+          <span>Provider</span><strong>{selected.providerError.providerId??"—"}</strong>
+          <span>Category</span><strong>{selected.providerError.category??"—"}</strong>
+          <span>HTTP status</span><strong>{selected.providerError.httpStatus??"—"}</strong>
+          <span>Timeout</span><strong>{selected.providerError.timeoutMs===undefined?"—":selected.providerError.timeoutMs+" ms"}</strong>
+          <span>Provider duration</span><strong>{selected.providerError.durationMs===undefined?"—":selected.providerError.durationMs+" ms"}</strong>
+        </div>
+        {selected.providerError.providerResponse!==undefined&&<pre className="diagnostic-json">{JSON.stringify(selected.providerError.providerResponse,null,2)}</pre>}
+      </div>}
+
       {selected.providerResponse&&<div className="diagnostic-block">
         <h3>Provider Response</h3>
         <div className="status-grid">
