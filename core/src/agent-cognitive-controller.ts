@@ -103,7 +103,7 @@ export class AgentCognitiveController implements AgentCognitiveDecisionProvider{
         conversationId:context.conversationId??("agent-run:"+context.runId),
         messages:[
           {role:"system",content:mode==="structured"?STRUCTURED_PROMPT:TAGGED_PROMPT},
-          ...context.recentConversationMessages.map(message=>({...message,metadata:message.metadata?{...message.metadata}:undefined})),
+          ...context.recentConversationMessages.map(message=>({...message,...(message.metadata?{metadata:{...message.metadata}}:{})})),
           {role:"user",content:JSON.stringify({
             protocol:"nova-agent-decision-v1",characterId:context.characterId,conversationId:context.conversationId??null,goal:context.goal,task:context.task,
             state:context.state,stepIndex:context.stepIndex,
