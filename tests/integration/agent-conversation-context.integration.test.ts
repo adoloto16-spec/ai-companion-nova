@@ -76,7 +76,7 @@ async function main(){
 
     const directController=new AgentChatController(runtime,character.id,conversation,persist);
     const direct=await directController.submit("расскажи о своих возможностях",provider.id,"test-model");
-    equal(direct.status,"completed","simple informational request finishes directly");
+    equal(direct.status,"completed",`simple informational request finishes directly; status=${direct.status}; runOutcome=${"run" in direct?direct.run.lastOutcome??"":""}; calls=${provider.calls.length}`);
     equal(directController.getSnapshot().result?.includes("Nova can explain"),true,"finish result is the user-facing response");
     equal(provider.calls.length,1,"simple request requires one cognitive step");
     equal(provider.calls[0]?.context.conversationId,conversation.id,"controller uses the real Conversation id");
