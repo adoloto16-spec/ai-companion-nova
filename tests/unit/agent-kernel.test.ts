@@ -4,6 +4,7 @@ import {
 } from "../../core/src";
 import {StandardContractValidator} from "../../contracts/src";
 import type {AgentDecision,ChatError,ChatProvider,ChatRequest,ChatResponse,HealthStatus,ModelInfo,ProviderCapabilities,ChatRequestOptions} from "../../contracts/src";
+import type {AgentCognitiveContext} from "../../core/src/agent-cognitive-controller";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION} from "../../contracts/src";
 
 function ok(value:unknown,label:string){if(!value)throw new Error(label);}
@@ -33,8 +34,9 @@ class SequenceProvider implements ChatProvider{
 
 class SequenceController{
   calls=0;
+  readonly contexts:AgentCognitiveContext[]=[];
   constructor(private readonly decisions:readonly AgentDecision[],private readonly outputMode:"structured"|"tagged"="tagged"){}
-  async decide(){const i=Math.min(this.calls++,this.decisions.length-1);return {decision:this.decisions[i]!,outputMode:this.outputMode};}
+  async decide(context:AgentCognitiveContext){this.contexts.push({...context});const i=Math.min(this.calls++,this.decisions.length-1);return {decision:this.decisions[i]!,outputMode:this.outputMode};}
 }
 
 async function controllerTests(){
@@ -116,15 +118,20 @@ async function kernelTests(){
   equal(controller.calls,3,"three decisions requested");
   ok(Date.now()-startedAt<1000,"continue path has no periodic artificial sleep");
 
-  const askController=new SequenceController([{action:"continue"},{action:"ask_user",question:"Need clarification?"},{action:"finish",result:"done"}]);
+  const askController=new SequenceController([{action:"ask_user",question:"Need clarification?"},{action:"continue"},{action:"finish",result:"done"}]);
   const askKernel=new AgentKernel({cognitive:askController,actionExecutor:new DefaultAgentActionExecutor()});
   const askRun=await askKernel.createRun({characterId:"c",goal:"ask",task:"t"});
   const waiting=await askKernel.run(askRun.id);
   equal(waiting.state,"waiting","ask_user waits");
-  equal(askController.calls,2,"no third decision after ask_user");
-  await askKernel.resume(askRun.id);
+  equal(askController.calls,1,"no next decision after ask_user");
+  equal(askController.contexts[0]?.userResponse,undefined,"initial ask_user step has no user response");
+  await askKernel.resume(askRun.id,"анализ данных");
   const resumed=await askKernel.run(askRun.id);
   equal(resumed.state,"completed","explicit resume continues waiting run");
+  equal(resumed.id,askRun.id,"resume keeps the same Agent Run");
+  equal(askController.contexts[1]?.userResponse,"анализ данных","resume response reaches next cognitive step");
+  equal(askController.contexts[1]?.lastOutcome,"waiting:Need clarification?","lastOutcome remains the previous action outcome");
+  equal(askController.contexts[2]?.userResponse,undefined,"user response is consumed after one cognitive step");
 
   const invalidKernel=new AgentKernel({cognitive:{async decide(){return {decision:{action:"destroy_system"} as never,outputMode:"tagged" as const};}},actionExecutor:new DefaultAgentActionExecutor()});
   const invalid=await invalidKernel.createRun({characterId:"c",goal:"invalid",task:"t"});
