@@ -1,6 +1,6 @@
 import type {
   AgentOutputMode,AppSettings,CharacterId,ChatRequest,ChatResponse,Clock,DiagnosticsStore,EmbeddingProvider,EventBus,
-  MemoryBroker,MemoryItem,MemorySemanticIndexState,MemorySemanticIndexStore,MemorySemanticVectorRecord,SchemaValidator
+  MemoryBroker,MemoryItem,MemorySemanticIndexState,MemorySemanticIndexStore,MemorySemanticVectorRecord,SchemaValidator,JsonSchema
 } from "../../contracts/src/index";
 import {MEMORY_SEMANTIC_INDEX_API_VERSION,MEMORY_SEMANTIC_INDEX_SCHEMA_VERSION,STANDARD_SCHEMAS} from "../../contracts/src/index";
 import {AgentOutputRunner} from "./agent-output";
@@ -125,6 +125,18 @@ export function selectTopSemanticCandidates(
   result.sort(compareSemanticCandidates);
   return result.slice(0,nextLimit);
 }
+
+const MEMORY_JUDGE_PROVIDER_SCHEMA:JsonSchema={
+  type:"object",
+  additionalProperties:false,
+  required:["archive"],
+  properties:{
+    archive:{
+      type:"array",
+      items:{type:"string"}
+    }
+  }
+};
 
 const PROVIDER_FAILURE_DETAIL_KEYS=["providerId","providerPresetId","model","baseUrlHost","chatTransport","httpStatus","durationMs","category","timeoutMs","providerResponse"] as const;
 
@@ -406,6 +418,7 @@ export class MemorySemanticDeduplicator{
         providerPresetId:presetId,
         schemaName:"memory-judge-decision",
         schema,
+        providerSchema:MEMORY_JUDGE_PROVIDER_SCHEMA,
         validator:this.options.validator,
         parseStructured:parseStructuredJudge,
         parsePlain:parsePlainJudge,
