@@ -174,12 +174,44 @@ async function structuredRequestMappingTest(){
   await p.chat({...request(),generation:{responseFormat:{type:"json-schema",schema,name:"memory_agent_decision",strict:true}}});
   const body=http.requests[0]?.body;
   if(body===undefined)throw new Error("expected structured request body");
-  const sent=JSON.parse(body) as {response_format?:{type:string;json_schema?:{name:string;strict:boolean;schema:unknown}}};
+  const sent=JSON.parse(body) as {model:string;stream:boolean;response_format?:{type:string;json_schema?:{name:string;strict:boolean;schema:unknown}}};
+  equal(sent.model,"openai-compatible-test-model","structured model mapping");
+  equal(sent.stream,false,"structured request is non-streaming");
   equal(sent.response_format?.type,"json_schema","structured response_format type");
   equal(sent.response_format?.json_schema?.name,"memory_agent_decision","structured schema name");
   equal(sent.response_format?.json_schema?.strict,true,"structured schema strict");
   equal(JSON.stringify(sent.response_format?.json_schema?.schema),JSON.stringify(schema),"structured schema mapping");
 }
+async function structuredMistralLikeSuccessTest(){
+  const http=new FakeHttpClient();
+  http.next={
+    status:200,
+    body:JSON.stringify({
+      model:"codestral-latest",
+      choices:[{
+        message:{
+          role:"assistant",
+          content:"{\"archive\":[\"2\"]}"
+        },
+        finish_reason:"stop"
+      }]
+    })
+  };
+  const schema={
+    type:"object",
+    additionalProperties:false,
+    properties:{archive:{type:"array",items:{type:"string"}}},
+    required:["archive"]
+  };
+  const response=await provider(http).chat({
+    ...request(),
+    model:"codestral-latest",
+    generation:{responseFormat:{type:"json-schema",name:"memory-judge-decision",strict:true,schema}}
+  });
+  equal(response.model,"codestral-latest","structured response model");
+  equal(response.message.content,'{"archive":["2"]}',"structured response content reaches caller");
+}
+
 async function plainRequestOmitsResponseFormatTest(){
   const http=new FakeHttpClient();
   await provider(http).chat({...request(),generation:{temperature:0.2,responseFormat:{type:"text"}}});
@@ -603,6 +635,7 @@ void (async()=>{
     ["Metadata and capabilities",metadataAndCapabilitiesTest],
     ["Request mapping",requestMappingTest],
     ["Structured request mapping",structuredRequestMappingTest],
+    ["Structured Mistral-like success",structuredMistralLikeSuccessTest],
     ["Plain request mapping",plainRequestOmitsResponseFormatTest],
     ["Structured unsupported classification",structuredUnsupportedClassificationTest],
     ["Success response mapping",successResponseMappingTest],
