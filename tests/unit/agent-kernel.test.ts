@@ -18,6 +18,7 @@ function makeError(code:ChatError["code"],category:string,httpStatus?:number):Ch
 class SequenceProvider implements ChatProvider{
   readonly id="test.agent";
   readonly calls:string[]=[];
+  readonly requestPayloads:string[]=[];
   private cursor=0;
   constructor(private readonly structured:boolean,private readonly outputs:readonly string[],private readonly structuredError?:ChatError){}
   metadata(){return {id:this.id,kind:"chat" as const,displayName:"Agent Test Provider",version:"1"};}
@@ -25,6 +26,8 @@ class SequenceProvider implements ChatProvider{
   async listModels():Promise<ModelInfo[]>{return [{id:"test-model",capabilities:this.capabilities()}];}
   async chat(request:ChatRequest,_options?:ChatRequestOptions):Promise<ChatResponse>{
     const mode=request.generation?.responseFormat?.type==="json"?"structured":"text";this.calls.push(mode);
+    const payload=request.context.messages.at(-1)?.content;
+    if(payload)this.requestPayloads.push(payload);
     if(mode==="structured"&&this.structuredError){const error=new Error(this.structuredError.message);Object.assign(error,{chatError:this.structuredError});throw error;}
     const output=this.outputs[Math.min(this.cursor++,this.outputs.length-1)]??"<NOVA_ACTION>\ntype=finish\nresult=done\n</NOVA_ACTION>";
     return {apiVersion:request.apiVersion,schemaVersion:request.schemaVersion,requestId:request.requestId,conversationId:request.context.conversationId,providerId:this.id,model:request.model,message:{id:request.requestId,role:"assistant",content:output},finishReason:"stop"};
@@ -49,6 +52,13 @@ async function controllerTests(){
   equal(decision.decision.action,"continue","structured JSON parsed");
   equal(decision.outputMode,"structured","structured mode preferred");
   equal(structuredProvider.calls[0],"structured","structured request used");
+
+  const responseProvider=new SequenceProvider(true,['{"action":"finish","result":"done"}']);
+  const responseRegistry=new ProviderRegistry();responseRegistry.register(responseProvider,["chat"]);
+  const responseController=new AgentCognitiveController(new AiRuntime(responseRegistry),{validator});
+  await responseController.decide({runId:"r-response",characterId:"c",goal:"g",task:"t",state:"thinking",stepIndex:2,model:"test-model",userResponse:"анализ данных"});
+  const responsePayload=JSON.parse(responseProvider.requestPayloads[0]!) as {userResponse?:string};
+  equal(responsePayload.userResponse,"анализ данных","cognitive payload includes userResponse");
 
   const malformed=new SequenceProvider(true,["not json","<NOVA_ACTION>\ntype=finish\nresult=done\n</NOVA_ACTION>"]);
   const malformedRegistry=new ProviderRegistry();malformedRegistry.register(malformed,["chat"]);
