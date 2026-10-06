@@ -226,6 +226,20 @@ async function invalidCandidateNumberNoMutationTest(){
   ok(f.diagnostics.recentErrors().some(error=>error.code==="MUTATION_BLOCKED"),"invalid Judge number is diagnosed as blocked mutation");
 }
 
+async function invalidStructuredValueNoMutationTest(){
+  for(const output of [
+    JSON.stringify({archive:["INVALID"]}),
+    JSON.stringify({archive:["2","2"]})
+  ]){
+    const f=await fixture(()=>output);
+    await f.broker.create("character.a",{id:"old",type:"fact",content:"User likes blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+    const newer=await f.broker.create("character.a",{id:"new",type:"fact",content:"User likes blue and programming.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+    equal(newer.status,"active","invalid structured selection leaves new memory active");
+    equal((await f.broker.get("character.a","old"))?.status,"active","invalid structured selection leaves candidate active");
+    ok(f.diagnostics.recentErrors().some(error=>error.code==="AGENT_STRUCTURED_SCHEMA_INVALID"),"canonical schema validation rejects provider response before mutation");
+  }
+}
+
 async function malformedOutputNoMutationTest(){
   const f=await fixture(()=>JSON.stringify({decisions:[{candidateId:"old",relation:"duplicate"}]}));
   await f.broker.create("character.a",{id:"old",type:"fact",content:"User likes blue.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
@@ -691,6 +705,7 @@ async function main(){
   await plainArchiveTest();
   await plainNoArchiveTest();
   await invalidCandidateNumberNoMutationTest();
+  await invalidStructuredValueNoMutationTest();
   await malformedOutputNoMutationTest();
   await allRecordsMutationBlockedTest();
   await equalInformationTest();
