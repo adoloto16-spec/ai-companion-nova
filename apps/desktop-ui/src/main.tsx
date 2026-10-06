@@ -295,7 +295,6 @@ function ChatView({controller,runtime,character,modelProfile,conversations,activ
       <strong>{statusLabel}</strong>
       {agentSnapshot.runId&&<span> · run {agentSnapshot.runId}</span>}
       {agentSnapshot.stepCount>0&&<span> · step {agentSnapshot.stepCount}</span>}
-      {agentSnapshot.question&&<div className="agent-question"><strong>Nova asks:</strong> {agentSnapshot.question}</div>}
       {agentSnapshot.error&&<div className="chat-error" role="alert">{agentSnapshot.error}</div>}
       {agentSnapshot.result&&agentSnapshot.status==="completed"&&<div className="agent-result-note">Final result saved to the conversation.</div>}
     </div>}
