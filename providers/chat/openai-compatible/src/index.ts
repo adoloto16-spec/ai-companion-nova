@@ -322,7 +322,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       const durationMs=Date.now()-started;
       this.recordDiagnostic(request,"CHAT_PROVIDER_HTTP_RESPONSE_RECEIVED","OpenAI-compatible provider HTTP response received","stream",{httpStatus:response.status,durationMs});
 
-      if(response.status<200||response.status>=300)throw this.httpFailure(response.status,request,durationMs);
+      if(response.status<200||response.status>=300)throw this.httpFailure(response.status,request,durationMs,undefined,"stream");
 
       let buffer="";
       let finishReason:ChatResponse["finishReason"]="unknown";
@@ -837,16 +837,21 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     }
   }
 
-  private httpFailure(status:number,request:ChatRequest,durationMs:number,body?:string):OpenAICompatibleProviderError{
+  private httpFailure(status:number,request:ChatRequest,durationMs:number,body?:string,chatTransport:"stream"|"chat"="chat"):OpenAICompatibleProviderError{
+    const diagnosticDetails={
+      ...this.diagnosticMetadata(request,chatTransport),
+      httpStatus:status,
+      durationMs
+    };
     if((status===400||status===422)&&request.generation?.responseFormat?.type==="json-schema"&&this.isStructuredUnsupportedResponse(body)){
-      return this.failure({code:"UNSUPPORTED",message:"OpenAI-compatible provider does not support the requested structured output.",request,retryable:false,details:withProviderResponse({category:"capability",httpStatus:status,durationMs},body)});
+      return this.failure({code:"UNSUPPORTED",message:"OpenAI-compatible provider does not support the requested structured output.",request,retryable:false,details:withProviderResponse({...diagnosticDetails,category:"capability"},body)});
     }
-    if(status===400)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rejected the chat request.",request,retryable:false,details:withProviderResponse({category:"bad_request",httpStatus:status,durationMs},body)});
-    if(status===401||status===403)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rejected authentication.",request,retryable:false,details:withProviderResponse({category:"authentication",httpStatus:status,durationMs},body)});
-    if(status===404)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible chat endpoint was not found.",request,retryable:false,details:withProviderResponse({category:"endpoint",httpStatus:status,durationMs},body)});
-    if(status===429)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rate limit was reached.",request,retryable:true,details:withProviderResponse({category:"rate_limit",httpStatus:status,durationMs},body)});
-    if(status>=500)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider returned a server error.",request,retryable:true,details:withProviderResponse({category:"server",httpStatus:status,durationMs},body)});
-    return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider returned an unexpected HTTP status.",request,retryable:false,details:withProviderResponse({category:"http",httpStatus:status,durationMs},body)});
+    if(status===400)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rejected the chat request.",request,retryable:false,details:withProviderResponse({...diagnosticDetails,category:"bad_request"},body)});
+    if(status===401||status===403)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rejected authentication.",request,retryable:false,details:withProviderResponse({...diagnosticDetails,category:"authentication"},body)});
+    if(status===404)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible chat endpoint was not found.",request,retryable:false,details:withProviderResponse({...diagnosticDetails,category:"endpoint"},body)});
+    if(status===429)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rate limit was reached.",request,retryable:true,details:withProviderResponse({...diagnosticDetails,category:"rate_limit"},body)});
+    if(status>=500)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider returned a server error.",request,retryable:true,details:withProviderResponse({...diagnosticDetails,category:"server"},body)});
+    return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider returned an unexpected HTTP status.",request,retryable:false,details:withProviderResponse({...diagnosticDetails,category:"http"},body)});
   }
 
   private mapResponse(payload:unknown,request:ChatRequest,durationMs:number):ChatResponse{
