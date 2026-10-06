@@ -528,7 +528,8 @@ export class ChatSessionController{
         ?(error as {chatError?:{providerId?:unknown;details?:Record<string,unknown>}}).chatError
         :undefined;
       const providerDetails=chatError?.details;
-      const providerId=typeof chatError?.providerId==="string"?chatError.providerId:providerDiagnosticsForRequest(this.runtime,providerPresetId)?.providerId;
+      const providerPresetIdForError=this.modelProfile?.providerPresetId??this.runtime.getActiveProviderPresetId?.();
+      const providerId=typeof chatError?.providerId==="string"?chatError.providerId:providerDiagnosticsForRequest(this.runtime,providerPresetIdForError)?.providerId;
       const current=this.session.getMessages().find(message=>message.id===active.assistantId);
       if(current?.content){
         this.session.replaceMessage(active.assistantId,withStreamMetadata(current,"interrupted"));
@@ -546,7 +547,7 @@ export class ChatSessionController{
         ...(chatError||providerDetails?{
           providerError:{
             ...(providerId?{providerId}:{}),
-            ...(providerPresetId?{providerPresetId}:{}),
+            ...(providerPresetIdForError?{providerPresetId:providerPresetIdForError}:{}),
             ...(typeof providerDetails?.category==="string"?{category:providerDetails.category}:{}),
             ...(typeof providerDetails?.httpStatus==="number"?{httpStatus:providerDetails.httpStatus}:{}),
             ...(typeof providerDetails?.durationMs==="number"?{durationMs:providerDetails.durationMs}:{}),
