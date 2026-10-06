@@ -205,7 +205,6 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
   private readonly credentialStore:CredentialStore;
   private readonly httpClient:HttpClient;
   private modelsCache:{expiresAt:number;models:ModelInfo[]}|undefined;
-  private streamEventObserved=false;
 
   constructor(
     config:OpenAICompatibleProviderConfig,
