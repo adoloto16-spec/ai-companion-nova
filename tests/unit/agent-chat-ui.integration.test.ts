@@ -74,6 +74,7 @@ async function main(){
   equal(completed.status,"completed","agent submit completes");
   equal(runtime.starts.length,1,"startAgentRun called exactly once");
   equal((runtime.inputs[0] as {providerId?:string}).providerId,"provider.test","provider-neutral provider id is passed through");
+  equal((runtime.inputs[0] as {conversationId?:string}).conversationId,persisted[0]!.id,"AgentRun is linked to the active Conversation");
   equal((runtime.inputs[0] as {model?:string}).model,"model.test","model is passed through");
   equal(runOf(completed).stepCount,3,"multi-step run reaches the final step");
   equal(persisted[0]!.messages.filter(message=>message.role==="user").length,1,"agent user message is persisted");
@@ -186,6 +187,7 @@ async function main(){
   assert.match(source,/agentController\.resume/);
   assert.match(source,/agentController\.interrupt/);
   assert.match(source,/agentSnapshot\.question/);
+  assert.doesNotMatch(source,/Nova asks:/);
   assert.match(source,/onPersistAgentConversation/);
   assert.match(source,/runtime\.getActiveChatModel\(\)/);
   console.log("agent-chat-ui integration: ok");

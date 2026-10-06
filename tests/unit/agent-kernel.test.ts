@@ -48,7 +48,7 @@ async function controllerTests(){
   const structuredProvider=new SequenceProvider(true,['{"action":"continue","workingSummary":"continue"}']);
   const structuredRegistry=new ProviderRegistry();structuredRegistry.register(structuredProvider,["chat"]);
   const controller=new AgentCognitiveController(new AiRuntime(structuredRegistry),{validator});
-  const decision=await controller.decide({runId:"r",characterId:"c",goal:"g",task:"t",state:"thinking",stepIndex:1,model:"test-model"});
+  const decision=await controller.decide({runId:"r",characterId:"c",goal:"g",task:"t",state:"thinking",stepIndex:1,model:"test-model",recentConversationMessages:[]});
   equal(decision.decision.action,"continue","structured JSON parsed");
   equal(decision.outputMode,"structured","structured mode preferred");
   equal(structuredProvider.calls[0],"structured","structured request used");
@@ -64,7 +64,7 @@ async function controllerTests(){
   const malformedRegistry=new ProviderRegistry();malformedRegistry.register(malformed,["chat"]);
   const diagnostics=new InMemoryDiagnosticsStore();
   const malformedController=new AgentCognitiveController(new AiRuntime(malformedRegistry),{validator,diagnostics});
-  const fallback=await malformedController.decide({runId:"r2",characterId:"c",goal:"g",task:"t",state:"thinking",stepIndex:1,model:"test-model"});
+  const fallback=await malformedController.decide({runId:"r2",characterId:"c",goal:"g",task:"t",state:"thinking",stepIndex:1,model:"test-model",recentConversationMessages:[]});
   equal(fallback.decision.action,"finish","malformed structured output falls back");
   equal(malformed.calls.join(","),"structured,text","one tagged fallback attempt");
   equal(diagnostics.recentErrors()[0]?.code,"AGENT_STRUCTURED_OUTPUT_FALLBACK","fallback diagnostic emitted");
@@ -72,31 +72,31 @@ async function controllerTests(){
   const unsupported=new SequenceProvider(true,["<NOVA_ACTION>\ntype=finish\nresult=done\n</NOVA_ACTION>"],makeError("UNSUPPORTED","capability"));
   const unsupportedRegistry=new ProviderRegistry();unsupportedRegistry.register(unsupported,["chat"]);
   const unsupportedController=new AgentCognitiveController(new AiRuntime(unsupportedRegistry),{validator});
-  const unsupportedDecision=await unsupportedController.decide({runId:"r3",characterId:"c",goal:"g",task:"t",state:"thinking",stepIndex:1,model:"test-model"});
+  const unsupportedDecision=await unsupportedController.decide({runId:"r3",characterId:"c",goal:"g",task:"t",state:"thinking",stepIndex:1,model:"test-model",recentConversationMessages:[]});
   equal(unsupportedDecision.outputMode,"tagged","capability unsupported falls back");
 
   const badRequest=new SequenceProvider(true,["<NOVA_ACTION>\ntype=finish\nresult=done\n</NOVA_ACTION>"],{...makeError("PROVIDER_ERROR","capability",400),details:{category:"capability",structuredOutputUnsupported:true,httpStatus:400}});
   const badRequestRegistry=new ProviderRegistry();badRequestRegistry.register(badRequest,["chat"]);
   const badRequestController=new AgentCognitiveController(new AiRuntime(badRequestRegistry),{validator});
-  const badRequestDecision=await badRequestController.decide({runId:"r4",characterId:"c",goal:"g",task:"t",state:"thinking",stepIndex:1,model:"test-model"});
+  const badRequestDecision=await badRequestController.decide({runId:"r4",characterId:"c",goal:"g",task:"t",state:"thinking",stepIndex:1,model:"test-model",recentConversationMessages:[]});
   equal(badRequestDecision.outputMode,"tagged","structured 400 unsupported falls back");
 
   const auth=new SequenceProvider(true,["<NOVA_ACTION>\ntype=finish\nresult=done\n</NOVA_ACTION>"],makeError("PROVIDER_ERROR","authentication",401));
   const authRegistry=new ProviderRegistry();authRegistry.register(auth,["chat"]);
   const authController=new AgentCognitiveController(new AiRuntime(authRegistry),{validator});
-  await rejects(()=>authController.decide({runId:"r5",characterId:"c",goal:"g",task:"t",state:"thinking",stepIndex:1,model:"test-model"}),"authentication failure is surfaced");
+  await rejects(()=>authController.decide({runId:"r5",characterId:"c",goal:"g",task:"t",state:"thinking",stepIndex:1,model:"test-model",recentConversationMessages:[]}),"authentication failure is surfaced");
   equal(auth.calls.join(","),"structured","authentication failure does not fallback");
 
   const timeout=new SequenceProvider(true,["<NOVA_ACTION>\ntype=finish\nresult=done\n</NOVA_ACTION>"],makeError("PROVIDER_ERROR","timeout"));
   const timeoutRegistry=new ProviderRegistry();timeoutRegistry.register(timeout,["chat"]);
   const timeoutController=new AgentCognitiveController(new AiRuntime(timeoutRegistry),{validator});
-  await rejects(()=>timeoutController.decide({runId:"r6",characterId:"c",goal:"g",task:"t",state:"thinking",stepIndex:1,model:"test-model"}),"timeout is surfaced");
+  await rejects(()=>timeoutController.decide({runId:"r6",characterId:"c",goal:"g",task:"t",state:"thinking",stepIndex:1,model:"test-model",recentConversationMessages:[]}),"timeout is surfaced");
   equal(timeout.calls.join(","),"structured","timeout does not fallback");
 
   const plain=new SequenceProvider(false,["<NOVA_ACTION>\ntype=finish\nresult=done\n</NOVA_ACTION>"]);
   const plainRegistry=new ProviderRegistry();plainRegistry.register(plain,["chat"]);
   const plainController=new AgentCognitiveController(new AiRuntime(plainRegistry),{validator});
-  const plainDecision=await plainController.decide({runId:"r7",characterId:"c",goal:"g",task:"t",state:"thinking",stepIndex:1,model:"test-model"});
+  const plainDecision=await plainController.decide({runId:"r7",characterId:"c",goal:"g",task:"t",state:"thinking",stepIndex:1,model:"test-model",recentConversationMessages:[]});
   equal(plainDecision.decision.action,"finish","plain tagged mode parses");
   equal(plain.calls.join(","),"text","unsupported structured capability skips structured request");
 
