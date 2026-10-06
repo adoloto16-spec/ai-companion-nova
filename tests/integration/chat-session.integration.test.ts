@@ -71,14 +71,20 @@ async function pinnedProviderPresetSurvivesActiveJudgePresetTest(){
         providerPresetId,
         providerId:"openai-compatible",
         baseUrlHost:providerPresetId==="provider-preset:main:1"?"main.invalid":"judge.invalid",
-        timeoutMs:providerPresetId==="provider-preset:main:1"?undefined:60000
-      })
+        timeoutMs:providerPresetId==="provider-preset:main:1"?30000:60000
+      }),
+      traceStore:runtime.getChatTraceStore()
     });
     controller.setModelProfile(reloaded);
     const result=await controller.submit("я живу в берлине","ministral-3b-2512");
     equal(result.status,"sent","pinned main provider remains usable while Judge preset is active");
     equal(httpClient.streamRequests.length,1,"one main Chat stream request is sent");
     equal(httpClient.streamRequests[0]?.url,"https://main.invalid/v1/chat/completions","Chat uses pinned main provider preset, not active Judge preset");
+    const trace=runtime.listChatTraces(1)[0];
+    equal(trace?.provider?.chatProviderPresetId,"provider-preset:main:1","trace records pinned main provider preset");
+    equal(trace?.provider?.chatProviderBaseUrlHost,"main.invalid","trace records main provider host");
+    equal(trace?.provider?.chatProviderTimeoutMs,30000,"trace records effective default Chat timeout");
+    equal(trace?.provider?.chatTransport,"stream","trace records stream transport");
   }finally{
     await runtime.stop();
   }
