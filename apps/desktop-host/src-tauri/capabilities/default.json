@@ -25,6 +25,8 @@
     "allow-save-core-book-entries",
     "allow-get-memory-state",
     "allow-save-memory-state",
+    "allow-get-memory-semantic-index",
+    "allow-save-memory-semantic-index",
     "allow-supersede-memory",
     "allow-search-retrieval-index",
     "allow-rebuild-retrieval-index",

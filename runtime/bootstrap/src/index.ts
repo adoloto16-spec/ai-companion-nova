@@ -1,9 +1,9 @@
-import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryArchiveReason,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider} from "../../../contracts/src/index";
+import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryArchiveReason,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,MemorySemanticIndexStore,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider} from "../../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore} from "../../../contracts/src/index";
 import type {Conversation,ConversationCreateInput,ConversationId,ConversationStore,ConversationUpdateInput} from "../../../contracts/src/index";
 import {
-  AiRuntime,AutomaticMemoryAgent,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,
+  AiRuntime,AutomaticMemoryAgent,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,MemorySemanticDeduplicator,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,
   InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,
   DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
   InMemoryActorIdentityResolver,createMemoryConfig,SettingsManager,InMemoryChatTraceStore
@@ -21,9 +21,9 @@ import {InMemoryCredentialStore} from "../../../host/credentials/src/index";
 import {InMemoryConversationStore} from "../../../host/conversations/src/index";
 import {InMemorySettingsStore} from "../../../host/settings/src/index";
 import {InMemoryCoreBookStore} from "../../../host/core-book/src/index";
-import {InMemoryMemoryStore} from "../../../host/memory/src/index";
+import {InMemoryMemorySemanticIndexStore,InMemoryMemoryStore} from "../../../host/memory/src/index";
 import type {CoreBookCreateInput,CoreBookUpdateInput} from "../../../core/src/core-book-manager";
-import {activeProviderId,buildConfiguredProvider,buildProviderForDiscovery,buildProviderForPreset,testProviderConfiguration} from "./provider-configuration";
+import {activeProviderId,buildConfiguredProvider,buildEmbeddingProviderForPreset,buildProviderForDiscovery,buildProviderForPreset,testProviderConfiguration} from "./provider-configuration";
 import {RetrievalEventIndexer} from "../../../core/src/retrieval-indexer";
 
 
@@ -46,6 +46,8 @@ export interface FoundationRuntimeOptions{
   contextEngine?:ContextEngine;
   retriever?:Retriever;
   retrievalIndexWriter?:RetrievalIndexWriter;
+  semanticIndexStore?:MemorySemanticIndexStore;
+  embeddingHttpClient?:import("../../../providers/embeddings/openai-compatible/src").EmbeddingHttpClient;
   providerPresetConfigurations?:readonly {presetId:string;configuration:ProviderConfiguration}[];
   activeProviderPresetId?:string;
 }
@@ -64,6 +66,12 @@ export interface FoundationRuntime{
   getChatModel(providerId?:string):Promise<string>;
   getChatModelForPreset(providerPresetId:string):Promise<string>;
   getActiveProviderPresetId():string|undefined;
+  getChatProviderDiagnostics(providerPresetId?:string):{
+    providerPresetId?:string;
+    providerId:string;
+    baseUrlHost?:string;
+    timeoutMs?:number;
+  };
   applyProviderConfiguration(configuration:ProviderConfiguration|undefined):Promise<void>;
   testConfiguredProvider():Promise<import("../../../contracts/src/index").ProviderConnectionTestResult>;
   getSettings():AppSettings;
@@ -116,6 +124,44 @@ export interface FoundationRuntime{
   rebuildAllRetrieval():Promise<void>;
 }
 
+function safeBaseUrlHost(baseUrl:string):string|undefined{
+  try{return new URL(baseUrl).host||undefined}catch{return undefined}
+}
+
+function safeProviderConfigMetadata(configuration:ProviderConfiguration|undefined):Record<string,unknown>|undefined{
+  if(!configuration)return undefined;
+  return {
+    providerId:configuration.providerId,
+    ...(safeBaseUrlHost(configuration.baseUrl)?{baseUrlHost:safeBaseUrlHost(configuration.baseUrl)}:{}),
+    ...(configuration.timeoutMs!==undefined?{timeoutMs:configuration.timeoutMs}:{}),
+  };
+}
+
+function recordChatProviderFailure(
+  diagnostics:InMemoryDiagnosticsStore,
+  error:unknown,
+  request:ChatRequest,
+  providerPresetId:string|undefined,
+  chatTransport:"stream"|"chat"
+):void{
+  const chatError=error&&typeof error==="object"&&"chatError" in error
+    ?(error as {chatError?:{providerId?:unknown;details?:Record<string,unknown>}}).chatError
+    :undefined;
+  const details=chatError?.details;
+  diagnostics.recordError("chat-provider","CHAT_PROVIDER_REQUEST_FAILED","Chat provider request failed",{
+    requestId:request.requestId,
+    ...(typeof chatError?.providerId==="string"?{providerId:chatError.providerId}:{}),
+    ...(providerPresetId?{providerPresetId}:{}),
+    model:request.model,
+    ...(typeof details?.category==="string"?{category:details.category}:{}),
+    ...(typeof details?.httpStatus==="number"?{httpStatus:details.httpStatus}:{}),
+    ...(typeof details?.durationMs==="number"?{durationMs:details.durationMs}:{}),
+    ...(typeof details?.timeoutMs==="number"?{timeoutMs:details.timeoutMs}:{}),
+    ...(details?.providerResponse!==undefined?{providerResponse:details.providerResponse}:{}),
+    chatTransport,
+  });
+}
+
 export async function createFoundationRuntime(options:FoundationRuntimeOptions={}):Promise<FoundationRuntime>{
   const contractValidator=new StandardContractValidator();
   const settingsStore=options.settingsStore??new InMemorySettingsStore(contractValidator);
@@ -133,6 +179,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const coreBookStore=options.coreBookStore??new InMemoryCoreBookStore();
   const coreBookManager=new CoreBookManager(coreBookStore,{events,clock:{now:()=>new Date().toISOString()},characterExists:async characterId=>Boolean(await characterManager.getCharacter(characterId))});
   const memoryStore=options.memoryStore??new InMemoryMemoryStore();
+  const semanticIndexStore=options.semanticIndexStore??new InMemoryMemorySemanticIndexStore();
+
   const conversationStore=options.conversationStore??new InMemoryConversationStore();
   const conversationManager=new ConversationManager(conversationStore,{characterExists:async characterId=>Boolean(await characterManager.getCharacter(characterId)),events,clock:{now:()=>new Date().toISOString()}});
   const credentialStore=options.credentialStore??options.openAICompatible?.credentialStore??new InMemoryCredentialStore();
@@ -181,7 +229,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const applyProvider=async(configuration:ProviderConfiguration|undefined)=>{
     providerConfiguration=configuration;
     providers.unregister("openai-compatible");
-    const configured=configuration?buildConfiguredProvider(configuration,credentialStore,options.httpClient):undefined;
+    const configured=configuration?buildConfiguredProvider(configuration,credentialStore,options.httpClient,diagnosticsStore,activeProviderPresetId):undefined;
     if(configured)providers.register(configured,["chat"]);
   };
   if(options.openAICompatible){
@@ -230,6 +278,37 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     validator:contractValidator,
     diagnostics:diagnosticsStore,
     traceStore
+  });
+
+  const semanticMemoryDeduplicator=new MemorySemanticDeduplicator({
+    settings:()=>settingsManager.get(),
+    broker:memoryBroker,
+    indexStore:semanticIndexStore,
+    embeddingProvider:async()=>{
+      const semanticSettings=settingsManager.get().semanticDedup;
+      const presetId=semanticSettings.embeddingProviderPresetId?.trim()??"";
+      const configuration=presetId?providerPresetConfigurations.get(presetId):undefined;
+      if(!configuration)return undefined;
+      return buildEmbeddingProviderForPreset(configuration,semanticSettings.embeddingModel,credentialStore,options.embeddingHttpClient);
+    },
+    judgeRuntime:extractionChatRuntime,
+    getChatModelForPreset:resolveChatModelForPreset,
+    validator:contractValidator,
+    diagnostics:diagnosticsStore,
+    events,
+    listCharacterIds:async()=> (await characterManager.listCharacters()).map(character=>character.id),
+    clock:{now:()=>new Date().toISOString()},
+    source:"memory-semantic-deduplication"
+  });
+  semanticMemoryDeduplicator.start();
+  // Record the effective production wiring and settings so disabled or unwired dedup is observable without exposing secrets.
+  diagnosticsStore.recordError("memory-semantic-deduplication","SEMANTIC_DEDUP_RUNTIME_READY","semantic memory deduplication runtime ready",{
+    semanticDedupEnabled:appSettings.semanticDedup.enabled,
+    judgeEnabled:appSettings.semanticDedup.judge.enabled,
+    judgeProviderPresetId:appSettings.semanticDedup.judge.providerPresetId??null,
+    judgeModel:appSettings.semanticDedup.judge.model,
+    judgeOutputMode:appSettings.semanticDedup.judge.outputMode,
+    memoryCreatedSubscribers:events.subscriberCount("MemoryCreated")
   });
 
   const moduleCapabilities:Record<string,readonly string[]>={
@@ -330,6 +409,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       try{await conversationManager.getActiveConversation(await characterManager.getActiveCharacter().then(character=>character.id));}
       catch(error){diagnosticsStore.recordError("conversation-storage","LOAD_FAILED",error instanceof Error?error.message:String(error));}
       retrievalIndexer?.start();
+      try{await semanticMemoryDeduplicator.rebuildAll();}
+      catch(error){diagnosticsStore.recordError("memory-semantic-deduplication","STARTUP_REBUILD_FAILED",error instanceof Error?error.message:String(error));}
       if(options.retriever){
         try{await options.retriever.rebuildAll();retrievalDegraded=false}
         catch(error){retrievalDegraded=true;diagnosticsStore.recordError("retrieval","REBUILD_FAILED",error instanceof Error?error.message:String(error))}
@@ -338,7 +419,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       await moduleManager.startAll();
       runtimeStatus="running";
     },
-    async stop(){try{retrievalIndexer?.stop();await moduleManager.stopAll();}finally{runtimeStatus="stopped";}},
+    async stop(){try{semanticMemoryDeduplicator.stop();retrievalIndexer?.stop();await moduleManager.stopAll();}finally{runtimeStatus="stopped";}},
     diagnostics:snapshot,
     recordDiagnosticError:(source,code,message,metadata)=>diagnosticsStore.recordError(source,code,message,metadata),
     invoke:request=>broker.execute({request,credential:characterCredential}),
@@ -348,13 +429,33 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
         const effectiveConfiguration=configuration?{...configuration,model:request.model}:undefined;
         const scopedProviders=new ProviderRegistry();
         if(effectiveConfiguration){
-          const configured=buildProviderForPreset(effectiveConfiguration,credentialStore,options.httpClient);
+          const configured=buildProviderForPreset(effectiveConfiguration,credentialStore,options.httpClient,diagnosticsStore,providerPresetId);
           if(configured)scopedProviders.register(configured,["chat"]);
         }
+        diagnosticsStore.recordError("chat-provider","CHAT_PROVIDER_REQUEST_STARTED","Chat provider stream request started",{
+          requestId:request.requestId,providerId:"openai-compatible",providerPresetId,model:request.model,
+          ...(safeProviderConfigMetadata(effectiveConfiguration)?{...safeProviderConfigMetadata(effectiveConfiguration)}:{}),
+          chatTransport:"stream"
+        });
         const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
-        return scopedRuntime.stream({...request,providerId:"openai-compatible"},handlers,streamOptions);
+        try{
+          return await scopedRuntime.stream({...request,providerId:"openai-compatible"},handlers,streamOptions);
+        }catch(error){
+          recordChatProviderFailure(diagnosticsStore,error,request,providerPresetId,"stream");
+          throw error;
+        }
       }
-      return aiRuntime.stream(request,handlers,streamOptions);
+      diagnosticsStore.recordError("chat-provider","CHAT_PROVIDER_REQUEST_STARTED","Chat provider stream request started",{
+        requestId:request.requestId,providerId:request.providerId??activeProviderId(providerConfiguration),model:request.model,
+        ...(safeProviderConfigMetadata(providerConfiguration)?{...safeProviderConfigMetadata(providerConfiguration)}:{}),
+        chatTransport:"stream"
+      });
+      try{
+        return await aiRuntime.stream(request,handlers,streamOptions);
+      }catch(error){
+        recordChatProviderFailure(diagnosticsStore,error,request,undefined,"stream");
+        throw error;
+      }
     },
     chat:async(request,providerPresetId)=>{
       if(providerPresetId){
@@ -385,6 +486,16 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       }
     },
     getActiveProviderPresetId:()=>activeProviderPresetId,
+    getChatProviderDiagnostics:providerPresetId=>{
+      const effectiveId=providerPresetId??activeProviderPresetId;
+      const configuration=effectiveId?providerPresetConfigurations.get(effectiveId):providerConfiguration;
+      return {
+        ...(effectiveId?{providerPresetId:effectiveId}:{}),
+        providerId:configuration?.providerId??activeProviderId(providerConfiguration),
+        ...(configuration?{baseUrlHost:safeBaseUrlHost(configuration.baseUrl)}:{}),
+        ...(configuration?{timeoutMs:configuration.timeoutMs??30000}:{}),
+      };
+    },
     getChatModelForPreset:resolveChatModelForPreset,
     applyProviderConfiguration:async(configuration)=>{await applyProvider(configuration);},
     getSettings:()=>settingsManager.get(),
@@ -392,6 +503,14 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       const next=await settingsManager.set(settings);
       diagnosticsStore.setMaxEntries(next.diagnostics.keepRecentEntries);
       traceStore.configure(next.diagnostics.logLevel,next.diagnostics.keepRecentEntries);
+      // Record the values the already-running runtime will use after a Settings Save.
+      diagnosticsStore.recordError("memory-semantic-deduplication","SEMANTIC_DEDUP_SETTINGS_APPLIED","semantic memory deduplication settings applied",{
+        semanticDedupEnabled:next.semanticDedup.enabled,
+        judgeEnabled:next.semanticDedup.judge.enabled,
+        judgeProviderPresetId:next.semanticDedup.judge.providerPresetId??null,
+        judgeModel:next.semanticDedup.judge.model,
+        judgeOutputMode:next.semanticDedup.judge.outputMode
+      });
       return next;
     },
     resetSettings:async()=>{

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.ai-companion-nova.dev/app-settings/v4",
-  "title": "AI Companion Nova App Settings v4",
+  "$id": "https://schemas.ai-companion-nova.dev/app-settings/v5",
+  "title": "AI Companion Nova App Settings v5",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -13,6 +13,7 @@
     "retrieval",
     "diagnostics",
     "ui",
+    "semanticDedup",
     "memoryAgent"
   ],
   "properties": {
@@ -20,7 +21,7 @@
       "const": "1"
     },
     "schemaVersion": {
-      "const": "4"
+      "const": "5"
     },
     "chat": {
       "type": "object",
@@ -179,6 +180,98 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 32
+        }
+      }
+    },
+    "semanticDedup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "embeddingProviderPresetId",
+        "embeddingModel",
+        "candidateSimilarityThreshold",
+        "candidateLimit",
+        "judge"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "embeddingProviderPresetId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "embeddingModel": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "candidateSimilarityThreshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "candidateLimit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "judge": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "providerPresetId",
+            "model",
+            "outputMode",
+            "prompt",
+            "promptBackup",
+            "defaultPromptVersion"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "providerPresetId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "model": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "outputMode": {
+              "enum": [
+                "auto",
+                "structured",
+                "plain"
+              ]
+            },
+            "prompt": {
+              "type": "string",
+              "maxLength": 12000
+            },
+            "promptBackup": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 12000
+            },
+            "defaultPromptVersion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32
+            }
+          }
         }
       }
     }

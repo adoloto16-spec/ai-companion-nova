@@ -199,6 +199,8 @@ export interface CoreBookStore{
 export type MemoryItemId=string;
 export const MEMORY_API_VERSION:ApiVersion="1";
 export const MEMORY_SCHEMA_VERSION="3";
+export const MEMORY_SEMANTIC_INDEX_API_VERSION:ApiVersion="1";
+export const MEMORY_SEMANTIC_INDEX_SCHEMA_VERSION="1";
 export const MEMORY_EXTRACTION_API_VERSION:ApiVersion="1";
 export const MEMORY_EXTRACTION_SCHEMA_VERSION="1";
 export type MemoryType="fact"|"preference"|"relationship"|"event"|"experience"|"goal"|"instruction"|"observation";
@@ -224,6 +226,7 @@ export interface MemoryItem{
   mutationPolicy:MemoryMutationPolicy;
   status:MemoryStatus;
   archiveReason:MemoryArchiveReason|null;
+  supersededBy?:MemoryItemId|null;
   metadata:Record<string,unknown>;
 }
 export interface MemoryCreateInput{
@@ -267,6 +270,26 @@ export interface MemoryUpdateInput{
   sourceReference?:string|null;
   mutationPolicy?:MemoryMutationPolicy;
   metadata?:Record<string,unknown>;
+}
+export interface MemorySemanticVectorRecord{
+  memoryId:MemoryItemId;
+  characterId:CharacterId;
+  contentHash:string;
+  embeddingProviderId:string;
+  embeddingModel:string;
+  dimensions:number;
+  vector:readonly number[];
+  updatedAt:string;
+}
+export interface MemorySemanticIndexState{
+  apiVersion:ApiVersion;
+  schemaVersion:string;
+  characterId:CharacterId;
+  records:readonly MemorySemanticVectorRecord[];
+}
+export interface MemorySemanticIndexStore{
+  load(characterId:CharacterId):Promise<MemorySemanticIndexState|undefined>;
+  save(state:MemorySemanticIndexState):Promise<void>;
 }
 export interface MemoryMutationAuthority{
   actorId:string;
@@ -337,9 +360,9 @@ export interface MemoryBroker{
   supersede(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
   /** @deprecated Compatibility overload; conversationId is provenance only. */
   supersede(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
-  archive(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason):Promise<MemoryItem>;
+  archive(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason,supersededBy?:MemoryItemId|null):Promise<MemoryItem>;
   /** @deprecated Compatibility overload; conversationId is provenance only. */
-  archive(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason):Promise<MemoryItem>;
+  archive(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason,supersededBy?:MemoryItemId|null):Promise<MemoryItem>;
   restore(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>;
   delete(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<void>;
 }
@@ -491,6 +514,23 @@ export interface ChatTurnTrace{
     omittedCandidates:readonly ContextCandidate[];
   };
   finalRequest?:ChatRequest;
+  provider?:{
+    chatProviderPresetId?:string;
+    chatProviderId:string;
+    chatModel:string;
+    chatProviderBaseUrlHost?:string;
+    chatProviderTimeoutMs?:number;
+    chatTransport:"stream"|"chat";
+  };
+  providerError?:{
+    providerId?:string;
+    providerPresetId?:string;
+    category?:string;
+    httpStatus?:number;
+    timeoutMs?:number;
+    durationMs?:number;
+    providerResponse?:unknown;
+  };
   automaticMemory?:{
     started:boolean;
     status?:"started"|"completed"|"failed"|"skipped";

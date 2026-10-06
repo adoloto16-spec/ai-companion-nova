@@ -10,6 +10,12 @@ export interface ChatRuntimeBoundary{
   getChatModel?(providerId?:string):Promise<string>;
   getChatModelForPreset?(providerPresetId:string):Promise<string>;
   getActiveProviderPresetId?():string|undefined;
+  getChatProviderDiagnostics?(providerPresetId?:string):{
+    providerPresetId?:string;
+    providerId:string;
+    baseUrlHost?:string;
+    timeoutMs?:number;
+  };
 }
 
 export type ChatSessionStatus="idle"|"streaming"|"interrupted"|"completed"|"error";
@@ -42,6 +48,17 @@ const USER_MESSAGES:Record<ChatErrorCode,string>={
   UNSUPPORTED:"This chat request is not supported."
 };
 let requestSequence=0;
+
+function providerDiagnosticsForRequest(
+  runtime:ChatRuntimeBoundary,
+  providerPresetId:string|undefined
+):{providerId:string}|undefined{
+  try{
+    return runtime.getChatProviderDiagnostics?.(providerPresetId);
+  }catch{
+    return undefined;
+  }
+}
 
 function defaultRequestId():string{
   requestSequence+=1;
@@ -364,7 +381,22 @@ export class ChatSessionController{
       if(active.stopRequested)return this.markInterrupted(active,assistantMessage);
 
       const request=await this.buildRequest(active.requestId,model,contextMessages);
-      this.traceStore?.update(active.requestId,{finalRequest:request});
+      const providerPresetId=this.modelProfile?.providerPresetId??this.runtime.getActiveProviderPresetId?.();
+      const providerDiagnostics=this.runtime.getChatProviderDiagnostics?.(providerPresetId);
+      const chatTransport=this.runtime.stream?"stream":"chat";
+      this.traceStore?.update(active.requestId,{
+        finalRequest:request,
+        ...(providerDiagnostics?{
+          provider:{
+            chatProviderPresetId:providerDiagnostics.providerPresetId,
+            chatProviderId:providerDiagnostics.providerId,
+            chatModel:request.model,
+            ...(providerDiagnostics.baseUrlHost?{chatProviderBaseUrlHost:providerDiagnostics.baseUrlHost}:{}),
+            ...(providerDiagnostics.timeoutMs!==undefined?{chatProviderTimeoutMs:providerDiagnostics.timeoutMs}:{}),
+            chatTransport
+          }
+        }:{})
+      });
       const currentAssistant=assistantMessage?cloneMessage(assistantMessage):{id:active.assistantId,role:"assistant" as const,content:""};
       const generationAssistant=(active.mode==="regenerate"||active.mode==="retry")
         ?{...currentAssistant,content:""}
@@ -404,12 +436,12 @@ export class ChatSessionController{
           request,
           {onEvent},
           {signal:active.abortController.signal},
-          this.modelProfile?.providerPresetId??this.runtime.getActiveProviderPresetId?.()
+          providerPresetId
         );
       }else{
         response=await this.runtime.chat(
           request,
-          this.modelProfile?.providerPresetId??this.runtime.getActiveProviderPresetId?.()
+          providerPresetId
         );
         await onEvent({
           apiVersion:"1",
@@ -492,6 +524,12 @@ export class ChatSessionController{
         return this.markInterrupted(active,this.session.getMessages().find(message=>message.id===active.assistantId));
       }
       const normalized=userMessageForError(error);
+      const chatError=error&&typeof error==="object"&&"chatError" in error
+        ?(error as {chatError?:{providerId?:unknown;details?:Record<string,unknown>}}).chatError
+        :undefined;
+      const providerDetails=chatError?.details;
+      const providerPresetIdForError=this.modelProfile?.providerPresetId??this.runtime.getActiveProviderPresetId?.();
+      const providerId=typeof chatError?.providerId==="string"?chatError.providerId:providerDiagnosticsForRequest(this.runtime,providerPresetIdForError)?.providerId;
       const current=this.session.getMessages().find(message=>message.id===active.assistantId);
       if(current?.content){
         this.session.replaceMessage(active.assistantId,withStreamMetadata(current,"interrupted"));
@@ -506,6 +544,17 @@ export class ChatSessionController{
       this.traceStore?.update(active.requestId,{
         status:"failed",
         durationMs:Date.now()-active.startedAt,
+        ...(chatError||providerDetails?{
+          providerError:{
+            ...(providerId?{providerId}:{}),
+            ...(providerPresetIdForError?{providerPresetId:providerPresetIdForError}:{}),
+            ...(typeof providerDetails?.category==="string"?{category:providerDetails.category}:{}),
+            ...(typeof providerDetails?.httpStatus==="number"?{httpStatus:providerDetails.httpStatus}:{}),
+            ...(typeof providerDetails?.durationMs==="number"?{durationMs:providerDetails.durationMs}:{}),
+            ...(typeof providerDetails?.timeoutMs==="number"?{timeoutMs:providerDetails.timeoutMs}:{}),
+            ...(providerDetails?.providerResponse!==undefined?{providerResponse:providerDetails.providerResponse}:{})
+          }
+        }:{ }),
         error:{code:normalized.code,message:normalized.message}
       });
       this.notify();

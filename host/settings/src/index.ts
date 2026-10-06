@@ -5,7 +5,8 @@ export type AppSettingsStoreInvoke=(command:string,args?:Record<string,unknown>)
 export const APP_SETTINGS_COMMANDS={get:"get_app_settings",save:"save_app_settings"} as const;
 
 function clone(settings:AppSettings):AppSettings{
-  return {...settings,chat:{...settings.chat},context:{...settings.context},memory:{...settings.memory},retrieval:{...settings.retrieval},diagnostics:{...settings.diagnostics},ui:{...settings.ui}};
+  // Persistence returns independent nested settings so provider/model bindings cannot be lost through shared mutable UI state.
+  return {...settings,chat:{...settings.chat},memoryAgent:{...settings.memoryAgent},semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge}},context:{...settings.context},memory:{...settings.memory},retrieval:{...settings.retrieval},diagnostics:{...settings.diagnostics},ui:{...settings.ui}};
 }
 function validate(settings:AppSettings,validator:SchemaValidator):void{
   const schema=validator.validate(settings,STANDARD_SCHEMAS["app-settings"]!);

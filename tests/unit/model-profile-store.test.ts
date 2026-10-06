@@ -8,6 +8,7 @@ function ok(value:unknown,label:string){if(!value)throw new Error(label)}
 const nova=():ModelProfile=>({
   ...defaultModelProfile("character.nova.default.v1","2026-09-28T10:00:00.000Z"),
   providerId:"fake.chat",
+  providerPresetId:"provider-preset:main:1",
   model:"nova-model",
   generation:{temperature:0.7,topP:0.9,maxTokens:256}
 });
@@ -22,6 +23,7 @@ async function main(){
   equal(await store.load(profile.characterId),undefined,"fresh character has logical default without physical storage");
   await store.save(profile);
   equal((await store.load(profile.characterId))?.model,"nova-model","saved model profile reloads");
+  equal((await store.load(profile.characterId))?.providerPresetId,"provider-preset:main:1","saved model profile preserves pinned provider preset");
 
   const gm={...defaultModelProfile("character.gm.v1","2026-09-28T10:00:00.000Z"),model:"gm-model",generation:{temperature:1.1}};
   await store.save(gm);

@@ -27,6 +27,10 @@ function defaultClock():Clock{return {now:()=>new Date().toISOString()}}
 function defaultIdFactory(prefix:string):()=>string{let sequence=0;return ()=>{sequence+=1;return prefix+"."+Date.now().toString(36)+"."+sequence.toString(36)}}
 const idFactory=defaultIdFactory("memory");
 function isRecord(value:unknown):value is Record<string,unknown>{return !!value&&typeof value==="object"&&!Array.isArray(value)}
+type MemoryArchiveArgs =
+  | [characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason,supersededBy?:MemoryItemId|null]
+  | [characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason,supersededBy?:MemoryItemId|null];
+
 function cloneMetadata(metadata:Record<string,unknown>):Record<string,unknown>{return {...metadata}}
 function cloneItem(item:MemoryItem):MemoryItem{return {...item,tags:[...item.tags],metadata:cloneMetadata(item.metadata)}}
 type MutableMemoryStoreState={apiVersion:"1";schemaVersion:string;characterId:CharacterId;items:MemoryItem[]};
@@ -93,14 +97,15 @@ export class MemoryBrokerImpl implements MemoryBroker{
   async supersede(characterId:CharacterId,memoryOrConversationId:MemoryItemId|ConversationId,idOrInput:MemoryItemId|MemoryCreateInput,inputOrAuthority:MemoryCreateInput|MemoryMutationAuthority,maybeAuthority?:MemoryMutationAuthority):Promise<MemoryItem>{
     const legacy=typeof idOrInput==="string";const id=requireMemoryId(legacy?idOrInput as string:memoryOrConversationId);const createInput=(legacy?inputOrAuthority:idOrInput) as MemoryCreateInput;const authority=(legacy?maybeAuthority:inputOrAuthority) as MemoryMutationAuthority;const scope=await this.ensureCharacter(characterId);const state=await this.loadState(scope);const previous=state.items.find(item=>item.id===id);if(!previous)throw new Error("Memory item was not found.");if(previous.status!=="active")throw new Error("Only active memory items can be superseded.");actorAllowed(previous,authority);const now=this.clock.now();const replacement:MemoryItem={id:requireMemoryId(createInput.id??idFactory()),characterId:scope,originConversationId:createInput.originConversationId??(createInput.conversationId===undefined?previous.originConversationId:requireConversationId(createInput.conversationId)),type:createInput.type,content:requireContent(createInput.content),tags:requireTags(createInput.tags??[]),importance:requireScore(createInput.importance??previous.importance,"importance"),confidence:requireScore(createInput.confidence??previous.confidence,"confidence"),createdAt:now,updatedAt:now,validFrom:createInput.validFrom===undefined?previous.validFrom:createInput.validFrom,validUntil:createInput.validUntil===undefined?previous.validUntil:createInput.validUntil,source:createInput.source,sourceReference:createInput.sourceReference===undefined?null:createInput.sourceReference,mutationPolicy:createInput.mutationPolicy??previous.mutationPolicy,status:"active",archiveReason:null,metadata:requireMetadata(createInput.metadata??previous.metadata)};validateItemShape(replacement,scope,this.deps.validator);if(replacement.id===previous.id)throw new Error("Superseding memory must use a new memory id.");creationAllowed(replacement,authority);await this.deps.store.supersede(scope,previous.id,replacement);await this.audit("supersede",scope,replacement.id,authority,"success");await this.publish("MemorySuperseded",{characterId:scope,originConversationId:replacement.originConversationId??undefined,memoryId:replacement.id,previousMemoryId:previous.id,status:replacement.status,updatedAt:replacement.updatedAt});return cloneItem(replacement);
   }
-  async archive(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason):Promise<MemoryItem>;
-  async archive(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason):Promise<MemoryItem>;
-  async archive(...args:[CharacterId,MemoryItemId,MemoryMutationAuthority,MemoryArchiveReason?]|[CharacterId,ConversationId,MemoryItemId,MemoryMutationAuthority,MemoryArchiveReason?]):Promise<MemoryItem>{
+  async archive(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason,supersededBy?:MemoryItemId|null):Promise<MemoryItem>;
+  async archive(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason,supersededBy?:MemoryItemId|null):Promise<MemoryItem>;
+  async archive(...args:MemoryArchiveArgs):Promise<MemoryItem>{
     const characterId=args[0];
     const legacy=typeof args[2]==="string";
     const memoryId=requireMemoryId((legacy?args[2]:args[1]) as string);
     const authority=(legacy?args[3]:args[2]) as MemoryMutationAuthority;
     const reason=(legacy?args[4]:args[3]) as MemoryArchiveReason|undefined;
+    const supersededBy=(legacy?args[5]:args[4]) as MemoryItemId|null|undefined;
     const effectiveReason=reason??"manual";
     const scope=await this.ensureCharacter(characterId);
     const state=await this.loadState(scope);
@@ -109,7 +114,7 @@ export class MemoryBrokerImpl implements MemoryBroker{
     const current=state.items[index]!;
     if(current.status!=="active")throw new Error("Only active memory items can be archived.");
     actorAllowed(current,authority);
-    const archived:MemoryItem={...current,status:"archived",archiveReason:effectiveReason,updatedAt:this.clock.now(),metadata:cloneMetadata(current.metadata)};
+    const archived:MemoryItem={...current,status:"archived",archiveReason:effectiveReason,updatedAt:this.clock.now(),metadata:cloneMetadata(current.metadata),...(supersededBy===undefined?{}:{supersededBy})};
     validateItemShape(archived,scope,this.deps.validator);
     state.items[index]=archived;
     await this.persist(scope,state);

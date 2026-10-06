@@ -48,7 +48,8 @@ fn get_host_diagnostics()->HostDiagnostics{
             "credential-profiles",
             "character-storage",
             "core-book-storage",
-            "dynamic-memory-storage"
+            "dynamic-memory-storage",
+            "dynamic-memory-semantic-index"
         ],
     }
 }
@@ -187,6 +188,18 @@ fn save_memory_state(app:tauri::AppHandle,state_value:memory::MemoryStoreState,s
 
 #[cfg(feature="tauri-app")]
 #[tauri::command]
+fn get_memory_semantic_index(app:tauri::AppHandle,character_id:String,state:tauri::State<'_,memory::MemoryWriteLock>)->Result<Option<memory::MemorySemanticIndexState>,String>{
+    memory::load_semantic_index(&app,&character_id,&state)
+}
+
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn save_memory_semantic_index(app:tauri::AppHandle,state_value:memory::MemorySemanticIndexState,state:tauri::State<'_,memory::MemoryWriteLock>)->Result<(),String>{
+    memory::save_semantic_index(&app,&state_value,&state)
+}
+
+#[cfg(feature="tauri-app")]
+#[tauri::command]
 fn supersede_memory(
     app:tauri::AppHandle,
     character_id:String,
@@ -276,6 +289,8 @@ fn main(){
             save_core_book_entries,
             get_memory_state,
             save_memory_state,
+            get_memory_semantic_index,
+            save_memory_semantic_index,
             supersede_memory,
             search_retrieval_index,
             rebuild_retrieval_index,

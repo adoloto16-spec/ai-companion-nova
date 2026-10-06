@@ -21,6 +21,8 @@ fn main() {
                     "save_core_book_entries",
                     "get_memory_state",
                     "save_memory_state",
+                    "get_memory_semantic_index",
+                    "save_memory_semantic_index",
                     "supersede_memory",
                     "search_retrieval_index",
                     "rebuild_retrieval_index",
