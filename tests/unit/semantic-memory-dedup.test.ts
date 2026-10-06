@@ -505,10 +505,12 @@ class ChatJudgeIsolationHttpClient implements HttpClient{
     this.mainStreamCalls+=1;
     this.mainStreamStartedResolver?.();
     if(this.blockMainUntilJudge)await this.judgeStartedPromise;
-    const body=streamChunks([
-      "data: "+JSON.stringify({id:"main-chat-response",model:"main-chat-model",choices:[{delta:{content:"ordinary chat success"},finish_reason:"stop"}]})+"\n\n",
-      "data: [DONE]\n\n"
-    ]);
+    const body:AsyncIterable<string>={
+      async *[Symbol.asyncIterator](){
+        yield "data: "+JSON.stringify({id:"main-chat-response",model:"main-chat-model",choices:[{delta:{content:"ordinary chat success"},finish_reason:"stop"}]})+"\n\n";
+        yield "data: [DONE]\n\n";
+      }
+    };
     return {status:200,body};
   }
 }
@@ -525,8 +527,7 @@ function makeProductionChatController(
     stream:(request,handlers,options,preset)=>runtime.stream(request,handlers,options,preset),
     getChatModel:providerId=>runtime.getChatModel(providerId),
     getChatModelForPreset:providerPresetId=>runtime.getChatModelForPreset(providerPresetId),
-    getActiveProviderPresetId:()=>runtime.getActiveProviderPresetId(),
-    memoryExtractionEnabled:()=>false
+    getActiveProviderPresetId:()=>runtime.getActiveProviderPresetId()
   });
   controller.setModelProfile({
     ...defaultModelProfile(characterId),
