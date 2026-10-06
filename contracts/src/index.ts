@@ -502,7 +502,7 @@ export interface EventPayloadMap{
   AgentRunStarted:{runId:string;characterId:string;goal:string};
   AgentStateChanged:{runId:string;state:AgentState;previousState?:AgentState};
   AgentStepStarted:{runId:string;stepIndex:number};
-  AgentDecisionMade:{runId:string;stepIndex:number;action:AgentDecisionAction;outputMode:AgentOutputMode};
+  AgentDecisionMade:{runId:string;stepIndex:number;action:AgentDecisionAction;outputMode:AgentDecisionOutputMode};
   AgentStepCompleted:{runId:string;stepIndex:number;decisionType:AgentDecisionAction;outcome:AgentStepOutcome};
   AgentRunCompleted:{runId:string;stepCount:number};
   AgentRunFailed:{runId:string;code:string;reason:string};
@@ -665,7 +665,7 @@ export interface ActionBroker{execute(invocation:ActionInvocation):Promise<Actio
 export type AgentState="starting"|"ready"|"idle"|"thinking"|"planning"|"acting"|"waiting"|"interrupted"|"paused"|"resting"|"completed"|"failed"|"stopping";
 export type AgentRunStatus="running"|"waiting"|"paused"|"completed"|"failed"|"interrupted";
 export type AgentDecisionAction="continue"|"wait"|"ask_user"|"finish";
-export type AgentOutputMode="structured"|"tagged";
+export type AgentDecisionOutputMode="structured"|"tagged";
 export type AgentStepOutcome="continued"|"waiting"|"completed"|"failed"|"interrupted";
 export type AgentDecision=
   | {action:"continue";workingSummary?:string}
