@@ -106,7 +106,7 @@ function provider(
   http:FakeHttpClient,
   credentialStore:CredentialStore=new FakeCredentialStore(),
   timeoutMs=1000,
-  structuredOutput=false
+  structuredOutput=true
 ){
   return new OpenAICompatibleChatProvider({
     baseUrl:"https://provider.example.test/v1",
