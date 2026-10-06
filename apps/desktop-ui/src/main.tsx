@@ -254,7 +254,7 @@ function ChatView({controller,runtime,character,modelProfile,conversations,activ
   const onKeyDown=(event:React.KeyboardEvent<HTMLTextAreaElement>)=>{
     if(event.key==="Enter"&&!event.shiftKey){
       event.preventDefault();
-      if(!sending&&!agentNeedsAnswer)void send();
+      if(!sending)void send();
     }
   };
   const lastAssistant=[...messages].reverse().find(message=>message.role==="assistant");
@@ -279,7 +279,7 @@ function ChatView({controller,runtime,character,modelProfile,conversations,activ
       </div>
       <div className="chat-toolbar-actions">
         <div className="chat-mode-switcher" role="group" aria-label="Chat mode">
-          <button type="button" className={mode==="chat"?"chat-mode-button active":"chat-mode-button"} onClick={()=>setMode("chat")} disabled={sending}>{">"}Chat</button>
+          <button type="button" className={mode==="chat"?"chat-mode-button active":"chat-mode-button"} onClick={()=>setMode("chat")} disabled={sending}>Chat</button>
           <button type="button" className={mode==="agent"?"chat-mode-button active":"chat-mode-button"} onClick={()=>setMode("agent")} disabled={sending}>Agent</button>
         </div>
         {((mode==="chat"&&snapshot.status==="streaming")||(mode==="agent"&&sending))&&<button type="button" onClick={()=>void stop()}>Stop</button>}

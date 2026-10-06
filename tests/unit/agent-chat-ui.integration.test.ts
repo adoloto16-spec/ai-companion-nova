@@ -103,6 +103,34 @@ async function main(){
   equal(waitingPersisted[0]!.messages.at(-2)?.content,"Use option B","user answer is persisted in Conversation");
   equal(waitingPersisted[0]!.messages.at(-1)?.content,"Resumed answer","resumed result is appended as assistant message");
 
+  const interruptRuntime=new FakeAgentRuntime();
+  interruptRuntime.startAgentRun=async(input)=>{
+    const thinking=run({id:input.id!,characterId:input.characterId,task:input.task,state:"thinking",status:"running",stepCount:1,lastAction:"continue",lastOutcome:"continued"});
+    interruptRuntime.runs.set(input.id!,thinking);
+    return await new Promise<AgentRun>(resolve=>{
+      interruptRuntime.pending.set(input.id!,resolve);
+    });
+  };
+  interruptRuntime.interruptAgentRun=async(runId,reason)=>{
+    const current=interruptRuntime.runs.get(runId)!;
+    const interrupted=run({...current,state:"interrupted",status:"interrupted",cancelReason:reason??"Interrupted by user."});
+    interruptRuntime.runs.set(runId,interrupted);
+    interruptRuntime.pending.get(runId)?.(interrupted);
+    interruptRuntime.pending.delete(runId);
+    return interrupted;
+  };
+  const interruptPersisted:Conversation[]=[conversation()];
+  const interruptController=new AgentChatController(interruptRuntime,"character:test",interruptPersisted[0]!,async(_c,_i,messages)=>{
+    const updated={...interruptPersisted[0]!,messages:[...messages],updatedAt:new Date().toISOString()};
+    interruptPersisted[0]=updated;return updated;
+  });
+  const interruptPromise=interruptController.submit("stop me");
+  await wait(40);
+  const interrupted=await interruptController.interrupt();
+  equal(interrupted.status,"interrupted","interruptAgentRun stops the active Agent Run");
+  equal(interruptController.getSnapshot().status,"interrupted","UI bridge exposes interrupted state");
+  equal(interruptRuntime.pending.size,0,"interrupted Agent Run completion is released");
+
   const failureRuntime=new FakeAgentRuntime();
   failureRuntime.startAgentRun=async(input)=>{
     const failed=run({id:input.id!,characterId:input.characterId,task:input.task,state:"failed",status:"failed",stepCount:1,lastOutcome:"provider failure"});
