@@ -72,7 +72,8 @@ async function pinnedProviderPresetSurvivesActiveJudgePresetTest(){
         providerId:"openai-compatible",
         baseUrlHost:providerPresetId==="provider-preset:main:1"?"main.invalid":"judge.invalid",
         timeoutMs:providerPresetId==="provider-preset:main:1"?30000:60000
-      }),
+      })
+    },{
       traceStore:runtime.getChatTraceStore()
     });
     controller.setModelProfile(reloaded);
