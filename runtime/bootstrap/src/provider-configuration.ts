@@ -188,13 +188,21 @@ export async function listProviderModels(configuration:ProviderConfiguration,cre
   return provider?provider.listModels():[];
 }
 
-export function buildConfiguredProvider(configuration:ProviderConfiguration|undefined,credentialStore:CredentialStore,httpClient?:HttpClient):ChatProvider|undefined{
+export function buildConfiguredProvider(
+  configuration:ProviderConfiguration|undefined,
+  credentialStore:CredentialStore,
+  httpClient?:HttpClient,
+  diagnostics?:InMemoryDiagnosticsStore,
+  providerPresetId?:string
+):ChatProvider|undefined{
   if(!configuration||!configuration.enabled)return undefined;
   const validation=validateProviderConfiguration(configuration);
   if(!validation.valid)return undefined;
   if(configuration.providerId===OPENAI_COMPATIBLE_PROVIDER_ID){
     return new OpenAICompatibleChatProvider({
-      baseUrl:configuration.baseUrl,model:configuration.model,credential:configuration.credentialReference,timeoutMs:configuration.timeoutMs
+      baseUrl:configuration.baseUrl,model:configuration.model,credential:configuration.credentialReference,timeoutMs:configuration.timeoutMs,
+      ...(diagnostics?{diagnostics}:{}),
+      ...(providerPresetId?{providerPresetId}:{})
     },credentialStore,httpClient);
   }
   return undefined;
