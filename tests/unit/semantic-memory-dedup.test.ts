@@ -12,7 +12,7 @@ import {
 import type {
   AppSettings,ChatRequest,ChatResponse,EmbeddingProvider,HealthStatus,MemoryItem,ProviderCapabilities
 } from "../../contracts/src";
-import {StandardContractValidator,defaultAppSettings,defaultModelProfile,migrateAppSettings} from "../../contracts/src";
+import {StandardContractValidator,STANDARD_SCHEMAS,defaultAppSettings,defaultModelProfile,migrateAppSettings} from "../../contracts/src";
 import {ChatSessionController,ConversationSession,InMemoryAuditService,InMemoryDiagnosticsStore,InMemoryEventBus,MemoryBrokerImpl,SettingsManager} from "../../core/src";
 import {createFoundationRuntime} from "../../runtime/bootstrap/src/index";
 import type {HttpClient} from "../../providers/chat/openai-compatible/src/index";
