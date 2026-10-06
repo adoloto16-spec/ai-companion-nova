@@ -562,6 +562,7 @@ async function productionChatJudgeFailureIsolationRegressionTest(){
     const initialProviderConfiguration=JSON.stringify(runtime.getProviderConfiguration());
     const initialActivePresetId=runtime.getActiveProviderPresetId();
     const initialChatModel=runtime.getActiveChatModel();
+    const initialGlobalChatProviders=JSON.stringify((await runtime.diagnostics()).providers.filter(provider=>provider.roles.includes("chat")).map(provider=>({id:provider.id,roles:provider.roles})));
 
     const disabledController=makeProductionChatController(runtime,character.id,"preset.main","main-chat-model");
     const disabledResult=await disabledController.submit("ordinary chat request","main-chat-model");
@@ -633,8 +634,8 @@ async function productionChatJudgeFailureIsolationRegressionTest(){
     equal(JSON.stringify(runtime.getProviderConfiguration()),initialProviderConfiguration,"Judge failure does not mutate main provider configuration");
     equal(runtime.getActiveProviderPresetId(),initialActivePresetId,"Judge failure does not mutate active provider preset");
     equal(runtime.getActiveChatModel(),initialChatModel,"Judge failure does not mutate active Chat model");
-    const providers=(await runtime.diagnostics()).providers.filter(provider=>provider.roles.includes("chat"));
-    equal(providers.filter(provider=>provider.id==="openai-compatible").length,1,"Judge provider is not registered in the global ProviderRegistry");
+    const finalGlobalChatProviders=JSON.stringify((await runtime.diagnostics()).providers.filter(provider=>provider.roles.includes("chat")).map(provider=>({id:provider.id,roles:provider.roles})));
+    equal(finalGlobalChatProviders,initialGlobalChatProviders,"Judge provider does not mutate the global ProviderRegistry");
     equal((await runtime.getMemory(character.id,"chat-isolation-old"))?.status,"active","failed Judge does not archive existing memory");
     equal((await runtime.getMemory(character.id,"chat-isolation-new"))?.status,"active","failed Judge does not archive new memory");
   }finally{
