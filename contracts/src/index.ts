@@ -738,7 +738,7 @@ export const CONTRACT_VERSIONS={
   retrievalQuery:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
   retrievalCandidate:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
   retrievalResult:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
-  retrievalIndexDocument:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},,
+  retrievalIndexDocument:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
   agentDecision:{apiVersion:AGENT_API_VERSION,schemaVersion:AGENT_SCHEMA_VERSION}
 } as const;
 export {STANDARD_SCHEMAS} from "./generated-schemas";
