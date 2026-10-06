@@ -73,7 +73,7 @@ export interface FoundationRuntime{
   startAgentRun(input:AgentRunInput):Promise<AgentRun>;
   getAgentRun(runId:string):AgentRun|undefined;
   interruptAgentRun(runId:string,reason?:string):Promise<AgentRun>;
-  resumeAgentRun(runId:string):Promise<AgentRun>;
+  resumeAgentRun(runId:string,userResponse?:string):Promise<AgentRun>;
   getChatProviderDiagnostics(providerPresetId?:string):{
     providerPresetId?:string;
     providerId:string;
@@ -431,8 +431,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     },
     getAgentRun:runId=>agentKernel.getRun(runId),
     interruptAgentRun:(runId,reason)=>agentKernel.interrupt(runId,reason),
-    resumeAgentRun:async runId=>{
-      await agentKernel.resume(runId);
+    resumeAgentRun:async (runId,userResponse)=>{
+      await agentKernel.resume(runId,userResponse);
       return agentKernel.run(runId);
     },
     async start(){
