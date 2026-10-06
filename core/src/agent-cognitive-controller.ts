@@ -1,11 +1,12 @@
-import type {AgentDecision,AgentDecisionOutputMode,ChatRequestOptions,DiagnosticsStore,SchemaValidator} from "../../contracts/src/index";
+import type {AgentDecision,AgentDecisionOutputMode,ChatMessage,ChatRequestOptions,DiagnosticsStore,SchemaValidator} from "../../contracts/src/index";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,STANDARD_SCHEMAS,StandardContractValidator} from "../../contracts/src/index";
 import {AiRuntime,AiRuntimeError} from "./ai-runtime";
 import {parseStructuredDecision,parseTaggedDecision} from "./agent-protocol";
 
 export interface AgentCognitiveContext{
-  runId:string;characterId:string;goal:string;task:string;state:string;stepIndex:number;
+  runId:string;characterId:string;conversationId?:string;goal:string;task:string;state:string;stepIndex:number;
   workingSummary?:string;lastAction?:string;lastOutcome?:string;userResponse?:string;providerId?:string;model:string;
+  recentConversationMessages:readonly ChatMessage[];
 }
 export interface AgentDecisionResult{decision:AgentDecision;outputMode:AgentDecisionOutputMode;}
 export interface AgentCognitiveDecisionProvider{
@@ -21,6 +22,14 @@ const STRUCTURED_PROMPT=[
   "You are not executing actions directly. You are selecting one action for the Agent Kernel.",
   "Do not output chain-of-thought.",
   "Preferred output protocol: structured decision.",
+  "Decision policy:",
+  "If the request can be reasonably completed with the information already available, do it immediately.",
+  "For ordinary informational questions, prefer finish with the final user-facing answer.",
+  "Do not ask a clarifying question only to learn a preferred answer format or optional preference.",
+  "Use ask_user only when information is genuinely missing and the task cannot be reasonably continued without it.",
+  "Do not ask the user to choose between reasonable defaults Nova can select itself.",
+  "finish.result must be the final user-facing answer.",
+  "A simple request may finish on the first cognitive step; do not create artificial continue steps.",
   "Do not emit additional prose outside the required protocol."
 ].join("\n");
 
@@ -30,6 +39,14 @@ const TAGGED_PROMPT=[
   "You are not executing actions directly. You are selecting one action for the Agent Kernel.",
   "Do not output chain-of-thought.",
   "Fallback protocol: output exactly one NOVA_ACTION block and no other prose.",
+  "Decision policy:",
+  "If the request can be reasonably completed with the information already available, do it immediately.",
+  "For ordinary informational questions, prefer finish with the final user-facing answer.",
+  "Do not ask a clarifying question only to learn a preferred answer format or optional preference.",
+  "Use ask_user only when information is genuinely missing and the task cannot be reasonably continued without it.",
+  "Do not ask the user to choose between reasonable defaults Nova can select itself.",
+  "finish.result must be the final user-facing answer.",
+  "A simple request may finish on the first cognitive step; do not create artificial continue steps.",
   "Allowed forms:",
   "<NOVA_ACTION>\ntype=continue\n</NOVA_ACTION>",
   "<NOVA_ACTION>\ntype=wait\nwait_ms=5000\n</NOVA_ACTION>",
@@ -83,11 +100,12 @@ export class AgentCognitiveController implements AgentCognitiveDecisionProvider{
       ...(context.providerId?{providerId:context.providerId}:{}),
       model:context.model,
       context:{
-        conversationId:"agent-run:"+context.runId,
+        conversationId:context.conversationId??("agent-run:"+context.runId),
         messages:[
           {role:"system",content:mode==="structured"?STRUCTURED_PROMPT:TAGGED_PROMPT},
+          ...context.recentConversationMessages.map(message=>({...message,metadata:message.metadata?{...message.metadata}:undefined})),
           {role:"user",content:JSON.stringify({
-            protocol:"nova-agent-decision-v1",characterId:context.characterId,goal:context.goal,task:context.task,
+            protocol:"nova-agent-decision-v1",characterId:context.characterId,conversationId:context.conversationId??null,goal:context.goal,task:context.task,
             state:context.state,stepIndex:context.stepIndex,
             ...(context.workingSummary?{workingSummary:context.workingSummary}:{}),
             ...(context.lastAction?{lastAction:context.lastAction}:{}),

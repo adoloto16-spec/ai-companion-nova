@@ -673,8 +673,8 @@ export type AgentDecision=
   | {action:"ask_user";question:string}
   | {action:"finish";result:string};
 export interface AgentRunLimits{maxSteps:number;maxDurationMs:number;maxConsecutiveFailures:number;}
-export interface AgentRunInput{id?:string;characterId:string;goal:string;task:string;providerId?:string;model?:string;limits?:Partial<AgentRunLimits>;}
-export interface AgentRun{id:string;characterId:string;goal:string;task:string;state:AgentState;status:AgentRunStatus;stepCount:number;startedAt:string;updatedAt:string;cancelReason?:string;workingSummary?:string;lastAction?:AgentDecisionAction;lastOutcome?:string;providerId?:string;model?:string;limits:AgentRunLimits;}
+export interface AgentRunInput{id?:string;characterId:string;conversationId?:ConversationId;goal:string;task:string;providerId?:string;model?:string;limits?:Partial<AgentRunLimits>;}
+export interface AgentRun{id:string;characterId:string;conversationId?:ConversationId;goal:string;task:string;state:AgentState;status:AgentRunStatus;stepCount:number;startedAt:string;updatedAt:string;cancelReason?:string;workingSummary?:string;lastAction?:AgentDecisionAction;lastOutcome?:string;providerId?:string;model?:string;limits:AgentRunLimits;}
 export interface AgentStep{stepIndex:number;startedAt:string;completedAt:string;decisionType:AgentDecisionAction;outcome:AgentStepOutcome;}
 export const AGENT_DEFAULT_LIMITS:AgentRunLimits={maxSteps:20,maxDurationMs:60000,maxConsecutiveFailures:3};
 export interface Permission{id:string;schemaVersion:string;subject:string;resourceType:"domain"|"filesystem"|"application"|"resource";action:string;effect:"allow"|"deny";scope?:{domains?:readonly string[];roots?:readonly string[];applications?:readonly string[];windows?:readonly string[]}}

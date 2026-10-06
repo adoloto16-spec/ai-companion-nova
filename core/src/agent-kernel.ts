@@ -1,4 +1,4 @@
-import type {AgentDecision,AgentRun,AgentRunInput,AgentRunLimits,AgentState,AgentStep,DiagnosticsStore,EventBus,SchemaValidator} from "../../contracts/src/index";
+import type {AgentDecision,AgentRun,AgentRunInput,AgentRunLimits,AgentState,AgentStep,ChatMessage,DiagnosticsStore,EventBus,SchemaValidator} from "../../contracts/src/index";
 import {AGENT_DEFAULT_LIMITS,STANDARD_SCHEMAS,StandardContractValidator,createEvent} from "../../contracts/src/index";
 import {AgentDecisionProtocolError} from "./agent-protocol";
 import type {AgentCognitiveDecisionProvider,AgentCognitiveContext} from "./agent-cognitive-controller";
@@ -47,6 +47,7 @@ export interface AgentKernelOptions{
   events?:EventBus;
   clock?:()=>string;
   limits?:Partial<AgentRunLimits>;
+  conversationContext?:(characterId:string,conversationId:string)=>Promise<readonly ChatMessage[]>;
 }
 
 export class AgentKernel{
@@ -75,7 +76,7 @@ export class AgentKernel{
     const now=this.clock(),id=input.id?.trim()||("agent-run:"+Date.now().toString(36)+":"+this.nextId++);
     if(this.runs.has(id))throw new Error("Agent run already exists: "+id);
     const run:AgentRun={
-      id,characterId:bounded(input.characterId,200),goal:bounded(input.goal,4000),task:bounded(input.task,4000),
+      id,characterId:bounded(input.characterId,200),...(input.conversationId?{conversationId:bounded(input.conversationId,200)}:{}),goal:bounded(input.goal,4000),task:bounded(input.task,4000),
       state:"starting",status:"running",stepCount:0,startedAt:now,updatedAt:now,limits,
       ...(input.providerId?{providerId:input.providerId}:{}),...(input.model?{model:input.model}: {})
     };
@@ -102,12 +103,17 @@ export class AgentKernel{
 
     let result:{decision:AgentDecision;outputMode:"structured"|"tagged"};
     try{
+      const conversationMessages=run.conversationId&&this.options.conversationContext
+        ?await this.options.conversationContext(run.characterId,run.conversationId)
+        :[];
       const userResponse=this.pendingUserResponses.get(run.id);
       if(userResponse!==undefined)this.pendingUserResponses.delete(run.id);
       const context:AgentCognitiveContext={
         runId:run.id,characterId:run.characterId,goal:run.goal,task:run.task,state:"thinking",stepIndex,
         ...(run.workingSummary?{workingSummary:run.workingSummary}:{}),
         ...(run.lastAction?{lastAction:run.lastAction}:{}),...(run.lastOutcome?{lastOutcome:run.lastOutcome}:{}),
+        ...(run.conversationId?{conversationId:run.conversationId}:{}),
+        recentConversationMessages:conversationMessages.slice(-32),
         ...(userResponse!==undefined?{userResponse}:{}),
         ...(run.providerId?{providerId:run.providerId}:{}),model:run.model??""
       };

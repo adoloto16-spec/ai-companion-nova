@@ -255,6 +255,11 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const agentKernel=new AgentKernel({
     cognitive:agentCognitiveController,
     actionExecutor:options.agentActionExecutor??new DefaultAgentActionExecutor(),
+    conversationContext:async(characterId,conversationId)=>{
+      const conversation=await conversationManager.getConversation(characterId,conversationId);
+      const limit=Math.max(1,Math.min(32,settingsManager.get().context.recentConversationMessages));
+      return conversation?.messages.slice(-limit)??[];
+    },
     validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()
   });
   const resolveAgentModel=async(providerId?:string):Promise<string>=>{

@@ -117,6 +117,7 @@ export class AgentChatController{
     const input:AgentRunInput={
       id:runId,
       characterId:this.characterId,
+      conversationId:this.conversation.id,
       goal:"Provide the final answer to the user's current request.",
       task:text,
       ...(providerId?{providerId}:{}),
