@@ -25,7 +25,7 @@ class FakeAgentRuntime{
   runs=new Map<string,AgentRun>();
   starts:AgentRun["id"][]=[];
   inputs:unknown[]=[];
-  private pending=new Map<string,(run:AgentRun)=>void>();
+  pending=new Map<string,(run:AgentRun)=>void>();
   async startAgentRun(input:import("../../contracts/src/index").AgentRunInput):Promise<AgentRun>{
     this.starts.push(input.id!);this.inputs.push(input);
     const first=run({id:input.id!,characterId:input.characterId,task:input.task,state:"thinking",status:"running",stepCount:1,lastAction:"continue",lastOutcome:"continued"});
