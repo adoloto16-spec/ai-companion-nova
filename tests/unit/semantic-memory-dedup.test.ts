@@ -481,6 +481,7 @@ class ChatJudgeIsolationHttpClient implements HttpClient{
   waitForMainStreamStart():Promise<void>{return this.mainStreamStartedPromise;}
   prepareConcurrentJudgeFailure():void{
     this.blockMainUntilJudge=true;
+    this.mainStreamStartedPromise=new Promise<void>(resolve=>{this.mainStreamStartedResolver=resolve;});
     this.judgeStartedPromise=new Promise<void>(resolve=>{this.judgeStartedResolver=resolve;});
   }
   async request(request:{url:string;method:"GET"|"POST";headers:Readonly<Record<string,string>>;body?:string;signal?:AbortSignal}):Promise<{status:number;body:string}>{
