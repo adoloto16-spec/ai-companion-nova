@@ -1,7 +1,7 @@
 import {startFoundationRuntime} from "../../runtime/bootstrap/src";
 import {ChatSessionController,ConversationSession} from "../../core/src";
 import {InMemoryModelProfileStore} from "../../host/model-profiles/src";
-import type {ChatRequest,ChatStreamResponse,ModelProfile} from "../../contracts/src";
+import type {ChatRequest,ModelProfile} from "../../contracts/src";
 import type {HttpClient,HttpClientRequest,HttpClientStreamResponse} from "../../providers/chat/openai-compatible/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(actual!==expected)throw new Error(label+" expected "+String(expected)+" got "+String(actual))}
