@@ -78,3 +78,11 @@ input,select{padding:9px;border:1px solid #394655;border-radius:7px;background:#
 .diagnostic-candidate-meta{margin-top:6px;font-size:12px;opacity:.62}
 .diagnostic-reason{margin-top:5px;font-size:12px;opacity:.8}
 .diagnostic-json{max-height:360px;overflow:auto;padding:12px;border:1px solid #2a3441;border-radius:8px;background:#0d1319;white-space:pre-wrap;overflow-wrap:anywhere}
+
+
+.chat-mode-switcher{display:flex;gap:4px;align-items:center}
+.chat-mode-button{padding:6px 10px}
+.chat-mode-button.active{font-weight:700}
+.agent-status{margin:8px 0;padding:10px 12px;border:1px solid currentColor;border-radius:8px}
+.agent-question{margin-top:8px}
+.agent-result-note{margin-top:6px;font-size:0.9em;opacity:0.8}

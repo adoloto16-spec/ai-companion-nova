@@ -2,6 +2,7 @@ import React from "react";
 import {createRoot} from "react-dom/client";
 import {invoke} from "@tauri-apps/api/core";
 import {ChatSessionController,ConversationSession,InMemoryCharacterStore} from "../../../core/src/index";
+import {AgentChatController} from "./agent-chat";
 
 import {startFoundationRuntime,testProviderPresetConfiguration,listProviderModels} from "../../../runtime/bootstrap/src/index";
 import type {FoundationRuntime} from "../../../runtime/bootstrap/src/index";
@@ -134,30 +135,44 @@ function ConversationSwitcher({conversations,activeConversationId,sending,onSele
   </div>;
 }
 
-function ChatView({controller,runtime,character,conversations,activeConversation,onPersist,onClear,onSelectConversation,onCreateConversation,onRenameConversation,onDeleteConversation}:{
+function ChatView({controller,runtime,character,modelProfile,conversations,activeConversation,onPersist,onPersistAgentConversation,onClear,onSelectConversation,onCreateConversation,onRenameConversation,onDeleteConversation}:{
   controller:ChatSessionController;
   runtime:FoundationRuntime;
   character:Character;
+  modelProfile?:ModelProfile;
   conversations:readonly Conversation[];
   activeConversation:Conversation;
   onPersist:()=>Promise<void>;
+  onPersistAgentConversation:(characterId:string,conversationId:string,messages:readonly import("../../../contracts/src/index").ChatMessage[])=>Promise<Conversation>;
   onClear:()=>Promise<void>;
   onSelectConversation:(id:string)=>Promise<void>;
   onCreateConversation:()=>Promise<void>;
   onRenameConversation:(conversation:Conversation)=>Promise<void>;
   onDeleteConversation:(conversation:Conversation)=>Promise<void>;
 }){
+  const [mode,setMode]=React.useState<"chat"|"agent">("chat");
   const [snapshot,setSnapshot]=React.useState(()=>controller.getSnapshot());
   const [input,setInput]=React.useState("");
   const [editingId,setEditingId]=React.useState<string|undefined>();
   const [editingText,setEditingText]=React.useState("");
   const [persistenceError,setPersistenceError]=React.useState("");
   const bottomRef=React.useRef<HTMLDivElement|null>(null);
+  const agentController=React.useMemo(
+    ()=>new AgentChatController(runtime,character.id,activeConversation,onPersistAgentConversation),
+    [runtime,character.id,activeConversation.id,onPersistAgentConversation]
+  );
+  const [agentSnapshot,setAgentSnapshot]=React.useState(()=>agentController.getSnapshot());
 
   React.useEffect(()=>{setSnapshot(controller.getSnapshot());return controller.subscribe(setSnapshot)},[controller]);
+  React.useEffect(()=>{setAgentSnapshot(agentController.getSnapshot());return agentController.subscribe(setAgentSnapshot)},[agentController]);
   React.useEffect(()=>{
+    agentController.replaceConversation(activeConversation);
+  },[agentController,activeConversation.id,activeConversation.updatedAt]);
+  React.useEffect(()=>{
+    const messages=mode==="chat"?snapshot.messages:agentSnapshot.messages;
     bottomRef.current?.scrollIntoView({block:"end"});
-  },[snapshot.messages.map(message=>message.content).join("\u0000"),snapshot.status]);
+    void messages;
+  },[mode,snapshot.messages.map(message=>message.content).join("\u0000"),agentSnapshot.messages.map(message=>message.content).join("\u0000"),snapshot.status,agentSnapshot.status]);
 
   const persistAfterAction=React.useCallback(async(result:{status:string})=>{
     if(result.status==="rejected")return;
@@ -167,16 +182,28 @@ function ChatView({controller,runtime,character,conversations,activeConversation
 
   const send=React.useCallback(async()=>{
     setPersistenceError("");
+    if(mode==="agent"){
+      const value=input.trim();
+      const result=agentSnapshot.status==="waiting"
+        ?await agentController.resume(value||undefined)
+        :await agentController.submit(input,modelProfile?.providerId,modelProfile?.model??runtime.getActiveChatModel());
+      if(result.status!=="rejected")setInput("");
+      return;
+    }
     const result=await controller.submit(input,runtime.getActiveChatModel());
     if(result.status!=="rejected")setInput("");
     await persistAfterAction(result);
-  },[controller,input,runtime,persistAfterAction]);
+  },[mode,input,agentSnapshot.status,agentController,modelProfile,controller,runtime,persistAfterAction]);
 
   const stop=React.useCallback(async()=>{
     setPersistenceError("");
+    if(mode==="agent"){
+      await agentController.interrupt();
+      return;
+    }
     const result=await controller.stop();
     await persistAfterAction(result);
-  },[controller,persistAfterAction]);
+  },[mode,agentController,controller,persistAfterAction]);
 
   const continueGeneration=React.useCallback(async()=>{
     setPersistenceError("");
@@ -201,56 +228,82 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     try{await onClear();}
     catch(error){setPersistenceError(error instanceof Error?error.message:"Conversation could not be cleared.");}
   },[onClear]);
+
   const editMessage=React.useCallback(async(id:string)=>{
+    if(mode!=="chat")return;
     setPersistenceError("");
     try{
       controller.editMessage(id,editingText);
       await onPersist();
       setEditingId(undefined);setEditingText("");
     }catch(error){setPersistenceError(error instanceof Error?error.message:"Message could not be edited.");}
-  },[controller,editingText,onPersist]);
+  },[mode,controller,editingText,onPersist]);
 
   const deleteMessage=React.useCallback(async(id:string)=>{
+    if(mode!=="chat")return;
     if(!window.confirm("Delete this message?"))return;
     setPersistenceError("");
     try{controller.deleteMessage(id);await onPersist();}
     catch(error){setPersistenceError(error instanceof Error?error.message:"Message could not be deleted.");}
-  },[controller,onPersist]);
+  },[mode,controller,onPersist]);
 
-
-
+  const messages=mode==="chat"?snapshot.messages:agentSnapshot.messages;
+  const sending=mode==="chat"?snapshot.sending:agentSnapshot.sending;
+  const agentWaiting=mode==="agent"&&agentSnapshot.status==="waiting";
+  const agentNeedsAnswer=agentWaiting&&Boolean(agentSnapshot.question);
   const onKeyDown=(event:React.KeyboardEvent<HTMLTextAreaElement>)=>{
     if(event.key==="Enter"&&!event.shiftKey){
       event.preventDefault();
-      if(!snapshot.sending)void send();
+      if(!sending&&!agentNeedsAnswer)void send();
     }
   };
-
-  const lastAssistant=[...snapshot.messages].reverse().find(message=>message.role==="assistant");
+  const lastAssistant=[...messages].reverse().find(message=>message.role==="assistant");
   const lastAssistantStatus=lastAssistant?messageStreamStatus(lastAssistant):undefined;
-  const showContinue=snapshot.status==="interrupted"&&lastAssistantStatus==="interrupted"&&!snapshot.sending;
-  const showRegenerate=(snapshot.status==="completed"||snapshot.status==="interrupted")&&(lastAssistantStatus==="complete"||lastAssistantStatus==="interrupted")&&!snapshot.sending;
-  const showRetry=snapshot.status==="error"&&!snapshot.sending;
+  const showContinue=mode==="chat"&&snapshot.status==="interrupted"&&lastAssistantStatus==="interrupted"&&!snapshot.sending;
+  const showRegenerate=mode==="chat"&&(snapshot.status==="completed"||snapshot.status==="interrupted")&&(lastAssistantStatus==="complete"||lastAssistantStatus==="interrupted")&&!snapshot.sending;
+  const showRetry=mode==="chat"&&snapshot.status==="error"&&!snapshot.sending;
+  const statusLabel=agentSnapshot.status==="thinking"?"Nova is thinking…"
+    :agentSnapshot.status==="acting"?"Nova is acting on the current step…"
+    :agentSnapshot.status==="starting"?"Starting Agent Run…"
+    :agentSnapshot.status==="waiting"?"Agent Run is waiting."
+    :agentSnapshot.status==="completed"?"Agent Run completed."
+    :agentSnapshot.status==="interrupted"?"Agent Run interrupted."
+    :agentSnapshot.status==="failed"?"Agent Run failed."
+    :"Agent is ready.";
 
   return <section className="chat-panel">
     <div className="chat-toolbar">
       <div>
-        <h2>Chat · {character.name}</h2>
+        <h2>{mode==="agent"?"Agent":"Chat"} · {character.name}</h2>
         <p className="chat-subtitle">{activeConversation.title} · persistent and scoped to {character.name}.</p>
       </div>
       <div className="chat-toolbar-actions">
-        {snapshot.status==="streaming"&&<button type="button" onClick={()=>void stop()}>Stop</button>}
+        <div className="chat-mode-switcher" role="group" aria-label="Chat mode">
+          <button type="button" className={mode==="chat"?"chat-mode-button active":"chat-mode-button"} onClick={()=>setMode("chat")} disabled={sending}>{">"}Chat</button>
+          <button type="button" className={mode==="agent"?"chat-mode-button active":"chat-mode-button"} onClick={()=>setMode("agent")} disabled={sending}>Agent</button>
+        </div>
+        {((mode==="chat"&&snapshot.status==="streaming")||(mode==="agent"&&sending))&&<button type="button" onClick={()=>void stop()}>Stop</button>}
         {showContinue&&<button type="button" onClick={()=>void continueGeneration()}>Continue</button>}
         {showRegenerate&&<button type="button" onClick={()=>void regenerate()}>Regenerate</button>}
         {showRetry&&<button type="button" onClick={()=>void retry()}>Retry</button>}
-        <button type="button" onClick={()=>void clear()} disabled={snapshot.sending||snapshot.messages.length===0}>Clear</button>
+        {mode==="agent"&&agentWaiting&&!agentSnapshot.question&&<button type="button" onClick={()=>void agentController.resume()}>Resume</button>}
+        <button type="button" onClick={()=>void clear()} disabled={sending||messages.length===0}>Clear</button>
       </div>
     </div>
+
+    {mode==="agent"&&<div className="agent-status" role="status" aria-live="polite">
+      <strong>{statusLabel}</strong>
+      {agentSnapshot.runId&&<span> · run {agentSnapshot.runId}</span>}
+      {agentSnapshot.stepCount>0&&<span> · step {agentSnapshot.stepCount}</span>}
+      {agentSnapshot.question&&<div className="agent-question"><strong>Nova asks:</strong> {agentSnapshot.question}</div>}
+      {agentSnapshot.error&&<div className="chat-error" role="alert">{agentSnapshot.error}</div>}
+      {agentSnapshot.result&&agentSnapshot.status==="completed"&&<div className="agent-result-note">Final result saved to the conversation.</div>}
+    </div>}
 
     <ConversationSwitcher
       conversations={conversations}
       activeConversationId={activeConversation.id}
-      sending={snapshot.sending}
+      sending={sending}
       onSelect={onSelectConversation}
       onCreate={onCreateConversation}
       onRename={onRenameConversation}
@@ -258,10 +311,10 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     />
 
     <div className="message-list" aria-live="polite">
-      {snapshot.messages.length===0&&<div className="empty-chat">Write a message to start the conversation.</div>}
-      {snapshot.messages.map((message,index)=>{
+      {messages.length===0&&<div className="empty-chat">{mode==="agent"?"Describe a task for Nova to work through.":"Write a message to start the conversation."}</div>}
+      {messages.map((message,index)=>{
         const state=messageStreamStatus(message);
-        const editable=message.role==="user"||message.role==="assistant";
+        const editable=mode==="chat"&&(message.role==="user"||message.role==="assistant");
         const isEditing=editingId===message.id;
         return <article className={"chat-message "+message.role} key={message.id??"message-"+index}>
           <div className="message-author">{message.role==="user"?"You":character.name}</div>
@@ -275,7 +328,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
             </div>
             :<div className="message-content">{message.content}</div>}
           {state==="interrupted"&&<div className="message-status">Interrupted</div>}
-          {editable&&!snapshot.sending&&!isEditing&&message.id&&
+          {editable&&!sending&&!isEditing&&message.id&&
             <div className="message-actions">
               <button type="button" onClick={()=>{setEditingId(message.id);setEditingText(message.content)}}>Edit</button>
               <button type="button" onClick={()=>void deleteMessage(message.id!)}>Delete</button>
@@ -284,12 +337,19 @@ function ChatView({controller,runtime,character,conversations,activeConversation
       })}
       <div ref={bottomRef}/>
     </div>
-    <form className="chat-composer" onSubmit={event=>{event.preventDefault();if(!snapshot.sending)void send()}}>
-      <textarea value={input} onChange={event=>setInput(event.target.value)} onKeyDown={onKeyDown} placeholder="Write a message…" aria-label="Chat message" disabled={snapshot.sending} rows={2}/>
-      <button type="submit" disabled={snapshot.sending||input.trim().length===0}>{snapshot.sending?"Streaming…":"Send"}</button>
+    <form className="chat-composer" onSubmit={event=>{event.preventDefault();if(!sending)void send()}}>
+      <textarea value={input} onChange={event=>setInput(event.target.value)}
+        onKeyDown={onKeyDown}
+        placeholder={mode==="agent"?(agentNeedsAnswer?"Answer Nova…":"Describe a task for Nova…"):"Write a message…"}
+        aria-label={mode==="agent"?"Agent task or answer":"Chat message"}
+        disabled={sending}
+        rows={2}/>
+      <button type="submit" disabled={sending||input.trim().length===0||agentNeedsAnswer&&input.trim().length===0}>
+        {mode==="agent"?(agentNeedsAnswer?"Continue":"Send to Agent"):(sending?"Streaming…":"Send")}
+      </button>
     </form>
     <p className="chat-hint">Enter to send · Shift+Enter for a new line</p>
-    {snapshot.error&&<div className="chat-error" role="alert">{snapshot.error}</div>}
+    {mode==="chat"&&snapshot.error&&<div className="chat-error" role="alert">{snapshot.error}</div>}
     {persistenceError&&<div className="chat-error" role="alert">{persistenceError}</div>}
   </section>;
 }
@@ -1743,6 +1803,19 @@ function App(){
     conversationLoadErrorRef.current=undefined;
   },[activeCharacter]);
 
+  const persistAgentConversation=React.useCallback(async(characterId:string,conversationId:string,messages:readonly import("../../../contracts/src/index").ChatMessage[]):Promise<Conversation>=>{
+    const foundation=foundationRef.current;
+    if(!foundation)throw new Error("Conversation runtime is not available.");
+    const updated=await foundation.updateConversation(characterId,conversationId,{messages});
+    const profile=await loadModelProfile(characterId);
+    setConversations(await foundation.listConversations(characterId));
+    setActiveConversation(updated);
+    setActiveModelProfile(profile);
+    setChatController(controllerForConversation(updated,profile));
+    conversationLoadErrorRef.current=undefined;
+    return updated;
+  },[controllerForConversation,loadModelProfile]);
+
   const clearConversation=React.useCallback(async(controller:ChatSessionController)=>{
     const foundation=foundationRef.current;
     if(!foundation)throw new Error("Conversation runtime is not available.");
@@ -2137,9 +2210,10 @@ function App(){
           <div>{startupError}</div>
         </section>
       :view==="chat"&&activeCharacter&&chatController&&activeConversation
-      ?<ChatView controller={chatController} runtime={foundationRef.current!} character={activeCharacter}
+      ?<ChatView controller={chatController} runtime={foundationRef.current!} character={activeCharacter} modelProfile={activeModelProfile}
           conversations={conversations} activeConversation={activeConversation}
           onPersist={()=>persistConversation(chatController!)}
+          onPersistAgentConversation={persistAgentConversation}
           onClear={()=>clearConversation(chatController!)}
           onSelectConversation={selectConversation}
           onCreateConversation={createConversation}
