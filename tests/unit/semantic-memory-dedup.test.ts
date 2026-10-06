@@ -59,7 +59,7 @@ function baseSettings(outputMode:"structured"|"plain"="structured"):AppSettings{
       ...settings.semanticDedup.judge,
       enabled:true,
       providerPresetId:"preset.judge",
-      model:"codestral-2508",
+      model:"fake-judge",
       outputMode,
       prompt:settings.semanticDedup.judge.prompt
     }
@@ -414,7 +414,7 @@ async function productionRuntimeSmokePathTest(){
         ...currentSettings.semanticDedup.judge,
         enabled:true,
         providerPresetId:"preset.judge",
-        model:"fake-judge",
+        model:"codestral-2508",
         outputMode:"structured",
         prompt:currentSettings.semanticDedup.judge.prompt
       }
