@@ -1,10 +1,10 @@
-import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryArchiveReason,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,MemorySemanticIndexStore,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider} from "../../../contracts/src/index";
+import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryArchiveReason,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,MemorySemanticIndexStore,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider,AgentRun,AgentRunInput} from "../../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore} from "../../../contracts/src/index";
 import type {Conversation,ConversationCreateInput,ConversationId,ConversationStore,ConversationUpdateInput} from "../../../contracts/src/index";
 import {
   AiRuntime,AutomaticMemoryAgent,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,MemorySemanticDeduplicator,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,
-  InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,
+  InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,AgentKernel,AgentCognitiveController,DefaultAgentActionExecutor,
   DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
   InMemoryActorIdentityResolver,createMemoryConfig,SettingsManager,InMemoryChatTraceStore
 } from "../../../core/src/index";
@@ -34,6 +34,8 @@ export interface OpenAICompatibleRuntimeConfig{
 }
 
 export interface FoundationRuntimeOptions{
+  agentCognitiveController?:AgentCognitiveDecisionProvider;
+  agentActionExecutor?:AgentActionExecutor;
   providerConfiguration?:ProviderConfiguration;
   settingsStore?:AppSettingsStore;
   credentialStore?:CredentialStore;
@@ -66,6 +68,10 @@ export interface FoundationRuntime{
   getChatModel(providerId?:string):Promise<string>;
   getChatModelForPreset(providerPresetId:string):Promise<string>;
   getActiveProviderPresetId():string|undefined;
+  startAgentRun(input:AgentRunInput):Promise<AgentRun>;
+  getAgentRun(runId:string):AgentRun|undefined;
+  interruptAgentRun(runId:string,reason?:string):Promise<AgentRun>;
+  resumeAgentRun(runId:string):Promise<AgentRun>;
   getChatProviderDiagnostics(providerPresetId?:string):{
     providerPresetId?:string;
     providerId:string;
@@ -243,6 +249,17 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   providers.register(new FakeVisionProvider(),["vision"]);
 
   const aiRuntime=new AiRuntime(providers,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
+  const agentCognitiveController=options.agentCognitiveController??new AgentCognitiveController(aiRuntime,{validator:contractValidator,diagnostics:diagnosticsStore});
+  const agentKernel=new AgentKernel({
+    cognitive:agentCognitiveController,
+    actionExecutor:options.agentActionExecutor??new DefaultAgentActionExecutor(),
+    validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()
+  });
+  const resolveAgentModel=async(providerId?:string):Promise<string>=>{
+    const provider=providerId?providers.get<ChatProvider>(providerId):(providers.list("chat")[0]?.provider as ChatProvider|undefined);
+    if(!provider)return "fake-chat";
+    try{const models=await provider.listModels();return models[0]?.id??"fake-chat";}catch{return "fake-chat";}
+  };
   const extractionChatRuntime={
     chat:async (request:ChatRequest,providerPresetId?:string):Promise<ChatResponse>=>{
       if(providerPresetId){
@@ -404,6 +421,18 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   };
 
   return {
+    startAgentRun:async input=>{
+      const providerId=input.providerId??activeProviderId(providerConfiguration);
+      const model=input.model??await resolveAgentModel(providerId);
+      const run=await agentKernel.createRun({...input,providerId,model});
+      return agentKernel.run(run.id);
+    },
+    getAgentRun:runId=>agentKernel.getRun(runId),
+    interruptAgentRun:(runId,reason)=>agentKernel.interrupt(runId,reason),
+    resumeAgentRun:async runId=>{
+      await agentKernel.resume(runId);
+      return agentKernel.run(runId);
+    },
     async start(){
       await characterManager.initialize();
       try{await conversationManager.getActiveConversation(await characterManager.getActiveCharacter().then(character=>character.id));}

@@ -105,7 +105,8 @@ function request(overrides:Partial<ChatRequest>={}):ChatRequest{
 function provider(
   http:FakeHttpClient,
   credentialStore:CredentialStore=new FakeCredentialStore(),
-  timeoutMs=1000
+  timeoutMs=1000,
+  structuredOutput=false
 ){
   return new OpenAICompatibleChatProvider({
     baseUrl:"https://provider.example.test/v1",
@@ -363,6 +364,27 @@ async function timeoutAndConnectionTest(){
   );
 }
 
+async function structuredOutputTransportAnd400FallbackTest(){
+  const http=new FakeHttpClient();
+  const p=provider(http,new FakeCredentialStore(),1000,true);
+  await p.chat({...request(),generation:{responseFormat:{type:"json",schema:{type:"object",additionalProperties:false}}}});
+  const body=http.requests[0]?.body;
+  if(!body)throw new Error("structured request body missing");
+  const sent=JSON.parse(body) as {response_format?:{type?:string;json_schema?:{strict?:boolean;schema?:unknown}}};
+  equal(sent.response_format?.type,"json_schema","structured response format type");
+  equal(sent.response_format?.json_schema?.strict,true,"structured schema strict flag");
+
+  const rejected=new FakeHttpClient();
+  rejected.next={status:400,body:JSON.stringify({error:{message:"response_format json_schema is unsupported"}})};
+  await throwsAsync(
+    ()=>provider(rejected,new FakeCredentialStore(),1000,true).chat({...request(),generation:{responseFormat:{type:"json",schema:{type:"object"}}}}),
+    error=>error instanceof OpenAICompatibleProviderError&&
+      error.chatError.code==="UNSUPPORTED"&&
+      error.chatError.details?.structuredOutputUnsupported===true&&
+      error.chatError.details?.httpStatus===400,
+    "structured HTTP 400 unsupported response format"
+  );
+}
 async function credentialAndUnsupportedTest(){
   const missingCredentials=new FakeCredentialStore();
   await missingCredentials.deleteSecret(credentialReference);
@@ -644,6 +666,7 @@ void (async()=>{
     ["HTTP status normalization",httpStatusTest],
     ["HTTP 400 provider response diagnostics",http400ResponseBodyPropagationTest],
     ["Timeout and connection",timeoutAndConnectionTest],
+    ["Structured output transport and 400 fallback",structuredOutputTransportAnd400FallbackTest],
     ["Credential and unsupported inputs",credentialAndUnsupportedTest],
     ["Secret safety",secretSafetyTest],
     ["Streaming",streamingTest],

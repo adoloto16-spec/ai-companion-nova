@@ -24,3 +24,8 @@ export * from "./settings";
 
 export * from "./agent-output";
 export * from "./semantic-memory-dedup";
+
+export * from "./agent-protocol";
+export * from "./agent-cognitive-controller";
+export * from "./agent-action-executor";
+export * from "./agent-kernel";

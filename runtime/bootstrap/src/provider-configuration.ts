@@ -90,7 +90,7 @@ export async function testProviderConfiguration(configuration:ProviderConfigurat
   if(!configuration.enabled)return result("configuration_error",configuration.providerId,"Real chat provider is disabled.");
   if(configuration.providerId!==OPENAI_COMPATIBLE_PROVIDER_ID)return result("configuration_error",configuration.providerId,"Configured provider is not supported.");
   const provider=new OpenAICompatibleChatProvider({
-    baseUrl:configuration.baseUrl,model:configuration.model,credential:configuration.credentialReference,timeoutMs:configuration.timeoutMs
+    baseUrl:configuration.baseUrl,model:configuration.model,credential:configuration.credentialReference,timeoutMs:configuration.timeoutMs,structuredOutput:configuration.structuredOutput
   },credentialStore,httpClient);
   const providers=new ProviderRegistry();
   providers.register(provider,["chat"]);
@@ -166,7 +166,8 @@ export function buildProviderForDiscovery(configuration:ProviderConfiguration,cr
     baseUrl:configuration.baseUrl,
     model:configuration.model,
     credential:configuration.credentialReference,
-    timeoutMs:configuration.timeoutMs
+    timeoutMs:configuration.timeoutMs,
+    structuredOutput:configuration.structuredOutput
   },{allowEmptyModel:true}).length>0)return undefined;
   return new OpenAICompatibleChatProvider({
     baseUrl:configuration.baseUrl,

@@ -1,4 +1,4 @@
-import type {ChatContext,ChatError,ChatRequest,ChatResponse,ChatProvider,ChatStreamDone,ChatStreamError,ChatStreamEvent,ChatStreamHandlers,ChatStreamOptions,DiagnosticsStore,EventBus,HealthStatus,SchemaValidator,ChatUsage} from "../../contracts/src/index";
+import type {ChatContext,ChatError,ChatRequest,ChatResponse,ChatProvider,ChatStreamDone,ChatStreamError,ChatStreamEvent,ChatStreamHandlers,ChatStreamOptions,ChatRequestOptions,DiagnosticsStore,EventBus,HealthStatus,SchemaValidator,ChatUsage,ProviderCapabilities} from "../../contracts/src/index";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,CHAT_STREAM_API_VERSION,CHAT_STREAM_SCHEMA_VERSION,STANDARD_SCHEMAS,createEvent,StandardContractValidator} from "../../contracts/src/index";
 import {ProviderRegistry} from "./providers";
 
@@ -27,7 +27,7 @@ export class AiRuntime{
   private readonly clock:()=>string;
   constructor(private readonly providers:ProviderRegistry,private readonly options:AiRuntimeOptions={}){this.validator=options.validator??new StandardContractValidator();this.clock=options.clock??(()=>new Date().toISOString());}
   async health():Promise<HealthStatus>{const providers=this.providers.list("chat");if(providers.length===0)return {status:"unavailable",message:"No chat providers registered.",capabilities:["chat-runtime"]};return {status:"healthy",capabilities:["chat-runtime"]};}
-  async generate(request:ChatRequest):Promise<ChatResponse>{
+  async generate(request:ChatRequest,options:ChatRequestOptions={}):Promise<ChatResponse>{
     const requestResult=this.validator.validate(request,STANDARD_SCHEMAS["chat-request"]!);
     if(!requestResult.valid)return this.fail({apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION,code:"INVALID_REQUEST",message:"Chat request failed contract validation.",requestId:request.requestId,providerId:request.providerId,details:{errors:[...requestResult.errors]}},request.context?.conversationId);
     const provider=this.resolveProvider(request.providerId);
@@ -35,13 +35,14 @@ export class AiRuntime{
     const providerId=provider.id;
     await this.options.events?.publish(createEvent("ChatRequestStarted",{requestId:request.requestId,conversationId:request.context.conversationId,providerId,model:request.model},"ai-runtime",this.clock,request.requestId+":started"));
     try{
-      const response=await provider.chat(request);
+      const response=await provider.chat(request,options);
       const normalized:ChatResponse={...response,apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION,requestId:request.requestId,conversationId:request.context.conversationId,providerId,model:request.model};
       const responseResult=this.validator.validate(normalized,STANDARD_SCHEMAS["chat-response"]!);
       if(!responseResult.valid)return this.fail({apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION,code:"INVALID_RESPONSE",message:"Chat provider returned an invalid canonical response.",requestId:request.requestId,providerId,details:{errors:[...responseResult.errors]}},request.context.conversationId);
       await this.options.events?.publish(createEvent("ChatResponseReceived",{requestId:request.requestId,conversationId:request.context.conversationId,providerId,model:request.model,finishReason:normalized.finishReason},"ai-runtime",this.clock,request.requestId+":received"));
       return normalized;
     }catch(error){
+      if(options.signal?.aborted||((error&&typeof error==="object"&&"name" in error)&&(error as {name?:unknown}).name==="AbortError"))throw error;
       const providerError=readProviderChatError(error,this.validator);
       if(providerError){
         return this.fail({
@@ -99,7 +100,7 @@ export class AiRuntime{
     const streamingSupported=provider.capabilities().streaming===true&&typeof provider.stream==="function";
     if(!streamingSupported){
       try{
-        const response=await provider.chat(request);
+        const response=await provider.chat(request,options);
         const normalized:ChatResponse={
           ...response,
           apiVersion:CHAT_API_VERSION,
@@ -311,6 +312,7 @@ export class AiRuntime{
     return response;
   }
 
+  getProviderCapabilities(providerId?:string):ProviderCapabilities|undefined{return this.resolveProvider(providerId)?.capabilities();}
   private resolveProvider(providerId?:string):ChatProvider|undefined{const registrations=this.providers.list("chat");if(providerId){const match=registrations.find(item=>item.provider.id===providerId);return match?.provider as ChatProvider|undefined;}return registrations[0]?.provider as ChatProvider|undefined;}
   private async fail(error:ChatError,conversationId?:string):Promise<never>{
     await this.options.events?.publish(createEvent("ChatRequestFailed",{requestId:error.requestId??"unknown",...(conversationId?{conversationId}:{}),...(error.providerId?{providerId:error.providerId}:{}),code:error.code},"ai-runtime",this.clock,(error.requestId??"unknown")+":failed:"+error.code)).catch(()=>undefined);

@@ -149,6 +149,7 @@ export interface OpenAICompatibleProviderConfig{
   model:string;
   credential?:CredentialReference|null;
   timeoutMs?:number;
+  structuredOutput?:boolean;
   diagnostics?:DiagnosticsStore;
   providerPresetId?:string;
 }
@@ -230,7 +231,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     return {
       streaming:true,
       toolCalling:false,
-      structuredOutput:true,
+      structuredOutput:this.config.structuredOutput===true,
       reasoning:false
     };
   }
@@ -578,7 +579,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     }
   }
 
-  async chat(request:ChatRequest):Promise<ChatResponse>{
+  async chat(request:ChatRequest,options:import("../../../../contracts/src/index").ChatRequestOptions={}):Promise<ChatResponse>{
     this.ensureConfig(request);
     if(!request.model.trim()){
       throw this.failure({code:"INVALID_REQUEST",message:"Requested model is not configured for this provider.",request,retryable:false,details:{category:"configuration"}});
@@ -600,7 +601,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
           ...(secret?{Authorization:"Bearer "+secret}:{}),
         },
         body
-      },this.timeoutMs(),request);
+      },this.timeoutMs(),request,options.signal);
     }catch(error){
       if(error instanceof OpenAICompatibleProviderError)throw error;
       const durationMs=Date.now()-started;
@@ -734,7 +735,9 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     if(generation?.topP!==undefined)payload.top_p=generation.topP;
     const responseFormat=generation?.responseFormat;
     if(responseFormat?.type==="json"){
-      payload.response_format={type:"json_object"};
+      payload.response_format=this.config.structuredOutput
+        ?{type:"json_schema",json_schema:{name:"nova_agent_decision",strict:true,schema:responseFormat.schema}}
+        :{type:"json_object"};
     }else if(responseFormat?.type==="json-schema"){
       payload.response_format={
         type:"json_schema",
@@ -794,11 +797,18 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
   private async requestWithTimeout(
     request:HttpClientRequest,
     timeoutMs:number,
-    chatRequest:ChatRequest
+    chatRequest:ChatRequest,
+    chatSignal?:AbortSignal
   ):Promise<HttpClientResponse>{
     const controller=new AbortController();
     let timer:ReturnType<typeof setTimeout>|undefined;
     let timedOut=false;
+    const callerSignal=chatSignal;
+    const callerAbort=()=>controller.abort();
+    if(callerSignal){
+      if(callerSignal.aborted)throw createAbortError();
+      callerSignal.addEventListener("abort",callerAbort,{once:true});
+    }
     const timeoutPromise=new Promise<never>((_,reject)=>{
       timer=setTimeout(()=>{
         timedOut=true;
@@ -833,6 +843,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       throw error;
     }finally{
       if(timer)clearTimeout(timer);
+      callerSignal?.removeEventListener("abort",callerAbort);
       controller.abort();
     }
   }
@@ -843,7 +854,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       httpStatus:status,
       durationMs
     };
-    if((status===400||status===422)&&request.generation?.responseFormat?.type==="json-schema"&&this.isStructuredUnsupportedResponse(body)){
+    if((status===400||status===422)&&(request.generation?.responseFormat?.type==="json"||request.generation?.responseFormat?.type==="json-schema")&&this.isStructuredUnsupportedResponse(body)){
       return this.failure({code:"UNSUPPORTED",message:"OpenAI-compatible provider does not support the requested structured output.",request,retryable:false,details:withProviderResponse({...diagnosticDetails,category:"capability"},body)});
     }
     if(status===400)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rejected the chat request.",request,retryable:false,details:withProviderResponse({...diagnosticDetails,category:"bad_request"},body)});

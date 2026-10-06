@@ -23,6 +23,7 @@
         "version":{"type":"string","minLength":1}
       }
     },
-    "timeoutMs":{"type":"number","minimum":0.000001}
+    "timeoutMs":{"type":"number","minimum":0.000001},
+    "structuredOutput":{"type":"boolean"}
   }
 }

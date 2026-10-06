@@ -3,6 +3,8 @@ import type {DiagnosticsLogLevel} from "./settings";
 import type {ChatStreamHandlers,ChatStreamOptions} from "./chat-stream";
 export type ApiVersion = "1";
 export const FOUNDATION_API_VERSION:ApiVersion="1";
+export const AGENT_API_VERSION:ApiVersion="1";
+export const AGENT_SCHEMA_VERSION="1";
 export const FOUNDATION_SCHEMA_VERSION="1";
 export const CHAT_API_VERSION:ApiVersion="1";
 export const CHAT_SCHEMA_VERSION="1";
@@ -74,7 +76,7 @@ export interface ProviderPresetModelResolver{
   listModels(presetId:string):Promise<readonly ModelInfo[]>;
 }
 
-export interface ProviderConfiguration{apiVersion:ApiVersion;schemaVersion:string;providerId:string;enabled:boolean;baseUrl:string;model:string;credentialReference:CredentialReference|null;timeoutMs?:number}
+export interface ProviderConfiguration{apiVersion:ApiVersion;schemaVersion:string;providerId:string;enabled:boolean;baseUrl:string;model:string;credentialReference:CredentialReference|null;timeoutMs?:number;structuredOutput?:boolean}
 export interface ProviderConnectionTestResult{apiVersion:ApiVersion;schemaVersion:string;status:ProviderConnectionTestStatus;providerId:string;message?:string}
 export type CharacterId=string;
 export const CHARACTER_API_VERSION:ApiVersion="1";
@@ -497,6 +499,15 @@ export interface EventPayloadMap{
   ConversationDeleted:{characterId:string;conversationId:string};
   ActiveConversationChanged:{characterId:string;conversationId:string};
 
+  AgentRunStarted:{runId:string;characterId:string;goal:string};
+  AgentStateChanged:{runId:string;state:AgentState;previousState?:AgentState};
+  AgentStepStarted:{runId:string;stepIndex:number};
+  AgentDecisionMade:{runId:string;stepIndex:number;action:AgentDecisionAction;outputMode:AgentOutputMode};
+  AgentStepCompleted:{runId:string;stepIndex:number;decisionType:AgentDecisionAction;outcome:AgentStepOutcome};
+  AgentRunCompleted:{runId:string;stepCount:number};
+  AgentRunFailed:{runId:string;code:string;reason:string};
+  AgentRunInterrupted:{runId:string;reason:string};
+
   ChatRequestFailed:{requestId:string;conversationId?:string;providerId?:string;code:ChatError["code"]};
 }
 export interface ChatTurnTrace{
@@ -613,7 +624,8 @@ export interface ChatError{apiVersion:ApiVersion;schemaVersion:string;code:ChatE
 export interface ChatRequest{apiVersion:ApiVersion;schemaVersion:string;requestId:string;providerId?:string;model:string;context:ChatContext;generation?:ChatGenerationOptions;metadata?:Record<string,unknown>}
 export interface ChatResponse{apiVersion:ApiVersion;schemaVersion:string;requestId:string;conversationId:string;providerId:string;model:string;message:ChatMessage;finishReason:ChatFinishReason;usage?:ChatUsage;metadata?:Record<string,unknown>}
 export interface ChatProviderMetadata{id:string;kind:"chat";displayName:string;version:string;description?:string}
-export interface ChatProvider{id:string;metadata():ChatProviderMetadata;capabilities():ProviderCapabilities;listModels():Promise<ModelInfo[]>;chat(request:ChatRequest):Promise<ChatResponse>;stream?(request:ChatRequest,handlers:ChatStreamHandlers,options?:ChatStreamOptions):Promise<ChatResponse>;health():Promise<HealthStatus>}
+export interface ChatRequestOptions{signal?:AbortSignal}
+export interface ChatProvider{id:string;metadata():ChatProviderMetadata;capabilities():ProviderCapabilities;listModels():Promise<ModelInfo[]>;chat(request:ChatRequest,options?:ChatRequestOptions):Promise<ChatResponse>;stream?(request:ChatRequest,handlers:ChatStreamHandlers,options?:ChatStreamOptions):Promise<ChatResponse>;health():Promise<HealthStatus>}
 export type Message=ChatMessage;
 export type Usage=ChatUsage;
 export interface STTRequest{audio:Uint8Array;language?:string}
@@ -650,6 +662,21 @@ export interface PostconditionChecker{verify(request:ActionRequest,target:Action
 export interface AuditEntry{timestamp:string;actorId:string;actorType:string;module?:string;action:string;resourceType:string;targetSummary?:string;argumentKeys:string[];status:"success"|"denied"|"error";durationMs:number;allowed:boolean;reason?:string}
 export interface AuditService{record(entry:AuditEntry):Promise<void>}
 export interface ActionBroker{execute(invocation:ActionInvocation):Promise<ActionResult>}
+export type AgentState="starting"|"ready"|"idle"|"thinking"|"planning"|"acting"|"waiting"|"interrupted"|"paused"|"resting"|"completed"|"failed"|"stopping";
+export type AgentRunStatus="running"|"waiting"|"paused"|"completed"|"failed"|"interrupted";
+export type AgentDecisionAction="continue"|"wait"|"ask_user"|"finish";
+export type AgentOutputMode="structured"|"tagged";
+export type AgentStepOutcome="continued"|"waiting"|"completed"|"failed"|"interrupted";
+export type AgentDecision=
+  | {action:"continue";workingSummary?:string}
+  | {action:"wait";waitMs:number}
+  | {action:"ask_user";question:string}
+  | {action:"finish";result:string};
+export interface AgentRunLimits{maxSteps:number;maxDurationMs:number;maxConsecutiveFailures:number;}
+export interface AgentRunInput{id?:string;characterId:string;goal:string;task:string;providerId?:string;model?:string;limits?:Partial<AgentRunLimits>;}
+export interface AgentRun{id:string;characterId:string;goal:string;task:string;state:AgentState;status:AgentRunStatus;stepCount:number;startedAt:string;updatedAt:string;cancelReason?:string;workingSummary?:string;lastAction?:AgentDecisionAction;lastOutcome?:string;providerId?:string;model?:string;limits:AgentRunLimits;}
+export interface AgentStep{stepIndex:number;startedAt:string;completedAt:string;decisionType:AgentDecisionAction;outcome:AgentStepOutcome;}
+export const AGENT_DEFAULT_LIMITS:AgentRunLimits={maxSteps:20,maxDurationMs:60000,maxConsecutiveFailures:3};
 export interface Permission{id:string;schemaVersion:string;subject:string;resourceType:"domain"|"filesystem"|"application"|"resource";action:string;effect:"allow"|"deny";scope?:{domains?:readonly string[];roots?:readonly string[];applications?:readonly string[];windows?:readonly string[]}}
 export interface ActionError{code:"INVALID_REQUEST"|"SCHEMA_VALIDATION_FAILED"|"TOOL_NOT_FOUND"|"CAPABILITY_DENIED"|"PERMISSION_DENIED"|"FOREGROUND_DENIED"|"SCOPE_DENIED"|"RISK_DENIED"|"CONFIRMATION_REQUIRED"|"TARGET_RESOLUTION_FAILED"|"DRIVER_ERROR"|"POSTCONDITION_FAILED";message:string;details?:Record<string,unknown>}
 export type ActionResult={id:string;schemaVersion:string;status:"success";output:unknown;durationMs:number}|{id:string;schemaVersion:string;status:"denied"|"error";error:ActionError;durationMs:number}
@@ -711,7 +738,8 @@ export const CONTRACT_VERSIONS={
   retrievalQuery:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
   retrievalCandidate:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
   retrievalResult:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
-  retrievalIndexDocument:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
+  retrievalIndexDocument:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},,
+  agentDecision:{apiVersion:AGENT_API_VERSION,schemaVersion:AGENT_SCHEMA_VERSION}
 } as const;
 export {STANDARD_SCHEMAS} from "./generated-schemas";
 
