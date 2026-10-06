@@ -59,7 +59,7 @@ function baseSettings(outputMode:"structured"|"plain"="structured"):AppSettings{
       ...settings.semanticDedup.judge,
       enabled:true,
       providerPresetId:"preset.judge",
-      model:"fake-judge",
+      model:"codestral-2508",
       outputMode,
       prompt:settings.semanticDedup.judge.prompt
     }
@@ -393,7 +393,7 @@ async function productionRuntimeSmokePathTest(){
     presetId:"preset.judge",
     configuration:{
       apiVersion:"1",schemaVersion:"1",providerId:"openai-compatible",enabled:true,
-      baseUrl:"https://judge.invalid/v1",model:"fake-judge",credentialReference:null
+      baseUrl:"https://api.mistral.ai/v1",model:"codestral-2508",credentialReference:null
     }
   } as const;
   const runtime=await createFoundationRuntime({
@@ -428,7 +428,7 @@ async function productionRuntimeSmokePathTest(){
   const applied=await runtime.updateSettings(enabledSettings);
   equal(applied.semanticDedup.enabled,true,"runtime SettingsManager sees Semantic Dedup enabled immediately after save");
   equal(applied.semanticDedup.judge.providerPresetId,"preset.judge","runtime settings preserve Judge preset");
-  equal(applied.semanticDedup.judge.model,"fake-judge","runtime settings preserve Judge model");
+  equal(applied.semanticDedup.judge.model,"codestral-2508","runtime settings preserve Judge model");
   equal(applied.semanticDedup.judge.outputMode,"structured","runtime settings preserve Judge output mode");
   const reloaded=new SettingsManager(settingsStore,validator);
   const persisted=await reloaded.initialize();
@@ -465,7 +465,7 @@ async function productionRuntimeSmokePathTest(){
       };
     };
     const providerSchema=judgeBody.response_format?.json_schema?.schema;
-    equal(judgeBody.model,"fake-judge","Judge provider request uses configured model");
+    equal(judgeBody.model,"codestral-2508","Judge provider request uses configured model");
     equal(judgeBody.stream,false,"Judge provider request is non-streaming");
     equal(judgeBody.response_format?.type,"json_schema","Judge uses Mistral json_schema response format");
     equal(judgeBody.response_format?.json_schema?.name,"memory-judge-decision","Judge schema name is stable");
@@ -490,7 +490,7 @@ async function productionRuntimeSmokePathTest(){
     equal(active.filter(item=>item.status==="active").length,1,"FoundationRuntime production path leaves one active memory");
     equal(httpClient.calls.length,1,"FoundationRuntime production path invokes Judge provider exactly once");
     const request=JSON.parse(httpClient.calls[0]?.body??"{}") as {messages?:Array<{role:string;content:string}>;model?:string;response_format?:unknown};
-    equal(request.model,"fake-judge","FoundationRuntime passes configured Judge model to provider");
+    equal(request.model,"codestral-2508","FoundationRuntime passes configured Judge model to provider");
     ok(request.messages?.some(message=>message.role==="user"&&message.content.includes("NEW MEMORY")&&message.content.includes("content: Личность проживает в Берлине и увлекается программированием.")&&message.content.includes("1. content: Личность проживает в Берлине и увлекается программированием.")),"FoundationRuntime sends the exact duplicate content as NEW and candidate 1");
     ok(!JSON.stringify(request.messages).includes("old-real-id"),"FoundationRuntime Judge request does not expose real memory IDs");
     const persistedAfter=await runtime.listMemory(character.id);
