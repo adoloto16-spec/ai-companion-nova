@@ -2,7 +2,6 @@ import {
   AiRuntime,
   AiRuntimeError,
   InMemoryDiagnosticsStore,
-  InMemoryDiagnosticsStore as CoreDiagnosticsStore,
   ProviderRegistry
 } from "../../../core/src";
 import {
@@ -135,7 +134,7 @@ export function buildProviderForPreset(
   configuration:ProviderConfiguration,
   credentialStore:CredentialStore,
   httpClient?:HttpClient,
-  diagnostics?:CoreDiagnosticsStore,
+  diagnostics?:InMemoryDiagnosticsStore,
   providerPresetId?:string
 ):ChatProvider|undefined{
   const validation=validateProviderPresetConfiguration(configuration);
