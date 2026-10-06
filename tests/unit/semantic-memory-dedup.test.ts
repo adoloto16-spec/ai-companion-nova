@@ -12,8 +12,8 @@ import {
 import type {
   AppSettings,ChatRequest,ChatResponse,EmbeddingProvider,HealthStatus,MemoryItem,ProviderCapabilities
 } from "../../contracts/src";
-import {StandardContractValidator,defaultAppSettings,migrateAppSettings} from "../../contracts/src";
-import {InMemoryAuditService,InMemoryDiagnosticsStore,InMemoryEventBus,MemoryBrokerImpl,SettingsManager} from "../../core/src";
+import {StandardContractValidator,defaultAppSettings,defaultModelProfile,migrateAppSettings} from "../../contracts/src";
+import {ChatSessionController,ConversationSession,InMemoryAuditService,InMemoryDiagnosticsStore,InMemoryEventBus,MemoryBrokerImpl,SettingsManager} from "../../core/src";
 import {createFoundationRuntime} from "../../runtime/bootstrap/src/index";
 import type {HttpClient} from "../../providers/chat/openai-compatible/src/index";
 import {InMemoryMemorySemanticIndexStore,InMemoryMemoryStore} from "../../host/memory/src";
@@ -469,12 +469,184 @@ async function productionRuntimeSmokePathTest(){
   }
 }
 
+class ChatJudgeIsolationHttpClient implements HttpClient{
+  mainStreamCalls=0;
+  judgeCalls=0;
+  private blockMainUntilJudge=false;
+  private mainStreamStartedResolver:(()=>void)|undefined;
+  private judgeStartedResolver:(()=>void)|undefined;
+  private mainStreamStartedPromise=new Promise<void>(resolve=>{this.mainStreamStartedResolver=resolve;});
+  private judgeStartedPromise=new Promise<void>(resolve=>{this.judgeStartedResolver=resolve;});
+
+  waitForMainStreamStart():Promise<void>{return this.mainStreamStartedPromise;}
+  prepareConcurrentJudgeFailure():void{
+    this.blockMainUntilJudge=true;
+    this.judgeStartedPromise=new Promise<void>(resolve=>{this.judgeStartedResolver=resolve;});
+  }
+  async request(request:{url:string;method:"GET"|"POST";headers:Readonly<Record<string,string>>;body?:string;signal?:AbortSignal}):Promise<{status:number;body:string}>{
+    if(request.method==="POST"&&request.url.endsWith("/chat/completions")&&request.url.startsWith("https://judge.invalid/")){
+      this.judgeCalls+=1;
+      this.judgeStartedResolver?.();
+      return {
+        status:400,
+        body:JSON.stringify({message:"deliberate Judge failure",type:"invalid_request",code:"judge_failure"})
+      };
+    }
+    throw new Error("unexpected HTTP request: "+request.method+" "+request.url);
+  }
+  async stream(request:{url:string;method:"GET"|"POST";headers:Readonly<Record<string,string>>;body?:string;signal?:AbortSignal}):Promise<{
+    status:number;
+    body:AsyncIterable<string>;
+  }>{
+    if(request.method!=="POST"||!request.url.endsWith("/chat/completions")||!request.url.startsWith("https://main.invalid/")){
+      throw new Error("unexpected streaming HTTP request: "+request.method+" "+request.url);
+    }
+    this.mainStreamCalls+=1;
+    this.mainStreamStartedResolver?.();
+    if(this.blockMainUntilJudge)await this.judgeStartedPromise;
+    const body=streamChunks([
+      "data: "+JSON.stringify({id:"main-chat-response",model:"main-chat-model",choices:[{delta:{content:"ordinary chat success"},finish_reason:"stop"}]})+"\n\n",
+      "data: [DONE]\n\n"
+    ]);
+    return {status:200,body};
+  }
+}
+
+function makeProductionChatController(
+  runtime:Awaited<ReturnType<typeof createFoundationRuntime>>,
+  characterId:string,
+  providerPresetId:string,
+  model:string
+):ChatSessionController{
+  const session=new ConversationSession("chat-regression-conversation",characterId);
+  const controller=new ChatSessionController(session,{
+    chat:(request,preset)=>runtime.chat(request,preset),
+    stream:(request,handlers,options,preset)=>runtime.stream(request,handlers,options,preset),
+    getChatModel:providerId=>runtime.getChatModel(providerId),
+    getChatModelForPreset:providerPresetId=>runtime.getChatModelForPreset(providerPresetId),
+    getActiveProviderPresetId:()=>runtime.getActiveProviderPresetId(),
+    memoryExtractionEnabled:()=>false
+  });
+  controller.setModelProfile({
+    ...defaultModelProfile(characterId),
+    providerPresetId,
+    model,
+  });
+  return controller;
+}
+
+async function productionChatJudgeFailureIsolationRegressionTest(){
+  const httpClient=new ChatJudgeIsolationHttpClient();
+  const mainConfiguration={
+    apiVersion:"1",schemaVersion:"1",providerId:"openai-compatible",enabled:true,
+    baseUrl:"https://main.invalid/v1",model:"main-chat-model",credentialReference:null
+  } as const;
+  const judgeConfiguration={
+    apiVersion:"1",schemaVersion:"1",providerId:"openai-compatible",enabled:true,
+    baseUrl:"https://judge.invalid/v1",model:"judge-model",credentialReference:null
+  } as const;
+  const runtime=await createFoundationRuntime({
+    providerConfiguration:mainConfiguration,
+    httpClient,
+    providerPresetConfigurations:[
+      {presetId:"preset.main",configuration:mainConfiguration},
+      {presetId:"preset.judge",configuration:judgeConfiguration}
+    ],
+    activeProviderPresetId:"preset.main"
+  });
+  await runtime.start();
+  try{
+    const character=await runtime.getActiveCharacter();
+    const initialProviderConfiguration=JSON.stringify(runtime.getProviderConfiguration());
+    const initialActivePresetId=runtime.getActiveProviderPresetId();
+    const initialChatModel=runtime.getActiveChatModel();
+
+    const disabledController=makeProductionChatController(runtime,character.id,"preset.main","main-chat-model");
+    const disabledResult=await disabledController.submit("ordinary chat request","main-chat-model");
+    equal(disabledResult.status,"sent","ordinary Chat succeeds with Semantic Dedup disabled");
+
+    const currentSettings=runtime.getSettings();
+    const enabledSettings:AppSettings={
+      ...currentSettings,
+      semanticDedup:{
+        ...currentSettings.semanticDedup,
+        enabled:true,
+        embeddingProviderPresetId:null,
+        embeddingModel:"",
+        judge:{
+          ...currentSettings.semanticDedup.judge,
+          enabled:true,
+          providerPresetId:"preset.judge",
+          model:"judge-model",
+          prompt:currentSettings.semanticDedup.judge.prompt
+        }
+      }
+    };
+    const saved=await runtime.updateSettings(enabledSettings);
+    equal(saved.semanticDedup.enabled,true,"Semantic Dedup settings are saved");
+    equal(saved.semanticDedup.judge.enabled,true,"Judge is enabled in saved settings");
+    equal(saved.semanticDedup.judge.providerPresetId,"preset.judge","saved Judge preset remains separate");
+
+    const enabledController=makeProductionChatController(runtime,character.id,"preset.main","main-chat-model");
+    const enabledResult=await enabledController.submit("ordinary chat request","main-chat-model");
+    equal(enabledResult.status,"sent","same ordinary Chat succeeds with Semantic Dedup enabled");
+
+    equal(JSON.stringify(runtime.getProviderConfiguration()),initialProviderConfiguration,"Semantic Dedup settings do not mutate main provider configuration");
+    equal(runtime.getActiveProviderPresetId(),initialActivePresetId,"Semantic Dedup settings do not mutate active provider preset");
+    equal(runtime.getActiveChatModel(),initialChatModel,"Semantic Dedup settings do not mutate active Chat model");
+
+    const oldMemory=await runtime.createMemory(character.id,{
+      id:"chat-isolation-old",
+      originConversationId:null,
+      type:"fact",
+      content:"User lives in Berlin and enjoys programming.",
+      tags:[],importance:70,confidence:80,validFrom:null,validUntil:null,
+      source:"user",sourceReference:null,mutationPolicy:"auto",metadata:{}
+    });
+    equal(oldMemory.status,"active","baseline memory remains active before concurrent regression scenario");
+
+    httpClient.prepareConcurrentJudgeFailure();
+    const concurrentController=makeProductionChatController(runtime,character.id,"preset.main","main-chat-model");
+    const chatPromise=concurrentController.submit("ordinary chat request","main-chat-model");
+    await httpClient.waitForMainStreamStart();
+
+    const memoryPromise=runtime.createMemory(character.id,{
+      id:"chat-isolation-new",
+      originConversationId:null,
+      type:"fact",
+      content:"User lives in Berlin and enjoys programming.",
+      tags:[],importance:70,confidence:80,validFrom:null,validUntil:null,
+      source:"user",sourceReference:null,mutationPolicy:"auto",metadata:{}
+    });
+
+    const [concurrentChatResult,newMemory]=await Promise.all([chatPromise,memoryPromise]);
+    equal(concurrentChatResult.status,"sent","main Chat completes while Judge deliberately fails concurrently");
+    equal(newMemory.status,"active","Memory creation completes despite Judge failure");
+    equal(httpClient.judgeCalls,1,"deliberate Judge failure occurs exactly once");
+    equal(httpClient.mainStreamCalls,3,"all ordinary Chat requests use the main streaming path");
+
+    const diagnostics=(await runtime.diagnostics()).recentErrors;
+    ok(diagnostics.some(entry=>entry.source==="memory-semantic-deduplication"&&entry.code==="SEMANTIC_DEDUP_FAILED"),"Judge failure is recorded as semantic dedup failure");
+    ok(!diagnostics.some(entry=>entry.source==="chat-session"&&entry.code==="PROVIDER_ERROR"),"Judge failure is not recorded as main Chat PROVIDER_ERROR");
+    equal(JSON.stringify(runtime.getProviderConfiguration()),initialProviderConfiguration,"Judge failure does not mutate main provider configuration");
+    equal(runtime.getActiveProviderPresetId(),initialActivePresetId,"Judge failure does not mutate active provider preset");
+    equal(runtime.getActiveChatModel(),initialChatModel,"Judge failure does not mutate active Chat model");
+    const providers=(await runtime.diagnostics()).providers.filter(provider=>provider.roles.includes("chat"));
+    equal(providers.filter(provider=>provider.id==="openai-compatible").length,1,"Judge provider is not registered in the global ProviderRegistry");
+    equal((await runtime.getMemory(character.id,"chat-isolation-old"))?.status,"active","failed Judge does not archive existing memory");
+    equal((await runtime.getMemory(character.id,"chat-isolation-new"))?.status,"active","failed Judge does not archive new memory");
+  }finally{
+    await runtime.stop();
+  }
+}
+
 async function main(){
   await judgeParserProtocolTest();
   await vectorMathTest();
   await containmentUnitTest();
   await candidateSelectionTest();
   await productionRuntimeSmokePathTest();
+  await productionChatJudgeFailureIsolationRegressionTest();
   await belowThresholdContainmentReachesJudgeTest();
   await structuredArchiveTest();
   await structuredNoArchiveTest();
