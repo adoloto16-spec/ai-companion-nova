@@ -31,6 +31,7 @@ class FakeAgentRuntime{
   runs=new Map<string,AgentRun>();
   starts:AgentRun["id"][]=[];
   inputs:unknown[]=[];
+  resumeResponses:string[]=[];
   pending=new Map<string,(run:AgentRun)=>void>();
   async startAgentRun(input:import("../../contracts/src/index").AgentRunInput):Promise<AgentRun>{
     this.starts.push(input.id!);this.inputs.push(input);
@@ -49,7 +50,8 @@ class FakeAgentRuntime{
     this.runs.set(runId,interrupted);
     return interrupted;
   }
-  async resumeAgentRun(runId:string):Promise<AgentRun>{
+  async resumeAgentRun(runId:string,userResponse?:string):Promise<AgentRun>{
+    this.resumeResponses.push(userResponse??"");
     const current=this.runs.get(runId)!;
     const resumed=run({...current,state:"completed",status:"completed",stepCount:current.stepCount+1,lastAction:"finish",workingSummary:"Resumed answer",lastOutcome:"completed"});
     this.runs.set(runId,resumed);
@@ -95,7 +97,8 @@ async function main(){
     waitingRuntime.runs.set(input.id!,waiting);
     return waiting;
   };
-  waitingRuntime.resumeAgentRun=async(runId)=>{
+  waitingRuntime.resumeAgentRun=async(runId,userResponse)=>{
+    waitingRuntime.resumeResponses.push(userResponse??"");
     const current=waitingRuntime.runs.get(runId)!;
     const resumed=run({...current,state:"completed",status:"completed",stepCount:2,lastAction:"finish",lastOutcome:"completed",workingSummary:"Resumed answer"});
     waitingRuntime.runs.set(runId,resumed);
@@ -110,11 +113,16 @@ async function main(){
   const waitingController=new AgentChatController(waitingRuntime,"character:test",waitingPersisted[0]!,waitingPersist);
   const waiting=await waitingController.submit("Need a choice");
   equal(waiting.status,"waiting","ask_user leaves the Agent Run waiting");
-  equal(waitingController.getSnapshot().question,"What should I use?","agent question is visible to UI");
+  equal(waitingController.getSnapshot().question,"What should I use?","agent question is visible to UI state");
+  equal(waitingPersisted[0]!.messages.at(-1)?.content,"What should I use?","agent question is persisted as a normal assistant chat message");
+  equal(waitingPersisted[0]!.messages.at(-1)?.metadata?.agentMessageType,"question","question message carries agent question metadata");
+  equal(waitingPersisted[0]!.messages.at(-1)?.metadata?.agentRunId,runOf(waiting).id,"question message is linked to the existing Agent Run");
   const resumed=await waitingController.resume("Use option B");
   equal(resumed.status,"completed","resumeAgentRun continues the waiting run");
   equal(waitingRuntime.starts.length,1,"resume does not create a second Agent Run");
+  equal(waitingRuntime.resumeResponses[0],"Use option B","UI forwards the answer to runtime.resumeAgentRun");
   equal(waitingRuntime.runs.get(runOf(waiting).id)?.state,"completed","existing Agent Run is resumed");
+  equal(waitingPersisted[0]!.messages.at(-3)?.content,"What should I use?","question remains in Conversation history");
   equal(waitingPersisted[0]!.messages.at(-2)?.content,"Use option B","user answer is persisted in Conversation");
   equal(waitingPersisted[0]!.messages.at(-1)?.content,"Resumed answer","resumed result is appended as assistant message");
 
@@ -177,6 +185,7 @@ async function main(){
   assert.match(source,/agentController\.submit/);
   assert.match(source,/agentController\.resume/);
   assert.match(source,/agentController\.interrupt/);
+  assert.match(source,/agentSnapshot\.question/);
   assert.match(source,/onPersistAgentConversation/);
   assert.match(source,/runtime\.getActiveChatModel\(\)/);
   console.log("agent-chat-ui integration: ok");
