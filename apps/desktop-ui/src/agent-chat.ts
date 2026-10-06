@@ -163,12 +163,12 @@ export class AgentChatController{
     }
     this.snapshot={...this.snapshot,status:"starting",sending:true,question:undefined,error:undefined};
     this.notify();
-    return this.startAndMonitor(waitingRun.id);
+    return this.startAndMonitor(waitingRun.id,undefined,text);
   }
 
-  private async startAndMonitor(runId:string,input?:AgentRunInput):Promise<AgentChatActionResult>{
+  private async startAndMonitor(runId:string,input?:AgentRunInput,userResponse?:string):Promise<AgentChatActionResult>{
     try{
-      const promise=input?this.runtime.startAgentRun(input):this.runtime.resumeAgentRun(runId);
+      const promise=input?this.runtime.startAgentRun(input):this.runtime.resumeAgentRun(runId,userResponse);
       this.activeRunId=runId;
       this.activePromise=promise;
       let settled=false;
@@ -238,7 +238,26 @@ export class AgentChatController{
       return {status:"completed",run};
     }
     if(run.state==="waiting"){
-      this.snapshot={...this.snapshot,status:"waiting",sending:false,messages:cloneMessages(this.conversation.messages),runId:run.id,stepCount:run.stepCount,question:questionForRun(run)};
+      const question=questionForRun(run);
+      if(question){
+        const questionId=run.id+":question";
+        if(!this.conversation.messages.some(message=>message.id===questionId)){
+          const questionMessage:ChatMessage={
+            id:questionId,
+            role:"assistant",
+            content:question,
+            metadata:{streamStatus:"complete",agentRunId:run.id,agentMessageType:"question"}
+          };
+          try{
+            await this.persistMessages([...this.conversation.messages,questionMessage]);
+          }catch(error){
+            this.snapshot={...this.snapshot,status:"failed",sending:false,error:error instanceof Error?error.message:"Conversation could not be saved."};
+            this.notify();
+            return {status:"failed",run};
+          }
+        }
+      }
+      this.snapshot={...this.snapshot,status:"waiting",sending:false,messages:cloneMessages(this.conversation.messages),runId:run.id,stepCount:run.stepCount,question,error:undefined};
       this.notify();
       return {status:"waiting",run};
     }
