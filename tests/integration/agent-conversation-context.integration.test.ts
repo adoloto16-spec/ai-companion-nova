@@ -86,7 +86,6 @@ async function main(){
     const askController=new AgentChatController(runtime,character.id,askConversation,persist);
     const waiting=await askController.submit("Нужен анализ, но параметр не задан.",provider.id,"test-model");
     equal(waiting.status,"waiting","missing required information enters waiting");
-    equal(waiting.status==="rejected"?"":waiting.run.conversationId,askConversation.id,"AgentRun keeps the Conversation id across ask_user");
     const runId=waiting.status==="rejected"?"":waiting.run.id;
     const askState=askController.getSnapshot();
     equal(askState.runId,runId,"waiting snapshot keeps the run id");

@@ -56,7 +56,7 @@ async function controllerTests(){
   const responseProvider=new SequenceProvider(true,['{"action":"finish","result":"done"}']);
   const responseRegistry=new ProviderRegistry();responseRegistry.register(responseProvider,["chat"]);
   const responseController=new AgentCognitiveController(new AiRuntime(responseRegistry),{validator});
-  await responseController.decide({runId:"r-response",characterId:"c",goal:"g",task:"t",state:"thinking",stepIndex:2,model:"test-model",userResponse:"анализ данных"});
+  await responseController.decide({runId:"r-response",characterId:"c",goal:"g",task:"t",state:"thinking",stepIndex:2,model:"test-model",userResponse:"анализ данных",recentConversationMessages:[]});
   const responsePayload=JSON.parse(responseProvider.requestPayloads[0]!) as {userResponse?:string};
   equal(responsePayload.userResponse,"анализ данных","cognitive payload includes userResponse");
 
