@@ -27,6 +27,7 @@ export interface AgentOutputRunnerOptions<T>{
   providerPresetId?:string;
   schemaName:string;
   schema:JsonSchema;
+  providerSchema?:JsonSchema;
   validator:SchemaValidator;
   parseStructured(value:unknown):T;
   parsePlain(content:string):T;
@@ -74,7 +75,7 @@ export class AgentOutputRunner{
         ...(options.request.generation??{}),
         responseFormat:{
           type:"json-schema",
-          schema:options.schema,
+          schema:options.providerSchema??options.schema,
           name:options.schemaName,
           strict:true
         }
