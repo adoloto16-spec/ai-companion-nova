@@ -514,6 +514,23 @@ export interface ChatTurnTrace{
     omittedCandidates:readonly ContextCandidate[];
   };
   finalRequest?:ChatRequest;
+  provider?:{
+    chatProviderPresetId?:string;
+    chatProviderId:string;
+    chatModel:string;
+    chatProviderBaseUrlHost?:string;
+    chatProviderTimeoutMs?:number;
+    chatTransport:"stream"|"chat";
+  };
+  providerError?:{
+    providerId?:string;
+    providerPresetId?:string;
+    category?:string;
+    httpStatus?:number;
+    timeoutMs?:number;
+    durationMs?:number;
+    providerResponse?:unknown;
+  };
   automaticMemory?:{
     started:boolean;
     status?:"started"|"completed"|"failed"|"skipped";
