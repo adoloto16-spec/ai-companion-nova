@@ -112,7 +112,8 @@ function provider(
     baseUrl:"https://provider.example.test/v1",
     model:"openai-compatible-test-model",
     credential:credentialReference,
-    timeoutMs
+    timeoutMs,
+    structuredOutput
   },credentialStore,http);
 }
 
