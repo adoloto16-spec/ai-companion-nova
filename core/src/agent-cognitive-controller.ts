@@ -5,7 +5,7 @@ import {parseStructuredDecision,parseTaggedDecision} from "./agent-protocol";
 
 export interface AgentCognitiveContext{
   runId:string;characterId:string;goal:string;task:string;state:string;stepIndex:number;
-  workingSummary?:string;lastAction?:string;lastOutcome?:string;providerId?:string;model:string;
+  workingSummary?:string;lastAction?:string;lastOutcome?:string;userResponse?:string;providerId?:string;model:string;
 }
 export interface AgentDecisionResult{decision:AgentDecision;outputMode:AgentDecisionOutputMode;}
 export interface AgentCognitiveDecisionProvider{
@@ -92,6 +92,7 @@ export class AgentCognitiveController implements AgentCognitiveDecisionProvider{
             ...(context.workingSummary?{workingSummary:context.workingSummary}:{}),
             ...(context.lastAction?{lastAction:context.lastAction}:{}),
             ...(context.lastOutcome?{lastOutcome:context.lastOutcome}:{}),
+            ...(context.userResponse?{userResponse:context.userResponse}:{}),
             availableInternalActions:["continue","wait","ask_user","finish"]
           })}
         ]
