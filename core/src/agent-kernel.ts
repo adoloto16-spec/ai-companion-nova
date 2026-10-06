@@ -59,6 +59,7 @@ export class AgentKernel{
   private readonly steps=new Map<string,AgentStep[]>();
   private readonly controls=new Map<string,Control>();
   private readonly consecutiveFailures=new Map<string,number>();
+  private readonly pendingUserResponses=new Map<string,string>();
   private nextId=1;
 
   constructor(private readonly options:AgentKernelOptions){
@@ -101,10 +102,13 @@ export class AgentKernel{
 
     let result:{decision:AgentDecision;outputMode:"structured"|"tagged"};
     try{
+      const userResponse=this.pendingUserResponses.get(run.id);
+      if(userResponse!==undefined)this.pendingUserResponses.delete(run.id);
       const context:AgentCognitiveContext={
         runId:run.id,characterId:run.characterId,goal:run.goal,task:run.task,state:"thinking",stepIndex,
         ...(run.workingSummary?{workingSummary:run.workingSummary}:{}),
         ...(run.lastAction?{lastAction:run.lastAction}:{}),...(run.lastOutcome?{lastOutcome:run.lastOutcome}:{}),
+        ...(userResponse!==undefined?{userResponse}:{}),
         ...(run.providerId?{providerId:run.providerId}:{}),model:run.model??""
       };
       result=await this.options.cognitive.decide(context,{signal:control.controller.signal});
@@ -195,6 +199,7 @@ export class AgentKernel{
   async interrupt(runId:string,reason="Interrupted by user."){
     const run=this.require(runId);
     if(TERMINAL.includes(run.state))return this.clone(run);
+    this.pendingUserResponses.delete(runId);
     run.cancelReason=bounded(reason);await this.setState(run,"interrupted");
     const control=this.controls.get(runId);if(control){control.controller.abort();if(control.timer)clearTimeout(control.timer);this.controls.delete(runId);}
     this.diagnostics?.recordError("agent-kernel","AGENT_RUN_INTERRUPTED","Agent run was interrupted.",{runId,reason:run.cancelReason});
@@ -204,16 +209,24 @@ export class AgentKernel{
 
   async pause(runId:string){
     const run=this.require(runId);if(TERMINAL.includes(run.state))return this.clone(run);
+    this.pendingUserResponses.delete(runId);
     await this.setState(run,"paused");
     const control=this.controls.get(runId);if(control){control.controller.abort();if(control.timer)clearTimeout(control.timer);this.controls.delete(runId);}
     return this.clone(run);
   }
 
-  async resume(runId:string){
+  async resume(runId:string,userResponse?:string){
     const run=this.require(runId);
     if(!["interrupted","paused","waiting"].includes(run.state)){
       if(run.state==="ready"||run.state==="thinking")return this.clone(run);
       throw new AgentKernelError("AGENT_INVALID_STATE","Agent run cannot be resumed from its current state.");
+    }
+    const normalizedResponse=userResponse?.trim();
+    if(normalizedResponse){
+      if(run.state!=="waiting"||run.lastAction!=="ask_user"){
+        throw new AgentKernelError("AGENT_INVALID_STATE","Agent run is not waiting for an ask_user response.");
+      }
+      this.pendingUserResponses.set(runId,normalizedResponse);
     }
     run.cancelReason=undefined;await this.setState(run,"ready");return this.clone(run);
   }
@@ -235,6 +248,7 @@ export class AgentKernel{
   }
   private async fail(run:AgentRun,code:string,reason:string,error?:unknown){
     if(TERMINAL.includes(run.state))return this.clone(run);
+    this.pendingUserResponses.delete(run.id);
     if(error instanceof Error)run.lastOutcome=bounded(error.message);
     await this.setState(run,"failed");
     this.diagnostics?.recordError("agent-kernel",code,reason,{runId:run.id});
