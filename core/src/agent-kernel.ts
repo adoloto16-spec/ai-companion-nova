@@ -40,7 +40,7 @@ export class AgentKernelError extends Error{
 interface Control{controller:AbortController;timer?:ReturnType<typeof setTimeout>;durationExceeded:boolean;}
 
 export interface AgentKernelStepOptions{
-  contextProvider?:(run:AgentRun,stepIndex:number)=>Promise<readonly ChatMessage[]>;
+  contextProvider?:(run:AgentRun,stepIndex:number,previousRuntimeMessages:readonly ChatMessage[])=>Promise<readonly ChatMessage[]>;
 }
 
 export interface AgentKernelOptions{
@@ -65,6 +65,7 @@ export class AgentKernel{
   private readonly controls=new Map<string,Control>();
   private readonly consecutiveFailures=new Map<string,number>();
   private readonly pendingUserResponses=new Map<string,string>();
+  private readonly runtimeContextMessages=new Map<string,ChatMessage[]>();
   private nextId=1;
 
   constructor(private readonly options:AgentKernelOptions){
@@ -84,7 +85,7 @@ export class AgentKernel{
       state:"starting",status:"running",stepCount:0,startedAt:now,updatedAt:now,limits,
       ...(input.providerId?{providerId:input.providerId}:{}),...(input.model?{model:input.model}: {})
     };
-    this.runs.set(id,run);this.steps.set(id,[]);
+    this.runs.set(id,run);this.steps.set(id,[]);this.runtimeContextMessages.set(id,[]);
     await this.events?.publish(createEvent("AgentRunStarted",{runId:id,characterId:run.characterId,goal:run.goal},"agent-kernel",this.clock,id+":started"));
     await this.setState(run,"ready");
     return this.clone(run);
@@ -107,8 +108,9 @@ export class AgentKernel{
 
     let result:{decision:AgentDecision;outputMode:"structured"|"tagged"};
     try{
+      const runtimeContext=this.runtimeContextMessages.get(run.id)??[];
       const conversationMessages=options.contextProvider
-        ?await options.contextProvider(run,stepIndex)
+        ?await options.contextProvider(run,stepIndex,runtimeContext)
         :run.conversationId&&this.options.conversationContext
           ?await this.options.conversationContext(run.characterId,run.conversationId)
           :[];
@@ -168,10 +170,23 @@ export class AgentKernel{
     run.stepCount=stepIndex;
     run.lastAction=result.decision.action;
     run.lastOutcome=bounded(action.outcome+(action.summary?":"+action.summary:""));
-    if(result.decision.action==="continue"&&result.decision.workingSummary)run.workingSummary=bounded(result.decision.workingSummary,1000);
+    if(action.contextMessages){
+      const runtimeMessages=this.runtimeContextMessages.get(run.id)??[];
+      runtimeMessages.push(...action.contextMessages.map(message=>({...message,...(message.metadata?{metadata:{...message.metadata}}:{})})));
+      this.runtimeContextMessages.set(run.id,runtimeMessages);
+    }
+    if(result.decision.action==="respond"||result.decision.action==="ask_user"){
+      run.workingSummary=bounded(result.decision.action==="respond"?result.decision.result:result.decision.question,2000);
+    }
     if(result.decision.action==="wait")run.lastWaitMs=action.waitMs;
     else run.lastWaitMs=undefined;
-    if(result.decision.action==="finish")run.workingSummary=bounded(result.decision.result,1000);
+    if(result.decision.action==="tool_call"){
+      run.lastToolName=result.decision.toolName;
+      run.lastToolCallId=result.decision.callId;
+    }else{
+      run.lastToolName=undefined;
+      run.lastToolCallId=undefined;
+    }
     run.updatedAt=this.clock();
 
     await this.setState(run,action.nextState);
@@ -214,6 +229,7 @@ export class AgentKernel{
     const run=this.require(runId);
     if(TERMINAL.includes(run.state))return this.clone(run);
     this.pendingUserResponses.delete(runId);
+    this.runtimeContextMessages.delete(runId);
     run.cancelReason=bounded(reason);await this.setState(run,"interrupted");
     const control=this.controls.get(runId);if(control){control.controller.abort();if(control.timer)clearTimeout(control.timer);this.controls.delete(runId);}
     this.diagnostics?.recordError("agent-kernel","AGENT_RUN_INTERRUPTED","Agent run was interrupted.",{runId,reason:run.cancelReason});
@@ -224,6 +240,7 @@ export class AgentKernel{
   async pause(runId:string){
     const run=this.require(runId);if(TERMINAL.includes(run.state))return this.clone(run);
     this.pendingUserResponses.delete(runId);
+    this.runtimeContextMessages.delete(runId);
     await this.setState(run,"paused");
     const control=this.controls.get(runId);if(control){control.controller.abort();if(control.timer)clearTimeout(control.timer);this.controls.delete(runId);}
     return this.clone(run);
@@ -263,6 +280,7 @@ export class AgentKernel{
   private async fail(run:AgentRun,code:string,reason:string,error?:unknown){
     if(TERMINAL.includes(run.state))return this.clone(run);
     this.pendingUserResponses.delete(run.id);
+    this.runtimeContextMessages.delete(run.id);
     if(error instanceof Error)run.lastOutcome=bounded(error.message);
     await this.setState(run,"failed");
     this.diagnostics?.recordError("agent-kernel",code,reason,{runId:run.id});

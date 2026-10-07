@@ -227,7 +227,7 @@ export class NovaLifeRuntime{
       this.state={...this.state,status:"thinking",activeAgentRunId:run.id,currentFocus:task};
       this.notify();
       terminal=await this.options.agentKernel.run(run.id,{
-        contextProvider:()=>this.buildContextMessages(request.reason,run!.id)
+        contextProvider:(_currentRun,_stepIndex,previousRuntimeMessages)=>this.buildContextMessages(request.reason,run!.id,previousRuntimeMessages)
       });
       await this.handleTerminalRun(terminal,request.reason,request.messageId);
       this.options.diagnostics?.recordError("nova-life","NOVA_LIFE_WAKE_COMPLETED","Nova Life wake completed",{
@@ -245,7 +245,7 @@ export class NovaLifeRuntime{
     }
   }
 
-  private async buildContextMessages(reason:NovaLifeWakeReason,agentRunId:string):Promise<readonly ChatMessage[]>{
+  private async buildContextMessages(reason:NovaLifeWakeReason,agentRunId:string,previousRuntimeMessages:readonly ChatMessage[]):Promise<readonly ChatMessage[]>{
     const characterId=this.state.characterId,conversationId=this.state.conversationId;
     if(!characterId||!conversationId)throw abortError();
     const conversation=await this.options.conversationManager.getConversation(characterId,conversationId);
@@ -271,7 +271,7 @@ export class NovaLifeRuntime{
     };
     const assembled=await this.options.contextEngine.build({
       apiVersion:"1",schemaVersion:"1",characterId,conversationId,
-      messages:[lifeContext,...conversation.messages],
+      messages:[lifeContext,...conversation.messages,...previousRuntimeMessages],
       budget:this.options.contextBudget()
     });
     this.options.diagnostics?.recordError("nova-life","NOVA_LIFE_CONTEXT_BUILT","Nova Life context assembled",{
@@ -311,7 +311,7 @@ export class NovaLifeRuntime{
       this.scheduleWake(this.retryWakeMs,"retry");
       return;
     }
-    if(run.lastAction==="finish"){
+    if(run.lastAction==="respond"){
       const result=run.workingSummary?.trim();
       if(!result){
         this.state={...this.state,status:"error",lastOutcome:"Cognition finished without a user-facing result."};
@@ -354,7 +354,7 @@ export class NovaLifeRuntime{
       metadata:{streamStatus:"complete",novaLife:true,agentRunId,...(isQuestion?{agentMessageType:"question"}:{})}
     };
     await this.options.conversationManager.updateConversation(characterId,conversationId,{messages:[...conversation.messages,message]});
-    this.state={...this.state,lastAction:isQuestion?"ask_user":"finish",lastOutcome:isQuestion?"waiting:"+content:"completed:"+content.slice(0,1000)};
+    this.state={...this.state,lastAction:isQuestion?"ask_user":"respond",lastOutcome:isQuestion?"waiting:"+content:"completed:"+content.slice(0,1000)};
     this.notify();
     return message;
   }

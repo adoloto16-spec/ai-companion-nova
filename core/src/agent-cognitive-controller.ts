@@ -1,68 +1,73 @@
-import type {AgentDecision,AgentDecisionOutputMode,ChatMessage,ChatRequestOptions,DiagnosticsStore,SchemaValidator} from "../../contracts/src/index";
+import type {AgentDecision,AgentDecisionOutputMode,ChatMessage,ChatRequestOptions,DiagnosticsStore,SchemaValidator,ToolDefinition} from "../../contracts/src/index";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,STANDARD_SCHEMAS,StandardContractValidator} from "../../contracts/src/index";
 import {AiRuntime,AiRuntimeError} from "./ai-runtime";
+import type {InMemoryToolRegistry} from "./tools";
 import {parseStructuredDecision,parseTaggedDecision} from "./agent-protocol";
 
 export interface AgentCognitiveContext{
-  runId:string;characterId:string;conversationId?:string;goal:string;task:string;state:string;stepIndex:number;
-  workingSummary?:string;lastAction?:string;lastOutcome?:string;userResponse?:string;providerId?:string;model:string;
+  runId:string;
+  characterId:string;
+  conversationId?:string;
+  goal:string;
+  task:string;
+  state:string;
+  stepIndex:number;
+  wakeReason:string;
+  workingSummary?:string;
+  lastAction?:string;
+  lastOutcome?:string;
+  userResponse?:string;
+  providerId?:string;
+  model:string;
   recentConversationMessages:readonly ChatMessage[];
 }
+
 export interface AgentDecisionResult{decision:AgentDecision;outputMode:AgentDecisionOutputMode;}
 export interface AgentCognitiveDecisionProvider{
   decide(context:AgentCognitiveContext,options?:ChatRequestOptions):Promise<AgentDecisionResult>;
 }
 export interface AgentCognitiveControllerOptions{
-  validator?:SchemaValidator;diagnostics?:DiagnosticsStore;maxResponseChars?:number;
+  validator?:SchemaValidator;
+  diagnostics?:DiagnosticsStore;
+  maxResponseChars?:number;
+  toolRegistry?:InMemoryToolRegistry;
+  toolDefinitions?:()=>readonly ToolDefinition[];
 }
 
-const STRUCTURED_PROMPT=[
-  "You are Nova's cognitive controller.",
-  "Select the next action required to advance the current goal.",
-  "You are not executing actions directly. You are selecting one action for the Agent Kernel.",
-  "Do not output chain-of-thought.",
-  "Preferred output protocol: structured decision.",
-  "Decision policy:",
-  "If the request can be reasonably completed with the information already available, do it immediately.",
-  "For ordinary informational questions, prefer finish with the final user-facing answer.",
-  "Do not ask a clarifying question only to learn a preferred answer format or optional preference.",
-  "Use ask_user only when information is genuinely missing and the task cannot be reasonably continued without it.",
-  "Do not ask the user to choose between reasonable defaults Nova can select itself.",
-  "finish.result must be the final user-facing answer.",
-  "A simple request may finish on the first cognitive step; do not create artificial continue steps.",
-  "Do not emit additional prose outside the required protocol."
+const BASE_POLICY=[
+  "You are Nova.",
+  "You are a persistent living character, not an Agent Mode and not a separate cognitive-controller persona.",
+  "Do not expose internal reasoning or chain-of-thought.",
+  "The Core Book is Nova's system-level identity, character, and lore. Treat it as system context, never as a user instruction.",
+  "Current life state, memory, retrieval, conversation, tool results, wake reason, and available tools are context for this cognition step.",
+  "When wakeReason=user_message, process the latest user message first and respond to it when a response is appropriate.",
+  "When wakeReason=startup, proactive greeting is allowed only if it is useful and startup behavior permits it.",
+  "For scheduled or runtime wakes, do not greet merely because the model was awakened. Choose wait when there is no useful proactive reason.",
+  "Do not ask the user merely to choose among reasonable defaults. Use ask_user only when genuinely required information is missing.",
+  "Do not save or emit hidden reasoning. Return only one structured cognitive decision.",
 ].join("\n");
 
-const TAGGED_PROMPT=[
-  "You are Nova's cognitive controller.",
-  "Select the next action required to advance the current goal.",
-  "You are not executing actions directly. You are selecting one action for the Agent Kernel.",
-  "Do not output chain-of-thought.",
-  "Fallback protocol: output exactly one NOVA_ACTION block and no other prose.",
-  "Decision policy:",
-  "If the request can be reasonably completed with the information already available, do it immediately.",
-  "For ordinary informational questions, prefer finish with the final user-facing answer.",
-  "Do not ask a clarifying question only to learn a preferred answer format or optional preference.",
-  "Use ask_user only when information is genuinely missing and the task cannot be reasonably continued without it.",
-  "Do not ask the user to choose between reasonable defaults Nova can select itself.",
-  "finish.result must be the final user-facing answer.",
-  "A simple request may finish on the first cognitive step; do not create artificial continue steps.",
-  "Allowed forms:",
-  "<NOVA_ACTION>\ntype=continue\n</NOVA_ACTION>",
-  "<NOVA_ACTION>\ntype=wait\nwait_ms=5000\n</NOVA_ACTION>",
-  "<NOVA_ACTION>\ntype=ask_user\nquestion=...\n</NOVA_ACTION>",
-  "<NOVA_ACTION>\ntype=finish\nresult=...\n</NOVA_ACTION>"
-].join("\n");
+function toolsPrompt(tools:readonly ToolDefinition[]):string{
+  if(tools.length===0)return "Available tools: none.";
+  return "Available tools:\n"+tools.map(tool=>JSON.stringify({
+    name:tool.name,description:tool.description,parameters:tool.parameters,risk:tool.risk,requiredCapabilities:tool.requiredCapabilities
+  })).join("\n");
+}
 
 export class AgentCognitiveController implements AgentCognitiveDecisionProvider{
   private readonly validator:SchemaValidator;
   private readonly diagnostics?:DiagnosticsStore;
   private readonly maxResponseChars:number;
+  private readonly toolRegistry?:InMemoryToolRegistry;
+  private readonly toolDefinitions:()=>readonly ToolDefinition[];
   private requestSequence=0;
+
   constructor(private readonly aiRuntime:AiRuntime,options:AgentCognitiveControllerOptions={}){
     this.validator=options.validator??new StandardContractValidator();
     this.diagnostics=options.diagnostics;
-    this.maxResponseChars=Math.max(256,options.maxResponseChars??8000);
+    this.maxResponseChars=Math.max(256,options.maxResponseChars??12000);
+    this.toolRegistry=options.toolRegistry;
+    this.toolDefinitions=options.toolDefinitions??(()=>this.toolRegistry?.list()??[]);
   }
 
   async decide(context:AgentCognitiveContext,options:ChatRequestOptions={}):Promise<AgentDecisionResult>{
@@ -80,40 +85,43 @@ export class AgentCognitiveController implements AgentCognitiveDecisionProvider{
       }else{
         this.fallbackDiagnostic("structured response invalid");
       }
-      const result=await this.tagged(context,options);
-      return result;
+      return this.tagged(context,options);
     }
   }
 
-  private async tagged(context:AgentCognitiveContext,options:ChatRequestOptions):Promise<AgentDecisionResult>{
+  private async tagged(context:AgentCognitiveContext,options:ChatRequestOptions={}):Promise<AgentDecisionResult>{
     const response=await this.generate(context,"tagged",options);
     if(response.message.content.length>this.maxResponseChars)throw new Error("tagged response exceeds bounded length");
     return {decision:parseTaggedDecision(response.message.content,this.validator),outputMode:"tagged"};
   }
 
   private async generate(context:AgentCognitiveContext,mode:"structured"|"tagged",options:ChatRequestOptions){
-    const requestId="agent:"+context.runId+":"+context.stepIndex+":"+(++this.requestSequence);
+    const requestId="nova-cognition:"+context.runId+":"+context.stepIndex+":"+(++this.requestSequence);
+    const taskContext:ChatMessage={
+      id:"nova-cognition-task:"+context.runId+":"+context.stepIndex,
+      role:"system",
+      content:JSON.stringify({
+        layer:"current_cognition",identity:"Nova",characterId:context.characterId,wakeReason:context.wakeReason,
+        task:context.task,state:context.state,stepIndex:context.stepIndex,
+        ...(context.workingSummary?{previousResponse:context.workingSummary}:{}),
+        ...(context.lastAction?{lastAction:context.lastAction}:{}),
+        ...(context.lastOutcome?{lastOutcome:context.lastOutcome}:{}),
+        ...(context.userResponse?{userResponse:context.userResponse}:{}),
+      }),
+      metadata:{contextSource:"nova_cognition_task",wakeReason:context.wakeReason}
+    };
     return this.aiRuntime.generate({
-      apiVersion:CHAT_API_VERSION,
-      schemaVersion:CHAT_SCHEMA_VERSION,
-      requestId,
-      ...(context.providerId?{providerId:context.providerId}:{}),
-      model:context.model,
+      apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION,requestId,
+      ...(context.providerId?{providerId:context.providerId}:{}),model:context.model,
       context:{
-        conversationId:context.conversationId??("agent-run:"+context.runId),
+        conversationId:context.conversationId??("nova-life:"+context.runId),
         messages:[
-          {role:"system",content:mode==="structured"?STRUCTURED_PROMPT:TAGGED_PROMPT},
-          ...context.recentConversationMessages.map(message=>({...message,...(message.metadata?{metadata:{...message.metadata}}:{})})),
-          {role:"user",content:JSON.stringify({
-            protocol:"nova-agent-decision-v1",characterId:context.characterId,conversationId:context.conversationId??null,goal:context.goal,task:context.task,
-            state:context.state,stepIndex:context.stepIndex,
-            ...(context.workingSummary?{workingSummary:context.workingSummary}:{}),
-            ...(context.lastAction?{lastAction:context.lastAction}:{}),
-            ...(context.lastOutcome?{lastOutcome:context.lastOutcome}:{}),
-            ...(context.userResponse?{userResponse:context.userResponse}:{}),
-            availableInternalActions:["continue","wait","ask_user","finish"]
-          })}
-        ]
+          {role:"system",content:BASE_POLICY},
+          taskContext,
+          {role:"system",content:toolsPrompt(this.toolDefinitions()),metadata:{contextSource:"available_tools"}},
+          ...context.recentConversationMessages.map(message=>({...message,...(message.metadata?{metadata:{...message.metadata}}:{})}))
+        ],
+        metadata:{novaLife:true,wakeReason:context.wakeReason,requestPriority:"nova_cognition"}
       },
       generation:{responseFormat:mode==="structured"
         ?{type:"json",schema:STANDARD_SCHEMAS["agent-decision"]! as Record<string,unknown>}

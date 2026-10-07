@@ -1,7 +1,7 @@
 import type {AgentDecision,SchemaValidator} from "../../contracts/src/index";
 import {STANDARD_SCHEMAS} from "../../contracts/src/index";
 
-const MAX_PROTOCOL_LENGTH=8000;
+const MAX_PROTOCOL_LENGTH=12000;
 
 export class AgentDecisionProtocolError extends Error{
   readonly code="AGENT_DECISION_INVALID" as const;
@@ -46,18 +46,28 @@ export function parseTaggedDecision(raw:string,validator:SchemaValidator):AgentD
   }
   const type=fields.type;
   const allowed:Record<string,readonly string[]>={
-    continue:["type","summary"],wait:["type","wait_ms"],ask_user:["type","question"],finish:["type","result"]
+    respond:["type","result"],
+    tool_call:["type","toolName","arguments","callId"],
+    wait:["type","wait_ms"],
+    ask_user:["type","question"]
   };
   if(!type||!allowed[type])throw new AgentDecisionProtocolError("NOVA_ACTION block contains an unknown action type.");
   for(const key of Object.keys(fields))if(!allowed[type]!.includes(key))throw new AgentDecisionProtocolError("NOVA_ACTION block contains an unknown field.");
   let candidate:unknown;
   switch(type){
-    case "continue":candidate={action:"continue",...(fields.summary!==undefined?{workingSummary:fields.summary}:{})};break;
+    case "respond":
+      candidate={action:"respond",result:fields.result};break;
+    case "tool_call":{
+      let argumentsValue:unknown;
+      try{argumentsValue=JSON.parse(fields.arguments??"");}catch{throw new AgentDecisionProtocolError("tool_call arguments must be valid JSON.");}
+      if(!argumentsValue||typeof argumentsValue!=="object"||Array.isArray(argumentsValue))throw new AgentDecisionProtocolError("tool_call arguments must be a JSON object.");
+      candidate={action:"tool_call",toolName:fields.toolName,arguments:argumentsValue,callId:fields.callId};break;
+    }
     case "wait":
       if(!/^[0-9]+$/.test(fields.wait_ms??""))throw new AgentDecisionProtocolError("wait_ms must be an integer.");
       candidate={action:"wait",waitMs:Number(fields.wait_ms)};break;
-    case "ask_user":candidate={action:"ask_user",question:fields.question};break;
-    case "finish":candidate={action:"finish",result:fields.result};break;
+    case "ask_user":
+      candidate={action:"ask_user",question:fields.question};break;
     default:throw new AgentDecisionProtocolError("Unsupported NOVA_ACTION type.");
   }
   return validateAgentDecision(candidate,validator);

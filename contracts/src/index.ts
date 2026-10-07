@@ -672,17 +672,17 @@ export interface AuditService{record(entry:AuditEntry):Promise<void>}
 export interface ActionBroker{execute(invocation:ActionInvocation):Promise<ActionResult>}
 export type AgentState="starting"|"ready"|"idle"|"thinking"|"planning"|"acting"|"waiting"|"interrupted"|"paused"|"resting"|"completed"|"failed"|"stopping";
 export type AgentRunStatus="running"|"waiting"|"paused"|"completed"|"failed"|"interrupted";
-export type AgentDecisionAction="continue"|"wait"|"ask_user"|"finish";
+export type AgentDecisionAction="respond"|"tool_call"|"wait"|"ask_user";
 export type AgentDecisionOutputMode="structured"|"tagged";
-export type AgentStepOutcome="continued"|"waiting"|"completed"|"failed"|"interrupted";
+export type AgentStepOutcome="responded"|"tool_called"|"waiting"|"failed"|"interrupted";
 export type AgentDecision=
-  | {action:"continue";workingSummary?:string}
+  | {action:"respond";result:string}
+  | {action:"tool_call";toolName:string;arguments:Record<string,unknown>;callId:string}
   | {action:"wait";waitMs:number}
-  | {action:"ask_user";question:string}
-  | {action:"finish";result:string};
+  | {action:"ask_user";question:string};
 export interface AgentRunLimits{maxSteps:number;maxDurationMs:number;maxConsecutiveFailures:number;}
 export interface AgentRunInput{id?:string;characterId:string;conversationId?:ConversationId;goal:string;task:string;providerId?:string;model?:string;limits?:Partial<AgentRunLimits>;}
-export interface AgentRun{id:string;characterId:string;conversationId?:ConversationId;goal:string;task:string;state:AgentState;status:AgentRunStatus;stepCount:number;startedAt:string;updatedAt:string;cancelReason?:string;workingSummary?:string;lastAction?:AgentDecisionAction;lastOutcome?:string;lastWaitMs?:number;providerId?:string;model?:string;limits:AgentRunLimits;}
+export interface AgentRun{id:string;characterId:string;conversationId?:ConversationId;goal:string;task:string;state:AgentState;status:AgentRunStatus;stepCount:number;startedAt:string;updatedAt:string;cancelReason?:string;workingSummary?:string;lastAction?:AgentDecisionAction;lastOutcome?:string;lastWaitMs?:number;lastToolName?:string;lastToolCallId?:string;providerId?:string;model?:string;limits:AgentRunLimits;}
 export interface AgentStep{stepIndex:number;startedAt:string;completedAt:string;decisionType:AgentDecisionAction;outcome:AgentStepOutcome;}
 export const AGENT_DEFAULT_LIMITS:AgentRunLimits={maxSteps:20,maxDurationMs:60000,maxConsecutiveFailures:3};
 export interface Permission{id:string;schemaVersion:string;subject:string;resourceType:"domain"|"filesystem"|"application"|"resource";action:string;effect:"allow"|"deny";scope?:{domains?:readonly string[];roots?:readonly string[];applications?:readonly string[];windows?:readonly string[]}}
