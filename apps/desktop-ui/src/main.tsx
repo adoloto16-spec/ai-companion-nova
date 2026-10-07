@@ -1347,6 +1347,8 @@ function TraceCandidate({candidate}:{candidate:any}){
 function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:AppSettings}){
   const [traces,setTraces]=React.useState<readonly ChatTurnTrace[]>([]);
   const [semanticDiagnostics,setSemanticDiagnostics]=React.useState<readonly ErrorDiagnostic[]>([]);
+  const [lifeDiagnostics,setLifeDiagnostics]=React.useState<readonly ErrorDiagnostic[]>([]);
+  const [novaLifeState,setNovaLifeState]=React.useState<NovaLifeState>(runtime.getNovaLifeState());
   const [selectedId,setSelectedId]=React.useState<string|undefined>();
   const [message,setMessage]=React.useState("");
   const [showRaw,setShowRaw]=React.useState(false);
@@ -1356,11 +1358,13 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
     try{
       const next=runtime.listChatTraces(50);
       setTraces(next);
+      setNovaLifeState(runtime.getNovaLifeState());
       setSelectedId(current=>current&&next.some(trace=>trace.turnId===current)?current:next[0]?.turnId);
       setMessage("");
     }catch(error){setMessage(error instanceof Error?error.message:"Diagnostics could not be loaded.");}
     void runtime.diagnostics().then(snapshot=>{
       setSemanticDiagnostics(snapshot.recentErrors.filter(entry=>entry.source==="memory-semantic-deduplication"));
+      setLifeDiagnostics(snapshot.recentErrors.filter(entry=>entry.source==="nova-life").slice(-50).reverse());
     }).catch(error=>{
       setMessage(error instanceof Error?error.message:"Semantic diagnostics could not be loaded.");
     });
@@ -1392,6 +1396,30 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
           </button>
         )}
       {message&&<div className="error">{message}</div>}
+    </section>
+
+    <section>
+      <h2>Nova Life</h2>
+      <div className="status-grid">
+        <span>Status</span><strong>{lifeStatusLabel(novaLifeState.status)}</strong>
+        <span>Wake count</span><strong>{novaLifeState.wakeCount}</strong>
+        <span>Wake reason</span><strong>{novaLifeState.wakeReason??"—"}</strong>
+        <span>Character</span><strong>{novaLifeState.characterId??"—"}</strong>
+        <span>Conversation</span><strong>{novaLifeState.conversationId??"—"}</strong>
+        <span>Active Agent Run</span><strong>{novaLifeState.activeAgentRunId??"—"}</strong>
+        <span>Last action</span><strong>{novaLifeState.lastAction??"—"}</strong>
+        <span>Last outcome</span><strong>{novaLifeState.lastOutcome??"—"}</strong>
+        <span>Next wake</span><strong>{novaLifeState.nextWakeAt?new Date(novaLifeState.nextWakeAt).toLocaleString():"—"}</strong>
+      </div>
+      {lifeDiagnostics.length===0
+        ?<div>No Nova Life diagnostics yet.</div>
+        :lifeDiagnostics.map((entry,index)=>
+          <div className="diagnostic-block" key={entry.timestamp+"-"+entry.code+"-"+index}>
+            <div className="section-header"><strong>{entry.code}</strong><small>{entry.timestamp}</small></div>
+            <div>{entry.message}</div>
+            {entry.metadata&&<pre className="diagnostic-json">{JSON.stringify(entry.metadata,null,2)}</pre>}
+          </div>
+        )}
     </section>
 
     <section>
