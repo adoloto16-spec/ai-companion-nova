@@ -29,11 +29,15 @@ async function main(){
   const router=new ProviderCredentialRouter({
     presetId:"preset",
     credentials,
-    createProvider:credential=>provider(credential.id,async()=>credential.id==="A"&&aCalls++===0?Promise.reject(failure(500)):Promise.resolve({ok:true,id:credential.id}))
+    createProvider:credential=>provider(credential.id,async()=>{
+      if(credential.id==="A"){aCalls++;if(aCalls===1)throw failure(500);}
+      if(credential.id==="B")bCalls++;
+      return{ok:true,id:credential.id};
+    })
   });
   const success=await router.chat({apiVersion:"1",schemaVersion:"1",requestId:"req",model:"test-model",context:{conversationId:"c",messages:[]},messages:[]});
   assert.equal((success as any).id,"B","credential B is selected after credential A provider failure");
-  assert.equal(aCalls,1);assert.equal(bCalls,0);
+  assert.equal(aCalls,1);assert.equal(bCalls,1);
 
   const router429=new ProviderCredentialRouter({
     presetId:"preset",

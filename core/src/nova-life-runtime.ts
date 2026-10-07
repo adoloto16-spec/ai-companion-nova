@@ -143,12 +143,6 @@ export class NovaLifeRuntime{
       if(!this.isOn())return;
       void this.followCharacter((event.payload as {characterId:string}).characterId).catch(error=>this.handleRuntimeError(error));
     }));
-    this.eventUnsubscribers.push(this.options.events.subscribe("ActiveConversationChanged",event=>{
-      const payload=event.payload as {characterId:string;conversationId:string};
-      if(!this.isOn()||payload.characterId!==this.state.characterId)return;
-      this.state={...this.state,conversationId:payload.conversationId};this.notify();
-      void this.options.autonomy.noteEvent("runtime_event").then(s=>{this.applyAutonomy(s);return this.triggerWake({reason:"runtime_event"})}).catch(error=>this.handleRuntimeError(error));
-    }));
     this.eventUnsubscribers.push(this.options.events.subscribe("AgentStateChanged",event=>{
       const payload=event.payload as {runId:string;state:string};
       if(payload.runId!==this.state.activeAgentRunId||!this.isOn())return;
@@ -351,30 +345,4 @@ export class NovaLifeRuntime{
     return rank(next.reason)>=rank(current.reason)?next:current;
   }
   private notify(){const snapshot=this.getState();for(const listener of [...this.listeners]){try{listener(snapshot)}catch{}}}
-  private followCharacter=async(characterId:string)=>{
-    const conversation=await this.options.conversationManager.getActiveConversation(characterId);
-    const autonomy=await this.options.autonomy.initialize(characterId);
-    this.state=this.withAutonomy({...this.state,characterId,conversationId:conversation.id},autonomy);this.notify();
-    await this.triggerWake({reason:"runtime_event"});
-  };
-  private subscribeToEvents(){
-    this.unsubscribeFromEvents();
-    this.eventUnsubscribers.push(this.options.events.subscribe("UserMessageReceived",event=>{
-      const payload=event.payload as {characterId:string;conversationId:string;messageId:string;text:string};
-      this.notifyUserMessage(payload.characterId,payload.conversationId,payload.messageId);
-    }));
-    this.eventUnsubscribers.push(this.options.events.subscribe("ToolResultReceived",event=>this.notifyToolResult((event.payload as {runId:string}).runId)));
-    for(const type of ["GoalCreated","GoalCompleted","GoalFailed"] as const)this.eventUnsubscribers.push(this.options.events.subscribe(type,()=>{
-      void this.options.autonomy.noteEvent("runtime_event").then(s=>{this.applyAutonomy(s);return this.triggerWake({reason:"runtime_event"})}).catch(e=>this.handleRuntimeError(e))
-    }));
-    this.eventUnsubscribers.push(this.options.events.subscribe("ActiveCharacterChanged",event=>{
-      if(this.isOn())void this.followCharacter((event.payload as {characterId:string}).characterId).catch(e=>this.handleRuntimeError(e))
-    }));
-    this.eventUnsubscribers.push(this.options.events.subscribe("AgentStateChanged",event=>{
-      const p=event.payload as {runId:string;state:string};
-      if(p.runId!==this.state.activeAgentRunId||!this.isOn())return;
-      if(p.state==="thinking"||p.state==="planning")this.setStatus("thinking");else if(p.state==="acting")this.setStatus("acting");
-    }));
-  }
-  private unsubscribeFromEvents(){while(this.eventUnsubscribers.length>0)this.eventUnsubscribers.pop()!()}
 }
