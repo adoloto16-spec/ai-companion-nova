@@ -140,7 +140,7 @@ async function main(){
     await contextRuntime.appendConversationUserMessage(character.id,conversation.id,"Nova lives in a persistent life runtime.");
     await contextRuntime.startNovaLife(character.id,conversation.id);
     const context=contextController.contexts[0]?.recentConversationMessages??[];
-    assert.equal(context.some(message=>message.metadata?.contextSource==="nova_life"),true,"cognition receives current Life state");
+    assert.equal(context.some(message=>message.content.includes("\"novaLife\"")),true,"cognition receives current Life state");
     assert.equal(context.some(message=>message.content.includes("wakeReason")&&message.content.includes("startup")),true,"cognition receives wake reason");
     assert.equal(context.some(message=>message.content.includes("Nova is a persistent companion")),true,"Context Engine contributes Core Book");
     assert.equal(context.some(message=>message.content.includes("Nova lives in a persistent life runtime")),true,"Context Engine contributes Conversation and Memory");
