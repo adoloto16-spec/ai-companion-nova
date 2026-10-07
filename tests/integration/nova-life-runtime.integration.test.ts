@@ -420,7 +420,7 @@ async function protocolFailureDiagnosticsIntegrationTest(){
     await failingRuntime.startNovaLife(character.id,conversation.id);
     assert.ok(failingRuntime.getNovaLifeState().nextWakeAt,"provider failure schedules a controlled retry wake");
     await waitFor(()=>failing.calls>=2,5000);
-    assert.equal(failingRuntime.getNovaLifeState().status,"waiting","provider failure is isolated and Life retries in a controlled wake");
+    assert.equal(failingRuntime.getNovaLifeState().status,"sleeping","provider failure is isolated and recovered respond schedules the next wake");
     assert.equal((await failingRuntime.getConversation(character.id,conversation.id))?.messages.at(-1)?.content,"Recovered after provider failure.","controlled retry can recover without restarting Nova");
   }finally{await failingRuntime.stop();}
 
