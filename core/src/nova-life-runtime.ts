@@ -386,7 +386,8 @@ export class NovaLifeRuntime{
       }
       const assistant=await this.appendAssistant(run.id,result,false);
       await this.extractMemoryForUserMessage(run,messageId,assistant);
-      if(this.idleWakeMs>0)this.scheduleWake(this.idleWakeMs,"scheduled_wake");
+      const idleWakeMs=typeof this.idleWakeMs==="function"?this.idleWakeMs():this.idleWakeMs;
+      if(typeof idleWakeMs==="number"&&Number.isFinite(idleWakeMs)&&idleWakeMs>0)this.scheduleWake(idleWakeMs,"scheduled_wake");
       else this.setWaiting();
       return;
     }
@@ -400,7 +401,8 @@ export class NovaLifeRuntime{
       return;
     }
     if(run.lastAction==="wait"){
-      this.scheduleWake(this.normalizeDelay(run.lastWaitMs??30000),"wait_completed");
+      const defaultWaitMs=this.resolveDelay(this.options.defaultWaitMs,30000);
+      this.scheduleWake(this.normalizeDelay(run.lastWaitMs??defaultWaitMs),"wait_completed");
       return;
     }
     this.setWaiting();
@@ -463,7 +465,14 @@ export class NovaLifeRuntime{
       case "wait_completed":return "Re-evaluate the current life context after the scheduled wait. Speak only when there is a useful user-facing reason; otherwise choose wait."; 
       case "scheduled_wake":return "Re-evaluate the current life context at the scheduled wake. Speak only when there is a useful user-facing reason; otherwise choose wait."; 
       case "retry":return "Retry the current life cognition after a controlled failure. Re-check the current context before deciding what to do."; 
-      case "startup":return "Evaluate the current life context now that Nova has been turned on. She may proactively greet the user or choose to wait."; 
+      case "startup":{
+        const proactive=this.options.proactiveEnabled?.()!==false&&this.options.allowProactiveMessages?.()!==false;
+        const behavior=this.options.startupBehavior?.()??"wait";
+        const defaultWaitMs=this.resolveDelay(this.options.defaultWaitMs,30000);
+        return behavior==="proactive"&&proactive
+          ? "Evaluate the current life context now that Nova has been turned on. A useful proactive message is allowed; otherwise choose wait. Default scheduled wait is "+defaultWaitMs+"ms."
+          : "Nova has just been turned on. Do not send a generic greeting. Choose wait unless there is a specific useful proactive reason. Default scheduled wait is "+defaultWaitMs+"ms.";
+      }
       case "conversation_changed":return "Evaluate the newly active conversation and decide whether Nova should respond proactively or wait."; 
       case "character_changed":return "Evaluate the newly active Character context and continue Nova's life naturally."; 
       case "runtime_event":return "Evaluate the current runtime event and decide whether Nova should respond, act internally, or wait."; 
