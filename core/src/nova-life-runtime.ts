@@ -596,7 +596,8 @@ export class NovaLifeRuntime{
   }
 
   private clampWakeDelay(value:number):number{
-    return Math.min(this.maximumWakeInterval(),Math.max(this.minimumBaseWakeInterval(),this.normalizeDelay(value)));
+    const normalized=Number.isFinite(value)&&value>=1?Math.floor(value):1;
+    return Math.min(this.maximumWakeInterval(),Math.max(this.minimumBaseWakeInterval(),normalized));
   }
 
   private normalizeDelay(value:number):number{
