@@ -97,7 +97,8 @@ async function realControllerPlainResponseIntegrationTest(){
     const conversation=await runtime.getActiveConversation(character.id);
     await runtime.startNovaLife(character.id,conversation.id);
     let state=runtime.getNovaLifeState();
-    assert.equal(state.status,"waiting","plain model response keeps Nova Life ON");
+    assert.equal(state.status,"sleeping","plain model response keeps Nova Life ON and schedules the next wake");
+    assert.equal(state.wakeReason,"scheduled_wake","plain response uses the lifecycle scheduled wake reason");
     assert.equal((await runtime.getConversation(character.id,conversation.id))?.messages.at(-1)?.content,"Привет, Андрей!","plain model response is persisted as assistant message");
     const requestDiagnostic=cognitionDiagnostics.entries.find(entry=>entry.code==="AGENT_MODEL_REQUEST");
     assert.equal(requestDiagnostic?.metadata?.requestId!==undefined,true,"model request diagnostic has requestId");
@@ -112,7 +113,7 @@ async function realControllerPlainResponseIntegrationTest(){
     await runtime.appendConversationUserMessage(character.id,conversation.id,"расскажи что-нибудь");
     await waitFor(()=>requests.length>=2);
     state=runtime.getNovaLifeState();
-    assert.equal(state.status,"waiting","user message cognition cycle completes normally");
+    assert.equal(state.status,"sleeping","user message cognition cycle completes and schedules the next wake");
     assert.equal(
       requests[1]?.context.messages.some(message=>message.role==="user"&&message.content==="расскажи что-нибудь"),
       true,
@@ -191,59 +192,127 @@ async function protocolFailureDiagnosticsIntegrationTest(){
   await realControllerPlainResponseIntegrationTest();
   await providerErrorPreservationIntegrationTest();
   await protocolFailureDiagnosticsIntegrationTest();
-  const proactive=new SequenceController([{action:"respond",content:"Привет! Я проснулась."}]);
-  const runtime=await createFoundationRuntime({agentCognitiveController:proactive,novaLifeRuntime:{startupBehavior:()=>"proactive",proactiveEnabled:()=>true,allowProactiveMessages:()=>true}});
-  await runtime.start();
-  try{
-    const character=await runtime.getActiveCharacter();
-    const conversation=await runtime.getActiveConversation(character.id);
-    await runtime.startNovaLife(character.id,conversation.id);
-    const life=runtime.getNovaLifeState();
-    assert.equal(life.status,"waiting","respond completes the burst but keeps Nova alive");
-    assert.equal(life.wakeCount,1,"turning Nova on creates the first wake");
-    assert.equal(proactive.calls,1,"first wake creates one bounded cognitive burst");
-    const updated=await runtime.getConversation(character.id,conversation.id);
-    assert.equal(updated?.messages.at(-1)?.content,"Привет! Я проснулась.","proactive result is a normal assistant message");
-    assert.equal(updated?.messages.at(-1)?.metadata?.novaLife,true,"proactive message is marked as Nova Life metadata");
-  }finally{await runtime.stop();}
-
-  const waitingController=new SequenceController([
-    {action:"wait",waitMs:1},
-    {action:"respond",content:"Я снова проснулась."}
+  // Test A — persistent life after respond, using the persisted scheduler setting.
+  const persistentController=new SequenceController([
+    {action:"respond",content:"Я снова проснусь по расписанию."},
+    {action:"wait",waitMs:60000}
   ]);
-  const waitingRuntime=await createFoundationRuntime({agentCognitiveController:waitingController,novaLifeRuntime:{minimumWakeIntervalMs:1,maximumWakeIntervalMs:100}});
-  await waitingRuntime.start();
+  const persistentRuntime=await createFoundationRuntime({agentCognitiveController:persistentController});
+  await persistentRuntime.start();
   try{
-    const character=await waitingRuntime.getActiveCharacter();
-    const conversation=await waitingRuntime.getActiveConversation(character.id);
-    await waitingRuntime.startNovaLife(character.id,conversation.id);
-    await waitFor(()=>waitingController.calls>=2);
-    const state=waitingRuntime.getNovaLifeState();
-    assert.equal(state.wakeCount,2,"wait schedules a second life wake");
-    assert.equal(state.status,"waiting","second burst can finish without stopping Nova");
-    assert.equal((await waitingRuntime.getConversation(character.id,conversation.id))?.messages.at(-1)?.content,"Я снова проснулась.","scheduled wake produces a normal message");
-  }finally{await waitingRuntime.stop();}
+    const persistentSettings=persistentRuntime.getSettings();
+    await persistentRuntime.updateSettings({
+      ...persistentSettings,
+      novaLife:{
+        ...persistentSettings.novaLife,
+        lifecycle:{...persistentSettings.novaLife.lifecycle,startupBehavior:"proactive",proactiveEnabled:true,allowProactiveMessages:true},
+        scheduler:{...persistentSettings.novaLife.scheduler,postResponseWakeMs:1000,minimumWakeIntervalMs:1,maximumWakeIntervalMs:300000}
+      }
+    });
+    const character=await persistentRuntime.getActiveCharacter();
+    const conversation=await persistentRuntime.getActiveConversation(character.id);
+    await persistentRuntime.startNovaLife(character.id,conversation.id);
+    const first=persistentRuntime.getNovaLifeState();
+    assert.equal(first.status,"sleeping","respond transitions Life into scheduler sleep");
+    assert.equal(first.wakeReason,"scheduled_wake","post-response sleep uses scheduled_wake");
+    assert.equal((await persistentRuntime.getConversation(character.id,conversation.id))?.messages.at(-1)?.content,"Я снова проснусь по расписанию.","respond is persisted before scheduled sleep");
+    const remaining=first.nextWakeAt?Date.parse(first.nextWakeAt)-Date.now():0;
+    assert.ok(remaining>=700&&remaining<=1500,"configured post-response interval reaches the scheduler");
+    await waitFor(()=>persistentController.calls>=2,3000);
+    assert.equal(persistentController.contexts[1]?.wakeReason,"scheduled_wake","next cognition is a fresh scheduled wake");
+    assert.notEqual(persistentController.contexts[1]?.runId,persistentController.contexts[0]?.runId,"scheduled wake creates a new bounded AgentRun");
+    const diagnostic=(await persistentRuntime.diagnostics()).recentErrors.find(entry=>entry.code==="NOVA_LIFE_SLEEPING"&&entry.metadata?.reason==="scheduled_wake");
+    assert.equal(diagnostic?.metadata?.nextWakeAt!==undefined,true,"scheduled sleep exposes nextWake");
+  }finally{await persistentRuntime.stop();}
 
-  const userController=new SequenceController([
-    {action:"wait",waitMs:300000},
-    {action:"respond",content:"Получила твоё сообщение через Life Runtime."}
+  // Test B — the second scheduled wake may choose wait and Life stays ON.
+  const secondWakeController=new SequenceController([
+    {action:"respond",content:"Первый bounded burst завершён."},
+    {action:"wait",waitMs:20}
   ]);
-  const userRuntime=await createFoundationRuntime({agentCognitiveController:userController,novaLifeRuntime:{minimumWakeIntervalMs:1,maximumWakeIntervalMs:300000}});
-  await userRuntime.start();
+  const secondWakeRuntime=await createFoundationRuntime({
+    agentCognitiveController:secondWakeController,
+    novaLifeRuntime:{postResponseWakeMs:1,minimumWakeIntervalMs:1,maximumWakeIntervalMs:100}
+  });
+  await secondWakeRuntime.start();
   try{
-    const character=await userRuntime.getActiveCharacter();
-    const conversation=await userRuntime.getActiveConversation(character.id);
-    await userRuntime.startNovaLife(character.id,conversation.id);
-    assert.equal(userController.calls,1,"Life is waiting after the initial burst");
-    await userRuntime.appendConversationUserMessage(character.id,conversation.id,"Расскажи, как ты живёшь.");
-    await waitFor(()=>userController.calls>=2);
-    const latest=await userRuntime.getConversation(character.id,conversation.id);
-    assert.equal(latest?.messages.at(-2)?.content,"Расскажи, как ты живёшь.","user message is persisted through ordinary Conversation");
-    assert.equal(latest?.messages.at(-1)?.content,"Получила твоё сообщение через Life Runtime.","UserMessageReceived wakes Life without a second UI Agent path");
-    assert.equal(userController.contexts[1]?.wakeReason,"user_message","user message wake is distinct from startup wake");
-    assert.equal(userController.contexts[1]?.recentConversationMessages.some(message=>message.role==="user"&&message.content==="Расскажи, как ты живёшь."),true,"new cognition receives the fresh user message");
-    assert.equal(userRuntime.getNovaLifeState().wakeCount,2,"user message creates a new bounded wake");
-  }finally{await userRuntime.stop();}
+    const character=await secondWakeRuntime.getActiveCharacter();
+    const conversation=await secondWakeRuntime.getActiveConversation(character.id);
+    await secondWakeRuntime.startNovaLife(character.id,conversation.id);
+    await waitFor(()=>secondWakeController.calls>=2);
+    const state=secondWakeRuntime.getNovaLifeState();
+    assert.equal(state.wakeCount,2,"second scheduled wake increments wakeCount");
+    assert.equal(state.status,"sleeping","wait after a scheduled wake keeps Life ON");
+    assert.equal(state.wakeReason,"wait_completed","wait selects its own completion reason");
+  }finally{await secondWakeRuntime.stop();}
+
+  // Test C — OFF cancels the scheduled wake created by respond.
+  const offAfterRespondController=new SequenceController([
+    {action:"respond",content:"Этот цикл должен быть последним."},
+    {action:"respond",content:"После OFF это не должно выполняться."}
+  ]);
+  const offAfterRespondRuntime=await createFoundationRuntime({
+    agentCognitiveController:offAfterRespondController,
+    novaLifeRuntime:{postResponseWakeMs:50,minimumWakeIntervalMs:1,maximumWakeIntervalMs:100}
+  });
+  await offAfterRespondRuntime.start();
+  try{
+    const character=await offAfterRespondRuntime.getActiveCharacter();
+    const conversation=await offAfterRespondRuntime.getActiveConversation(character.id);
+    await offAfterRespondRuntime.startNovaLife(character.id,conversation.id);
+    assert.equal(offAfterRespondController.calls,1,"respond completes the initial bounded burst");
+    await offAfterRespondRuntime.stopNovaLife();
+    await sleep(100);
+    assert.equal(offAfterRespondController.calls,1,"OFF cancels the scheduled response wake");
+    assert.equal(offAfterRespondRuntime.getNovaLifeState().status,"off","OFF leaves no active Nova Life scheduler");
+  }finally{await offAfterRespondRuntime.stop();}
+
+  // Test D — a user message wins over an already pending scheduler wake.
+  const userPriorityController=new SequenceController([
+    {action:"respond",content:"Плановый цикл завершён."},
+    {action:"respond",content:"Новое сообщение имеет приоритет."}
+  ]);
+  const userPriorityRuntime=await createFoundationRuntime({
+    agentCognitiveController:userPriorityController,
+    novaLifeRuntime:{postResponseWakeMs:100,minimumWakeIntervalMs:1,maximumWakeIntervalMs:1000}
+  });
+  await userPriorityRuntime.start();
+  try{
+    const character=await userPriorityRuntime.getActiveCharacter();
+    const conversation=await userPriorityRuntime.getActiveConversation(character.id);
+    await userPriorityRuntime.startNovaLife(character.id,conversation.id);
+    assert.equal(userPriorityRuntime.getNovaLifeState().wakeReason,"scheduled_wake","scheduler wake is pending after respond");
+    await userPriorityRuntime.appendConversationUserMessage(character.id,conversation.id,"Это новое пользовательское сообщение.");
+    await waitFor(()=>userPriorityController.calls>=2);
+    assert.equal(userPriorityController.calls,2,"pending scheduled wake is coalesced into one user-priority cognition");
+    assert.equal(userPriorityController.contexts[1]?.wakeReason,"user_message","user message replaces pending scheduled wake reason");
+    assert.equal(userPriorityController.contexts[1]?.recentConversationMessages.some(message=>message.role==="user"&&message.content==="Это новое пользовательское сообщение."),true,"priority cognition receives the latest user message");
+  }finally{await userPriorityRuntime.stop();}
+
+  // Test E — scheduled wake can choose wait, which schedules the next wake independently.
+  const scheduledWaitController=new SequenceController([
+    {action:"respond",content:"Сплю по lifecycle scheduler."},
+    {action:"wait",waitMs:20},
+    {action:"respond",content:"Я снова проснулась после wait."}
+  ]);
+  const scheduledWaitRuntime=await createFoundationRuntime({
+    agentCognitiveController:scheduledWaitController,
+    novaLifeRuntime:{postResponseWakeMs:1,minimumWakeIntervalMs:1,maximumWakeIntervalMs:100}
+  });
+  await scheduledWaitRuntime.start();
+  try{
+    const character=await scheduledWaitRuntime.getActiveCharacter();
+    const conversation=await scheduledWaitRuntime.getActiveConversation(character.id);
+    await scheduledWaitRuntime.startNovaLife(character.id,conversation.id);
+    await waitFor(()=>scheduledWaitController.calls>=2);
+    const afterWait=scheduledWaitRuntime.getNovaLifeState();
+    assert.equal(afterWait.wakeCount,2,"wait follows a second bounded cognition burst");
+    assert.equal(afterWait.status,"sleeping","wait schedules another sleep");
+    assert.equal(afterWait.wakeReason,"wait_completed","wait owns its completion wake reason");
+    assert.ok(afterWait.nextWakeAt,"wait exposes the next wake");
+    await waitFor(()=>scheduledWaitController.calls>=3);
+    assert.equal(scheduledWaitController.contexts[2]?.wakeReason,"wait_completed","wait completion starts the next bounded cognition");
+  }finally{await scheduledWaitRuntime.stop();}
 
   const toolController=new SequenceController([
     {action:"tool_call",toolName:"browser.navigate",arguments:{url:"https://wikipedia.org"},callId:"browser-call-1"},
@@ -261,7 +330,7 @@ async function protocolFailureDiagnosticsIntegrationTest(){
     assert.equal(secondContext.some(message=>message.role==="tool"&&message.toolCallId==="browser-call-1"),true,"next cognition receives ActionBroker tool result");
     assert.equal(toolController.contexts[1]?.wakeReason,"startup","startup wake reason remains explicit");
     assert.equal((await toolRuntime.getConversation(character.id,conversation.id))?.messages.at(-1)?.content,"Инструмент выполнен, результат получен.","respond decision is persisted as normal assistant message");
-    assert.equal(toolRuntime.getNovaLifeState().status,"waiting","Life remains on after tool-driven response");
+    assert.equal(toolRuntime.getNovaLifeState().status,"sleeping","Life remains on after tool-driven response");
   }finally{await toolRuntime.stop();}
 
   const askController=new SequenceController([
