@@ -378,6 +378,7 @@ export class NovaLifeRuntime{
       return;
     }
     if(run.lastAction==="respond"){
+      if(!this.allowsProactive(reason)){this.setWaiting();return;}
       const result=run.workingSummary?.trim();
       if(!result){
         this.state={...this.state,status:"error",lastOutcome:"Cognition finished without a user-facing result."};
@@ -393,6 +394,7 @@ export class NovaLifeRuntime{
       return;
     }
     if(run.lastAction==="ask_user"){
+      if(!this.allowsProactive(reason)){this.setWaiting();return;}
       const question=this.extractWaitingText(run);
       if(question){
         const assistant=await this.appendAssistant(run.id,question,true);
@@ -407,6 +409,13 @@ export class NovaLifeRuntime{
       return;
     }
     this.setWaiting();
+  }
+
+  private allowsProactive(reason:NovaLifeWakeReason):boolean{
+    if(reason==="user_message")return true;
+    if(this.options.proactiveEnabled?.()===false||this.options.allowProactiveMessages?.()===false)return false;
+    if(reason==="startup"&&this.options.startupBehavior?.()==="wait")return false;
+    return true;
   }
 
   private async appendAssistant(agentRunId:string,content:string,isQuestion:boolean):Promise<ChatMessage>{
