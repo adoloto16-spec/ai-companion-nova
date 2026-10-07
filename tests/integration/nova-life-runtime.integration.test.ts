@@ -201,13 +201,13 @@ async function main(){
   }finally{await failingRuntime.stop();}
 
 
-  const parserFailureController:AgentCognitiveDecisionProvider={
+  const parserFailureController={
     calls:0,
     async decide(){
       this.calls++;
       throw new AgentDecisionProtocolError("Agent output must contain exactly one NOVA_ACTION block and no surrounding prose.");
     }
-  };
+  } as AgentCognitiveDecisionProvider & {calls:number};
   const parserRuntime=await createFoundationRuntime({agentCognitiveController:parserFailureController});
   await parserRuntime.start();
   try{
