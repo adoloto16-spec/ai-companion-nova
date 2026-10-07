@@ -676,13 +676,13 @@ export type AgentDecisionAction="respond"|"tool_call"|"wait"|"ask_user";
 export type AgentDecisionOutputMode="structured"|"tagged";
 export type AgentStepOutcome="responded"|"tool_called"|"waiting"|"failed"|"interrupted";
 export type AgentDecision=
-  | {action:"respond";result:string}
+  | {action:"respond";content:string}
   | {action:"tool_call";toolName:string;arguments:Record<string,unknown>;callId:string}
   | {action:"wait";waitMs:number}
   | {action:"ask_user";question:string};
 export interface AgentRunLimits{maxSteps:number;maxDurationMs:number;maxConsecutiveFailures:number;maxModelCallsPerBurst:number;}
 export interface AgentRunInput{id?:string;characterId:string;conversationId?:ConversationId;goal:string;task:string;wakeReason?:string;providerId?:string;model?:string;limits?:Partial<AgentRunLimits>;}
-export interface AgentRun{id:string;characterId:string;conversationId?:ConversationId;goal:string;task:string;wakeReason:string;state:AgentState;status:AgentRunStatus;stepCount:number;startedAt:string;updatedAt:string;cancelReason?:string;workingSummary?:string;lastAction?:AgentDecisionAction;lastOutcome?:string;lastErrorCategory?:string;lastWaitMs?:number;lastToolName?:string;lastToolCallId?:string;providerId?:string;model?:string;limits:AgentRunLimits;}
+export interface AgentRun{id:string;characterId:string;conversationId?:ConversationId;goal:string;task:string;wakeReason:string;state:AgentState;status:AgentRunStatus;stepCount:number;modelCallCount:number;startedAt:string;updatedAt:string;cancelReason?:string;workingSummary?:string;lastAction?:AgentDecisionAction;lastOutcome?:string;lastErrorCategory?:string;lastWaitMs?:number;lastToolName?:string;lastToolCallId?:string;providerId?:string;model?:string;limits:AgentRunLimits;}
 export interface AgentStep{stepIndex:number;startedAt:string;completedAt:string;decisionType:AgentDecisionAction;outcome:AgentStepOutcome;}
 export const AGENT_DEFAULT_LIMITS:AgentRunLimits={maxSteps:20,maxDurationMs:60000,maxConsecutiveFailures:3,maxModelCallsPerBurst:20};
 export interface Permission{id:string;schemaVersion:string;subject:string;resourceType:"domain"|"filesystem"|"application"|"resource";action:string;effect:"allow"|"deny";scope?:{domains?:readonly string[];roots?:readonly string[];applications?:readonly string[];windows?:readonly string[]}}
