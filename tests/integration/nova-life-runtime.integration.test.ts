@@ -232,7 +232,7 @@ async function protocolFailureDiagnosticsIntegrationTest(){
   ]);
   const secondWakeRuntime=await createFoundationRuntime({
     agentCognitiveController:secondWakeController,
-    novaLifeRuntime:{postResponseWakeMs:1,minimumWakeIntervalMs:1,maximumWakeIntervalMs:100}
+    novaLifeRuntime:{postResponseWakeMs:1,minimumWakeIntervalMs:1,maximumWakeIntervalMs:100,startupBehavior:()=>"proactive",proactiveEnabled:()=>true,allowProactiveMessages:()=>true}
   });
   await secondWakeRuntime.start();
   try{
@@ -253,7 +253,7 @@ async function protocolFailureDiagnosticsIntegrationTest(){
   ]);
   const offAfterRespondRuntime=await createFoundationRuntime({
     agentCognitiveController:offAfterRespondController,
-    novaLifeRuntime:{postResponseWakeMs:50,minimumWakeIntervalMs:1,maximumWakeIntervalMs:100}
+    novaLifeRuntime:{postResponseWakeMs:50,minimumWakeIntervalMs:1,maximumWakeIntervalMs:100,startupBehavior:()=>"proactive",proactiveEnabled:()=>true,allowProactiveMessages:()=>true}
   });
   await offAfterRespondRuntime.start();
   try{
@@ -274,7 +274,7 @@ async function protocolFailureDiagnosticsIntegrationTest(){
   ]);
   const userPriorityRuntime=await createFoundationRuntime({
     agentCognitiveController:userPriorityController,
-    novaLifeRuntime:{postResponseWakeMs:100,minimumWakeIntervalMs:1,maximumWakeIntervalMs:1000}
+    novaLifeRuntime:{postResponseWakeMs:100,minimumWakeIntervalMs:1,maximumWakeIntervalMs:1000,startupBehavior:()=>"proactive",proactiveEnabled:()=>true,allowProactiveMessages:()=>true}
   });
   await userPriorityRuntime.start();
   try{
@@ -297,7 +297,7 @@ async function protocolFailureDiagnosticsIntegrationTest(){
   ]);
   const scheduledWaitRuntime=await createFoundationRuntime({
     agentCognitiveController:scheduledWaitController,
-    novaLifeRuntime:{postResponseWakeMs:1,minimumWakeIntervalMs:1,maximumWakeIntervalMs:100}
+    novaLifeRuntime:{postResponseWakeMs:1,minimumWakeIntervalMs:1,maximumWakeIntervalMs:100,startupBehavior:()=>"proactive",proactiveEnabled:()=>true,allowProactiveMessages:()=>true}
   });
   await scheduledWaitRuntime.start();
   try{
