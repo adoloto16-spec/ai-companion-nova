@@ -46,7 +46,7 @@ async function main(){
     const conversation=await runtime.getActiveConversation(character.id);
     await runtime.startNovaLife(character.id,conversation.id);
     const life=runtime.getNovaLifeState();
-    assert.equal(life.status,"waiting",respond completes the burst but keeps Nova alive");
+    assert.equal(life.status,"waiting","respond completes the burst but keeps Nova alive");
     assert.equal(life.wakeCount,1,"turning Nova on creates the first wake");
     assert.equal(proactive.calls,1,"first wake creates one bounded cognitive burst");
     const updated=await runtime.getConversation(character.id,conversation.id);
