@@ -13,18 +13,21 @@ async function main(){
     const initial=runtime.getSettings();
     equal(initial.context.recentConversationMessages,8,"runtime loads default recent message setting");
     equal(initial.memory.candidateLimit,8,"runtime loads default memory candidate setting");
+    equal(initial.novaLife.scheduler.postResponseWakeMs,30000,"runtime loads default post-response wake interval");
 
     const custom={
       ...initial,
       context:{...initial.context,recentConversationMessages:2,availableContextTokens:1024,reservedOutputTokens:256,safetyMarginTokens:32},
       memory:{...initial.memory,candidateLimit:1},
       retrieval:{...initial.retrieval,candidateLimit:5},
-      chat:{...initial.chat,automaticLongTermMemory:false}
+      chat:{...initial.chat,automaticLongTermMemory:false},
+      novaLife:{...initial.novaLife,scheduler:{...initial.novaLife.scheduler,postResponseWakeMs:1500}}
     };
     await runtime.updateSettings(custom);
     equal(runtime.getSettings().context.recentConversationMessages,2,"runtime returns changed recent setting");
     equal(runtime.getSettings().memory.candidateLimit,1,"runtime returns changed memory setting");
     equal(runtime.getSettings().chat.automaticLongTermMemory,false,"runtime returns changed extraction toggle");
+    equal(runtime.getSettings().novaLife.scheduler.postResponseWakeMs,1500,"runtime returns changed post-response wake interval");
 
     const character=await runtime.getActiveCharacter();
     const conversation=await runtime.getActiveConversation(character.id);
