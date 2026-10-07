@@ -1832,19 +1832,6 @@ function App(){
     conversationLoadErrorRef.current=undefined;
   },[activeCharacter]);
 
-  const persistAgentConversation=React.useCallback(async(characterId:string,conversationId:string,messages:readonly import("../../../contracts/src/index").ChatMessage[]):Promise<Conversation>=>{
-    const foundation=foundationRef.current;
-    if(!foundation)throw new Error("Conversation runtime is not available.");
-    const updated=await foundation.updateConversation(characterId,conversationId,{messages});
-    const profile=await loadModelProfile(characterId);
-    setConversations(await foundation.listConversations(characterId));
-    setActiveConversation(updated);
-    setActiveModelProfile(profile);
-    setChatController(controllerForConversation(updated,profile));
-    conversationLoadErrorRef.current=undefined;
-    return updated;
-  },[controllerForConversation,loadModelProfile]);
-
   const clearConversation=React.useCallback(async(controller:ChatSessionController)=>{
     const foundation=foundationRef.current;
     if(!foundation)throw new Error("Conversation runtime is not available.");
