@@ -31,8 +31,10 @@ class SequenceController implements AgentCognitiveDecisionProvider{
 }
 
 class CaptureDiagnostics{
-  readonly entries:Array<{source:string;code:string;message:string;metadata?:Record<string,unknown>}>=[];
-  recordError(source:string,code:string,message:string,metadata?:Record<string,unknown>):void{this.entries.push({source,code,message,metadata});}
+  readonly entries:Array<{timestamp:string;source:string;code:string;message:string;metadata?:Record<string,unknown>}>=[];
+  recordError(source:string,code:string,message:string,metadata?:Record<string,unknown>):void{
+    this.entries.push({timestamp:new Date().toISOString(),source,code,message,metadata});
+  }
   recentErrors(limit?:number){return limit===undefined?this.entries.slice():this.entries.slice(-limit);}
 }
 
