@@ -77,7 +77,7 @@ export const DEFAULT_APP_SETTINGS:AppSettings={
   },
   memory:{candidateLimit:8},
   retrieval:{candidateLimit:32},
-  novaLife:{lifecycle:{enabledAtStartup:true,startupBehavior:"wait",proactiveEnabled:true,allowProactiveMessages:true},scheduler:{defaultWaitMs:30000,minimumWakeIntervalMs:1000,maximumWakeIntervalMs:300000,retryDelayMs:5000,eventDebounceMs:250,eventWakePolicy:{appChanged:false,windowChanged:false,conversationChanged:true,characterChanged:true}},cognition:{maxSteps:8,maxDurationMs:60000,maxConsecutiveFailures:3,maxModelCallsPerBurst:8},resourceBudget:{maxRequestsPerMinute:30,maxConcurrentRequests:2,backgroundRequestPriority:10}},
+  novaLife:{lifecycle:{enabledAtStartup:false,startupBehavior:"wait",proactiveEnabled:true,allowProactiveMessages:true},scheduler:{defaultWaitMs:30000,minimumWakeIntervalMs:1000,maximumWakeIntervalMs:300000,retryDelayMs:5000,eventDebounceMs:250,eventWakePolicy:{appChanged:false,windowChanged:false,conversationChanged:true,characterChanged:true}},cognition:{maxSteps:8,maxDurationMs:60000,maxConsecutiveFailures:3,maxModelCallsPerBurst:8},resourceBudget:{maxRequestsPerMinute:30,maxConcurrentRequests:2,backgroundRequestPriority:10}},
   diagnostics:{logLevel:"normal",keepRecentEntries:100},
   ui:{showDiagnosticsInChat:true}
 };
