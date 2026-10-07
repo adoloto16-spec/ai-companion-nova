@@ -106,7 +106,10 @@ export class AgentCognitiveController implements AgentCognitiveDecisionProvider{
           modelCalls:generated.modelCalls
         };
       }catch(error){
-        if(error instanceof AgentDecisionProtocolError)this.protocolDiagnostic(context,"structured",generated.requestId,error);
+        if(error instanceof AgentDecisionProtocolError){
+          decorateAgentCognitiveError(error,{modelCalls:generated.modelCalls,requestId:generated.requestId,outputMode:"structured"});
+          this.protocolDiagnostic(context,"structured",generated.requestId,error);
+        }
         throw error;
       }
     }catch(error){
