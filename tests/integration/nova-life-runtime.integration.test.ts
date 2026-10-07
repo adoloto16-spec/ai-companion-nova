@@ -217,7 +217,7 @@ async function main(){
           contextMessages:[{role:"tool",content:"{\"status\":\"success\"}",toolCallId:decision.callId,metadata:{contextSource:"agent_tool_result"}}]
         };
       }
-      return {outcome:"responded",nextState:"completed",summary:decision.action==="respond"?decision.content:decision.question};
+      return decision.action==="respond"?{outcome:"responded",nextState:"completed",summary:decision.content}:{outcome:"waiting",nextState:"waiting",summary:decision.action==="ask_user"?decision.question:"wait:"+decision.waitMs,waitMs:decision.action==="wait"?decision.waitMs:undefined};
     }
   };
   const budgetRuntime=await createFoundationRuntime({
