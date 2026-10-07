@@ -50,6 +50,94 @@
     "updatedAt": {
       "type": "string",
       "minLength": 1
+    },
+    "credentials": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "label",
+          "credentialReference",
+          "health",
+          "failureCount"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "credentialReference": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "kind": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 50
+              },
+              "provider": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              }
+            }
+          },
+          "health": {
+            "enum": [
+              "healthy",
+              "degraded",
+              "unhealthy",
+              "disabled"
+            ]
+          },
+          "cooldownUntil": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastSuccessAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastFailureAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failureCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "temporarilyDisabledUntil": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
     }
   }
 }

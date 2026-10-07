@@ -50,12 +50,25 @@ export interface CredentialProfileStore{
 
 export const PROVIDER_PRESET_API_VERSION:ApiVersion="1";
 export const PROVIDER_PRESET_SCHEMA_VERSION="1";
+export type ProviderCredentialHealth="healthy"|"degraded"|"unhealthy"|"disabled";
+export interface ProviderPresetCredential{
+  id:string;
+  label:string;
+  credentialReference:CredentialReference;
+  health:ProviderCredentialHealth;
+  cooldownUntil?:string|null;
+  lastSuccessAt?:string|null;
+  lastFailureAt?:string|null;
+  failureCount:number;
+  temporarilyDisabledUntil?:string|null;
+}
 export interface ProviderPreset{
   id:string;
   name:string;
   providerId:string;
   baseUrl:string;
   credentialProfileId?:string;
+  credentials?:readonly ProviderPresetCredential[];
   model?:string;
   timeoutMs?:number;
   createdAt:string;
@@ -76,7 +89,7 @@ export interface ProviderPresetModelResolver{
   listModels(presetId:string):Promise<readonly ModelInfo[]>;
 }
 
-export interface ProviderConfiguration{apiVersion:ApiVersion;schemaVersion:string;providerId:string;enabled:boolean;baseUrl:string;model:string;credentialReference:CredentialReference|null;timeoutMs?:number;structuredOutput?:boolean}
+export interface ProviderConfiguration{apiVersion:ApiVersion;schemaVersion:string;providerId:string;enabled:boolean;baseUrl:string;model:string;credentialReference:CredentialReference|null;credentials?:readonly ProviderPresetCredential[];timeoutMs?:number;structuredOutput?:boolean}
 export interface ProviderConnectionTestResult{apiVersion:ApiVersion;schemaVersion:string;status:ProviderConnectionTestStatus;providerId:string;message?:string}
 export type CharacterId=string;
 export const CHARACTER_API_VERSION:ApiVersion="1";

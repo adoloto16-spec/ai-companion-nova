@@ -32,3 +32,5 @@ export * from "./agent-action-executor";
 export * from "./agent-kernel";
 export * from "./nova-life-runtime";
 export * from "./nova-autonomy-core";
+
+export * from "./provider-router";
