@@ -95,10 +95,10 @@ export class NovaLifeRuntime{
     this.timerEpoch++;
     this.clearTimer();
     this.pendingWake=undefined;
+    const runId=this.state.activeAgentRunId;
     this.state={...this.state,status:"stopping",nextWakeAt:undefined,activeAgentRunId:undefined};
     this.notify();
 
-    const runId=this.state.activeAgentRunId;
     if(runId){
       try{await this.options.agentKernel.interrupt(runId,"Nova Life stopped by user.");}catch{}
     }
