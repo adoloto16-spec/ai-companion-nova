@@ -660,10 +660,9 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       if(!normalized)throw new Error("Conversation user message must not be empty.");
       const conversation=await conversationManager.getConversation(characterId,conversationId);
       if(!conversation)throw new Error("Conversation was not found.");
-      const message:ChatMessage={id:"user:"+Date.now().toString(36)+":"+conversation.messages.length,role:"user",content:normalized};
-      const updated=await conversationManager.updateConversation(characterId,conversationId,{messages:[...conversation.messages,message]});
-      await events.publish(createEvent("UserMessageReceived",{characterId,conversationId,messageId:message.id,text:normalized},"foundation-runtime",()=>new Date().toISOString(),"user-message:"+message.id));
-      return updated;
+      const messageId="user:"+Date.now().toString(36)+":"+conversation.messages.length;
+      const message:ChatMessage={id:messageId,role:"user",content:normalized};
+      return conversationManager.updateConversation(characterId,conversationId,{messages:[...conversation.messages,message]});
     },
     createConversation:(characterId,input)=>conversationManager.createConversation(characterId,input),
     listConversations:characterId=>conversationManager.listConversations(characterId),
