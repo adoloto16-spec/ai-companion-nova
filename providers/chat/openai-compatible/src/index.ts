@@ -23,6 +23,15 @@ const MAX_PROVIDER_RESPONSE_CHARS=4000;
 const MAX_PROVIDER_RESPONSE_VALUE_CHARS=2000;
 const PROVIDER_RESPONSE_SAFE_KEYS=["message","type","code","param","error"] as const;
 
+function parseRetryAfterMs(headers?:Readonly<Record<string,string>>):number|undefined{
+  const raw=headers?.["retry-after"]??headers?.["Retry-After"];
+  if(raw===undefined)return undefined;
+  const seconds=Number(raw.trim());
+  if(Number.isFinite(seconds)&&seconds>=0)return Math.min(600000,Math.round(seconds*1000));
+  const timestamp=Date.parse(raw);
+  return Number.isFinite(timestamp)?Math.min(600000,Math.max(0,timestamp-Date.now())):undefined;
+}
+
 function redactProviderResponseText(value:string):string{
   return value
     .replace(/authorization\s*:\s*bearer\s+\S+/gi,"Authorization: Bearer [REDACTED]")
@@ -88,6 +97,7 @@ export interface HttpClientRequest{
 export interface HttpClientResponse{
   status:number;
   body:string;
+  headers?:Readonly<Record<string,string>>;
 }
 export interface HttpClientStreamResponse{
   status:number;
@@ -107,7 +117,7 @@ export class FetchHttpClient implements HttpClient{
       ...(request.body===undefined?{}:{body:request.body}),
       signal:request.signal
     });
-    return {status:response.status,body:await response.text()};
+    return {status:response.status,body:await response.text(),headers:Object.fromEntries(response.headers.entries())};
   }
 
   async stream(request:HttpClientRequest):Promise<HttpClientStreamResponse>{
@@ -323,7 +333,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       const durationMs=Date.now()-started;
       this.recordDiagnostic(request,"CHAT_PROVIDER_HTTP_RESPONSE_RECEIVED","OpenAI-compatible provider HTTP response received","stream",{httpStatus:response.status,durationMs});
 
-      if(response.status<200||response.status>=300)throw this.httpFailure(response.status,request,durationMs,undefined,"stream");
+      if(response.status<200||response.status>=300)throw this.httpFailure(response.status,request,durationMs,undefined,"stream",response.headers);
 
       let buffer="";
       let finishReason:ChatResponse["finishReason"]="unknown";
@@ -617,7 +627,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     const durationMs=Date.now()-started;
     this.recordDiagnostic(request,"CHAT_PROVIDER_HTTP_RESPONSE_RECEIVED","OpenAI-compatible provider HTTP response received","chat",{httpStatus:response.status,durationMs});
     if(response.status<200||response.status>=300){
-      throw this.httpFailure(response.status,request,durationMs,response.body);
+      throw this.httpFailure(response.status,request,durationMs,response.body,"chat",response.headers);
     }
 
     let payload:unknown;
@@ -848,7 +858,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     }
   }
 
-  private httpFailure(status:number,request:ChatRequest,durationMs:number,body?:string,chatTransport:"stream"|"chat"="chat"):OpenAICompatibleProviderError{
+  private httpFailure(status:number,request:ChatRequest,durationMs:number,body?:string,chatTransport:"stream"|"chat"="chat",headers?:Readonly<Record<string,string>>):OpenAICompatibleProviderError{
     const diagnosticDetails={
       ...this.diagnosticMetadata(request,chatTransport),
       httpStatus:status,
@@ -860,7 +870,10 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     if(status===400)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rejected the chat request.",request,retryable:false,details:withProviderResponse({...diagnosticDetails,category:"bad_request"},body)});
     if(status===401||status===403)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rejected authentication.",request,retryable:false,details:withProviderResponse({...diagnosticDetails,category:"authentication"},body)});
     if(status===404)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible chat endpoint was not found.",request,retryable:false,details:withProviderResponse({...diagnosticDetails,category:"endpoint"},body)});
-    if(status===429)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rate limit was reached.",request,retryable:true,details:withProviderResponse({...diagnosticDetails,category:"rate_limit"},body)});
+    if(status===429){
+      const retryAfterMs=parseRetryAfterMs(headers);
+      return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rate limit was reached.",request,retryable:true,details:withProviderResponse({...diagnosticDetails,category:"rate_limit",...(retryAfterMs===undefined?{}:{retryAfterMs})},body)});
+    }
     if(status>=500)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider returned a server error.",request,retryable:true,details:withProviderResponse({...diagnosticDetails,category:"server"},body)});
     return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider returned an unexpected HTTP status.",request,retryable:false,details:withProviderResponse({...diagnosticDetails,category:"http"},body)});
   }

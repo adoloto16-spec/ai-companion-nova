@@ -117,7 +117,7 @@ export class AutomaticMemoryAgent{
       if(!model.trim())throw new Error("Memory Agent model is not configured.");
       const chatRequest:ChatRequest={
         apiVersion:"1",schemaVersion:"1",requestId,model,
-        context:{conversationId:request.conversationId,messages:[
+        context:{conversationId:request.conversationId,metadata:{requestPriority:"maintenance"},messages:[
           {role:"system",content:settings.memoryAgent.prompt.trim()||DEFAULT_AUTOMATIC_MEMORY_PROMPT},
           {role:"user",content:buildRuntimeData(request)}
         ]}

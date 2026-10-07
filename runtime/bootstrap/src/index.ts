@@ -3,7 +3,7 @@ import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore} from "../../../contracts/src/index";
 import type {Conversation,ConversationCreateInput,ConversationId,ConversationStore,ConversationUpdateInput} from "../../../contracts/src/index";
 import {
-  AiRuntime,AutomaticMemoryAgent,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,MemorySemanticDeduplicator,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,
+  AiRuntime,AutomaticMemoryAgent,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,MemorySemanticDeduplicator,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,ModelRequestGovernor,
   InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,AgentKernel,AgentCognitiveController,DefaultAgentActionExecutor,NovaLifeRuntime,
   DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
   InMemoryActorIdentityResolver,createMemoryConfig,SettingsManager,InMemoryChatTraceStore
@@ -255,7 +255,14 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   providers.register(new FakeEmbeddingProvider(),["embeddings"]);
   providers.register(new FakeVisionProvider(),["vision"]);
 
-  const aiRuntime=new AiRuntime(providers,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
+  const requestGovernor=new ModelRequestGovernor({
+    maxRequestsPerMinute:()=>settingsManager.get().novaLife.resourceBudget.maxRequestsPerMinute,
+    maxConcurrentRequests:()=>settingsManager.get().novaLife.resourceBudget.maxConcurrentRequests,
+    backgroundRequestPriority:()=>settingsManager.get().novaLife.resourceBudget.backgroundRequestPriority,
+    retryDelayMs:()=>settingsManager.get().novaLife.scheduler.retryDelayMs,
+    diagnostics:diagnosticsStore
+  });
+  const aiRuntime=new AiRuntime(providers,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString(),requestGovernor});
   const agentCognitiveController=options.agentCognitiveController??new AgentCognitiveController(aiRuntime,{
     validator:contractValidator,diagnostics:diagnosticsStore,toolRegistry:tools
   });
@@ -274,7 +281,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
           const configured=buildProviderForPreset(effectiveConfiguration,credentialStore,options.httpClient);
           if(configured)scopedProviders.register(configured,["chat"]);
         }
-        const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
+        const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString(),requestGovernor});
         return scopedRuntime.generate({...request,providerId:"openai-compatible"});
       }
       return aiRuntime.generate(request.providerId?request:{...request,providerId:activeProviderId(providerConfiguration)});
@@ -319,7 +326,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     events,
     listCharacterIds:async()=> (await characterManager.listCharacters()).map(character=>character.id),
     clock:{now:()=>new Date().toISOString()},
-    source:"memory-semantic-deduplication"
+    source:"memory-semantic-deduplication",
+    requestGovernor
   });
   semanticMemoryDeduplicator.start();
   // Record the effective production wiring and settings so disabled or unwired dedup is observable without exposing secrets.
@@ -498,7 +506,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
           ...(safeProviderConfigMetadata(effectiveConfiguration)?{...safeProviderConfigMetadata(effectiveConfiguration)}:{}),
           chatTransport:"stream"
         });
-        const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
+        const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString(),requestGovernor});
         try{
           return await scopedRuntime.stream({...request,providerId:"openai-compatible"},handlers,streamOptions);
         }catch(error){
@@ -527,7 +535,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
           const configured=buildProviderForPreset(effectiveConfiguration,credentialStore,options.httpClient);
           if(configured)scopedProviders.register(configured,["chat"]);
         }
-        const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
+        const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString(),requestGovernor});
         return scopedRuntime.generate({...request,providerId:"openai-compatible"});
       }
       return aiRuntime.generate(request.providerId?request:{...request,providerId:activeProviderId(providerConfiguration)});

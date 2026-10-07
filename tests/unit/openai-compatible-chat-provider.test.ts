@@ -582,6 +582,21 @@ async function modelDiscoveryTest(){
   equal(malformed.length,0,"malformed discovery returns manual mode without provider failure");
 }
 
+async function retryAfterHeaderTest(){
+  const http=new FakeHttpClient();
+  http.next={status:429,body:"rate limited",headers:{"retry-after":"2"}};
+  await throwsAsync(
+    ()=>provider(http).chat(request()),
+    error=>{
+      const chatError=(error as OpenAICompatibleProviderError).chatError;
+      equal(chatError.details?.retryAfterMs,2000,"Retry-After converted to milliseconds");
+      equal(chatError.details?.httpStatus,429,"429 status preserved");
+      return error instanceof OpenAICompatibleProviderError;
+    },
+    "Retry-After rate limit"
+  );
+}
+
 async function runtimeIntegrationTest(){
   const http=new FakeHttpClient();
   const registry=new ProviderRegistry();
@@ -665,6 +680,7 @@ void (async()=>{
     ["Finish reasons",finishReasonTest],
     ["Malformed response",malformedResponseTest],
     ["HTTP status normalization",httpStatusTest],
+    ["Retry-After header",retryAfterHeaderTest],
     ["HTTP 400 provider response diagnostics",http400ResponseBodyPropagationTest],
     ["Timeout and connection",timeoutAndConnectionTest],
     ["Structured output transport and 400 fallback",structuredOutputTransportAnd400FallbackTest],

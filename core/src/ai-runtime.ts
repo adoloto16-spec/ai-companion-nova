@@ -1,6 +1,7 @@
 import type {ChatContext,ChatError,ChatRequest,ChatResponse,ChatProvider,ChatStreamDone,ChatStreamError,ChatStreamEvent,ChatStreamHandlers,ChatStreamOptions,ChatRequestOptions,DiagnosticsStore,EventBus,HealthStatus,SchemaValidator,ChatUsage,ProviderCapabilities} from "../../contracts/src/index";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,CHAT_STREAM_API_VERSION,CHAT_STREAM_SCHEMA_VERSION,STANDARD_SCHEMAS,createEvent,StandardContractValidator} from "../../contracts/src/index";
 import {ProviderRegistry} from "./providers";
+import type {ModelRequestGovernor,ModelRequestPriority} from "./model-request-governor";
 
 export type AiRuntimeErrorCode=ChatError["code"];
 
@@ -10,7 +11,7 @@ export class AiRuntimeError extends Error{
   constructor(error:ChatError){super(error.message);this.name="AiRuntimeError";this.code=error.code;this.chatError=error;}
 }
 
-export interface AiRuntimeOptions{validator?:SchemaValidator;diagnostics?:DiagnosticsStore;events?:EventBus;clock?:()=>string}
+export interface AiRuntimeOptions{validator?:SchemaValidator;diagnostics?:DiagnosticsStore;events?:EventBus;clock?:()=>string;requestGovernor?:ModelRequestGovernor}
 export interface ChatContextInput{conversationId:string;messages:readonly ChatContext["messages"][number][];metadata?:Record<string,unknown>}
 export const createChatContext=(input:ChatContextInput):ChatContext=>({conversationId:input.conversationId,messages:[...input.messages],...(input.metadata===undefined?{}:{metadata:{...input.metadata}})});
 
@@ -28,6 +29,11 @@ export class AiRuntime{
   constructor(private readonly providers:ProviderRegistry,private readonly options:AiRuntimeOptions={}){this.validator=options.validator??new StandardContractValidator();this.clock=options.clock??(()=>new Date().toISOString());}
   async health():Promise<HealthStatus>{const providers=this.providers.list("chat");if(providers.length===0)return {status:"unavailable",message:"No chat providers registered.",capabilities:["chat-runtime"]};return {status:"healthy",capabilities:["chat-runtime"]};}
   async generate(request:ChatRequest,options:ChatRequestOptions={}):Promise<ChatResponse>{
+    const priority=this.requestPriority(request);
+    if(this.options.requestGovernor)return this.options.requestGovernor.run({id:request.requestId,priority,signal:options.signal,execute:()=>this.generateInternal(request,options)});
+    return this.generateInternal(request,options);
+  }
+  private async generateInternal(request:ChatRequest,options:ChatRequestOptions={}):Promise<ChatResponse>{
     const requestResult=this.validator.validate(request,STANDARD_SCHEMAS["chat-request"]!);
     if(!requestResult.valid)return this.fail({apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION,code:"INVALID_REQUEST",message:"Chat request failed contract validation.",requestId:request.requestId,providerId:request.providerId,details:{errors:[...requestResult.errors]}},request.context?.conversationId);
     const provider=this.resolveProvider(request.providerId);
@@ -64,6 +70,11 @@ export class AiRuntime{
     }
   }
   async stream(request:ChatRequest,handlers:ChatStreamHandlers,options:ChatStreamOptions={}):Promise<ChatResponse>{
+    const priority=this.requestPriority(request);
+    if(this.options.requestGovernor)return this.options.requestGovernor.run({id:request.requestId,priority,signal:options.signal,retry:false,execute:()=>this.streamInternal(request,handlers,options)});
+    return this.streamInternal(request,handlers,options);
+  }
+  private async streamInternal(request:ChatRequest,handlers:ChatStreamHandlers,options:ChatStreamOptions={}):Promise<ChatResponse>{
     const requestResult=this.validator.validate(request,STANDARD_SCHEMAS["chat-request"]!);
     if(!requestResult.valid)return this.fail({
       apiVersion:CHAT_API_VERSION,
@@ -313,6 +324,10 @@ export class AiRuntime{
   }
 
   getProviderCapabilities(providerId?:string):ProviderCapabilities|undefined{return this.resolveProvider(providerId)?.capabilities();}
+  private requestPriority(request:ChatRequest):ModelRequestPriority{
+    const value=request.context.metadata?.requestPriority;
+    return value==="interactive"||value==="nova_cognition"||value==="maintenance"?value:"interactive";
+  }
   private resolveProvider(providerId?:string):ChatProvider|undefined{const registrations=this.providers.list("chat");if(providerId){const match=registrations.find(item=>item.provider.id===providerId);return match?.provider as ChatProvider|undefined;}return registrations[0]?.provider as ChatProvider|undefined;}
   private async fail(error:ChatError,conversationId?:string):Promise<never>{
     await this.options.events?.publish(createEvent("ChatRequestFailed",{requestId:error.requestId??"unknown",...(conversationId?{conversationId}:{}),...(error.providerId?{providerId:error.providerId}:{}),code:error.code},"ai-runtime",this.clock,(error.requestId??"unknown")+":failed:"+error.code)).catch(()=>undefined);
