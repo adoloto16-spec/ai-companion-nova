@@ -1,15 +1,15 @@
 {
   "$schema":"https://json-schema.org/draft/2020-12/schema",
-  "$id":"https://schemas.ai-companion-nova.dev/agent-decision/v2",
-  "title":"AI Companion Nova Agent Decision v2",
+  "$id":"https://schemas.ai-companion-nova.dev/agent-decision/v3",
+  "title":"AI Companion Nova Agent Decision v3",
   "type":"object",
   "oneOf":[
     {
       "additionalProperties":false,
-      "required":["action","result"],
+      "required":["action","content"],
       "properties":{
         "action":{"const":"respond"},
-        "result":{"type":"string","minLength":1,"maxLength":4000}
+        "content":{"type":"string","minLength":1,"maxLength":4000}
       }
     },
     {
