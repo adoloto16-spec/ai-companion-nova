@@ -2,7 +2,7 @@ import type {AgentDecision,AgentDecisionAction,AgentRun,AgentRunInput,AgentRunLi
 import {AGENT_DEFAULT_LIMITS,STANDARD_SCHEMAS,StandardContractValidator,createEvent} from "../../contracts/src/index";
 import {AgentDecisionProtocolError} from "./agent-protocol";
 import {AgentModelCallLimitError} from "./agent-cognitive-controller";
-import type {AgentCognitiveDecisionProvider,AgentCognitiveContext} from "./agent-cognitive-controller";
+import type {AgentCognitiveDecisionProvider,AgentCognitiveContext,AgentDecisionResult} from "./agent-cognitive-controller";
 import type {AgentActionExecutor,AgentActionExecution} from "./agent-action-executor";
 
 const TERMINAL:readonly AgentState[]=["completed","failed"];
@@ -108,7 +108,7 @@ export class AgentKernel{
     await this.setState(run,"thinking");
     await this.events?.publish(createEvent("AgentStepStarted",{runId:run.id,stepIndex},"agent-kernel",this.clock,run.id+":step-started:"+stepIndex));
 
-    let result:{decision:AgentDecision;outputMode:"structured"|"tagged"};
+    let result:AgentDecisionResult;
     try{
       const runtimeContext=this.runtimeContextMessages.get(run.id)??[];
       const conversationMessages=options.contextProvider
