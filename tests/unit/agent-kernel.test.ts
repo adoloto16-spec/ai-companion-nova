@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {AgentKernel} from "../../core/src/agent-kernel";
 import {AgentDecisionProtocolError} from "../../core/src/agent-protocol";
-import {parseStructuredDecision,parseTaggedDecision} from "../../core/src/agent-protocol";
+import {parseNonStructuredDecision,parseStructuredDecision,parseTaggedDecision} from "../../core/src/agent-protocol";
 import {StandardContractValidator} from "../../contracts/src/index";
 import {DefaultActionBroker} from "../../core/src/action-broker";
 import {DefaultAgentActionExecutor} from "../../core/src/agent-action-executor";
@@ -35,7 +35,7 @@ async function protocolTests(){
   equal(parseStructuredDecision('{"action":"tool_call","toolName":"tool-a","arguments":{"value":1},"callId":"call-1"}',validator).action,"tool_call","generic tool_call parses");
   equal(parseStructuredDecision('{"action":"wait","waitMs":100}',validator).action,"wait","wait parses");
   equal(parseStructuredDecision('{"action":"ask_user","question":"Need data"}',validator).action,"ask_user","ask_user parses");
-  equal(parseTaggedDecision("<NOVA_ACTION>\ntype=respond\ncontent=done\n</NOVA_ACTION>",validator).action,"respond","tagged respond parses");
+  equal(parseTaggedDecision("<NOVA_ACTION>\ntype=respond\ncontent=done\n</NOVA_ACTION>",validator).action,"respond","tagged respond parses");\n  equal(parseNonStructuredDecision("Привет, Андрей!",validator).action,"respond","plain response becomes respond");\n  equal(parseNonStructuredDecision("Привет, Андрей!",validator).content,"Привет, Андрей!","plain response preserves full model text");
   equal(parseTaggedDecision("<NOVA_ACTION>\ntype=tool_call\ntoolName=tool-a\narguments={\"value\":1}\ncallId=call-1\n</NOVA_ACTION>",validator).action,"tool_call","tagged tool_call parses");
   await rejects(()=>parseStructuredDecision('{"action":"continue"}',validator),"continue is rejected");
   await rejects(()=>parseStructuredDecision('{"action":"finish","content":"done"}',validator),"finish is rejected");
@@ -101,6 +101,9 @@ async function kernelTests(){
   const failed=await protocolKernel.run(protocolRun.id);
   equal(failed.state,"failed","invalid model protocol fails the bounded run");
   equal(failed.lastErrorCategory,"protocol_model_output","parser failures are categorized as protocol errors");
+  equal(failed.lastAction,undefined,"protocol failure does not manufacture a respond decision");
+  equal(failed.stepCount,0,"protocol failure does not count as a completed cognition step");
+  equal(failed.attemptedStepCount,1,"protocol failure records one attempted cognition step");
 
   const registry=new InMemoryToolRegistry();
   let driverCalls=0;
