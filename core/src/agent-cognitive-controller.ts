@@ -2,7 +2,7 @@ import type {AgentDecision,AgentDecisionOutputMode,ChatMessage,ChatRequestOption
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,STANDARD_SCHEMAS,StandardContractValidator} from "../../contracts/src/index";
 import {AiRuntime,AiRuntimeError} from "./ai-runtime";
 import type {InMemoryToolRegistry} from "./tools";
-import {AgentDecisionProtocolError,parseStructuredDecision,parseTaggedDecision} from "./agent-protocol";
+import {AgentDecisionProtocolError,parseNonStructuredDecision,parseStructuredDecision} from "./agent-protocol";
 
 export interface AgentCognitiveContext{
   runId:string;
@@ -25,6 +25,22 @@ export interface AgentCognitiveContext{
 }
 
 export interface AgentDecisionResult{decision:AgentDecision;outputMode:AgentDecisionOutputMode;modelCalls:number;}
+export interface AgentCognitiveErrorMetadata{modelCalls:number;requestId?:string;outputMode?:AgentDecisionOutputMode;}
+const cognitiveErrorMetadata=new WeakMap<object,AgentCognitiveErrorMetadata>();
+export function decorateAgentCognitiveError(error:unknown,metadata:AgentCognitiveErrorMetadata):unknown{
+  if(error&&typeof error==="object"){
+    const existing=cognitiveErrorMetadata.get(error);
+    cognitiveErrorMetadata.set(error,{
+      modelCalls:(existing?.modelCalls??0)+metadata.modelCalls,
+      ...(metadata.requestId?{requestId:metadata.requestId}:(existing?.requestId?{requestId:existing.requestId}:{})),
+      ...(metadata.outputMode?{outputMode:metadata.outputMode}:(existing?.outputMode?{outputMode:existing.outputMode}:{}))
+    });
+  }
+  return error;
+}
+export function getAgentCognitiveErrorMetadata(error:unknown):AgentCognitiveErrorMetadata|undefined{
+  return error&&typeof error==="object"?cognitiveErrorMetadata.get(error):undefined;
+}
 
 export class AgentModelCallLimitError extends Error{
   readonly code="AGENT_MODEL_CALL_LIMIT_REACHED" as const;
@@ -51,7 +67,7 @@ const BASE_POLICY=[
   "When wakeReason=startup, proactive greeting is allowed only if it is useful and startup behavior permits it.",
   "For scheduled or runtime wakes, do not greet merely because the model was awakened. Choose wait when there is no useful proactive reason.",
   "Do not ask the user merely to choose among reasonable defaults. Use ask_user only when genuinely required information is missing.",
-  "Do not save or emit hidden reasoning. Return exactly one cognitive decision using respond/content, tool_call/toolName/arguments/callId, wait/waitMs, or ask_user/question.",
+  "Do not save or emit hidden reasoning. Return normal user-facing responses as plain assistant text. Use the NOVA_ACTION tagged protocol for tool_call, wait, and ask_user; respond/content is also accepted when explicitly tagged.",
 ].join("\n");
 
 function toolsPrompt(tools:readonly ToolDefinition[]):string{
@@ -106,16 +122,25 @@ export class AgentCognitiveController implements AgentCognitiveDecisionProvider{
   }
 
   private async tagged(context:AgentCognitiveContext,options:ChatRequestOptions={},callsAlreadyUsed=0):Promise<AgentDecisionResult>{
-    const generated=await this.generate(context,"tagged",options,callsAlreadyUsed);
+    let generated:{response:Awaited<ReturnType<AiRuntime["generate"]>>;requestId:string;modelCalls:number};
+    try{
+      generated=await this.generate(context,"tagged",options,callsAlreadyUsed);
+    }catch(error){
+      if(getAgentCognitiveErrorMetadata(error)&&callsAlreadyUsed>0)decorateAgentCognitiveError(error,{modelCalls:callsAlreadyUsed});
+      throw error;
+    }
     if(generated.response.message.content.length>this.maxResponseChars)throw new Error("tagged response exceeds bounded length");
     try{
       return {
-        decision:parseTaggedDecision(generated.response.message.content,this.validator),
+        decision:parseNonStructuredDecision(generated.response.message.content,this.validator),
         outputMode:"tagged",
         modelCalls:generated.modelCalls
       };
     }catch(error){
-      if(error instanceof AgentDecisionProtocolError)this.protocolDiagnostic(context,"tagged",generated.requestId,error);
+      if(error instanceof AgentDecisionProtocolError){
+        decorateAgentCognitiveError(error,{modelCalls:callsAlreadyUsed+generated.modelCalls,requestId:generated.requestId,outputMode:"tagged"});
+        this.protocolDiagnostic(context,"tagged",generated.requestId,error);
+      }
       throw error;
     }
   }
@@ -138,11 +163,9 @@ export class AgentCognitiveController implements AgentCognitiveDecisionProvider{
       }),
       metadata:{contextSource:"nova_cognition_task",wakeReason:context.wakeReason}
     };
-    this.diagnostics?.recordError("agent-cognitive","AGENT_COGNITION_REQUEST","Nova cognition model request",{
-      requestId,runId:context.runId,wakeReason:context.wakeReason,step:context.stepIndex,
-      provider:context.providerId??"default",model:context.model,outputMode:mode,errorCategory:"none"
-    });
-    return this.aiRuntime.generate({
+    const startedAt=Date.now();
+    try{
+      const response=await this.aiRuntime.generate({
       apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION,requestId,
       ...(context.providerId?{providerId:context.providerId}:{}),model:context.model,
       context:{
@@ -158,7 +181,25 @@ export class AgentCognitiveController implements AgentCognitiveDecisionProvider{
       generation:{responseFormat:mode==="structured"
         ?{type:"json",schema:STANDARD_SCHEMAS["agent-decision"]! as Record<string,unknown>}
         :{type:"text"}}
-    },options).then(response=>({response,requestId,modelCalls:1}));
+      },options);
+      this.diagnostics?.recordError("agent-cognitive","AGENT_MODEL_REQUEST","Nova cognition model request completed",{
+        requestId,runId:context.runId,wakeReason:context.wakeReason,step:context.stepIndex,
+        provider:context.providerId??"default",model:context.model,outputMode:mode,status:"completed",
+        durationMs:Math.max(0,Date.now()-startedAt)
+      });
+      return {response,requestId,modelCalls:1};
+    }catch(error){
+      const providerError=error instanceof AiRuntimeError?error.chatError:undefined;
+      this.diagnostics?.recordError("agent-cognitive","AGENT_MODEL_REQUEST","Nova cognition model request failed",{
+        requestId,runId:context.runId,wakeReason:context.wakeReason,step:context.stepIndex,
+        provider:context.providerId??"default",model:context.model,outputMode:mode,status:"failed",
+        durationMs:Math.max(0,Date.now()-startedAt),
+        ...(providerError?.details?.category?{errorCategory:providerError.details.category}:{}),
+        ...(providerError?.code?{providerErrorCode:providerError.code}:{})
+      });
+      decorateAgentCognitiveError(error,{modelCalls:1,requestId,outputMode:mode});
+      throw error;
+    }
   }
 
   private protocolDiagnostic(context:AgentCognitiveContext,outputMode:"structured"|"tagged",requestId:string,error:AgentDecisionProtocolError){
