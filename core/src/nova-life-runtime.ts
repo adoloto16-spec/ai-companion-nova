@@ -204,6 +204,7 @@ export class NovaLifeRuntime{
   private async triggerWake(request:WakeRequest):Promise<void>{
     if(!this.isOn())return;
     this.clearTimer();
+    if(request.reason==="user_message")this.clearEventTimer();
     if(this.activeWake){
       this.pendingWake=this.mergeWake(this.pendingWake,request);
       return this.activeWake;
