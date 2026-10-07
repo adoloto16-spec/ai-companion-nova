@@ -2,7 +2,7 @@ import type {AgentDecision,AgentDecisionOutputMode,ChatMessage,ChatRequestOption
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,STANDARD_SCHEMAS,StandardContractValidator} from "../../contracts/src/index";
 import {AiRuntime,AiRuntimeError} from "./ai-runtime";
 import type {InMemoryToolRegistry} from "./tools";
-import {parseStructuredDecision,parseTaggedDecision} from "./agent-protocol";
+import {AgentDecisionProtocolError,parseStructuredDecision,parseTaggedDecision} from "./agent-protocol";
 
 export interface AgentCognitiveContext{
   runId:string;
@@ -19,10 +19,17 @@ export interface AgentCognitiveContext{
   userResponse?:string;
   providerId?:string;
   model:string;
+  maxModelCallsPerBurst:number;
+  modelCallsUsed:number;
   recentConversationMessages:readonly ChatMessage[];
 }
 
-export interface AgentDecisionResult{decision:AgentDecision;outputMode:AgentDecisionOutputMode;}
+export interface AgentDecisionResult{decision:AgentDecision;outputMode:AgentDecisionOutputMode;modelCalls:number;}
+
+export class AgentModelCallLimitError extends Error{
+  readonly code="AGENT_MODEL_CALL_LIMIT_REACHED" as const;
+  constructor(message:string){super(message);this.name="AgentModelCallLimitError";}
+}
 export interface AgentCognitiveDecisionProvider{
   decide(context:AgentCognitiveContext,options?:ChatRequestOptions):Promise<AgentDecisionResult>;
 }
@@ -44,7 +51,7 @@ const BASE_POLICY=[
   "When wakeReason=startup, proactive greeting is allowed only if it is useful and startup behavior permits it.",
   "For scheduled or runtime wakes, do not greet merely because the model was awakened. Choose wait when there is no useful proactive reason.",
   "Do not ask the user merely to choose among reasonable defaults. Use ask_user only when genuinely required information is missing.",
-  "Do not save or emit hidden reasoning. Return only one structured cognitive decision.",
+  "Do not save or emit hidden reasoning. Return exactly one cognitive decision using respond/content, tool_call/toolName/arguments/callId, wait/waitMs, or ask_user/question.",
 ].join("\n");
 
 function toolsPrompt(tools:readonly ToolDefinition[]):string{
@@ -72,30 +79,51 @@ export class AgentCognitiveController implements AgentCognitiveDecisionProvider{
 
   async decide(context:AgentCognitiveContext,options:ChatRequestOptions={}):Promise<AgentDecisionResult>{
     const capabilities=this.aiRuntime.getProviderCapabilities(context.providerId);
-    if(capabilities?.structuredOutput!==true)return this.tagged(context,options);
+    if(capabilities?.structuredOutput!==true)return this.tagged(context,options,0);
     try{
-      const response=await this.generate(context,"structured",options);
-      if(response.message.content.length>this.maxResponseChars)throw new Error("structured response exceeds bounded length");
-      return {decision:parseStructuredDecision(response.message.content,this.validator),outputMode:"structured"};
+      const generated=await this.generate(context,"structured",options,0);
+      if(generated.response.message.content.length>this.maxResponseChars)throw new Error("structured response exceeds bounded length");
+      try{
+        return {
+          decision:parseStructuredDecision(generated.response.message.content,this.validator),
+          outputMode:"structured",
+          modelCalls:generated.modelCalls
+        };
+      }catch(error){
+        if(error instanceof AgentDecisionProtocolError)this.protocolDiagnostic(context,"structured",generated.requestId,error);
+        throw error;
+      }
     }catch(error){
       if(options.signal?.aborted||((error instanceof Error)&&error.name==="AbortError"))throw error;
+      if(error instanceof AgentDecisionProtocolError)throw error;
       if(error instanceof AiRuntimeError){
         if(!this.isStructuredUnsupported(error))throw error;
-        this.fallbackDiagnostic("provider capability unsupported");
-      }else{
-        this.fallbackDiagnostic("structured response invalid");
+        this.fallbackDiagnostic("provider capability unsupported",context,error.chatError.requestId);
+        return this.tagged(context,options,1);
       }
-      return this.tagged(context,options);
+      throw error;
     }
   }
 
-  private async tagged(context:AgentCognitiveContext,options:ChatRequestOptions={}):Promise<AgentDecisionResult>{
-    const response=await this.generate(context,"tagged",options);
-    if(response.message.content.length>this.maxResponseChars)throw new Error("tagged response exceeds bounded length");
-    return {decision:parseTaggedDecision(response.message.content,this.validator),outputMode:"tagged"};
+  private async tagged(context:AgentCognitiveContext,options:ChatRequestOptions={},callsAlreadyUsed=0):Promise<AgentDecisionResult>{
+    const generated=await this.generate(context,"tagged",options,callsAlreadyUsed);
+    if(generated.response.message.content.length>this.maxResponseChars)throw new Error("tagged response exceeds bounded length");
+    try{
+      return {
+        decision:parseTaggedDecision(generated.response.message.content,this.validator),
+        outputMode:"tagged",
+        modelCalls:generated.modelCalls
+      };
+    }catch(error){
+      if(error instanceof AgentDecisionProtocolError)this.protocolDiagnostic(context,"tagged",generated.requestId,error);
+      throw error;
+    }
   }
 
-  private async generate(context:AgentCognitiveContext,mode:"structured"|"tagged",options:ChatRequestOptions){
+  private async generate(context:AgentCognitiveContext,mode:"structured"|"tagged",options:ChatRequestOptions={},callsAlreadyUsed=0){
+    if(context.modelCallsUsed+callsAlreadyUsed+1>context.maxModelCallsPerBurst){
+      throw new AgentModelCallLimitError("Nova cognition model-call budget is exhausted for this wake.");
+    }
     const requestId="nova-cognition:"+context.runId+":"+context.stepIndex+":"+(++this.requestSequence);
     const taskContext:ChatMessage={
       id:"nova-cognition-task:"+context.runId+":"+context.stepIndex,
@@ -110,6 +138,10 @@ export class AgentCognitiveController implements AgentCognitiveDecisionProvider{
       }),
       metadata:{contextSource:"nova_cognition_task",wakeReason:context.wakeReason}
     };
+    this.diagnostics?.recordError("agent-cognitive","AGENT_COGNITION_REQUEST","Nova cognition model request",{
+      requestId,runId:context.runId,wakeReason:context.wakeReason,step:context.stepIndex,
+      provider:context.providerId??"default",model:context.model,outputMode:mode,errorCategory:"none"
+    });
     return this.aiRuntime.generate({
       apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION,requestId,
       ...(context.providerId?{providerId:context.providerId}:{}),model:context.model,
@@ -126,7 +158,14 @@ export class AgentCognitiveController implements AgentCognitiveDecisionProvider{
       generation:{responseFormat:mode==="structured"
         ?{type:"json",schema:STANDARD_SCHEMAS["agent-decision"]! as Record<string,unknown>}
         :{type:"text"}}
-    },options);
+    },options).then(response=>({response,requestId,modelCalls:1}));
+  }
+
+  private protocolDiagnostic(context:AgentCognitiveContext,outputMode:"structured"|"tagged",requestId:string,error:AgentDecisionProtocolError){
+    this.diagnostics?.recordError("agent-cognitive","AGENT_DECISION_INVALID","Nova cognition produced an invalid decision.",{
+      requestId,runId:context.runId,wakeReason:context.wakeReason,step:context.stepIndex,
+      provider:context.providerId??"default",model:context.model,outputMode,errorCategory:"protocol_model_output",message:error.message
+    });
   }
 
   private isStructuredUnsupported(error:AiRuntimeError){
@@ -134,7 +173,7 @@ export class AgentCognitiveController implements AgentCognitiveDecisionProvider{
     return details.structuredOutputUnsupported===true || (error.chatError.code==="UNSUPPORTED"&&details.category==="capability");
   }
 
-  private fallbackDiagnostic(reason:string){
-    this.diagnostics?.recordError("agent-cognitive","AGENT_STRUCTURED_OUTPUT_FALLBACK","Structured agent output fell back to tagged mode.",{reason});
+  private fallbackDiagnostic(reason:string,context:AgentCognitiveContext,requestId?:string){
+    this.diagnostics?.recordError("agent-cognitive","AGENT_STRUCTURED_OUTPUT_FALLBACK","Structured agent output fell back to tagged mode.",{reason,requestId:requestId??null,runId:context.runId,step:context.stepIndex,provider:context.providerId??"default",model:context.model,outputMode:"structured",errorCategory:"provider_capability"});
   }
 }
