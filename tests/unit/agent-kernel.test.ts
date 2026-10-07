@@ -35,7 +35,9 @@ async function protocolTests(){
   equal(parseStructuredDecision('{"action":"tool_call","toolName":"tool-a","arguments":{"value":1},"callId":"call-1"}',validator).action,"tool_call","generic tool_call parses");
   equal(parseStructuredDecision('{"action":"wait","waitMs":100}',validator).action,"wait","wait parses");
   equal(parseStructuredDecision('{"action":"ask_user","question":"Need data"}',validator).action,"ask_user","ask_user parses");
-  equal(parseTaggedDecision("<NOVA_ACTION>\ntype=respond\ncontent=done\n</NOVA_ACTION>",validator).action,"respond","tagged respond parses");\n  equal(parseNonStructuredDecision("Привет, Андрей!",validator).action,"respond","plain response becomes respond");\n  equal(parseNonStructuredDecision("Привет, Андрей!",validator).content,"Привет, Андрей!","plain response preserves full model text");
+  equal(parseTaggedDecision("<NOVA_ACTION>\ntype=respond\ncontent=done\n</NOVA_ACTION>",validator).action,"respond","tagged respond parses");
+  equal(parseNonStructuredDecision("Привет, Андрей!",validator).action,"respond","plain response becomes respond");
+  equal(parseNonStructuredDecision("Привет, Андрей!",validator).content,"Привет, Андрей!","plain response preserves full model text");
   equal(parseTaggedDecision("<NOVA_ACTION>\ntype=tool_call\ntoolName=tool-a\narguments={\"value\":1}\ncallId=call-1\n</NOVA_ACTION>",validator).action,"tool_call","tagged tool_call parses");
   await rejects(()=>parseStructuredDecision('{"action":"continue"}',validator),"continue is rejected");
   await rejects(()=>parseStructuredDecision('{"action":"finish","content":"done"}',validator),"finish is rejected");
