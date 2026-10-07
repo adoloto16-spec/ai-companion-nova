@@ -362,7 +362,8 @@ export class NovaLifeRuntime{
         return;
       }
       this.consecutiveFailures++;
-      const maxFailures=Math.max(1,this.options.resolveAgentRunLimits?.().maxConsecutiveFailures??3);
+      const configuredLimits=this.options.resolveAgentRunLimits?.()??{};
+      const maxFailures=Math.max(1,configuredLimits.maxConsecutiveFailures??3);
       if(category==="rate_limit"||category==="timeout"||category==="network"||category==="transient_provider"){
         if(this.consecutiveFailures>maxFailures){
           this.setWaiting();
