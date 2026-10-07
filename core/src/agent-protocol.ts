@@ -72,3 +72,11 @@ export function parseTaggedDecision(raw:string,validator:SchemaValidator):AgentD
   }
   return validateAgentDecision(candidate,validator);
 }
+
+
+export function parseNonStructuredDecision(raw:string,validator:SchemaValidator):AgentDecision{
+  bounded(raw);
+  if(/^\s*<NOVA_ACTION>/.test(raw)||/<\/NOVA_ACTION>\s*$/.test(raw))return parseTaggedDecision(raw,validator);
+  if(!raw.trim())throw new AgentDecisionProtocolError("Agent response is empty.");
+  return validateAgentDecision({action:"respond",content:raw},validator);
+}
