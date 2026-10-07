@@ -28,6 +28,10 @@ export class ProviderCredentialRouter implements ChatProvider{
   readonly id:string;
   private readonly clock:()=>number;
   private readonly runtime:CredentialRuntime[];
+  private capabilityNames():readonly string[]{
+    const capabilities=this.capabilities();
+    return Object.entries(capabilities).filter(([,value])=>value).map(([key])=>key);
+  }
 
   constructor(private readonly options:ProviderCredentialRouterOptions){
     if(options.credentials.length===0)throw new Error("Provider credential router requires at least one credential.");
@@ -67,8 +71,8 @@ export class ProviderCredentialRouter implements ChatProvider{
 
   async health():Promise<HealthStatus>{
     const available=this.runtime.filter(item=>this.available(item,this.clock()));
-    if(available.length===0)return {status:"unavailable",message:"All provider credentials are temporarily unavailable.",capabilities:this.capabilities()};
-    const results=await Promise.all(available.map(item=>item.provider.health().catch(()=>({status:"unavailable" as const,message:"Credential health check failed.",capabilities:item.provider.capabilities()}))));
+    if(available.length===0)return {status:"unavailable",message:"All provider credentials are temporarily unavailable.",capabilities:this.capabilityNames()};
+    const results=await Promise.all(available.map(item=>item.provider.health().catch(()=>({status:"unavailable" as const,message:"Credential health check failed.",capabilities:this.capabilityNames()}))));
     const healthy=results.some(result=>result.status==="healthy");
     return {status:healthy?"healthy":"degraded",message:healthy?"At least one provider credential is healthy.":"Provider credentials are degraded.",capabilities:this.capabilities()};
   }

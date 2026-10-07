@@ -26,6 +26,9 @@ export interface NovaLifeState{
   lastOutcome?:string;
   lastActivityAt?:string;
   lastDecision?:AgentDecision;
+  lastToolName?:string;
+  toolCallCount?:number;
+  pendingTriggers?:readonly NovaLifeWakeReason[];
   wakeCount:number;
 }
 export interface NovaLifeRuntimeOptions{
@@ -137,6 +140,12 @@ export class NovaLifeRuntime{
       if(!this.isOn())return;
       void this.followCharacter((event.payload as {characterId:string}).characterId).catch(error=>this.handleRuntimeError(error));
     }));
+    this.eventUnsubscribers.push(this.options.events.subscribe("ActiveConversationChanged",event=>{
+      const payload=event.payload as {characterId:string;conversationId:string};
+      if(!this.isOn()||payload.characterId!==this.state.characterId)return;
+      this.state={...this.state,conversationId:payload.conversationId};this.notify();
+      void this.options.autonomy.noteEvent("runtime_event").then(s=>{this.applyAutonomy(s);return this.triggerWake({reason:"runtime_event"})}).catch(error=>this.handleRuntimeError(error));
+    }));
     this.eventUnsubscribers.push(this.options.events.subscribe("AgentStateChanged",event=>{
       const payload=event.payload as {runId:string;state:string};
       if(payload.runId!==this.state.activeAgentRunId||!this.isOn())return;
@@ -235,7 +244,7 @@ export class NovaLifeRuntime{
 
   private async handleTerminalRun(run:AgentRun,reason:NovaLifeWakeReason,messageId?:string){
     if(!this.isOn())return;
-    this.state={...this.state,activeAgentRunId:undefined,lastAction:run.lastDecision??run.lastAction,lastDecision:run.lastDecision,lastOutcome:run.lastOutcome,lastActivityAt:this.clock(),lastDecisionAt:this.options.autonomy.getState().lastDecisionAt};
+    this.state={...this.state,activeAgentRunId:undefined,lastAction:run.lastDecision??run.lastAction,lastDecision:run.lastDecision,lastToolName:run.lastToolName,toolCallCount:run.toolCallCount,lastOutcome:run.lastOutcome,lastActivityAt:this.clock(),lastDecisionAt:this.options.autonomy.getState().lastDecisionAt};
     this.applyAutonomy(this.options.autonomy.getState());
     if(run.state==="interrupted"){this.enterIdle();return}
     if(run.state==="failed"){
@@ -258,7 +267,7 @@ export class NovaLifeRuntime{
     if(!this.isOn())return;
     this.clearDeadline();
     const autonomy=this.options.autonomy.getState();
-    this.state=this.withAutonomy({...this.state,status:"idle",activeAgentRunId:undefined},autonomy);this.notify();
+    this.state=this.withAutonomy({...this.state,status:"idle",activeAgentRunId:undefined,pendingTriggers:this.pendingWake?[this.pendingWake.reason]:[]},autonomy);this.notify();
     void this.options.events.publish(createEvent("NovaLifeIdle",{characterId:this.state.characterId!,conversationId:this.state.conversationId!,nextRelevantDeadline:autonomy.nextRelevantDeadline,trigger:this.state.trigger??"runtime_event"},"nova-life",this.clock,"nova-life:idle:"+Date.now().toString(36))).catch(()=>undefined);
     this.armDeadline();
   }
