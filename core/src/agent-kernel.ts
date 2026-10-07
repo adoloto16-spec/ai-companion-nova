@@ -303,7 +303,7 @@ export class AgentKernel{
     return this.clone(run);
   }
   private limitFailure(run:AgentRun,code:"AGENT_STEP_LIMIT_REACHED"|"AGENT_DURATION_LIMIT_REACHED"|"AGENT_FAILURE_LIMIT_REACHED"|"AGENT_MODEL_CALL_LIMIT_REACHED",reason:string){
-    return this.fail(run,code,reason);
+    return this.fail(run,code,reason,undefined,"budget");
   }
   private normalizeLimits(input:Partial<AgentRunLimits>):AgentRunLimits{
     const limits={...AGENT_DEFAULT_LIMITS,...input};
