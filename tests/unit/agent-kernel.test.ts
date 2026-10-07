@@ -38,7 +38,7 @@ async function protocolTests(){
   equal(parseTaggedDecision("<NOVA_ACTION>\ntype=respond\ncontent=done\n</NOVA_ACTION>",validator).action,"respond","tagged respond parses");
   equal(parseTaggedDecision("<NOVA_ACTION>\ntype=tool_call\ntoolName=tool-a\narguments={\"value\":1}\ncallId=call-1\n</NOVA_ACTION>",validator).action,"tool_call","tagged tool_call parses");
   await rejects(()=>parseStructuredDecision('{"action":"continue"}',validator),"continue is rejected");
-  await rejects(()=>parseStructuredDecision('{"action":"finish","result":"done"}',validator),"finish is rejected");
+  await rejects(()=>parseStructuredDecision('{"action":"finish","content":"done"}',validator),"finish is rejected");
   await rejects(()=>parseTaggedDecision("<NOVA_ACTION>\ntype=continue\n</NOVA_ACTION>",validator),"tagged continue is rejected");
   console.log("PASS Agent decision protocol tests");
 }
