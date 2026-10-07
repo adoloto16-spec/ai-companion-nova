@@ -41,7 +41,7 @@ class FailingOnceController extends SequenceController{
 
 async function main(){
   const proactive=new SequenceController([{action:"respond",content:"Привет! Я проснулась."}]);
-  const runtime=await createFoundationRuntime({agentCognitiveController:proactive});
+  const runtime=await createFoundationRuntime({agentCognitiveController:proactive,novaLifeRuntime:{startupBehavior:()=>"proactive",proactiveEnabled:()=>true,allowProactiveMessages:()=>true}});
   await runtime.start();
   try{
     const character=await runtime.getActiveCharacter();
@@ -117,7 +117,7 @@ async function main(){
     {action:"ask_user",question:"Какая информация нужна?"},
     {action:"respond",content:"Теперь могу продолжить."}
   ]);
-  const askRuntime=await createFoundationRuntime({agentCognitiveController:askController,novaLifeRuntime:{minimumWakeIntervalMs:1}});
+  const askRuntime=await createFoundationRuntime({agentCognitiveController:askController,novaLifeRuntime:{startupBehavior:()=>"proactive",proactiveEnabled:()=>true,allowProactiveMessages:()=>true,minimumWakeIntervalMs:1}});
   await askRuntime.start();
   try{
     const character=await askRuntime.getActiveCharacter();
