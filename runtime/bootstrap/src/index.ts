@@ -55,7 +55,7 @@ export interface FoundationRuntimeOptions{
   embeddingHttpClient?:import("../../../providers/embeddings/openai-compatible/src").EmbeddingHttpClient;
   providerPresetConfigurations?:readonly {presetId:string;configuration:ProviderConfiguration}[];
   activeProviderPresetId?:string;
-  novaLifeRuntime?:Pick<import("../../../core/src/nova-life-runtime").NovaLifeRuntimeOptions,"retryWakeMs"|"idleWakeMs">;
+  novaLifeRuntime?:Pick<import("../../../core/src/nova-life-runtime").NovaLifeRuntimeOptions,"retryWakeMs"|"idleWakeMs"|"resolveAgentRunLimits"|"proactiveEnabled"|"allowProactiveMessages"|"startupBehavior"|"defaultWaitMs"|"eventWakePolicy"|"eventDebounceMs"|"minimumWakeIntervalMs"|"maximumWakeIntervalMs">;
 }
 
 export interface FoundationRuntime{
@@ -487,6 +487,15 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       await moduleManager.initializeAll();
       await moduleManager.startAll();
       runtimeStatus="running";
+      if(settingsManager.get().novaLife.lifecycle.enabledAtStartup){
+        try{
+          const character=await characterManager.getActiveCharacter();
+          const conversation=await conversationManager.getActiveConversation(character.id);
+          await novaLife.start(character.id,conversation.id);
+        }catch(error){
+          diagnosticsStore.recordError("nova-life","STARTUP_WAKE_FAILED",error instanceof Error?error.message:String(error),{errorCategory:"runtime"});
+        }
+      }
     },
     async stop(){try{await novaLife.stop();semanticMemoryDeduplicator.stop();retrievalIndexer?.stop();await moduleManager.stopAll();}finally{runtimeStatus="stopped";}},
     diagnostics:snapshot,
