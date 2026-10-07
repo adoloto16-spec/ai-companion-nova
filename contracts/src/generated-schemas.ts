@@ -485,6 +485,7 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             "additionalProperties": false,
             "required": [
               "defaultWaitMs",
+              "postResponseWakeMs",
               "minimumWakeIntervalMs",
               "maximumWakeIntervalMs",
               "retryDelayMs",
@@ -495,6 +496,11 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
               "defaultWaitMs": {
                 "type": "integer",
                 "minimum": 1,
+                "maximum": 300000
+              },
+              "postResponseWakeMs": {
+                "type": "integer",
+                "minimum": 1000,
                 "maximum": 300000
               },
               "minimumWakeIntervalMs": {
