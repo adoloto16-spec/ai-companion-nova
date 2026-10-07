@@ -2,7 +2,7 @@ import type {DiagnosticsStore} from "../../contracts/src/index";
 export type ModelRequestPriority="interactive"|"nova_cognition"|"maintenance";
 export interface ModelRequestGovernorRequest<T>{id:string;priority:ModelRequestPriority;signal?:AbortSignal;retry?:boolean;execute:()=>Promise<T>}
 export interface ModelRequestGovernorOptions{maxRequestsPerMinute:number|(()=>number);maxConcurrentRequests:number|(()=>number);backgroundRequestPriority?:number|(()=>number);retryDelayMs?:number|(()=>number);maxRetryDelayMs?:number|(()=>number);maxRetries?:number|(()=>number);maxRateLimitCooldownMs?:number|(()=>number);nowMs?:()=>number;sleep?:(ms:number,signal?:AbortSignal)=>Promise<void>;diagnostics?:DiagnosticsStore}
-const bound=(v:number|undefined,d:number,min:number,max:number)=>Number.isInteger(v)?Math.min(max,Math.max(min,v)):d;
+const bound=(v:number|undefined,d:number,min:number,max:number)=>typeof v==="number"&&Number.isInteger(v)?Math.min(max,Math.max(min,v)):d;
 const resolve=(v:number|(()=>number)|undefined,d:number):number=>typeof v==="function"?(()=>{try{return v()}catch{return d}})():v===undefined?d:v;
 const abort=()=>{const e=new Error("Model request was aborted.");e.name="AbortError";return e};
 const details=(e:unknown)=>{if(!e||typeof e!=="object")return undefined;const c=(e as any).chatError;return c&&typeof c==="object"&&c.details&&typeof c.details==="object"?c.details as Record<string,unknown>:undefined};
