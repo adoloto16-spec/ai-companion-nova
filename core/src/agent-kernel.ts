@@ -34,14 +34,15 @@ function bounded(value:string,max=512){return value.length<=max?value:value.slic
 function isAbortError(error:unknown){return error instanceof Error&&error.name==="AbortError";}
 
 export class AgentKernelError extends Error{
-  readonly code:"AGENT_RUN_NOT_FOUND"|"AGENT_INVALID_STATE"|"AGENT_MODEL_CALL_LIMIT_REACHED";
-  constructor(code:"AGENT_RUN_NOT_FOUND"|"AGENT_INVALID_STATE"|"AGENT_MODEL_CALL_LIMIT_REACHED",message:string){super(message);this.name="AgentKernelError";this.code=code;}
+  readonly code:"AGENT_RUN_NOT_FOUND"|"AGENT_INVALID_STATE"|"AGENT_MODEL_CALL_LIMIT_REACHED"|"AGENT_TOOL_CALL_LIMIT_REACHED";
+  constructor(code:"AGENT_RUN_NOT_FOUND"|"AGENT_INVALID_STATE"|"AGENT_MODEL_CALL_LIMIT_REACHED"|"AGENT_TOOL_CALL_LIMIT_REACHED",message:string){super(message);this.name="AgentKernelError";this.code=code;}
 }
 
 interface Control{controller:AbortController;timer?:ReturnType<typeof setTimeout>;durationExceeded:boolean;}
 
 export interface AgentKernelStepOptions{
   contextProvider?:(run:AgentRun,stepIndex:number,previousRuntimeMessages:readonly ChatMessage[])=>Promise<readonly ChatMessage[]>;
+  onDecision?:(run:AgentRun,decision:AgentDecision)=>Promise<void>|void;
 }
 
 export interface AgentKernelOptions{
@@ -83,7 +84,7 @@ export class AgentKernel{
     if(this.runs.has(id))throw new Error("Agent run already exists: "+id);
     const run:AgentRun={
       id,characterId:bounded(input.characterId,200),...(input.conversationId?{conversationId:bounded(input.conversationId,200)}:{}),goal:bounded(input.goal,4000),task:bounded(input.task,4000),wakeReason:bounded(input.wakeReason??"runtime_event",100),
-      state:"starting",status:"running",stepCount:0,attemptedStepCount:0,modelCallCount:0,startedAt:now,updatedAt:now,limits,
+      state:"starting",status:"running",stepCount:0,attemptedStepCount:0,modelCallCount:0,toolCallCount:0,startedAt:now,updatedAt:now,limits,
       ...(input.providerId?{providerId:input.providerId}:{}),...(input.model?{model:input.model}: {})
     };
     this.runs.set(id,run);this.steps.set(id,[]);this.runtimeContextMessages.set(id,[]);
@@ -162,7 +163,8 @@ export class AgentKernel{
 
     await this.events?.publish(createEvent("AgentDecisionMade",{runId:run.id,stepIndex,action:result.decision.action,outputMode:result.outputMode},"agent-kernel",this.clock,run.id+":decision:"+stepIndex));
     await this.setState(run,"acting");
-
+    if(result.decision.action==="tool_call"&&run.toolCallCount>=run.limits.maxToolCallsPerBurst)return this.limitFailure(run,"AGENT_TOOL_CALL_LIMIT_REACHED","Agent tool-call budget reached.");
+    try{await options.onDecision?.(this.clone(run),result.decision)}catch(error){return this.fail(run,"AGENT_DECISION_INVALID","Agent decision state update failed.",error,"runtime",stepIndex);}
     const decisionAction=result.decision.action;
     let action:AgentActionExecution;
     try{
@@ -185,6 +187,8 @@ export class AgentKernel{
     run.stepCount=stepIndex;
     run.modelCallCount+=result.modelCalls;
     run.lastAction=result.decision.action;
+    run.lastDecision=result.decision;
+    if(result.decision.action==="tool_call")run.toolCallCount++;
     run.lastOutcome=bounded(action.outcome+(action.summary?":"+action.summary:""));
     if(action.contextMessages){
       const runtimeMessages=this.runtimeContextMessages.get(run.id)??[];
@@ -307,7 +311,7 @@ export class AgentKernel{
     await this.events?.publish(createEvent("AgentRunFailed",{runId:run.id,code,reason},"agent-kernel",this.clock,run.id+":failed:"+code));
     return this.clone(run);
   }
-  private limitFailure(run:AgentRun,code:"AGENT_STEP_LIMIT_REACHED"|"AGENT_DURATION_LIMIT_REACHED"|"AGENT_FAILURE_LIMIT_REACHED"|"AGENT_MODEL_CALL_LIMIT_REACHED",reason:string){
+  private limitFailure(run:AgentRun,code:"AGENT_STEP_LIMIT_REACHED"|"AGENT_DURATION_LIMIT_REACHED"|"AGENT_FAILURE_LIMIT_REACHED"|"AGENT_MODEL_CALL_LIMIT_REACHED"|"AGENT_TOOL_CALL_LIMIT_REACHED",reason:string){
     return this.fail(run,code,reason,undefined,"budget");
   }
   private normalizeLimits(input:Partial<AgentRunLimits>):AgentRunLimits{
@@ -316,6 +320,7 @@ export class AgentKernel{
     if(!Number.isFinite(limits.maxDurationMs)||limits.maxDurationMs<1)throw new Error("maxDurationMs must be a positive finite number.");
     if(!Number.isInteger(limits.maxConsecutiveFailures)||limits.maxConsecutiveFailures<1)throw new Error("maxConsecutiveFailures must be a positive integer.");
     if(!Number.isInteger(limits.maxModelCallsPerBurst)||limits.maxModelCallsPerBurst<1)throw new Error("maxModelCallsPerBurst must be a positive integer.");
+    if(!Number.isInteger(limits.maxToolCallsPerBurst)||limits.maxToolCallsPerBurst<1)throw new Error("maxToolCallsPerBurst must be a positive integer.");
     return limits;
   }
   private require(runId:string){const run=this.runs.get(runId);if(!run)throw new AgentKernelError("AGENT_RUN_NOT_FOUND","Agent run not found: "+runId);return run;}

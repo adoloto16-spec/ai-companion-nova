@@ -31,3 +31,4 @@ export * from "./agent-cognitive-controller";
 export * from "./agent-action-executor";
 export * from "./agent-kernel";
 export * from "./nova-life-runtime";
+export * from "./nova-autonomy-core";

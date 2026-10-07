@@ -515,6 +515,8 @@ export interface EventPayloadMap{
   NovaLifeWakeCompleted:{characterId:string;conversationId:string;wakeCount:number;reason:string;agentRunId?:string;status:string};
   NovaLifeSleeping:{characterId:string;conversationId:string;nextWakeAt:string;reason:string};
   NovaLifeError:{characterId?:string;conversationId?:string;reason:string;agentRunId?:string;category?:string;wakeCount?:number;step?:number;provider?:string;model?:string};
+  NovaLifeIdle:{characterId:string;conversationId:string;nextRelevantDeadline?:string|null;trigger:string};
+  ToolResultReceived:{runId:string;toolName:string;callId:string;status:string};
 
   ChatRequestFailed:{requestId:string;conversationId?:string;providerId?:string;code:ChatError["code"]};
 }
@@ -672,19 +674,24 @@ export interface AuditService{record(entry:AuditEntry):Promise<void>}
 export interface ActionBroker{execute(invocation:ActionInvocation):Promise<ActionResult>}
 export type AgentState="starting"|"ready"|"idle"|"thinking"|"planning"|"acting"|"waiting"|"interrupted"|"paused"|"resting"|"completed"|"failed"|"stopping";
 export type AgentRunStatus="running"|"waiting"|"paused"|"completed"|"failed"|"interrupted";
-export type AgentDecisionAction="respond"|"tool_call"|"wait"|"ask_user";
+export type AgentDecisionAction="respond"|"tool_call"|"create_intent"|"update_intent"|"complete_intent"|"ask_user"|"idle"|"wait";
 export type AgentDecisionOutputMode="structured"|"tagged";
-export type AgentStepOutcome="responded"|"tool_called"|"waiting"|"failed"|"interrupted";
+export type AgentStepOutcome="responded"|"tool_called"|"intent_updated"|"waiting"|"failed"|"interrupted";
+export interface AgentIntentDraft{type:string;description:string;priority:number;dueAt?:string|null}
 export type AgentDecision=
   | {action:"respond";content:string}
   | {action:"tool_call";toolName:string;arguments:Record<string,unknown>;callId:string}
-  | {action:"wait";waitMs:number}
-  | {action:"ask_user";question:string};
-export interface AgentRunLimits{maxSteps:number;maxDurationMs:number;maxConsecutiveFailures:number;maxModelCallsPerBurst:number;}
+  | {action:"create_intent";intent:AgentIntentDraft}
+  | {action:"update_intent";intentId:string;intent:Partial<AgentIntentDraft>}
+  | {action:"complete_intent";intentId:string}
+  | {action:"ask_user";question:string}
+  | {action:"idle"}
+  | {action:"wait";waitMs:number};
+export interface AgentRunLimits{maxSteps:number;maxDurationMs:number;maxConsecutiveFailures:number;maxModelCallsPerBurst:number;maxToolCallsPerBurst:number;}
 export interface AgentRunInput{id?:string;characterId:string;conversationId?:ConversationId;goal:string;task:string;wakeReason?:string;providerId?:string;model?:string;limits?:Partial<AgentRunLimits>;}
-export interface AgentRun{id:string;characterId:string;conversationId?:ConversationId;goal:string;task:string;wakeReason:string;state:AgentState;status:AgentRunStatus;stepCount:number;attemptedStepCount:number;modelCallCount:number;startedAt:string;updatedAt:string;cancelReason?:string;workingSummary?:string;lastAction?:AgentDecisionAction;lastOutcome?:string;lastErrorCategory?:string;lastWaitMs?:number;lastToolName?:string;lastToolCallId?:string;providerId?:string;model?:string;limits:AgentRunLimits;}
+export interface AgentRun{id:string;characterId:string;conversationId?:ConversationId;goal:string;task:string;wakeReason:string;state:AgentState;status:AgentRunStatus;stepCount:number;attemptedStepCount:number;modelCallCount:number;toolCallCount:number;startedAt:string;updatedAt:string;cancelReason?:string;workingSummary?:string;lastAction?:AgentDecisionAction;lastDecision?:AgentDecision;lastOutcome?:string;lastErrorCategory?:string;lastWaitMs?:number;lastToolName?:string;lastToolCallId?:string;providerId?:string;model?:string;limits:AgentRunLimits;}
 export interface AgentStep{stepIndex:number;startedAt:string;completedAt:string;decisionType:AgentDecisionAction;outcome:AgentStepOutcome;}
-export const AGENT_DEFAULT_LIMITS:AgentRunLimits={maxSteps:20,maxDurationMs:60000,maxConsecutiveFailures:3,maxModelCallsPerBurst:20};
+export const AGENT_DEFAULT_LIMITS:AgentRunLimits={maxSteps:20,maxDurationMs:60000,maxConsecutiveFailures:3,maxModelCallsPerBurst:20,maxToolCallsPerBurst:10};
 export interface Permission{id:string;schemaVersion:string;subject:string;resourceType:"domain"|"filesystem"|"application"|"resource";action:string;effect:"allow"|"deny";scope?:{domains?:readonly string[];roots?:readonly string[];applications?:readonly string[];windows?:readonly string[]}}
 export interface ActionError{code:"INVALID_REQUEST"|"SCHEMA_VALIDATION_FAILED"|"TOOL_NOT_FOUND"|"CAPABILITY_DENIED"|"PERMISSION_DENIED"|"FOREGROUND_DENIED"|"SCOPE_DENIED"|"RISK_DENIED"|"CONFIRMATION_REQUIRED"|"TARGET_RESOLUTION_FAILED"|"DRIVER_ERROR"|"POSTCONDITION_FAILED";message:string;details?:Record<string,unknown>}
 export type ActionResult={id:string;schemaVersion:string;status:"success";output:unknown;durationMs:number}|{id:string;schemaVersion:string;status:"denied"|"error";error:ActionError;durationMs:number}

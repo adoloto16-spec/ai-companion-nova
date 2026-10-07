@@ -1,4 +1,5 @@
-import type {ActionBroker,ActorCredential,AgentDecision,AgentRun,AgentStepOutcome,ChatMessage} from "../../contracts/src/index";
+import type {ActionBroker,ActorCredential,AgentDecision,AgentRun,AgentStepOutcome,ChatMessage,Clock,EventBus} from "../../contracts/src/index";
+import {createEvent} from "../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../contracts/src/index";
 import type {InMemoryToolRegistry} from "./tools";
 
@@ -23,6 +24,8 @@ export interface DefaultAgentActionExecutorOptions{
   toolRegistry?:InMemoryToolRegistry;
   actionBroker?:ActionBroker;
   credential?:ActorCredential;
+  events?:EventBus;
+  clock?:Clock;
 }
 
 export class DefaultAgentActionExecutor implements AgentActionExecutor{
@@ -34,10 +37,16 @@ export class DefaultAgentActionExecutor implements AgentActionExecutor{
     switch(decision.action){
       case "respond":
         return {outcome:"responded",nextState:"completed",summary:decision.content};
+      case "idle":
+        return {outcome:"waiting",nextState:"waiting",summary:"idle"};
       case "wait":
         return {outcome:"waiting",nextState:"waiting",summary:"wait:"+decision.waitMs,waitMs:decision.waitMs};
       case "ask_user":
         return {outcome:"waiting",nextState:"waiting",summary:decision.question};
+      case "create_intent":
+      case "update_intent":
+      case "complete_intent":
+        return {outcome:"intent_updated",nextState:"thinking",summary:"intent:"+decision.action};
       case "tool_call":{
         if(!this.options.toolRegistry||!this.options.actionBroker||!this.options.credential)throw new Error("Tool execution dependencies are not configured.");
         const tool=this.options.toolRegistry.get(decision.toolName);
@@ -67,6 +76,7 @@ export class DefaultAgentActionExecutor implements AgentActionExecutor{
           toolCallId:decision.callId,
           metadata:{contextSource:"agent_tool_call",toolName:decision.toolName,callId:decision.callId}
         };
+        await this.options.events?.publish(createEvent("ToolResultReceived",{runId:_run.id,toolName:decision.toolName,callId:decision.callId,status:result.status},"agent-action-executor",()=>this.options.clock?.now()??new Date().toISOString(),_run.id+":tool-result:"+decision.callId));
         return {
           outcome:"tool_called",
           nextState:"thinking",
