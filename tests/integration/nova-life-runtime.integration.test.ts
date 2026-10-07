@@ -44,10 +44,6 @@ async function main(){
   try{
     const character=await runtime.getActiveCharacter();
     const conversation=await runtime.getActiveConversation(character.id);
-    let wakeStarted=0,wakeCompleted=0;
-    const unsubscribeStarted=runtime.subscribeNovaLifeState(()=>undefined);
-    const events=(runtime as any);
-    void events;
     await runtime.startNovaLife(character.id,conversation.id);
     const life=runtime.getNovaLifeState();
     assert.equal(life.status,"waiting","finish completes the burst but keeps Nova alive");
@@ -56,8 +52,6 @@ async function main(){
     const updated=await runtime.getConversation(character.id,conversation.id);
     assert.equal(updated?.messages.at(-1)?.content,"Привет! Я проснулась.","proactive result is a normal assistant message");
     assert.equal(updated?.messages.at(-1)?.metadata?.novaLife,true,"proactive message is marked as Nova Life metadata");
-    unsubscribeStarted();
-    void wakeStarted;void wakeCompleted;
   }finally{await runtime.stop();}
 
   const waitingController=new SequenceController([
@@ -167,7 +161,7 @@ async function main(){
     assert.equal(offRuntime.getNovaLifeState().status,"off","OFF returns Life to off");
     await sleep(40);
     assert.equal(offController.calls,1,"OFF cancels future scheduled wake cycles");
-    assert.equal((await offRuntime.getConversation(character.id,conversation.id))?.messages.at(-1)?.role,"user", "no proactive assistant result appears after OFF");
+    assert.equal((await offRuntime.getConversation(character.id,conversation.id))?.messages.length,0, "no proactive assistant result appears after OFF");
   }finally{await offRuntime.stop();}
 
   const failing=new FailingOnceController(new Error("provider unavailable"),[{action:"finish",result:"Recovered after provider failure."}]);
