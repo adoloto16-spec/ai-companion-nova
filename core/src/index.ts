@@ -10,6 +10,7 @@ export * from "./security";
 export * from "./tools";
 export * from "./providers";
 export * from "./ai-runtime";
+export * from "./model-request-governor";
 export * from "./action-broker";
 
 export * from "./core-book-manager";

@@ -1,7 +1,7 @@
 export type DiagnosticsLogLevel="off"|"errors"|"normal"|"verbose"|"debug";
 
 export const APP_SETTINGS_API_VERSION:"1"="1";
-export const APP_SETTINGS_SCHEMA_VERSION:"5"="5";
+export const APP_SETTINGS_SCHEMA_VERSION:"6"="6";
 export const DEFAULT_MEMORY_AGENT_PROMPT_VERSION="1";
 export const DEFAULT_AUTOMATIC_MEMORY_PROMPT="You are a long-term memory agent.\nDecide whether the exchange contains durable information worth remembering after this conversation ends.\nReturn only the requested output.\nGood memories are brief, self-contained, durable, and understandable without the original conversation.\nDo not invent ids or metadata; the application supplies all internal state.";
 export const DEFAULT_MEMORY_JUDGE_PROMPT_VERSION="2";
@@ -9,9 +9,10 @@ export const DEFAULT_MEMORY_JUDGE_PROMPT="You are a memory deduplication judge.\
 
 const LEGACY_MEMORY_JUDGE_PROMPT="You are a memory deduplication judge.\n\nCompare NEW MEMORY with CANDIDATES.\n\nKeep the most complete and informative record.\n\nIf NEW MEMORY is less informative because its information is contained in a candidate, return NEW.\n\nIf a candidate contains all meaningful information from NEW MEMORY and adds useful information, return that candidate number.\n\nIf two records contain essentially the same information, return one of them.\n\nIf records contain different useful information, return NO_ARCHIVE.\n\nReturn only:\nNO_ARCHIVE,\nNEW,\nor candidate numbers, one per line.\n\nNever return explanations or text.\nNever invent candidate numbers.";
 
+export interface NovaLifeSettings{lifecycle:{enabledAtStartup:boolean;startupBehavior:"proactive"|"wait";proactiveEnabled:boolean;allowProactiveMessages:boolean};scheduler:{defaultWaitMs:number;minimumWakeIntervalMs:number;maximumWakeIntervalMs:number;retryDelayMs:number;eventDebounceMs:number;eventWakePolicy:{appChanged:boolean;windowChanged:boolean;conversationChanged:boolean;characterChanged:boolean}};cognition:{maxSteps:number;maxDurationMs:number;maxConsecutiveFailures:number;maxModelCallsPerBurst:number};resourceBudget:{maxRequestsPerMinute:number;maxConcurrentRequests:number;backgroundRequestPriority:number}}
 export interface AppSettings{
   apiVersion:"1";
-  schemaVersion:"5";
+  schemaVersion:"6";
   chat:{
     automaticLongTermMemory:boolean;
   };
@@ -52,6 +53,7 @@ export interface AppSettings{
   retrieval:{
     candidateLimit:number;
   };
+  novaLife:NovaLifeSettings;
   diagnostics:{
     logLevel:DiagnosticsLogLevel;
     keepRecentEntries:number;
@@ -75,6 +77,7 @@ export const DEFAULT_APP_SETTINGS:AppSettings={
   },
   memory:{candidateLimit:8},
   retrieval:{candidateLimit:32},
+  novaLife:{lifecycle:{enabledAtStartup:true,startupBehavior:"wait",proactiveEnabled:true,allowProactiveMessages:true},scheduler:{defaultWaitMs:30000,minimumWakeIntervalMs:1000,maximumWakeIntervalMs:300000,retryDelayMs:5000,eventDebounceMs:250,eventWakePolicy:{appChanged:false,windowChanged:false,conversationChanged:true,characterChanged:true}},cognition:{maxSteps:8,maxDurationMs:60000,maxConsecutiveFailures:3,maxModelCallsPerBurst:8},resourceBudget:{maxRequestsPerMinute:30,maxConcurrentRequests:2,backgroundRequestPriority:10}},
   diagnostics:{logLevel:"normal",keepRecentEntries:100},
   ui:{showDiagnosticsInChat:true}
 };
@@ -89,6 +92,7 @@ export function defaultAppSettings():AppSettings{
     context:{...DEFAULT_APP_SETTINGS.context},
     memory:{...DEFAULT_APP_SETTINGS.memory},
     retrieval:{...DEFAULT_APP_SETTINGS.retrieval},
+    novaLife:{lifecycle:{...DEFAULT_APP_SETTINGS.novaLife.lifecycle},scheduler:{...DEFAULT_APP_SETTINGS.novaLife.scheduler,eventWakePolicy:{...DEFAULT_APP_SETTINGS.novaLife.scheduler.eventWakePolicy}},cognition:{...DEFAULT_APP_SETTINGS.novaLife.cognition},resourceBudget:{...DEFAULT_APP_SETTINGS.novaLife.resourceBudget}},
     diagnostics:{...DEFAULT_APP_SETTINGS.diagnostics},
     ui:{...DEFAULT_APP_SETTINGS.ui}
   };
@@ -102,7 +106,8 @@ const SECURITY_MAX={
   memoryCandidateLimit:100,
   retrievalCandidateLimit:100,
   semanticCandidateLimit:100,
-  diagnosticsEntries:500
+  diagnosticsEntries:500,
+  novaLifeDefaultWaitMs:300000,novaLifeMinWakeIntervalMs:300000,novaLifeMaxWakeIntervalMs:3600000,novaLifeRetryDelayMs:120000,novaLifeEventDebounceMs:60000,novaLifeMaxSteps:50,novaLifeMaxDurationMs:300000,novaLifeMaxConsecutiveFailures:10,novaLifeMaxModelCallsPerBurst:50,novaLifeMaxRequestsPerMinute:120,novaLifeMaxConcurrentRequests:8,novaLifeBackgroundPriority:50
 } as const;
 
 export function validateAppSettings(settings:AppSettings):string[]{
@@ -137,6 +142,24 @@ export function validateAppSettings(settings:AppSettings):string[]{
   integer(settings.context.recentConversationMessages,"Recent messages",1,SECURITY_MAX.recentConversationMessages);
   integer(settings.memory.candidateLimit,"Memory items",1,SECURITY_MAX.memoryCandidateLimit);
   integer(settings.retrieval.candidateLimit,"Retrieval candidates",1,SECURITY_MAX.retrievalCandidateLimit);
+  const life=settings.novaLife;
+  if(typeof life.lifecycle.enabledAtStartup!=="boolean")errors.push("Nova Life enabledAtStartup must be boolean.");
+  if(!["proactive","wait"].includes(life.lifecycle.startupBehavior))errors.push("Unsupported Nova Life startup behavior.");
+  if(typeof life.lifecycle.proactiveEnabled!=="boolean")errors.push("Nova Life proactiveEnabled must be boolean.");
+  if(typeof life.lifecycle.allowProactiveMessages!=="boolean")errors.push("Nova Life allowProactiveMessages must be boolean.");
+  integer(life.scheduler.defaultWaitMs,"Nova Life default wait",1,SECURITY_MAX.novaLifeDefaultWaitMs);
+  integer(life.scheduler.minimumWakeIntervalMs,"Nova Life minimum wake interval",1,SECURITY_MAX.novaLifeMinWakeIntervalMs);
+  integer(life.scheduler.maximumWakeIntervalMs,"Nova Life maximum wake interval",life.scheduler.minimumWakeIntervalMs,SECURITY_MAX.novaLifeMaxWakeIntervalMs);
+  integer(life.scheduler.retryDelayMs,"Nova Life retry delay",0,SECURITY_MAX.novaLifeRetryDelayMs);
+  integer(life.scheduler.eventDebounceMs,"Nova Life event debounce",0,SECURITY_MAX.novaLifeEventDebounceMs);
+  if(Object.values(life.scheduler.eventWakePolicy).some(value=>typeof value!=="boolean"))errors.push("Nova Life event wake policy values must be boolean.");
+  integer(life.cognition.maxSteps,"Nova Life max steps",1,SECURITY_MAX.novaLifeMaxSteps);
+  integer(life.cognition.maxDurationMs,"Nova Life max duration",1000,SECURITY_MAX.novaLifeMaxDurationMs);
+  integer(life.cognition.maxConsecutiveFailures,"Nova Life max consecutive failures",1,SECURITY_MAX.novaLifeMaxConsecutiveFailures);
+  integer(life.cognition.maxModelCallsPerBurst,"Nova Life max model calls",1,SECURITY_MAX.novaLifeMaxModelCallsPerBurst);
+  integer(life.resourceBudget.maxRequestsPerMinute,"Nova Life max requests/minute",1,SECURITY_MAX.novaLifeMaxRequestsPerMinute);
+  integer(life.resourceBudget.maxConcurrentRequests,"Nova Life max concurrent requests",1,SECURITY_MAX.novaLifeMaxConcurrentRequests);
+  integer(life.resourceBudget.backgroundRequestPriority,"Nova Life background request priority",0,SECURITY_MAX.novaLifeBackgroundPriority);
   if(!["off","errors","normal","verbose","debug"].includes(settings.diagnostics.logLevel))errors.push("Unsupported diagnostics log level.");
   integer(settings.diagnostics.keepRecentEntries,"Recent diagnostic entries",1,SECURITY_MAX.diagnosticsEntries);
   if(typeof settings.chat.automaticLongTermMemory!=="boolean")errors.push("Automatic long-term memory must be boolean.");
@@ -150,7 +173,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const input=value as Record<string,unknown>;
   const legacy=input.schemaVersion==="0"||input.schemaVersion===undefined||input.schemaVersion==="1";
   if(input.apiVersion!==undefined&&input.apiVersion!=="1"&&!legacy)throw new Error("Unsupported AppSettings apiVersion.");
-  if(input.schemaVersion!==undefined&&!["0","1","2","3","4","5"].includes(String(input.schemaVersion)))throw new Error("Unsupported AppSettings schemaVersion.");
+  if(input.schemaVersion!==undefined&&!["0","1","2","3","4","5","6"].includes(String(input.schemaVersion)))throw new Error("Unsupported AppSettings schemaVersion.");
   const root=value as Record<string,any>;
   const context=root.context&&typeof root.context==="object"?root.context:{};
   const memory=root.memory&&typeof root.memory==="object"?root.memory:{};
@@ -160,6 +183,12 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const ui=root.ui&&typeof root.ui==="object"?root.ui:{};
   const semanticDedup=root.semanticDedup&&typeof root.semanticDedup==="object"?root.semanticDedup:{};
   const semanticJudge=semanticDedup.judge&&typeof semanticDedup.judge==="object"?semanticDedup.judge:{};
+  const novaLifeInput=root.novaLife&&typeof root.novaLife==="object"?root.novaLife:{};
+  const lifeLifecycle=novaLifeInput.lifecycle&&typeof novaLifeInput.lifecycle==="object"?novaLifeInput.lifecycle:{};
+  const lifeScheduler=novaLifeInput.scheduler&&typeof novaLifeInput.scheduler==="object"?novaLifeInput.scheduler:{};
+  const lifeWakePolicy=lifeScheduler.eventWakePolicy&&typeof lifeScheduler.eventWakePolicy==="object"?lifeScheduler.eventWakePolicy:{};
+  const lifeCognition=novaLifeInput.cognition&&typeof novaLifeInput.cognition==="object"?novaLifeInput.cognition:{};
+  const lifeBudget=novaLifeInput.resourceBudget&&typeof novaLifeInput.resourceBudget==="object"?novaLifeInput.resourceBudget:{};
   const legacyContextBudget=typeof root.contextBudget==="number"?root.contextBudget:undefined;
   const legacyRecent=typeof root.recentMessages==="number"?root.recentMessages:undefined;
   const legacyMemory=typeof root.memoryCandidateLimit==="number"?root.memoryCandidateLimit:undefined;
@@ -168,7 +197,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
   if(!["off","errors","normal","verbose","debug"].includes(logLevelValue))throw new Error("Unsupported diagnostics log level.");
   const legacyEnabled=typeof chat.automaticLongTermMemory==="boolean"?chat.automaticLongTermMemory:defaults.chat.automaticLongTermMemory;
   // Schema v5 is canonical, so Memory Agent persistence fields must survive migration unchanged; legacy schemas keep their historical gates.
-  const preservesMemoryAgentBinding=["2","3","4","5"].includes(String(input.schemaVersion));
+  const preservesMemoryAgentBinding=["2","3","4","5","6"].includes(String(input.schemaVersion));
   const previousSchema=input.schemaVersion==="2";
   const memoryAgentEnabled=preservesMemoryAgentBinding&&typeof memoryAgent.enabled==="boolean"?memoryAgent.enabled:legacyEnabled;
   const memoryAgentPreset=preservesMemoryAgentBinding&&typeof memoryAgent.providerPresetId==="string"&&memoryAgent.providerPresetId.trim()?memoryAgent.providerPresetId.trim():null;
@@ -194,7 +223,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const semanticJudgeBackup=typeof semanticJudge.promptBackup==="string"&&semanticJudge.promptBackup.length>0?semanticJudge.promptBackup:null;
   const semanticJudgeVersion=semanticJudgePromptIsLegacyDefault?DEFAULT_MEMORY_JUDGE_PROMPT_VERSION:(typeof semanticJudge.defaultPromptVersion==="string"&&semanticJudge.defaultPromptVersion.trim()?semanticJudge.defaultPromptVersion.trim():DEFAULT_MEMORY_JUDGE_PROMPT_VERSION);
   const next:AppSettings={
-    apiVersion:"1",schemaVersion:"5",
+    apiVersion:"1",schemaVersion:"6",
     chat:{automaticLongTermMemory:legacyEnabled},
     memoryAgent:{enabled:memoryAgentEnabled,providerPresetId:memoryAgentPreset,model:memoryAgentModel,outputMode,prompt:currentPrompt,promptBackup:currentBackup,defaultPromptVersion},
     semanticDedup:{
@@ -223,6 +252,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
       candidateLimit:typeof memory.candidateLimit==="number"?memory.candidateLimit:(legacyMemory??defaults.memory.candidateLimit)
     },
     retrieval:{candidateLimit:typeof (root.retrieval as any)?.candidateLimit==="number"?(root.retrieval as any).candidateLimit:defaults.retrieval.candidateLimit},
+    novaLife:{lifecycle:{enabledAtStartup:typeof lifeLifecycle.enabledAtStartup==="boolean"?lifeLifecycle.enabledAtStartup:defaults.novaLife.lifecycle.enabledAtStartup,startupBehavior:lifeLifecycle.startupBehavior==="proactive"||lifeLifecycle.startupBehavior==="wait"?lifeLifecycle.startupBehavior:defaults.novaLife.lifecycle.startupBehavior,proactiveEnabled:typeof lifeLifecycle.proactiveEnabled==="boolean"?lifeLifecycle.proactiveEnabled:defaults.novaLife.lifecycle.proactiveEnabled,allowProactiveMessages:typeof lifeLifecycle.allowProactiveMessages==="boolean"?lifeLifecycle.allowProactiveMessages:defaults.novaLife.lifecycle.allowProactiveMessages},scheduler:{defaultWaitMs:typeof lifeScheduler.defaultWaitMs==="number"?lifeScheduler.defaultWaitMs:defaults.novaLife.scheduler.defaultWaitMs,minimumWakeIntervalMs:typeof lifeScheduler.minimumWakeIntervalMs==="number"?lifeScheduler.minimumWakeIntervalMs:defaults.novaLife.scheduler.minimumWakeIntervalMs,maximumWakeIntervalMs:typeof lifeScheduler.maximumWakeIntervalMs==="number"?lifeScheduler.maximumWakeIntervalMs:defaults.novaLife.scheduler.maximumWakeIntervalMs,retryDelayMs:typeof lifeScheduler.retryDelayMs==="number"?lifeScheduler.retryDelayMs:defaults.novaLife.scheduler.retryDelayMs,eventDebounceMs:typeof lifeScheduler.eventDebounceMs==="number"?lifeScheduler.eventDebounceMs:defaults.novaLife.scheduler.eventDebounceMs,eventWakePolicy:{appChanged:typeof lifeWakePolicy.appChanged==="boolean"?lifeWakePolicy.appChanged:defaults.novaLife.scheduler.eventWakePolicy.appChanged,windowChanged:typeof lifeWakePolicy.windowChanged==="boolean"?lifeWakePolicy.windowChanged:defaults.novaLife.scheduler.eventWakePolicy.windowChanged,conversationChanged:typeof lifeWakePolicy.conversationChanged==="boolean"?lifeWakePolicy.conversationChanged:defaults.novaLife.scheduler.eventWakePolicy.conversationChanged,characterChanged:typeof lifeWakePolicy.characterChanged==="boolean"?lifeWakePolicy.characterChanged:defaults.novaLife.scheduler.eventWakePolicy.characterChanged}},cognition:{maxSteps:typeof lifeCognition.maxSteps==="number"?lifeCognition.maxSteps:defaults.novaLife.cognition.maxSteps,maxDurationMs:typeof lifeCognition.maxDurationMs==="number"?lifeCognition.maxDurationMs:defaults.novaLife.cognition.maxDurationMs,maxConsecutiveFailures:typeof lifeCognition.maxConsecutiveFailures==="number"?lifeCognition.maxConsecutiveFailures:defaults.novaLife.cognition.maxConsecutiveFailures,maxModelCallsPerBurst:typeof lifeCognition.maxModelCallsPerBurst==="number"?lifeCognition.maxModelCallsPerBurst:defaults.novaLife.cognition.maxModelCallsPerBurst},resourceBudget:{maxRequestsPerMinute:typeof lifeBudget.maxRequestsPerMinute==="number"?lifeBudget.maxRequestsPerMinute:defaults.novaLife.resourceBudget.maxRequestsPerMinute,maxConcurrentRequests:typeof lifeBudget.maxConcurrentRequests==="number"?lifeBudget.maxConcurrentRequests:defaults.novaLife.resourceBudget.maxConcurrentRequests,backgroundRequestPriority:typeof lifeBudget.backgroundRequestPriority==="number"?lifeBudget.backgroundRequestPriority:defaults.novaLife.resourceBudget.backgroundRequestPriority}},
     diagnostics:{
       logLevel:logLevelValue as DiagnosticsLogLevel,
       keepRecentEntries:typeof diagnostics.keepRecentEntries==="number"?diagnostics.keepRecentEntries:defaults.diagnostics.keepRecentEntries
