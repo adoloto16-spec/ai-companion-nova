@@ -1,9 +1,9 @@
-import type {ProviderConfiguration,ProviderPreset,ProviderPresetStore,ProviderPresetStoreState,CredentialProfile,CredentialReference} from "../../../contracts/src/index";
+import type {ProviderConfiguration,ProviderPreset,ProviderPresetCredential,ProviderPresetStore,ProviderPresetStoreState,CredentialProfile,CredentialReference} from "../../../contracts/src/index";
 
 export type ProviderPresetInvoke=(command:string,args?:Record<string,unknown>)=>Promise<unknown>;
 export const PROVIDER_PRESET_COMMANDS={get:"get_provider_presets",save:"save_provider_presets",remove:"delete_provider_preset"} as const;
 
-function normalizeCredential(credential:ProviderPreset["credentials"] extends readonly (infer C)[]?C:never){
+function normalizeCredential(credential:ProviderPresetCredential){
   return {
     ...credential,
     health:credential.health??"healthy",

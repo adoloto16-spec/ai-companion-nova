@@ -591,6 +591,15 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     getSettings:()=>settingsManager.get(),
     updateSettings:async(settings)=>{
       const next=await settingsManager.set(settings);
+      const configuredDefault=providerPresetConfigurations.keys().next().value;
+      const selectedPresetId=next.novaLife.provider.activePresetId??(typeof configuredDefault==="string"?configuredDefault:undefined);
+      if(typeof selectedPresetId==="string"){
+        const configuration=providerPresetConfigurations.get(selectedPresetId);
+        if(configuration){
+          activeProviderPresetId=selectedPresetId;
+          await applyProvider(configuration);
+        }
+      }
       diagnosticsStore.setMaxEntries(next.diagnostics.keepRecentEntries);
       traceStore.configure(next.diagnostics.logLevel,next.diagnostics.keepRecentEntries);
       // Record the values the already-running runtime will use after a Settings Save.
@@ -605,6 +614,15 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     },
     resetSettings:async()=>{
       const next=await settingsManager.reset();
+      const configuredDefault=providerPresetConfigurations.keys().next().value;
+      const selectedPresetId=next.novaLife.provider.activePresetId??(typeof configuredDefault==="string"?configuredDefault:undefined);
+      if(typeof selectedPresetId==="string"){
+        const configuration=providerPresetConfigurations.get(selectedPresetId);
+        if(configuration){
+          activeProviderPresetId=selectedPresetId;
+          await applyProvider(configuration);
+        }
+      }
       diagnosticsStore.setMaxEntries(next.diagnostics.keepRecentEntries);
       traceStore.configure(next.diagnostics.logLevel,next.diagnostics.keepRecentEntries);
       return next;

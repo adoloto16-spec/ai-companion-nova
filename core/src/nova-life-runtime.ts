@@ -135,6 +135,9 @@ export class NovaLifeRuntime{
       const payload=event.payload as {characterId:string;conversationId:string};
       if(!this.isOn()||payload.characterId!==this.state.characterId)return;
       this.state={...this.state,conversationId:payload.conversationId};this.notify();
+      void this.options.autonomy.noteEvent("runtime_event").then(s=>{
+        this.applyAutonomy(s);return this.triggerWake({reason:"runtime_event"})
+      }).catch(error=>this.handleRuntimeError(error));
     }));
     this.eventUnsubscribers.push(this.options.events.subscribe("ActiveCharacterChanged",event=>{
       if(!this.isOn())return;
@@ -244,7 +247,7 @@ export class NovaLifeRuntime{
 
   private async handleTerminalRun(run:AgentRun,reason:NovaLifeWakeReason,messageId?:string){
     if(!this.isOn())return;
-    this.state={...this.state,activeAgentRunId:undefined,lastAction:run.lastDecision??run.lastAction,lastDecision:run.lastDecision,lastToolName:run.lastToolName,toolCallCount:run.toolCallCount,lastOutcome:run.lastOutcome,lastActivityAt:this.clock(),lastDecisionAt:this.options.autonomy.getState().lastDecisionAt};
+    this.state={...this.state,activeAgentRunId:undefined,lastAction:run.lastDecision,lastDecision:run.lastDecision,lastToolName:run.lastToolName,toolCallCount:run.toolCallCount,lastOutcome:run.lastOutcome,lastActivityAt:this.clock(),lastDecisionAt:this.options.autonomy.getState().lastDecisionAt};
     this.applyAutonomy(this.options.autonomy.getState());
     if(run.state==="interrupted"){this.enterIdle();return}
     if(run.state==="failed"){
