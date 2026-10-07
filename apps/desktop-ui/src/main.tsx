@@ -139,11 +139,9 @@ function lifeStatusLabel(status:NovaLifeState["status"]):string{
   switch(status){
     case "off":return "OFF";
     case "starting":return "Starting";
-    case "awake":return "Awake";
     case "thinking":return "Thinking";
     case "acting":return "Acting";
-    case "waiting":return "Waiting";
-    case "sleeping":return "Sleeping";
+    case "idle":return "Idle";
     case "stopping":return "Stopping";
     case "error":return "Error";
   }
@@ -182,7 +180,7 @@ function ChatView({controller,runtime,character,modelProfile,conversations,activ
 
   React.useEffect(()=>{
     if(!lifeActive||novaLifeState.wakeCount===0)return;
-    if(novaLifeState.status!=="waiting"&&novaLifeState.status!=="sleeping"&&novaLifeState.status!=="error")return;
+    if(novaLifeState.status!=="idle"&&novaLifeState.status!=="error")return;
     void onRefreshConversation().catch(error=>{
       setPersistenceError(error instanceof Error?error.message:"Conversation could not be refreshed.");
     });
@@ -1525,15 +1523,16 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
     <section>
       <h2>Nova Life</h2>
       <div className="status-grid">
-        <span>Status</span><strong>{lifeStatusLabel(novaLifeState.status)}</strong>
-        <span>Wake count</span><strong>{novaLifeState.wakeCount}</strong>
-        <span>Wake reason</span><strong>{novaLifeState.wakeReason??"—"}</strong>
-        <span>Character</span><strong>{novaLifeState.characterId??"—"}</strong>
-        <span>Conversation</span><strong>{novaLifeState.conversationId??"—"}</strong>
-        <span>Active Agent Run</span><strong>{novaLifeState.activeAgentRunId??"—"}</strong>
-        <span>Last action</span><strong>{novaLifeState.lastAction??"—"}</strong>
-        <span>Last outcome</span><strong>{novaLifeState.lastOutcome??"—"}</strong>
-        <span>Next wake</span><strong>{novaLifeState.nextWakeAt?new Date(novaLifeState.nextWakeAt).toLocaleString():"—"}</strong>
+        <span>Life state</span><strong>{lifeStatusLabel(novaLifeState.status)}</strong>
+        <span>Trigger</span><strong>{novaLifeState.trigger??novaLifeState.wakeReason??"—"}</strong>
+        <span>Current focus</span><strong>{novaLifeState.currentFocus??"—"}</strong>
+        <span>Active intentions</span><strong>{novaLifeState.activeIntentions?.length??0}</strong>
+        <span>Active goals</span><strong>{novaLifeState.activeGoals?.length??0}</strong>
+        <span>Pending activities</span><strong>{novaLifeState.pendingActivities?.length??0}</strong>
+        <span>Last cognition</span><strong>{novaLifeState.lastActivityAt?new Date(novaLifeState.lastActivityAt).toLocaleString():"—"}</strong>
+        <span>Decision</span><strong>{novaLifeState.lastDecision?JSON.stringify(novaLifeState.lastDecision):"—"}</strong>
+        <span>Tools</span><strong>{novaLifeState.lastToolName?novaLifeState.lastToolName+" ("+(novaLifeState.toolCallCount??0)+")":(novaLifeState.toolCallCount?String(novaLifeState.toolCallCount):"—")}</strong>
+        <span>Next meaningful deadline</span><strong>{novaLifeState.nextRelevantDeadline?new Date(novaLifeState.nextRelevantDeadline).toLocaleString():"—"}</strong>
       </div>
       {lifeDiagnostics.length===0
         ?<div>No Nova Life diagnostics yet.</div>
