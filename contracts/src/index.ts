@@ -680,11 +680,11 @@ export type AgentDecision=
   | {action:"tool_call";toolName:string;arguments:Record<string,unknown>;callId:string}
   | {action:"wait";waitMs:number}
   | {action:"ask_user";question:string};
-export interface AgentRunLimits{maxSteps:number;maxDurationMs:number;maxConsecutiveFailures:number;}
+export interface AgentRunLimits{maxSteps:number;maxDurationMs:number;maxConsecutiveFailures:number;maxModelCallsPerBurst:number;}
 export interface AgentRunInput{id?:string;characterId:string;conversationId?:ConversationId;goal:string;task:string;wakeReason?:string;providerId?:string;model?:string;limits?:Partial<AgentRunLimits>;}
 export interface AgentRun{id:string;characterId:string;conversationId?:ConversationId;goal:string;task:string;wakeReason:string;state:AgentState;status:AgentRunStatus;stepCount:number;startedAt:string;updatedAt:string;cancelReason?:string;workingSummary?:string;lastAction?:AgentDecisionAction;lastOutcome?:string;lastWaitMs?:number;lastToolName?:string;lastToolCallId?:string;providerId?:string;model?:string;limits:AgentRunLimits;}
 export interface AgentStep{stepIndex:number;startedAt:string;completedAt:string;decisionType:AgentDecisionAction;outcome:AgentStepOutcome;}
-export const AGENT_DEFAULT_LIMITS:AgentRunLimits={maxSteps:20,maxDurationMs:60000,maxConsecutiveFailures:3};
+export const AGENT_DEFAULT_LIMITS:AgentRunLimits={maxSteps:20,maxDurationMs:60000,maxConsecutiveFailures:3,maxModelCallsPerBurst:20};
 export interface Permission{id:string;schemaVersion:string;subject:string;resourceType:"domain"|"filesystem"|"application"|"resource";action:string;effect:"allow"|"deny";scope?:{domains?:readonly string[];roots?:readonly string[];applications?:readonly string[];windows?:readonly string[]}}
 export interface ActionError{code:"INVALID_REQUEST"|"SCHEMA_VALIDATION_FAILED"|"TOOL_NOT_FOUND"|"CAPABILITY_DENIED"|"PERMISSION_DENIED"|"FOREGROUND_DENIED"|"SCOPE_DENIED"|"RISK_DENIED"|"CONFIRMATION_REQUIRED"|"TARGET_RESOLUTION_FAILED"|"DRIVER_ERROR"|"POSTCONDITION_FAILED";message:string;details?:Record<string,unknown>}
 export type ActionResult={id:string;schemaVersion:string;status:"success";output:unknown;durationMs:number}|{id:string;schemaVersion:string;status:"denied"|"error";error:ActionError;durationMs:number}
