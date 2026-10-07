@@ -399,6 +399,7 @@ export class MemorySemanticDeduplicator{
         model:modelName,
         context:{
           conversationId:"memory-judge:"+memoryId,
+          metadata:{requestPriority:"maintenance"},
           messages:[
             {role:"system",content:judge.prompt.trim()},
             {role:"user",content:buildJudgeInput(newMemory,selected)}
