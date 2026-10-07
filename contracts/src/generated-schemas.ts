@@ -80,8 +80,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
   },
   "agent-decision": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/agent-decision/v2",
-    "title": "AI Companion Nova Agent Decision v2",
+    "$id": "https://schemas.ai-companion-nova.dev/agent-decision/v3",
+    "title": "AI Companion Nova Agent Decision v3",
     "type": "object",
     "oneOf": [
       {
