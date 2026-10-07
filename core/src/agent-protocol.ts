@@ -46,7 +46,7 @@ export function parseTaggedDecision(raw:string,validator:SchemaValidator):AgentD
   }
   const type=fields.type;
   const allowed:Record<string,readonly string[]>={
-    respond:["type","result"],
+    respond:["type","content"],
     tool_call:["type","toolName","arguments","callId"],
     wait:["type","wait_ms"],
     ask_user:["type","question"]
@@ -56,7 +56,7 @@ export function parseTaggedDecision(raw:string,validator:SchemaValidator):AgentD
   let candidate:unknown;
   switch(type){
     case "respond":
-      candidate={action:"respond",result:fields.result};break;
+      candidate={action:"respond",content:fields.content};break;
     case "tool_call":{
       let argumentsValue:unknown;
       try{argumentsValue=JSON.parse(fields.arguments??"");}catch{throw new AgentDecisionProtocolError("tool_call arguments must be valid JSON.");}
