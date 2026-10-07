@@ -158,8 +158,8 @@ async function providerErrorPreservationIntegrationTest(){
     const conversation=await runtime.getActiveConversation(character.id);
     await runtime.startNovaLife(character.id,conversation.id);
     const errors=(await runtime.diagnostics()).recentErrors;
-    const wakeError=errors.find(entry=>entry.code==="NOVA_LIFE_ERROR"&&entry.metadata?.agentRunId);
-    assert.equal(wakeError?.metadata?.category,"rate_limit","provider category is preserved through AgentKernel and Life");
+    const cognitionError=errors.find(entry=>entry.code==="AGENT_COGNITION_FAILED"&&entry.metadata?.runId);
+    assert.equal(cognitionError?.metadata?.errorCategory,"rate_limit","provider category is preserved through AgentKernel and Life");
     assert.equal(errors.some(entry=>entry.code==="AGENT_DECISION_INVALID"&&entry.metadata?.errorCategory==="protocol_model_output"),false,"provider failure is not reclassified as protocol output");
     const requestDiagnostic=cognitionDiagnostics.entries.find(entry=>entry.code==="AGENT_MODEL_REQUEST");
     assert.equal(requestDiagnostic?.metadata?.status,"failed","provider model request is marked failed");
