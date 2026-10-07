@@ -88,6 +88,7 @@ async function main(){
     const latest=await userRuntime.getConversation(character.id,conversation.id);
     assert.equal(latest?.messages.at(-2)?.content,"Расскажи, как ты живёшь.","user message is persisted through ordinary Conversation");
     assert.equal(latest?.messages.at(-1)?.content,"Получила твоё сообщение через Life Runtime.","UserMessageReceived wakes Life without a second UI Agent path");
+    assert.equal(userController.contexts[1]?.wakeReason,"user_message","user message wake is distinct from startup wake");
     assert.equal(userController.contexts[1]?.recentConversationMessages.some(message=>message.role==="user"&&message.content==="Расскажи, как ты живёшь."),true,"new cognition receives the fresh user message");
     assert.equal(userRuntime.getNovaLifeState().wakeCount,2,"user message creates a new bounded wake");
   }finally{await userRuntime.stop();}
