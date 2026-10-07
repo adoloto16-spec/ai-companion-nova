@@ -55,7 +55,7 @@ export interface FoundationRuntimeOptions{
   embeddingHttpClient?:import("../../../providers/embeddings/openai-compatible/src").EmbeddingHttpClient;
   providerPresetConfigurations?:readonly {presetId:string;configuration:ProviderConfiguration}[];
   activeProviderPresetId?:string;
-  novaLifeRuntime?:Pick<import("../../../core/src/nova-life-runtime").NovaLifeRuntimeOptions,"retryWakeMs"|"idleWakeMs"|"resolveAgentRunLimits"|"proactiveEnabled"|"allowProactiveMessages"|"startupBehavior"|"defaultWaitMs"|"eventWakePolicy"|"eventDebounceMs"|"minimumWakeIntervalMs"|"maximumWakeIntervalMs">;
+  novaLifeRuntime?:Pick<import("../../../core/src/nova-life-runtime").NovaLifeRuntimeOptions,"retryWakeMs"|"postResponseWakeMs"|"resolveAgentRunLimits"|"proactiveEnabled"|"allowProactiveMessages"|"startupBehavior"|"defaultWaitMs"|"eventWakePolicy"|"eventDebounceMs"|"minimumWakeIntervalMs"|"maximumWakeIntervalMs">;
 }
 
 export interface FoundationRuntime{
@@ -455,6 +455,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     minimumWakeIntervalMs:()=>settingsManager.get().novaLife.scheduler.minimumWakeIntervalMs,
     maximumWakeIntervalMs:()=>settingsManager.get().novaLife.scheduler.maximumWakeIntervalMs,
     retryWakeMs:()=>settingsManager.get().novaLife.scheduler.retryDelayMs,
+    postResponseWakeMs:()=>settingsManager.get().novaLife.scheduler.postResponseWakeMs,
     ...(options.novaLifeRuntime??{})
   });
 
