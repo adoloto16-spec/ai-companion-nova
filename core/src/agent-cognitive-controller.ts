@@ -68,13 +68,16 @@ const BASE_POLICY=[
   "For scheduled or runtime wakes, do not greet merely because the model was awakened. Choose wait when there is no useful proactive reason.",
   "Do not ask the user merely to choose among reasonable defaults. Use ask_user only when genuinely required information is missing.",
   "Do not save or emit hidden reasoning. Return normal user-facing responses as plain assistant text. Use the NOVA_ACTION tagged protocol for tool_call, wait, and ask_user; respond/content is also accepted when explicitly tagged.",
-].join("\n");
+].join("
+");
 
 function toolsPrompt(tools:readonly ToolDefinition[]):string{
   if(tools.length===0)return "Available tools: none.";
-  return "Available tools:\n"+tools.map(tool=>JSON.stringify({
+  return "Available tools:
+"+tools.map(tool=>JSON.stringify({
     name:tool.name,description:tool.description,parameters:tool.parameters,risk:tool.risk,requiredCapabilities:tool.requiredCapabilities
-  })).join("\n");
+  })).join("
+");
 }
 
 export class AgentCognitiveController implements AgentCognitiveDecisionProvider{
@@ -98,7 +101,11 @@ export class AgentCognitiveController implements AgentCognitiveDecisionProvider{
     if(capabilities?.structuredOutput!==true)return this.tagged(context,options,0);
     try{
       const generated=await this.generate(context,"structured",options,0);
-      if(generated.response.message.content.length>this.maxResponseChars){\n        const error=new Error("structured response exceeds bounded length");\n        decorateAgentCognitiveError(error,{modelCalls:generated.modelCalls,requestId:generated.requestId,outputMode:"structured"});\n        throw error;\n      }
+      if(generated.response.message.content.length>this.maxResponseChars){
+        const error=new Error("structured response exceeds bounded length");
+        decorateAgentCognitiveError(error,{modelCalls:generated.modelCalls,requestId:generated.requestId,outputMode:"structured"});
+        throw error;
+      }
       try{
         return {
           decision:parseStructuredDecision(generated.response.message.content,this.validator),
@@ -132,7 +139,11 @@ export class AgentCognitiveController implements AgentCognitiveDecisionProvider{
       if(getAgentCognitiveErrorMetadata(error)&&callsAlreadyUsed>0)decorateAgentCognitiveError(error,{modelCalls:callsAlreadyUsed});
       throw error;
     }
-    if(generated.response.message.content.length>this.maxResponseChars){\n      const error=new Error("tagged response exceeds bounded length");\n      decorateAgentCognitiveError(error,{modelCalls:generated.modelCalls+callsAlreadyUsed,requestId:generated.requestId,outputMode:"tagged"});\n      throw error;\n    }
+    if(generated.response.message.content.length>this.maxResponseChars){
+      const error=new Error("tagged response exceeds bounded length");
+      decorateAgentCognitiveError(error,{modelCalls:generated.modelCalls+callsAlreadyUsed,requestId:generated.requestId,outputMode:"tagged"});
+      throw error;
+    }
     try{
       return {
         decision:parseNonStructuredDecision(generated.response.message.content,this.validator),
