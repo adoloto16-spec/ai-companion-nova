@@ -92,8 +92,10 @@ async function main(){
   ok(!byId.get("invalid-regex")?.eligible,"invalid regex safely rejected");
   ok(!byId.get("other-character")?.eligible,"cross-character Core Book rejected");
   ok(built.includedCandidates.every(candidate=>candidate.characterId==="character.a"),"no cross-character candidates included");
-  ok(built.includedCandidates.every(candidate=>candidate.source==="core_book"?candidate.role==="user":true),"Core Book remains data-role, not system instruction");
-  equal(built.messages.find(message=>message.content==="Nova identity")?.metadata?.contextSource,"core_book","provenance source preserved");
+  ok(built.includedCandidates.every(candidate=>candidate.source==="core_book"?candidate.role==="system":true),"Core Book candidates are system context");
+  const coreBookMessage=built.messages.find(message=>message.content==="Nova identity");
+  equal(coreBookMessage?.role,"system","Core Book message role is system");
+  equal(coreBookMessage?.metadata?.contextSource,"core_book","provenance source preserved");
   equal(built.messages.find(message=>message.content==="Nova identity")?.metadata?.contextReferenceId,"always","provenance reference preserved");
 
   let capturedMemoryQuery="";
