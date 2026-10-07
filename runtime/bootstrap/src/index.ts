@@ -440,6 +440,21 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     extractMemory:async request=>{await automaticMemoryAgent.process(request);},
     memoryExtractionEnabled:()=>settingsManager.get().chat.automaticLongTermMemory,
     recentConversationMessages:()=>settingsManager.get().context.recentConversationMessages,
+    resolveAgentRunLimits:()=>({
+      maxSteps:settingsManager.get().novaLife.cognition.maxSteps,
+      maxDurationMs:settingsManager.get().novaLife.cognition.maxDurationMs,
+      maxConsecutiveFailures:settingsManager.get().novaLife.cognition.maxConsecutiveFailures,
+      maxModelCallsPerBurst:settingsManager.get().novaLife.cognition.maxModelCallsPerBurst
+    }),
+    proactiveEnabled:()=>settingsManager.get().novaLife.lifecycle.proactiveEnabled,
+    allowProactiveMessages:()=>settingsManager.get().novaLife.lifecycle.allowProactiveMessages,
+    startupBehavior:()=>settingsManager.get().novaLife.lifecycle.startupBehavior,
+    defaultWaitMs:()=>settingsManager.get().novaLife.scheduler.defaultWaitMs,
+    eventWakePolicy:()=>settingsManager.get().novaLife.scheduler.eventWakePolicy,
+    eventDebounceMs:()=>settingsManager.get().novaLife.scheduler.eventDebounceMs,
+    minimumWakeIntervalMs:()=>settingsManager.get().novaLife.scheduler.minimumWakeIntervalMs,
+    maximumWakeIntervalMs:()=>settingsManager.get().novaLife.scheduler.maximumWakeIntervalMs,
+    retryWakeMs:()=>settingsManager.get().novaLife.scheduler.retryDelayMs,
     ...(options.novaLifeRuntime??{})
   });
 
