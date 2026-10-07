@@ -86,36 +86,81 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
     "oneOf": [
       {
         "additionalProperties": false,
-        "required": ["action","result"],
+        "required": [
+          "action",
+          "result"
+        ],
         "properties": {
-          "action": {"const":"respond"},
-          "result": {"type":"string","minLength":1,"maxLength":4000}
+          "action": {
+            "const": "respond"
+          },
+          "result": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          }
         }
       },
       {
         "additionalProperties": false,
-        "required": ["action","toolName","arguments","callId"],
+        "required": [
+          "action",
+          "toolName",
+          "arguments",
+          "callId"
+        ],
         "properties": {
-          "action": {"const":"tool_call"},
-          "toolName": {"type":"string","minLength":1,"maxLength":200},
-          "arguments": {"type":"object","additionalProperties":true},
-          "callId": {"type":"string","minLength":1,"maxLength":200}
+          "action": {
+            "const": "tool_call"
+          },
+          "toolName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "arguments": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "callId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
         }
       },
       {
         "additionalProperties": false,
-        "required": ["action","waitMs"],
+        "required": [
+          "action",
+          "waitMs"
+        ],
         "properties": {
-          "action": {"const":"wait"},
-          "waitMs": {"type":"integer","minimum":1,"maximum":300000}
+          "action": {
+            "const": "wait"
+          },
+          "waitMs": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 300000
+          }
         }
       },
       {
         "additionalProperties": false,
-        "required": ["action","question"],
+        "required": [
+          "action",
+          "question"
+        ],
         "properties": {
-          "action": {"const":"ask_user"},
-          "question": {"type":"string","minLength":1,"maxLength":2000}
+          "action": {
+            "const": "ask_user"
+          },
+          "question": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
         }
       }
     ]
