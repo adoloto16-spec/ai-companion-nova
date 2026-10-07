@@ -39,7 +39,7 @@ export function parseTaggedDecision(raw:string,validator:SchemaValidator):AgentD
   if(!match)throw new AgentDecisionProtocolError("Agent output must contain exactly one NOVA_ACTION block and no surrounding prose.");
   const fields:Record<string,string>={};
   for(const line of match[1]!.split(/\r?\n/)){
-    if(!line.trim())throw new AgentDecisionProtocolError("NOVA_ACTION block contains an empty line.");
+    if(!line.trim())continue;
     const [key,value]=tagLine(line);
     if(fields[key]!==undefined)throw new AgentDecisionProtocolError("NOVA_ACTION block contains duplicate fields.");
     fields[key]=value;
