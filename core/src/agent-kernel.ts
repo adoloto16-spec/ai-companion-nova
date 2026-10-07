@@ -1,6 +1,7 @@
 import type {AgentDecision,AgentDecisionAction,AgentRun,AgentRunInput,AgentRunLimits,AgentState,AgentStep,ChatMessage,DiagnosticsStore,EventBus,SchemaValidator} from "../../contracts/src/index";
 import {AGENT_DEFAULT_LIMITS,STANDARD_SCHEMAS,StandardContractValidator,createEvent} from "../../contracts/src/index";
 import {AgentDecisionProtocolError} from "./agent-protocol";
+import {AgentModelCallLimitError} from "./agent-cognitive-controller";
 import type {AgentCognitiveDecisionProvider,AgentCognitiveContext} from "./agent-cognitive-controller";
 import type {AgentActionExecutor,AgentActionExecution} from "./agent-action-executor";
 
@@ -33,8 +34,8 @@ function bounded(value:string,max=512){return value.length<=max?value:value.slic
 function isAbortError(error:unknown){return error instanceof Error&&error.name==="AbortError";}
 
 export class AgentKernelError extends Error{
-  readonly code:"AGENT_RUN_NOT_FOUND"|"AGENT_INVALID_STATE";
-  constructor(code:"AGENT_RUN_NOT_FOUND"|"AGENT_INVALID_STATE",message:string){super(message);this.name="AgentKernelError";this.code=code;}
+  readonly code:"AGENT_RUN_NOT_FOUND"|"AGENT_INVALID_STATE"|"AGENT_MODEL_CALL_LIMIT_REACHED";
+  constructor(code:"AGENT_RUN_NOT_FOUND"|"AGENT_INVALID_STATE"|"AGENT_MODEL_CALL_LIMIT_REACHED",message:string){super(message);this.name="AgentKernelError";this.code=code;}
 }
 
 interface Control{controller:AbortController;timer?:ReturnType<typeof setTimeout>;durationExceeded:boolean;}
@@ -82,7 +83,7 @@ export class AgentKernel{
     if(this.runs.has(id))throw new Error("Agent run already exists: "+id);
     const run:AgentRun={
       id,characterId:bounded(input.characterId,200),...(input.conversationId?{conversationId:bounded(input.conversationId,200)}:{}),goal:bounded(input.goal,4000),task:bounded(input.task,4000),wakeReason:bounded(input.wakeReason??"runtime_event",100),
-      state:"starting",status:"running",stepCount:0,startedAt:now,updatedAt:now,limits,
+      state:"starting",status:"running",stepCount:0,modelCallCount:0,startedAt:now,updatedAt:now,limits,
       ...(input.providerId?{providerId:input.providerId}:{}),...(input.model?{model:input.model}: {})
     };
     this.runs.set(id,run);this.steps.set(id,[]);this.runtimeContextMessages.set(id,[]);
@@ -99,6 +100,7 @@ export class AgentKernel{
     if(TERMINAL.includes(run.state)||run.state==="waiting"||run.state==="paused"||run.state==="interrupted")
       throw new AgentKernelError("AGENT_INVALID_STATE","Agent run is not ready for another automatic step.");
     if(run.stepCount>=run.limits.maxSteps)return this.limitFailure(run,"AGENT_STEP_LIMIT_REACHED","Agent step limit reached.");
+    if(run.modelCallCount>=run.limits.maxModelCallsPerBurst)return this.limitFailure(run,"AGENT_MODEL_CALL_LIMIT_REACHED","Agent model-call budget reached.");
     if(this.elapsed(run)>=run.limits.maxDurationMs)return this.limitFailure(run,"AGENT_DURATION_LIMIT_REACHED","Agent duration limit reached.");
 
     const control=this.controlFor(run);
@@ -123,11 +125,18 @@ export class AgentKernel{
         ...(run.conversationId?{conversationId:run.conversationId}:{}),
         recentConversationMessages:conversationMessages.slice(-32),
         ...(userResponse!==undefined?{userResponse}:{}),
-        ...(run.providerId?{providerId:run.providerId}:{}),model:run.model??""
+        ...(run.providerId?{providerId:run.providerId}:{}),model:run.model??"",maxModelCallsPerBurst:run.limits.maxModelCallsPerBurst,modelCallsUsed:run.modelCallCount
       };
       result=await this.options.cognitive.decide(context,{signal:control.controller.signal});
     }catch(error){
-      if(error instanceof AgentDecisionProtocolError)return this.fail(run,"AGENT_DECISION_INVALID","Agent decision parsing failed.",error);
+      if(error instanceof AgentDecisionProtocolError){
+        this.recordStep(run,stepIndex,startedAt,this.clock(),"failed","respond");
+        return this.fail(run,"AGENT_DECISION_INVALID","Agent decision parsing failed.",error,"protocol_model_output",stepIndex);
+      }
+      if(error instanceof AgentModelCallLimitError){
+        this.recordStep(run,stepIndex,startedAt,this.clock(),"failed","respond");
+        return this.fail(run,"AGENT_MODEL_CALL_LIMIT_REACHED","Agent model-call budget reached.",error,"budget",stepIndex);
+      }
       if(isAbortError(error)){
         const liveState=run.state as AgentState;
     if(liveState==="interrupted"||liveState==="paused")return this.clone(run);
@@ -169,6 +178,7 @@ export class AgentKernel{
 
     this.consecutiveFailures.set(run.id,0);
     run.stepCount=stepIndex;
+    run.modelCallCount+=result.modelCalls;
     run.lastAction=result.decision.action;
     run.lastOutcome=bounded(action.outcome+(action.summary?":"+action.summary:""));
     if(action.contextMessages){
@@ -177,7 +187,7 @@ export class AgentKernel{
       this.runtimeContextMessages.set(run.id,runtimeMessages);
     }
     if(result.decision.action==="respond"||result.decision.action==="ask_user"){
-      run.workingSummary=bounded(result.decision.action==="respond"?result.decision.result:result.decision.question,2000);
+      run.workingSummary=bounded(result.decision.action==="respond"?result.decision.content:result.decision.question,2000);
     }
     if(result.decision.action==="wait")run.lastWaitMs=action.waitMs;
     else run.lastWaitMs=undefined;
@@ -278,17 +288,21 @@ export class AgentKernel{
     const list=this.steps.get(run.id);if(!list)return;
     list.push({stepIndex,startedAt,completedAt,decisionType,outcome});
   }
-  private async fail(run:AgentRun,code:string,reason:string,error?:unknown){
+  private async fail(run:AgentRun,code:string,reason:string,error?:unknown,errorCategory?:string,stepIndex?:number){
     if(TERMINAL.includes(run.state))return this.clone(run);
     this.pendingUserResponses.delete(run.id);
     this.runtimeContextMessages.delete(run.id);
     if(error instanceof Error)run.lastOutcome=bounded(error.message);
+    if(errorCategory)run.lastErrorCategory=errorCategory;
     await this.setState(run,"failed");
-    this.diagnostics?.recordError("agent-kernel",code,reason,{runId:run.id});
+    const chatError=error&&typeof error==="object"?(error as any).chatError:undefined;
+    const chatDetails=chatError&&typeof chatError==="object"&&chatError.details&&typeof chatError.details==="object"?chatError.details:{};
+    const category=errorCategory??(code==="AGENT_DECISION_INVALID"?"protocol_model_output":chatDetails.category??"runtime");
+    this.diagnostics?.recordError("agent-kernel",code,reason,{runId:run.id,step:stepIndex??null,provider:run.providerId??"default",model:run.model??"",outputMode:chatDetails.outputMode??null,errorCategory:category,requestId:chatError?.requestId??null});
     await this.events?.publish(createEvent("AgentRunFailed",{runId:run.id,code,reason},"agent-kernel",this.clock,run.id+":failed:"+code));
     return this.clone(run);
   }
-  private limitFailure(run:AgentRun,code:"AGENT_STEP_LIMIT_REACHED"|"AGENT_DURATION_LIMIT_REACHED"|"AGENT_FAILURE_LIMIT_REACHED",reason:string){
+  private limitFailure(run:AgentRun,code:"AGENT_STEP_LIMIT_REACHED"|"AGENT_DURATION_LIMIT_REACHED"|"AGENT_FAILURE_LIMIT_REACHED"|"AGENT_MODEL_CALL_LIMIT_REACHED",reason:string){
     return this.fail(run,code,reason);
   }
   private normalizeLimits(input:Partial<AgentRunLimits>):AgentRunLimits{
@@ -296,6 +310,7 @@ export class AgentKernel{
     if(!Number.isInteger(limits.maxSteps)||limits.maxSteps<1)throw new Error("maxSteps must be a positive integer.");
     if(!Number.isFinite(limits.maxDurationMs)||limits.maxDurationMs<1)throw new Error("maxDurationMs must be a positive finite number.");
     if(!Number.isInteger(limits.maxConsecutiveFailures)||limits.maxConsecutiveFailures<1)throw new Error("maxConsecutiveFailures must be a positive integer.");
+    if(!Number.isInteger(limits.maxModelCallsPerBurst)||limits.maxModelCallsPerBurst<1)throw new Error("maxModelCallsPerBurst must be a positive integer.");
     return limits;
   }
   private require(runId:string){const run=this.runs.get(runId);if(!run)throw new AgentKernelError("AGENT_RUN_NOT_FOUND","Agent run not found: "+runId);return run;}
