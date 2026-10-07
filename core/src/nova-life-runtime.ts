@@ -42,6 +42,7 @@ export interface NovaLifeRuntimeOptions{
   proactiveEnabled?:()=>boolean;
   allowProactiveMessages?:()=>boolean;
   startupBehavior?:()=>"proactive"|"wait";
+  defaultWaitMs?:number|(()=>number);
   eventWakePolicy?:()=>{appChanged:boolean;windowChanged:boolean;conversationChanged:boolean;characterChanged:boolean};
   eventDebounceMs?:number|(()=>number);
   minimumWakeIntervalMs?:number|(()=>number);
@@ -77,8 +78,8 @@ export class NovaLifeRuntime{
 
   constructor(private readonly options:NovaLifeRuntimeOptions){
     this.clock=options.clock?.now?()=>options.clock!.now():()=>new Date().toISOString();
-    this.retryWakeMs=this.normalizeDelay(options.retryWakeMs??10000);
-    this.idleWakeMs=options.idleWakeMs===undefined?0:this.normalizeDelay(options.idleWakeMs);
+    this.retryWakeMs=options.retryWakeMs??10000;
+    this.idleWakeMs=options.idleWakeMs??0;
   }
 
   getState():NovaLifeState{return cloneState(this.state);}
@@ -257,7 +258,7 @@ export class NovaLifeRuntime{
         contextProvider:(_currentRun,_stepIndex,previousRuntimeMessages)=>this.buildContextMessages(request.reason,run!.id,previousRuntimeMessages)
       });
       await this.handleTerminalRun(terminal,request.reason,request.messageId);
-      this.consecutiveFailures=0;
+      if(terminal.state!=="failed")this.consecutiveFailures=0;
       this.options.diagnostics?.recordError("nova-life","NOVA_LIFE_WAKE_COMPLETED","Nova Life wake completed",{
         characterId,conversationId,wakeCount,reason:request.reason,agentRunId:terminal.id,status:terminal.status,
         durationMs:this.currentWakeStartedAt===undefined?null:Math.max(0,Date.now()-this.currentWakeStartedAt),
