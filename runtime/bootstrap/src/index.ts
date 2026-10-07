@@ -256,16 +256,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   providers.register(new FakeVisionProvider(),["vision"]);
 
   const aiRuntime=new AiRuntime(providers,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
-  const agentCognitiveController=options.agentCognitiveController??new AgentCognitiveController(aiRuntime,{validator:contractValidator,diagnostics:diagnosticsStore});
-  const agentKernel=new AgentKernel({
-    cognitive:agentCognitiveController,
-    actionExecutor:options.agentActionExecutor??new DefaultAgentActionExecutor(),
-    conversationContext:async(characterId,conversationId)=>{
-      const conversation=await conversationManager.getConversation(characterId,conversationId);
-      const limit=Math.max(1,Math.min(32,settingsManager.get().context.recentConversationMessages));
-      return conversation?.messages.slice(-limit)??[];
-    },
-    validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()
+  const agentCognitiveController=options.agentCognitiveController??new AgentCognitiveController(aiRuntime,{
+    validator:contractValidator,diagnostics:diagnosticsStore,toolRegistry:tools
   });
   const resolveAgentModel=async(providerId?:string):Promise<string>=>{
     const provider=providerId?providers.get<ChatProvider>(providerId):(providers.list("chat")[0]?.provider as ChatProvider|undefined);
@@ -307,31 +299,6 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     validator:contractValidator,
     diagnostics:diagnosticsStore,
     traceStore
-  });
-
-  const novaLife=new NovaLifeRuntime({
-    agentKernel,
-    contextEngine,
-    conversationManager,
-    events,
-    diagnostics:diagnosticsStore,
-    clock:{now:()=>new Date().toISOString()},
-    contextBudget:()=>{
-      const settings=settingsManager.get();
-      return {
-        availableContextTokens:settings.context.availableContextTokens,
-        reservedOutputTokens:settings.context.reservedOutputTokens,
-        systemOverheadTokens:0,
-        safetyMarginTokens:settings.context.safetyMarginTokens
-      };
-    },
-    resolveProviderId:()=>activeProviderId(providerConfiguration),
-    resolveModel:resolveAgentModel,
-    getProviderPresetId:()=>activeProviderPresetId,
-    extractMemory:async request=>{await automaticMemoryAgent.process(request);},
-    memoryExtractionEnabled:()=>settingsManager.get().chat.automaticLongTermMemory,
-    recentConversationMessages:()=>settingsManager.get().context.recentConversationMessages,
-    ...(options.novaLifeRuntime??{})
   });
 
   const semanticMemoryDeduplicator=new MemorySemanticDeduplicator({
@@ -426,6 +393,46 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const broker=new DefaultActionBroker({
     toolRegistry:tools,permissions,foreground,riskPolicy:new DefaultRiskPolicy(),confirmation,audit,
     schemaValidator:new StandardContractValidator(),diagnostics:diagnosticsStore,targetResolvers,actorResolver
+  });
+
+  const agentKernel=new AgentKernel({
+    cognitive:agentCognitiveController,
+    actionExecutor:options.agentActionExecutor??new DefaultAgentActionExecutor({
+      toolRegistry:tools,
+      actionBroker:broker,
+      credential:characterCredential
+    }),
+    conversationContext:async(characterId,conversationId)=>{
+      const conversation=await conversationManager.getConversation(characterId,conversationId);
+      const limit=Math.max(1,Math.min(32,settingsManager.get().context.recentConversationMessages));
+      return conversation?.messages.slice(-limit)??[];
+    },
+    validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()
+  });
+
+  const novaLife=new NovaLifeRuntime({
+    agentKernel,
+    contextEngine,
+    conversationManager,
+    events,
+    diagnostics:diagnosticsStore,
+    clock:{now:()=>new Date().toISOString()},
+    contextBudget:()=>{
+      const settings=settingsManager.get();
+      return {
+        availableContextTokens:settings.context.availableContextTokens,
+        reservedOutputTokens:settings.context.reservedOutputTokens,
+        systemOverheadTokens:0,
+        safetyMarginTokens:settings.context.safetyMarginTokens
+      };
+    },
+    resolveProviderId:()=>activeProviderId(providerConfiguration),
+    resolveModel:resolveAgentModel,
+    getProviderPresetId:()=>activeProviderPresetId,
+    extractMemory:async request=>{await automaticMemoryAgent.process(request);},
+    memoryExtractionEnabled:()=>settingsManager.get().chat.automaticLongTermMemory,
+    recentConversationMessages:()=>settingsManager.get().context.recentConversationMessages,
+    ...(options.novaLifeRuntime??{})
   });
 
   let runtimeStatus:RuntimeDiagnostics["runtimeStatus"]="starting";

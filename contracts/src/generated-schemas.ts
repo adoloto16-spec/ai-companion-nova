@@ -80,75 +80,42 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
   },
   "agent-decision": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/agent-decision/v1",
-    "title": "AI Companion Nova Agent Decision v1",
+    "$id": "https://schemas.ai-companion-nova.dev/agent-decision/v2",
+    "title": "AI Companion Nova Agent Decision v2",
     "type": "object",
     "oneOf": [
       {
         "additionalProperties": false,
-        "required": [
-          "action"
-        ],
+        "required": ["action","result"],
         "properties": {
-          "action": {
-            "const": "continue"
-          },
-          "workingSummary": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 1000
-          }
+          "action": {"const":"respond"},
+          "result": {"type":"string","minLength":1,"maxLength":4000}
         }
       },
       {
         "additionalProperties": false,
-        "required": [
-          "action",
-          "waitMs"
-        ],
+        "required": ["action","toolName","arguments","callId"],
         "properties": {
-          "action": {
-            "const": "wait"
-          },
-          "waitMs": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 300000
-          }
+          "action": {"const":"tool_call"},
+          "toolName": {"type":"string","minLength":1,"maxLength":200},
+          "arguments": {"type":"object","additionalProperties":true},
+          "callId": {"type":"string","minLength":1,"maxLength":200}
         }
       },
       {
         "additionalProperties": false,
-        "required": [
-          "action",
-          "question"
-        ],
+        "required": ["action","waitMs"],
         "properties": {
-          "action": {
-            "const": "ask_user"
-          },
-          "question": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 2000
-          }
+          "action": {"const":"wait"},
+          "waitMs": {"type":"integer","minimum":1,"maximum":300000}
         }
       },
       {
         "additionalProperties": false,
-        "required": [
-          "action",
-          "result"
-        ],
+        "required": ["action","question"],
         "properties": {
-          "action": {
-            "const": "finish"
-          },
-          "result": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 2000
-          }
+          "action": {"const":"ask_user"},
+          "question": {"type":"string","minLength":1,"maxLength":2000}
         }
       }
     ]

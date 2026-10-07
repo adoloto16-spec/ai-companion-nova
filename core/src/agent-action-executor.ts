@@ -20,9 +20,9 @@ function serialize(value:unknown):string{
 }
 
 export interface DefaultAgentActionExecutorOptions{
-  toolRegistry:InMemoryToolRegistry;
-  actionBroker:ActionBroker;
-  credential:ActorCredential;
+  toolRegistry?:InMemoryToolRegistry;
+  actionBroker?:ActionBroker;
+  credential?:ActorCredential;
 }
 
 export class DefaultAgentActionExecutor implements AgentActionExecutor{
@@ -39,6 +39,7 @@ export class DefaultAgentActionExecutor implements AgentActionExecutor{
       case "ask_user":
         return {outcome:"waiting",nextState:"waiting",summary:decision.question};
       case "tool_call":{
+        if(!this.options.toolRegistry||!this.options.actionBroker||!this.options.credential)throw new Error("Tool execution dependencies are not configured.");
         const tool=this.options.toolRegistry.get(decision.toolName);
         if(!tool)throw new Error("Tool not found: "+decision.toolName);
         const request={
