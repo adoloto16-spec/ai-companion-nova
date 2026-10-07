@@ -293,11 +293,11 @@ export class AgentKernel{
     this.pendingUserResponses.delete(run.id);
     this.runtimeContextMessages.delete(run.id);
     if(error instanceof Error)run.lastOutcome=bounded(error.message);
-    if(errorCategory)run.lastErrorCategory=errorCategory;
     await this.setState(run,"failed");
     const chatError=error&&typeof error==="object"?(error as any).chatError:undefined;
     const chatDetails=chatError&&typeof chatError==="object"&&chatError.details&&typeof chatError.details==="object"?chatError.details:{};
-    const category=errorCategory??(code==="AGENT_DECISION_INVALID"?"protocol_model_output":chatDetails.category??"runtime");
+    const category=errorCategory??(code==="AGENT_DECISION_INVALID"?"protocol_model_output":code==="AGENT_MODEL_CALL_LIMIT_REACHED"?"budget":chatDetails.category??"runtime");
+    run.lastErrorCategory=category;
     this.diagnostics?.recordError("agent-kernel",code,reason,{runId:run.id,step:stepIndex??null,provider:run.providerId??"default",model:run.model??"",outputMode:chatDetails.outputMode??null,errorCategory:category,requestId:chatError?.requestId??null});
     await this.events?.publish(createEvent("AgentRunFailed",{runId:run.id,code,reason},"agent-kernel",this.clock,run.id+":failed:"+code));
     return this.clone(run);
