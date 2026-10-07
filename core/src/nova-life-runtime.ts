@@ -260,15 +260,20 @@ export class NovaLifeRuntime{
       });
       await this.handleTerminalRun(terminal,request.reason,request.messageId);
       if(terminal.state!=="failed")this.consecutiveFailures=0;
+      const completedSteps=this.options.agentKernel.getSteps(terminal.id);
+      const decision=terminal.state==="failed"
+        ?(terminal.lastErrorCategory==="protocol_model_output"?"protocol_error":terminal.lastAction??null)
+        :terminal.lastAction??null;
       this.options.diagnostics?.recordError("nova-life","NOVA_LIFE_WAKE_COMPLETED","Nova Life wake completed",{
         characterId,conversationId,wakeCount,reason:request.reason,agentRunId:terminal.id,status:terminal.status,
         durationMs:this.currentWakeStartedAt===undefined?null:Math.max(0,Date.now()-this.currentWakeStartedAt),
-        steps:terminal.stepCount,llmCalls:terminal.modelCallCount,provider:terminal.providerId??"default",model:terminal.model??"",
+        steps:terminal.stepCount,attemptedSteps:terminal.attemptedStepCount,llmCalls:terminal.modelCallCount,
+        provider:terminal.providerId??"default",model:terminal.model??"",
         contextMessageCount:this.currentContextStats.contextMessageCount,memoryCandidates:this.currentContextStats.memoryCandidates,
         coreBookCandidates:this.currentContextStats.coreBookCandidates,retrievalCandidates:this.currentContextStats.retrievalCandidates,
-        decisions:this.options.agentKernel.getSteps(terminal.id).map(step=>step.decisionType),
-        toolCalls:this.options.agentKernel.getSteps(terminal.id).filter(step=>step.decisionType==="tool_call").length,
-        toolResults:this.options.agentKernel.getSteps(terminal.id).filter(step=>step.outcome==="tool_called").length,
+        decisions:completedSteps.map(step=>step.decisionType),decision,
+        toolCalls:completedSteps.filter(step=>step.decisionType==="tool_call").length,
+        toolResults:completedSteps.filter(step=>step.outcome==="tool_called").length,
         finalResponse:terminal.lastAction==="respond"?(terminal.workingSummary??null):null,nextWake:this.state.nextWakeAt??null,
         lastAction:terminal.lastAction??null,lastOutcome:terminal.lastOutcome??null
       });
