@@ -1261,6 +1261,11 @@ function AppSettingsView({
             onChange={event=>setLifeNumber("scheduler","defaultWaitMs",Number(event.target.value))} disabled={saving}/>
           <small>Default: {defaults.novaLife.scheduler.defaultWaitMs}</small>
         </label>
+        <label>Wake after response (ms)
+          <input type="number" min={1000} max={300000} value={settings.novaLife.scheduler.postResponseWakeMs}
+            onChange={event=>setLifeNumber("scheduler","postResponseWakeMs",Number(event.target.value))} disabled={saving}/>
+          <small>Default: {defaults.novaLife.scheduler.postResponseWakeMs}</small>
+        </label>
         <label>Minimum wake interval (ms)
           <input type="number" min={1} max={300000} value={settings.novaLife.scheduler.minimumWakeIntervalMs}
             onChange={event=>setLifeNumber("scheduler","minimumWakeIntervalMs",Number(event.target.value))} disabled={saving}/>
