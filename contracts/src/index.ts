@@ -508,6 +508,14 @@ export interface EventPayloadMap{
   AgentRunFailed:{runId:string;code:string;reason:string};
   AgentRunInterrupted:{runId:string;reason:string};
 
+  UserMessageReceived:{characterId:string;conversationId:string;messageId:string;text:string};
+  NovaLifeStarted:{characterId:string;conversationId:string};
+  NovaLifeStopped:{characterId?:string;conversationId?:string};
+  NovaLifeWakeStarted:{characterId:string;conversationId:string;wakeCount:number;reason:string;agentRunId:string};
+  NovaLifeWakeCompleted:{characterId:string;conversationId:string;wakeCount:number;reason:string;agentRunId?:string;status:string};
+  NovaLifeSleeping:{characterId:string;conversationId:string;nextWakeAt:string;reason:string};
+  NovaLifeError:{characterId?:string;conversationId?:string;reason:string;agentRunId?:string};
+
   ChatRequestFailed:{requestId:string;conversationId?:string;providerId?:string;code:ChatError["code"]};
 }
 export interface ChatTurnTrace{
@@ -674,7 +682,7 @@ export type AgentDecision=
   | {action:"finish";result:string};
 export interface AgentRunLimits{maxSteps:number;maxDurationMs:number;maxConsecutiveFailures:number;}
 export interface AgentRunInput{id?:string;characterId:string;conversationId?:ConversationId;goal:string;task:string;providerId?:string;model?:string;limits?:Partial<AgentRunLimits>;}
-export interface AgentRun{id:string;characterId:string;conversationId?:ConversationId;goal:string;task:string;state:AgentState;status:AgentRunStatus;stepCount:number;startedAt:string;updatedAt:string;cancelReason?:string;workingSummary?:string;lastAction?:AgentDecisionAction;lastOutcome?:string;providerId?:string;model?:string;limits:AgentRunLimits;}
+export interface AgentRun{id:string;characterId:string;conversationId?:ConversationId;goal:string;task:string;state:AgentState;status:AgentRunStatus;stepCount:number;startedAt:string;updatedAt:string;cancelReason?:string;workingSummary?:string;lastAction?:AgentDecisionAction;lastOutcome?:string;lastWaitMs?:number;providerId?:string;model?:string;limits:AgentRunLimits;}
 export interface AgentStep{stepIndex:number;startedAt:string;completedAt:string;decisionType:AgentDecisionAction;outcome:AgentStepOutcome;}
 export const AGENT_DEFAULT_LIMITS:AgentRunLimits={maxSteps:20,maxDurationMs:60000,maxConsecutiveFailures:3};
 export interface Permission{id:string;schemaVersion:string;subject:string;resourceType:"domain"|"filesystem"|"application"|"resource";action:string;effect:"allow"|"deny";scope?:{domains?:readonly string[];roots?:readonly string[];applications?:readonly string[];windows?:readonly string[]}}
