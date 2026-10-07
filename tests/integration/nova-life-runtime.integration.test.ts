@@ -3,6 +3,7 @@ import {AgentDecisionProtocolError} from "../../core/src/agent-protocol";
 import {createFoundationRuntime} from "../../runtime/bootstrap/src/index";
 import type {AgentDecision,ChatMessage} from "../../contracts/src/index";
 import type {AgentCognitiveContext,AgentCognitiveDecisionProvider,AgentDecisionResult} from "../../core/src/agent-cognitive-controller";
+import type {AgentActionExecutor} from "../../core/src/agent-action-executor";
 
 const sleep=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
 
@@ -201,6 +202,46 @@ async function main(){
     assert.equal((await failingRuntime.getConversation(character.id,conversation.id))?.messages.at(-1)?.content,"Recovered after provider failure.","controlled retry can recover without restarting Nova");
   }finally{await failingRuntime.stop();}
 
+
+  const budgetController=new SequenceController([
+    {action:"tool_call",toolName:"nova.test.fake",arguments:{value:"first"},callId:"budget-call-1"},
+    {action:"respond",content:"This second cognition must be blocked by the configured budget."}
+  ]);
+  const budgetExecutor:AgentActionExecutor={
+    async execute(_run,decision){
+      if(decision.action==="tool_call"){
+        return {
+          outcome:"tool_called",
+          nextState:"thinking",
+          summary:"tool:nova.test.fake:success",
+          contextMessages:[{role:"tool",content:"{\"status\":\"success\"}",toolCallId:decision.callId,metadata:{contextSource:"agent_tool_result"}}]
+        };
+      }
+      return {outcome:"responded",nextState:"completed",summary:decision.action==="respond"?decision.content:decision.question};
+    }
+  };
+  const budgetRuntime=await createFoundationRuntime({
+    agentCognitiveController:budgetController,
+    agentActionExecutor:budgetExecutor,
+    novaLifeRuntime:{minimumWakeIntervalMs:1,maximumWakeIntervalMs:100}
+  });
+  await budgetRuntime.start();
+  try{
+    const currentSettings=budgetRuntime.getSettings();
+    await budgetRuntime.updateSettings({
+      ...currentSettings,
+      novaLife:{
+        ...currentSettings.novaLife,
+        cognition:{...currentSettings.novaLife.cognition,maxModelCallsPerBurst:1}
+      }
+    });
+    const character=await budgetRuntime.getActiveCharacter();
+    const conversation=await budgetRuntime.getActiveConversation(character.id);
+    await budgetRuntime.startNovaLife(character.id,conversation.id);
+    assert.equal(budgetController.calls,1,"runtime settings limit Nova cognition to one model call per wake");
+    assert.equal(budgetRuntime.getNovaLifeState().status,"waiting","model-call budget failure returns Life to waiting");
+    assert.ok((await budgetRuntime.diagnostics()).recentErrors.some(item=>item.code==="AGENT_MODEL_CALL_LIMIT_REACHED"),"budget failure is diagnostic");
+  }finally{await budgetRuntime.stop();}
 
   const parserFailureController={
     calls:0,
