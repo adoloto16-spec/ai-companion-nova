@@ -88,13 +88,13 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         "additionalProperties": false,
         "required": [
           "action",
-          "result"
+          "content"
         ],
         "properties": {
           "action": {
             "const": "respond"
           },
-          "result": {
+          "content": {
             "type": "string",
             "minLength": 1,
             "maxLength": 4000
