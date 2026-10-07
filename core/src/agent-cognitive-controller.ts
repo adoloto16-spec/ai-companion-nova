@@ -98,7 +98,7 @@ export class AgentCognitiveController implements AgentCognitiveDecisionProvider{
     if(capabilities?.structuredOutput!==true)return this.tagged(context,options,0);
     try{
       const generated=await this.generate(context,"structured",options,0);
-      if(generated.response.message.content.length>this.maxResponseChars)throw new Error("structured response exceeds bounded length");
+      if(generated.response.message.content.length>this.maxResponseChars){\n        const error=new Error("structured response exceeds bounded length");\n        decorateAgentCognitiveError(error,{modelCalls:generated.modelCalls,requestId:generated.requestId,outputMode:"structured"});\n        throw error;\n      }
       try{
         return {
           decision:parseStructuredDecision(generated.response.message.content,this.validator),
@@ -132,7 +132,7 @@ export class AgentCognitiveController implements AgentCognitiveDecisionProvider{
       if(getAgentCognitiveErrorMetadata(error)&&callsAlreadyUsed>0)decorateAgentCognitiveError(error,{modelCalls:callsAlreadyUsed});
       throw error;
     }
-    if(generated.response.message.content.length>this.maxResponseChars)throw new Error("tagged response exceeds bounded length");
+    if(generated.response.message.content.length>this.maxResponseChars){\n      const error=new Error("tagged response exceeds bounded length");\n      decorateAgentCognitiveError(error,{modelCalls:generated.modelCalls+callsAlreadyUsed,requestId:generated.requestId,outputMode:"tagged"});\n      throw error;\n    }
     try{
       return {
         decision:parseNonStructuredDecision(generated.response.message.content,this.validator),
