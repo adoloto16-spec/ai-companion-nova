@@ -35,6 +35,9 @@ async function protocolTests(){
   equal(parseStructuredDecision('{"action":"tool_call","toolName":"tool-a","arguments":{"value":1},"callId":"call-1"}',validator).action,"tool_call","generic tool_call parses");
   equal(parseStructuredDecision('{"action":"wait","waitMs":100}',validator).action,"wait","wait parses");
   equal(parseStructuredDecision('{"action":"ask_user","question":"Need data"}',validator).action,"ask_user","ask_user parses");
+  equal(parseStructuredDecision('{"action":"create_intent","intent":{"type":"followup","description":"later","priority":70}}',validator).action,"create_intent","create_intent parses");
+  equal(parseStructuredDecision('{"action":"complete_intent","intentId":"intent:1"}',validator).action,"complete_intent","complete_intent parses");
+  equal(parseStructuredDecision('{"action":"idle"}',validator).action,"idle","idle parses");
   equal(parseTaggedDecision("<NOVA_ACTION>\ntype=respond\ncontent=done\n</NOVA_ACTION>",validator).action,"respond","tagged respond parses");
   const plainResponse=parseNonStructuredDecision("Привет, Андрей!",validator);
   equal(plainResponse.action,"respond","plain response becomes respond");
@@ -55,6 +58,8 @@ class StubActionExecutor{
     }
     if(decision.action==="respond")return {outcome:"responded" as const,nextState:"completed" as const,summary:decision.content};
     if(decision.action==="wait")return {outcome:"waiting" as const,nextState:"waiting" as const,summary:"wait:"+decision.waitMs,waitMs:decision.waitMs};
+    if(decision.action==="idle")return {outcome:"waiting" as const,nextState:"waiting" as const,summary:"idle"};
+    if(decision.action==="create_intent"||decision.action==="update_intent"||decision.action==="complete_intent")return {outcome:"intent_updated" as const,nextState:"thinking" as const,summary:decision.action};
     return {outcome:"waiting" as const,nextState:"waiting" as const,summary:decision.question};
   }
 }
@@ -86,6 +91,16 @@ async function kernelTests(){
   const asked=await askKernel.run(askRun.id);
   equal(asked.state,"waiting","ask_user ends the cognition burst");
 
+  let decisionCallbackCalls=0;
+  const intentController=new SequenceController([
+    {action:"create_intent",intent:{type:"test",description:"keep working",priority:50,dueAt:null}},
+    {action:"idle"}
+  ]);
+  const intentKernel=new AgentKernel({cognitive:intentController,actionExecutor:new StubActionExecutor()});
+  const intentRun=await intentKernel.createRun({characterId:"nova",goal:"intent",task:"create intent"});
+  const intentCompleted=await intentKernel.run(intentRun.id,{onDecision:async()=>{decisionCallbackCalls++}});
+  equal(decisionCallbackCalls,2,"bounded kernel exposes every accepted decision to autonomy");
+  equal(intentCompleted.lastDecision?.action,"idle","bounded run preserves final autonomy decision");
   const limitedController=new SequenceController([{action:"respond",content:"limited"}]);
   const limitedKernel=new AgentKernel({
     cognitive:limitedController,
