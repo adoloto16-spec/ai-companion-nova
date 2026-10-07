@@ -1,10 +1,10 @@
 import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryArchiveReason,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,MemorySemanticIndexStore,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider,ChatMessage} from "../../../contracts/src/index";
-import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
+import {FOUNDATION_SCHEMA_VERSION,createEvent} from "../../../contracts/src/index";
 import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore} from "../../../contracts/src/index";
 import type {Conversation,ConversationCreateInput,ConversationId,ConversationStore,ConversationUpdateInput} from "../../../contracts/src/index";
 import {
   AiRuntime,AutomaticMemoryAgent,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,MemorySemanticDeduplicator,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,ModelRequestGovernor,
-  InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,AgentKernel,AgentCognitiveController,DefaultAgentActionExecutor,NovaLifeRuntime,
+  InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,AgentKernel,AgentCognitiveController,DefaultAgentActionExecutor,NovaLifeRuntime,NovaAutonomyCore,StateStoreNovaAutonomyStore,
   DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
   InMemoryActorIdentityResolver,createMemoryConfig,SettingsManager,InMemoryChatTraceStore
 } from "../../../core/src/index";
@@ -55,7 +55,8 @@ export interface FoundationRuntimeOptions{
   embeddingHttpClient?:import("../../../providers/embeddings/openai-compatible/src").EmbeddingHttpClient;
   providerPresetConfigurations?:readonly {presetId:string;configuration:ProviderConfiguration}[];
   activeProviderPresetId?:string;
-  novaLifeRuntime?:Pick<import("../../../core/src/nova-life-runtime").NovaLifeRuntimeOptions,"retryWakeMs"|"postResponseWakeMs"|"resolveAgentRunLimits"|"proactiveEnabled"|"allowProactiveMessages"|"startupBehavior"|"defaultWaitMs"|"eventWakePolicy"|"eventDebounceMs"|"minimumWakeIntervalMs"|"maximumWakeIntervalMs">;
+  novaLifeRuntime?:Pick<import("../../../core/src/nova-life-runtime").NovaLifeRuntimeOptions,"resolveAgentRunLimits"|"proactiveEnabled"|"allowProactiveMessages">;
+  novaAutonomyStore?:import("../../../core/src/nova-autonomy-core").NovaAutonomyStore;
 }
 
 export interface FoundationRuntime{
@@ -255,13 +256,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   providers.register(new FakeEmbeddingProvider(),["embeddings"]);
   providers.register(new FakeVisionProvider(),["vision"]);
 
-  const requestGovernor=new ModelRequestGovernor({
-    maxRequestsPerMinute:()=>settingsManager.get().novaLife.resourceBudget.maxRequestsPerMinute,
-    maxConcurrentRequests:()=>settingsManager.get().novaLife.resourceBudget.maxConcurrentRequests,
-    backgroundRequestPriority:()=>settingsManager.get().novaLife.resourceBudget.backgroundRequestPriority,
-    retryDelayMs:()=>settingsManager.get().novaLife.scheduler.retryDelayMs,
-    diagnostics:diagnosticsStore
-  });
+  const requestGovernor=new ModelRequestGovernor({maxConcurrentRequests:2,backgroundRequestPriority:10,maxRetries:0,diagnostics:diagnosticsStore});
   const aiRuntime=new AiRuntime(providers,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString(),requestGovernor});
   const agentCognitiveController=options.agentCognitiveController??new AgentCognitiveController(aiRuntime,{
     validator:contractValidator,diagnostics:diagnosticsStore,toolRegistry:tools
@@ -408,7 +403,9 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     actionExecutor:options.agentActionExecutor??new DefaultAgentActionExecutor({
       toolRegistry:tools,
       actionBroker:broker,
-      credential:characterCredential
+      credential:characterCredential,
+      events,
+      clock:{now:()=>new Date().toISOString()}
     }),
     conversationContext:async(characterId,conversationId)=>{
       const conversation=await conversationManager.getConversation(characterId,conversationId);
@@ -418,8 +415,14 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()
   });
 
+  const autonomy=new NovaAutonomyCore({
+    store:options.novaAutonomyStore??new StateStoreNovaAutonomyStore(_state),
+    clock:{now:()=>new Date().toISOString()},
+    diagnostics:diagnosticsStore
+  });
   const novaLife=new NovaLifeRuntime({
     agentKernel,
+    autonomy,
     contextEngine,
     conversationManager,
     events,
@@ -443,19 +446,12 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     resolveAgentRunLimits:()=>({
       maxSteps:settingsManager.get().novaLife.cognition.maxSteps,
       maxDurationMs:settingsManager.get().novaLife.cognition.maxDurationMs,
-      maxConsecutiveFailures:settingsManager.get().novaLife.cognition.maxConsecutiveFailures,
-      maxModelCallsPerBurst:settingsManager.get().novaLife.cognition.maxModelCallsPerBurst
+      maxConsecutiveFailures:3,
+      maxModelCallsPerBurst:settingsManager.get().novaLife.cognition.maxModelCallsPerBurst,
+      maxToolCallsPerBurst:10
     }),
     proactiveEnabled:()=>settingsManager.get().novaLife.lifecycle.proactiveEnabled,
     allowProactiveMessages:()=>settingsManager.get().novaLife.lifecycle.allowProactiveMessages,
-    startupBehavior:()=>settingsManager.get().novaLife.lifecycle.startupBehavior,
-    defaultWaitMs:()=>settingsManager.get().novaLife.scheduler.defaultWaitMs,
-    eventWakePolicy:()=>settingsManager.get().novaLife.scheduler.eventWakePolicy,
-    eventDebounceMs:()=>settingsManager.get().novaLife.scheduler.eventDebounceMs,
-    minimumWakeIntervalMs:()=>settingsManager.get().novaLife.scheduler.minimumWakeIntervalMs,
-    maximumWakeIntervalMs:()=>settingsManager.get().novaLife.scheduler.maximumWakeIntervalMs,
-    retryWakeMs:()=>settingsManager.get().novaLife.scheduler.retryDelayMs,
-    postResponseWakeMs:()=>settingsManager.get().novaLife.scheduler.postResponseWakeMs,
     ...(options.novaLifeRuntime??{})
   });
 
@@ -643,12 +639,10 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       if(!normalized)throw new Error("Conversation user message must not be empty.");
       const conversation=await conversationManager.getConversation(characterId,conversationId);
       if(!conversation)throw new Error("Conversation was not found.");
-      const message:ChatMessage={
-        id:"user:"+Date.now().toString(36)+":"+conversation.messages.length,
-        role:"user",
-        content:normalized
-      };
-      return conversationManager.updateConversation(characterId,conversationId,{messages:[...conversation.messages,message]});
+      const message:ChatMessage={id:"user:"+Date.now().toString(36)+":"+conversation.messages.length,role:"user",content:normalized};
+      const updated=await conversationManager.updateConversation(characterId,conversationId,{messages:[...conversation.messages,message]});
+      await events.publish(createEvent("UserMessageReceived",{characterId,conversationId,messageId:message.id,text:normalized},"foundation-runtime",()=>new Date().toISOString(),"user-message:"+message.id));
+      return updated;
     },
     createConversation:(characterId,input)=>conversationManager.createConversation(characterId,input),
     listConversations:characterId=>conversationManager.listConversations(characterId),

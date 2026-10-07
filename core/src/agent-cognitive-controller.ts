@@ -22,15 +22,6 @@ export interface AgentCognitiveContext{
   maxModelCallsPerBurst:number;
   modelCallsUsed:number;
   recentConversationMessages:readonly ChatMessage[];
-  currentFocus?:string|null;
-  activeIntentions:readonly {id:string;type:string;description:string;status:string;priority:number;createdAt:string;dueAt?:string|null}[];
-  activeGoals:readonly {id:string;description:string;priority:number;status:string}[];
-  pendingActivities:readonly {id:string;intentId?:string;description:string;status:string;dueAt?:string|null}[];
-  lastMeaningfulInteraction?:string|null;
-  lastDecisionAt?:string|null;
-  nextRelevantDeadline?:string|null;
-  currentTime:string;
-  recentEvents:readonly string[];
 }
 
 export interface AgentDecisionResult{decision:AgentDecision;outputMode:AgentDecisionOutputMode;modelCalls:number;}
