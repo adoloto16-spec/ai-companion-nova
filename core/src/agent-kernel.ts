@@ -39,6 +39,10 @@ export class AgentKernelError extends Error{
 
 interface Control{controller:AbortController;timer?:ReturnType<typeof setTimeout>;durationExceeded:boolean;}
 
+export interface AgentKernelStepOptions{
+  contextProvider?:(run:AgentRun,stepIndex:number)=>Promise<readonly ChatMessage[]>;
+}
+
 export interface AgentKernelOptions{
   cognitive:AgentCognitiveDecisionProvider;
   actionExecutor:AgentActionExecutor;
@@ -89,7 +93,7 @@ export class AgentKernel{
   getRun(runId:string){const run=this.runs.get(runId);return run?this.clone(run):undefined;}
   getSteps(runId:string){return [...(this.steps.get(runId)??[])].map(step=>({...step}));}
 
-  async step(runId:string):Promise<AgentRun>{
+  async step(runId:string,options:AgentKernelStepOptions={}):Promise<AgentRun>{
     const run=this.require(runId);
     if(TERMINAL.includes(run.state)||run.state==="waiting"||run.state==="paused"||run.state==="interrupted")
       throw new AgentKernelError("AGENT_INVALID_STATE","Agent run is not ready for another automatic step.");
@@ -103,9 +107,11 @@ export class AgentKernel{
 
     let result:{decision:AgentDecision;outputMode:"structured"|"tagged"};
     try{
-      const conversationMessages=run.conversationId&&this.options.conversationContext
-        ?await this.options.conversationContext(run.characterId,run.conversationId)
-        :[];
+      const conversationMessages=options.contextProvider
+        ?await options.contextProvider(run,stepIndex)
+        :run.conversationId&&this.options.conversationContext
+          ?await this.options.conversationContext(run.characterId,run.conversationId)
+          :[];
       const userResponse=this.pendingUserResponses.get(run.id);
       if(userResponse!==undefined)this.pendingUserResponses.delete(run.id);
       const context:AgentCognitiveContext={
@@ -163,6 +169,8 @@ export class AgentKernel{
     run.lastAction=result.decision.action;
     run.lastOutcome=bounded(action.outcome+(action.summary?":"+action.summary:""));
     if(result.decision.action==="continue"&&result.decision.workingSummary)run.workingSummary=bounded(result.decision.workingSummary,1000);
+    if(result.decision.action==="wait")run.lastWaitMs=action.waitMs;
+    else run.lastWaitMs=undefined;
     if(result.decision.action==="finish")run.workingSummary=bounded(result.decision.result,1000);
     run.updatedAt=this.clock();
 
@@ -180,7 +188,7 @@ export class AgentKernel{
     return this.clone(run);
   }
 
-  async run(runId:string):Promise<AgentRun>{
+  async run(runId:string,options:AgentKernelStepOptions={}):Promise<AgentRun>{
     const run=this.require(runId);
     if(TERMINAL.includes(run.state)||run.state==="waiting"||run.state==="paused"||run.state==="interrupted")return this.clone(run);
     const control=this.controlFor(run);
@@ -193,7 +201,7 @@ export class AgentKernel{
         if(TERMINAL.includes(current.state)||current.state==="waiting"||current.state==="paused"||current.state==="interrupted")break;
         if(current.stepCount>=current.limits.maxSteps){await this.limitFailure(current,"AGENT_STEP_LIMIT_REACHED","Agent step limit reached.");break;}
         if(this.elapsed(current)>=current.limits.maxDurationMs){await this.limitFailure(current,"AGENT_DURATION_LIMIT_REACHED","Agent duration limit reached.");break;}
-        await this.step(runId);
+        await this.step(runId,options);
       }
       return this.clone(this.runs.get(runId)!);
     }finally{
