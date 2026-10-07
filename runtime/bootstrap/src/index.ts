@@ -630,7 +630,10 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     getChatTraceStore:()=>traceStore,
     listChatTraces:limit=>traceStore.recent(limit),
     clearChatTraces:()=>traceStore.clear(),
-    setProviderPresetConfigurations:(configurations,activePresetId)=>{providerPresetConfigurations=new Map(configurations.map(item=>[item.presetId,item.configuration])); activeProviderPresetId=activePresetId??configurations[0]?.presetId;},
+    setProviderPresetConfigurations:(configurations,activePresetId)=>{
+  providerPresetConfigurations=new Map(configurations.map(item=>[item.presetId,item.configuration]));
+  activeProviderPresetId=activePresetId??configurations[0]?.presetId??activeProviderPresetId;
+},
     listCharacters:()=>characterManager.listCharacters(),
     getCharacter:id=>characterManager.getCharacter(id),
     createCharacter:async input=>{

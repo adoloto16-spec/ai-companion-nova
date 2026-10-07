@@ -35,7 +35,7 @@ async function main(){
       return{ok:true,id:credential.id};
     })
   });
-  const success=await router.chat({apiVersion:"1",schemaVersion:"1",requestId:"req",model:"test-model",context:{conversationId:"c",messages:[]},messages:[]});
+  const success=await router.chat({apiVersion:"1",schemaVersion:"1",requestId:"req",model:"test-model",context:{conversationId:"c",messages:[]}});
   assert.equal((success as any).id,"B","credential B is selected after credential A provider failure");
   assert.equal(aCalls,1);assert.equal(bCalls,1);
 
@@ -48,7 +48,7 @@ async function main(){
     clock:()=>1000,
     createProvider:credential=>provider(credential.id,async()=>credential.id==="A"?Promise.reject(failure(429,5000)):Promise.resolve({ok:true,id:"B"}))
   });
-  const rateLimited=await router429.chat({apiVersion:"1",schemaVersion:"1",requestId:"req2",model:"test-model",context:{conversationId:"c",messages:[]},messages:[]});
+  const rateLimited=await router429.chat({apiVersion:"1",schemaVersion:"1",requestId:"req2",model:"test-model",context:{conversationId:"c",messages:[]}});
   assert.equal((rateLimited as any).id,"B","429 credential is cooled down and the next healthy credential is selected");
   assert.equal(router429.getCredentialState()[0]?.health,"degraded");
   assert.equal(router429.getCredentialState()[0]?.cooldownUntil,"1970-01-01T00:00:06.000Z");
@@ -59,7 +59,7 @@ async function main(){
     createProvider:credential=>provider(credential.id,async()=>Promise.resolve({ok:true}))
   });
   let rejected=0;
-  try{await unavailable.chat({apiVersion:"1",schemaVersion:"1",requestId:"req3",model:"test-model",context:{conversationId:"c",messages:[]},messages:[]})}catch(error){rejected++;assert.equal((error as any).chatError?.retryable,true)}
+  try{await unavailable.chat({apiVersion:"1",schemaVersion:"1",requestId:"req3",model:"test-model",context:{conversationId:"c",messages:[]}})}catch(error){rejected++;assert.equal((error as any).chatError?.retryable,true)}
   assert.equal(rejected,1,"all unavailable credentials fail as recoverable instead of rotating indefinitely");
   console.log("PASS Provider credential router tests");
 }

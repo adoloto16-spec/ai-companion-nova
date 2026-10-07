@@ -5,7 +5,8 @@ import {ConversationCandidateSource,DeterministicContextEngine} from "../../core
 import {ConversationManager} from "../../core/src/conversation-manager";
 import {NovaAutonomyCore} from "../../core/src/nova-autonomy-core";
 import {NovaLifeRuntime} from "../../core/src/nova-life-runtime";
-import type {AgentDecision,AgentCognitiveDecisionProvider,AgentCognitiveContext,AgentDecisionResult,Conversation,ConversationStore,Event,EventBus,ContextBudget} from "../../contracts/src/index";
+import type {AgentDecision,Conversation,ConversationStore,Event,EventBus,ContextBudget} from "../../contracts/src/index";
+import type {AgentCognitiveDecisionProvider,AgentCognitiveContext,AgentDecisionResult} from "../../core/src/agent-cognitive-controller";
 
 class MemoryConversationStore implements ConversationStore{
   private readonly conversations=new Map<string,Conversation>();
@@ -54,7 +55,7 @@ async function createTestRuntime(controller:CaptureController){
   const conversationManager=new ConversationManager(conversations,{events,characterExists:async()=>true});
   const conversation=await conversationManager.getActiveConversation("character:test");
   const autonomy=new NovaAutonomyCore({store:new MemoryStateStore() as any});
-  const kernel=new AgentKernel({cognitive:controller,actionExecutor:new DefaultAgentActionExecutor()});
+  const kernel=new AgentKernel({cognitive:controller,actionExecutor:new DefaultAgentActionExecutor({})});
   const contextEngine=new DeterministicContextEngine([new ConversationCandidateSource()]);
   const runtime=new NovaLifeRuntime({
     agentKernel:kernel,
@@ -113,13 +114,13 @@ async function resumeIntentAfterUserMessageTest(){
     }
     return{action:"idle"};
   });
-  const {runtime,conversationManager,conversation}=await createTestRuntime(controller);
+  const {runtime,conversationManager,events,conversation}=await createTestRuntime(controller);
   try{
     await runtime.start("character:test",conversation.id);
     await waitFor(()=>controller.calls>=2);
     const before=controller.calls;
     await conversationManager.updateConversation("character:test",conversation.id,{messages:[...conversation.messages,{id:"user:1",role:"user",content:"Новый результат по проекту"}]});
-    await events.publish({id:"user-event",type:"UserMessageReceived",timestamp:new Date().toISOString(),source:"test",schemaVersion:"1",payload:{characterId:"character:test",conversationId:conversation.id,messageId:"user:1",text:"Новый результат по проекту"}});
+
     await waitFor(()=>controller.calls>before&&runtime.getState().status==="idle");
     assert.equal(runtime.getState().activeIntentions?.length,0,"unfinished intent was completed after user-triggered cognition");
   }finally{await runtime.stop()}
