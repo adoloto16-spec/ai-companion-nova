@@ -1,7 +1,7 @@
 import React from "react";
 import {createRoot} from "react-dom/client";
 import {invoke} from "@tauri-apps/api/core";
-import {ChatSessionController,ConversationSession,InMemoryCharacterStore} from "../../../core/src/index";
+import {ChatSessionController,ConversationSession} from "../../../core/src/index";
 
 import {startFoundationRuntime,testProviderPresetConfiguration,listProviderModels} from "../../../runtime/bootstrap/src/index";
 import type {FoundationRuntime} from "../../../runtime/bootstrap/src/index";
@@ -9,7 +9,7 @@ import {IpcCredentialStore,InMemoryCredentialStore} from "../../../host/credenti
 import {IpcCredentialProfileStore,InMemoryCredentialProfileStore,emptyCredentialProfileState} from "../../../host/credential-profiles/src/index";
 import {IpcProviderPresetStore,InMemoryProviderPresetStore,materializeProviderConfiguration,migrateProviderConfiguration,emptyProviderPresetState} from "../../../host/provider-presets/src/index";
 import {IpcProviderConfigurationStore,loadProviderConfigurationSafely} from "../../../host/config/src/index";
-import {IpcCharacterStore} from "../../../host/characters/src/index";
+import {IpcCharacterStore,InMemoryCharacterStore as HostInMemoryCharacterStore} from "../../../host/characters/src/index";
 import {IpcCoreBookStore,InMemoryCoreBookStore} from "../../../host/core-book/src/index";
 import {IpcMemorySemanticIndexStore,IpcMemoryStore,InMemoryMemoryStore} from "../../../host/memory/src/index";
 import {IpcConversationStore,InMemoryConversationStore} from "../../../host/conversations/src/index";
@@ -19,10 +19,11 @@ import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
-  type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem, type ErrorDiagnostic, type NovaLifeState,
+  type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem, type ErrorDiagnostic,
   defaultAppSettings, validateAppSettings, StandardContractValidator,
   type ProviderPreset, type ProviderPresetStoreState, type ModelInfo
 } from "../../../contracts/src/index";
+import type {NovaLifeState} from "../../../core/src/nova-life-runtime";
 import "./styles.css";
 
 const preview:RuntimeDiagnostics={schemaVersion:"1",timestamp:new Date().toISOString(),runtimeStatus:"stopped",coreStatus:"stopped",modules:[],providers:[],recentErrors:[],capabilities:[]};
@@ -146,6 +147,7 @@ function lifeStatusLabel(status:NovaLifeState["status"]):string{
     case "stopping":return "Stopping";
     case "error":return "Error";
   }
+  throw new Error("Unknown Nova Life status: "+status);
 }
 
 function ChatView({controller,runtime,character,modelProfile,conversations,activeConversation,novaLifeState,onPersist,onClear,onRefreshConversation,onSelectConversation,onCreateConversation,onRenameConversation,onDeleteConversation}:{
@@ -1721,7 +1723,7 @@ function App(){
   const modelProfileLoadErrorRef=React.useRef<string|undefined>(undefined);
   const credentialStore=React.useMemo(()=>new IpcCredentialStore(invoke),[]);
   const configurationStore=React.useMemo(()=>new IpcProviderConfigurationStore(invoke),[]);
-  const characterStore=React.useMemo(()=>isTauriRuntime()?new IpcCharacterStore(invoke):new InMemoryCharacterStore(),[]);
+  const characterStore=React.useMemo(()=>isTauriRuntime()?new IpcCharacterStore(invoke):new HostInMemoryCharacterStore(),[]);
   const coreBookStore=React.useMemo(()=>isTauriRuntime()?new IpcCoreBookStore(invoke):new InMemoryCoreBookStore(),[]);
   const memoryStore=React.useMemo(()=>isTauriRuntime()?new IpcMemoryStore(invoke):new InMemoryMemoryStore(),[]);
   const conversationStore=React.useMemo(()=>isTauriRuntime()?new IpcConversationStore(invoke):new InMemoryConversationStore(),[]);
