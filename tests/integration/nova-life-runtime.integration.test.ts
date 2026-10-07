@@ -351,7 +351,8 @@ async function protocolFailureDiagnosticsIntegrationTest(){
     await waitFor(()=>askController.calls>=2);
     assert.equal(askController.contexts[1]?.runId===firstRunId,false,"reply starts a new bounded AgentRun within the same Life");
     assert.equal((await askRuntime.getConversation(character.id,conversation.id))?.messages.at(-1)?.content,"Теперь могу продолжить.","same Life persists the next assistant response");
-    assert.equal(askRuntime.getNovaLifeState().status,"waiting","Life remains on after the answer");
+    assert.equal(askRuntime.getNovaLifeState().status,"sleeping","Life remains on and schedules the next wake after the answer");
+    assert.equal(askRuntime.getNovaLifeState().wakeReason,"scheduled_wake","the answer uses post-response scheduling");
   }finally{await askRuntime.stop();}
 
   const contextController=new SequenceController([{action:"respond",content:"Контекст собран."}]);
