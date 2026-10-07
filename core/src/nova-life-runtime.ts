@@ -1,5 +1,5 @@
 import type {
-  AgentRun,AgentDecisionAction,ChatMessage,Clock,ContextBudget,ContextEngine,DiagnosticsStore,EventBus,MemoryExtractionRequest,AgentRunInput
+  AgentRun,AgentDecisionAction,ChatMessage,Clock,ContextBudget,ContextEngine,DiagnosticsStore,EventBus,MemoryExtractionRequest,AgentRunInput,AgentRunLimits
 } from "../../contracts/src/index";
 import {createEvent} from "../../contracts/src/index";
 import type {ConversationManager} from "./conversation-manager";
@@ -38,8 +38,16 @@ export interface NovaLifeRuntimeOptions{
   extractMemory?:(request:MemoryExtractionRequest)=>Promise<unknown>;
   memoryExtractionEnabled?:()=>boolean;
   recentConversationMessages?:()=>number;
-  retryWakeMs?:number;
-  idleWakeMs?:number;
+  resolveAgentRunLimits?:()=>Partial<AgentRunLimits>;
+  proactiveEnabled?:()=>boolean;
+  allowProactiveMessages?:()=>boolean;
+  startupBehavior?:()=>"proactive"|"wait";
+  eventWakePolicy?:()=>{appChanged:boolean;windowChanged:boolean;conversationChanged:boolean;characterChanged:boolean};
+  eventDebounceMs?:number|(()=>number);
+  minimumWakeIntervalMs?:number|(()=>number);
+  maximumWakeIntervalMs?:number|(()=>number);
+  retryWakeMs?:number|(()=>number);
+  idleWakeMs?:number|(()=>number);
 }
 
 type WakeRequest={reason:NovaLifeWakeReason;messageId?:string};
@@ -53,14 +61,19 @@ export class NovaLifeRuntime{
   private readonly listeners=new Set<LifeSubscriber>();
   private readonly eventUnsubscribers:Array<()=>void>=[];
   private readonly clock:()=>string;
-  private readonly retryWakeMs:number;
-  private readonly idleWakeMs:number;
+  private readonly retryWakeMs:number|(()=>number);
+  private readonly idleWakeMs:number|(()=>number);
   private state:NovaLifeState={status:"off",wakeCount:0};
   private timer?:ReturnType<typeof setTimeout>;
   private timerEpoch=0;
   private activeWake?:Promise<void>;
   private pendingWake?:WakeRequest;
+  private eventTimer?:ReturnType<typeof setTimeout>;
+  private pendingEventWake?:WakeRequest;
   private wakeSequence=0;
+  private consecutiveFailures=0;
+  private currentWakeStartedAt?:number;
+  private currentContextStats:{contextMessageCount:number;memoryCandidates:number;coreBookCandidates:number;retrievalCandidates:number}={contextMessageCount:0,memoryCandidates:0,coreBookCandidates:0,retrievalCandidates:0};
 
   constructor(private readonly options:NovaLifeRuntimeOptions){
     this.clock=options.clock?.now?()=>options.clock!.now():()=>new Date().toISOString();
@@ -81,7 +94,10 @@ export class NovaLifeRuntime{
     if(!characterId.trim())throw new Error("Nova Life characterId must not be empty.");
     if(!conversationId.trim())throw new Error("Nova Life conversationId must not be empty.");
     this.clearTimer();
+    this.clearEventTimer();
     this.pendingWake=undefined;
+    this.pendingEventWake=undefined;
+    this.consecutiveFailures=0;
     this.state={status:"starting",characterId,conversationId,startedAt:this.clock(),wakeReason:"startup",wakeCount:0};
     this.notify();
     this.options.diagnostics?.recordError("nova-life","NOVA_LIFE_STARTED","Nova Life started",{characterId,conversationId});
@@ -95,7 +111,9 @@ export class NovaLifeRuntime{
     if(this.state.status==="off")return this.getState();
     this.timerEpoch++;
     this.clearTimer();
+    this.clearEventTimer();
     this.pendingWake=undefined;
+    this.pendingEventWake=undefined;
     const runId=this.state.activeAgentRunId;
     this.state={...this.state,status:"stopping",nextWakeAt:undefined,activeAgentRunId:undefined};
     this.notify();
@@ -142,20 +160,25 @@ export class NovaLifeRuntime{
     this.eventUnsubscribers.push(this.options.events.subscribe("ActiveConversationChanged",event=>{
       const payload=event.payload as {characterId:string;conversationId:string};
       if(!this.isOn()||payload.characterId!==this.state.characterId)return;
+      const policy=this.options.eventWakePolicy?.();
       this.state={...this.state,conversationId:payload.conversationId,lastActivityAt:this.clock()};
       this.notify();
-      void this.triggerWake({reason:"conversation_changed"}).catch(error=>this.handleRuntimeError(error));
+      if(policy?.conversationChanged!==false)this.queueEventWake({reason:"conversation_changed"});
     }));
     this.eventUnsubscribers.push(this.options.events.subscribe("ActiveCharacterChanged",event=>{
       const payload=event.payload as {characterId:string};
       if(!this.isOn())return;
+      const policy=this.options.eventWakePolicy?.();
+      if(policy?.characterChanged===false)return;
       void this.followCharacter(payload.characterId).catch(error=>this.handleRuntimeError(error));
     }));
     this.eventUnsubscribers.push(this.options.events.subscribe("AppChanged",()=>{
-      if(this.isOn())void this.triggerWake({reason:"runtime_event"}).catch(error=>this.handleRuntimeError(error));
+      const policy=this.options.eventWakePolicy?.();
+      if(this.isOn()&&policy?.appChanged===true)this.queueEventWake({reason:"runtime_event"});
     }));
     this.eventUnsubscribers.push(this.options.events.subscribe("WindowChanged",()=>{
-      if(this.isOn())void this.triggerWake({reason:"runtime_event"}).catch(error=>this.handleRuntimeError(error));
+      const policy=this.options.eventWakePolicy?.();
+      if(this.isOn()&&policy?.windowChanged===true)this.queueEventWake({reason:"runtime_event"});
     }));
     this.eventUnsubscribers.push(this.options.events.subscribe("AgentStateChanged",event=>{
       const payload=event.payload as {runId:string;state:string};
@@ -174,14 +197,14 @@ export class NovaLifeRuntime{
     const conversation=await this.options.conversationManager.getActiveConversation(characterId);
     this.state={...this.state,characterId,conversationId:conversation.id,lastActivityAt:this.clock()};
     this.notify();
-    await this.triggerWake({reason:"character_changed"});
+    this.queueEventWake({reason:"character_changed"});
   }
 
   private async triggerWake(request:WakeRequest):Promise<void>{
     if(!this.isOn())return;
     this.clearTimer();
     if(this.activeWake){
-      this.pendingWake=request;
+      this.pendingWake=this.mergeWake(this.pendingWake,request);
       return this.activeWake;
     }
     const wake=this.executeWake(request);
@@ -199,6 +222,8 @@ export class NovaLifeRuntime{
     const characterId=this.state.characterId,conversationId=this.state.conversationId;
     if(!characterId||!conversationId)return;
     const wakeCount=++this.wakeSequence;
+    this.currentWakeStartedAt=Date.now();
+    this.currentContextStats={contextMessageCount:0,memoryCandidates:0,coreBookCandidates:0,retrievalCandidates:0};
     this.state={...this.state,status:"awake",wakeReason:request.reason,lastWakeAt:this.clock(),nextWakeAt:undefined,activeAgentRunId:undefined,currentFocus:undefined,wakeCount};
     this.notify();
     this.options.diagnostics?.recordError("nova-life","NOVA_LIFE_WAKE_STARTED","Nova Life wake started",{
@@ -222,7 +247,8 @@ export class NovaLifeRuntime{
         task,
         wakeReason:request.reason,
         ...(providerId?{providerId}:{}),
-        ...(model?{model}: {})
+        ...(model?{model}: {}),
+        limits:this.options.resolveAgentRunLimits?.()
       };
       run=await this.options.agentKernel.createRun(input);
       this.state={...this.state,status:"thinking",activeAgentRunId:run.id,currentFocus:task};
@@ -231,8 +257,17 @@ export class NovaLifeRuntime{
         contextProvider:(_currentRun,_stepIndex,previousRuntimeMessages)=>this.buildContextMessages(request.reason,run!.id,previousRuntimeMessages)
       });
       await this.handleTerminalRun(terminal,request.reason,request.messageId);
+      this.consecutiveFailures=0;
       this.options.diagnostics?.recordError("nova-life","NOVA_LIFE_WAKE_COMPLETED","Nova Life wake completed",{
         characterId,conversationId,wakeCount,reason:request.reason,agentRunId:terminal.id,status:terminal.status,
+        durationMs:this.currentWakeStartedAt===undefined?null:Math.max(0,Date.now()-this.currentWakeStartedAt),
+        steps:terminal.stepCount,llmCalls:terminal.modelCallCount,provider:terminal.providerId??"default",model:terminal.model??"",
+        contextMessageCount:this.currentContextStats.contextMessageCount,memoryCandidates:this.currentContextStats.memoryCandidates,
+        coreBookCandidates:this.currentContextStats.coreBookCandidates,retrievalCandidates:this.currentContextStats.retrievalCandidates,
+        decisions:this.options.agentKernel.getSteps(terminal.id).map(step=>step.decisionType),
+        toolCalls:this.options.agentKernel.getSteps(terminal.id).filter(step=>step.decisionType==="tool_call").length,
+        toolResults:this.options.agentKernel.getSteps(terminal.id).filter(step=>step.outcome==="tool_called").length,
+        finalResponse:terminal.lastAction==="respond"?(terminal.workingSummary??null):null,nextWake:this.state.nextWakeAt??null,
         lastAction:terminal.lastAction??null,lastOutcome:terminal.lastOutcome??null
       });
       await this.options.events.publish(createEvent("NovaLifeWakeCompleted",{
@@ -275,11 +310,17 @@ export class NovaLifeRuntime{
       messages:[lifeContext,...conversation.messages,...previousRuntimeMessages],
       budget:this.options.contextBudget()
     });
-    this.options.diagnostics?.recordError("nova-life","NOVA_LIFE_CONTEXT_BUILT","Nova Life context assembled",{
-      characterId,conversationId,wakeReason:reason,contextMessageCount:assembled.messages.length,
+    this.currentContextStats={
+      contextMessageCount:assembled.messages.length,
       memoryCandidates:assembled.includedCandidates.filter(candidate=>candidate.source==="memory").length,
       coreBookCandidates:assembled.includedCandidates.filter(candidate=>candidate.source==="core_book").length,
-      contextSources:["conversation","memory","core_book","life_state"]
+      retrievalCandidates:assembled.includedCandidates.filter(candidate=>candidate.zone==="retrieved_core_book"||candidate.zone==="retrieved_memory").length
+    };
+    this.options.diagnostics?.recordError("nova-life","NOVA_LIFE_CONTEXT_BUILT","Nova Life context assembled",{
+      characterId,conversationId,wakeReason:reason,contextMessageCount:assembled.messages.length,
+      memoryCandidates:this.currentContextStats.memoryCandidates,
+      coreBookCandidates:this.currentContextStats.coreBookCandidates,retrievalCandidates:this.currentContextStats.retrievalCandidates,
+      contextSources:["conversation","memory","core_book","life_state","wake_reason"]
     });
     return assembled.messages;
   }
@@ -301,15 +342,37 @@ export class NovaLifeRuntime{
       return;
     }
     if(run.state==="failed"){
+      const category=run.lastErrorCategory??"runtime";
       this.state={...this.state,status:"error",lastOutcome:run.lastOutcome??"Cognition failed."};
       this.notify();
       await this.options.events.publish(createEvent("NovaLifeError",{
         characterId:this.state.characterId,
         conversationId:this.state.conversationId,
         reason:run.lastOutcome??"Cognition failed.",
-        agentRunId:run.id
+        agentRunId:run.id,
+        category,
+        wakeCount:this.state.wakeCount,
+        step:run.stepCount+1,
+        provider:run.providerId??"default",
+        model:run.model??""
       },"nova-life",this.clock,"nova-life:error:"+run.id));
-      this.scheduleWake(this.retryWakeMs,"retry");
+      if(category==="protocol_model_output"||category==="budget"||category==="runtime"){
+        this.setWaiting();
+        return;
+      }
+      this.consecutiveFailures++;
+      const maxFailures=Math.max(1,this.options.resolveAgentRunLimits?.().maxConsecutiveFailures??3);
+      if(category==="rate_limit"||category==="timeout"||category==="network"||category==="transient_provider"){
+        if(this.consecutiveFailures>maxFailures){
+          this.setWaiting();
+          return;
+        }
+        const base=this.resolveDelay(this.retryWakeMs,10000);
+        const delay=Math.min(this.maximumWakeInterval(),base*Math.pow(2,this.consecutiveFailures-1));
+        this.scheduleWake(delay,"retry");
+      }else{
+        this.setWaiting();
+      }
       return;
     }
     if(run.lastAction==="respond"){
@@ -317,7 +380,7 @@ export class NovaLifeRuntime{
       if(!result){
         this.state={...this.state,status:"error",lastOutcome:"Cognition finished without a user-facing result."};
         this.notify();
-        this.scheduleWake(this.retryWakeMs,"retry");
+        this.setWaiting();
         return;
       }
       const assistant=await this.appendAssistant(run.id,result,false);
@@ -408,14 +471,14 @@ export class NovaLifeRuntime{
 
   private scheduleWake(delayMs:number,reason:NovaLifeWakeReason):void{
     if(!this.isOn())return;
-    const delay=this.normalizeDelay(delayMs);
+    const delay=this.clampWakeDelay(delayMs);
     this.clearTimer();
     const nextWakeAt=new Date(Date.parse(this.clock())+delay).toISOString();
     const epoch=++this.timerEpoch;
     this.state={...this.state,status:"sleeping",nextWakeAt,wakeReason:reason,activeAgentRunId:undefined};
     this.notify();
     this.options.diagnostics?.recordError("nova-life","NOVA_LIFE_SLEEPING","Nova Life scheduled next wake",{
-      characterId:this.state.characterId!,conversationId:this.state.conversationId!,nextWakeAt,reason
+      characterId:this.state.characterId!,conversationId:this.state.conversationId!,nextWakeAt,reason,delayMs:delay,wakeCount:this.state.wakeCount
     });
     void this.options.events.publish(createEvent("NovaLifeSleeping",{
       characterId:this.state.characterId!,conversationId:this.state.conversationId!,nextWakeAt,reason
@@ -450,14 +513,18 @@ export class NovaLifeRuntime{
     const message=error instanceof Error?error.message:String(error);
     this.state={...this.state,status:"error",lastOutcome:message,activeAgentRunId:undefined};
     this.notify();
-    this.options.diagnostics?.recordError("nova-life","NOVA_LIFE_RUNTIME_ERROR","Nova Life runtime error",{message,agentRunId});
+    this.options.diagnostics?.recordError("nova-life","NOVA_LIFE_RUNTIME_ERROR","Nova Life runtime error",{
+      message,agentRunId,wakeCount:this.state.wakeCount,errorCategory:"runtime"
+    });
     void this.options.events.publish(createEvent("NovaLifeError",{
       ...(this.state.characterId?{characterId:this.state.characterId}:{}),
       ...(this.state.conversationId?{conversationId:this.state.conversationId}:{}),
       reason:message,
-      ...(agentRunId?{agentRunId}: {})
+      ...(agentRunId?{agentRunId}: {}),
+      wakeCount:this.state.wakeCount,
+      category:"runtime"
     },"nova-life",this.clock,"nova-life:runtime-error:"+Date.now())).catch(()=>undefined);
-    this.scheduleWake(this.retryWakeMs,"retry");
+    this.setWaiting();
   }
 
   private notify():void{
@@ -465,6 +532,60 @@ export class NovaLifeRuntime{
     for(const listener of [...this.listeners]){
       try{listener(snapshot)}catch{}
     }
+  }
+
+  private queueEventWake(request:WakeRequest):void{
+    if(!this.isOn())return;
+    this.pendingEventWake=this.mergeWake(this.pendingEventWake,request);
+    if(this.eventTimer)return;
+    const debounce=this.resolveDelay(this.options.eventDebounceMs,250);
+    const minInterval=this.minimumWakeInterval();
+    const lastWake=this.state.lastWakeAt?Date.parse(this.state.lastWakeAt):0;
+    const elapsed=lastWake>0?Math.max(0,Date.now()-lastWake):Number.POSITIVE_INFINITY;
+    const cooldown=Math.max(0,minInterval-elapsed);
+    const delay=Math.max(debounce,cooldown);
+    this.eventTimer=setTimeout(()=>{
+      this.eventTimer=undefined;
+      const next=this.pendingEventWake;
+      this.pendingEventWake=undefined;
+      if(next&&this.isOn())void this.triggerWake(next).catch(error=>this.handleRuntimeError(error));
+    },delay);
+  }
+
+  private clearEventTimer():void{
+    if(this.eventTimer){clearTimeout(this.eventTimer);this.eventTimer=undefined;}
+    this.pendingEventWake=undefined;
+  }
+
+  private mergeWake(current:WakeRequest|undefined,next:WakeRequest):WakeRequest{
+    if(!current)return next;
+    const rank=(reason:NovaLifeWakeReason)=>reason==="user_message"?100:reason==="conversation_changed"?80:reason==="character_changed"?70:reason==="scheduled_wake"?60:reason==="wait_completed"?50:20;
+    return rank(next.reason)>=rank(current.reason)?next:current;
+  }
+
+  private resolveDelay(value:number|(()=>number)|undefined,fallback:number):number{
+    const resolved=typeof value==="function"?value():value;
+    return this.normalizeDelay(typeof resolved==="number"&&Number.isFinite(resolved)?resolved:fallback);
+  }
+
+  private minimumWakeInterval():number{
+    const value=this.resolveDelay(this.options.minimumWakeIntervalMs,1000);
+    return Math.min(value,this.maximumWakeInterval());
+  }
+
+  private maximumWakeInterval():number{
+    const raw=typeof this.options.maximumWakeIntervalMs==="function"?this.options.maximumWakeIntervalMs():this.options.maximumWakeIntervalMs;
+    const value=Number.isFinite(raw as number)?Math.max(1,Math.floor(raw as number)):300000;
+    return Math.max(this.minimumBaseWakeInterval(),Math.min(3600000,value));
+  }
+
+  private minimumBaseWakeInterval():number{
+    const raw=typeof this.options.minimumWakeIntervalMs==="function"?this.options.minimumWakeIntervalMs():this.options.minimumWakeIntervalMs;
+    return Number.isFinite(raw as number)?Math.max(1,Math.floor(raw as number)):1000;
+  }
+
+  private clampWakeDelay(value:number):number{
+    return Math.min(this.maximumWakeInterval(),Math.max(this.minimumBaseWakeInterval(),this.normalizeDelay(value)));
   }
 
   private normalizeDelay(value:number):number{
