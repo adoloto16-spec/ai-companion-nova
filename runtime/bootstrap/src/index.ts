@@ -1,10 +1,10 @@
-import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryArchiveReason,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,MemorySemanticIndexStore,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider,AgentRun,AgentRunInput} from "../../../contracts/src/index";
+import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryArchiveReason,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,MemorySemanticIndexStore,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider,NovaLifeState,NovaLifeWakeReason,ChatMessage} from "../../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore} from "../../../contracts/src/index";
 import type {Conversation,ConversationCreateInput,ConversationId,ConversationStore,ConversationUpdateInput} from "../../../contracts/src/index";
 import {
   AiRuntime,AutomaticMemoryAgent,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,MemorySemanticDeduplicator,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,
-  InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,AgentKernel,AgentCognitiveController,DefaultAgentActionExecutor,
+  InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,AgentKernel,AgentCognitiveController,DefaultAgentActionExecutor,NovaLifeRuntime,
   DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
   InMemoryActorIdentityResolver,createMemoryConfig,SettingsManager,InMemoryChatTraceStore
 } from "../../../core/src/index";
@@ -54,6 +54,7 @@ export interface FoundationRuntimeOptions{
   embeddingHttpClient?:import("../../../providers/embeddings/openai-compatible/src").EmbeddingHttpClient;
   providerPresetConfigurations?:readonly {presetId:string;configuration:ProviderConfiguration}[];
   activeProviderPresetId?:string;
+  novaLifeRuntime?:Pick<import("../../../core/src/nova-life-runtime").NovaLifeRuntimeOptions,"retryWakeMs"|"idleWakeMs">;
 }
 
 export interface FoundationRuntime{
@@ -70,10 +71,13 @@ export interface FoundationRuntime{
   getChatModel(providerId?:string):Promise<string>;
   getChatModelForPreset(providerPresetId:string):Promise<string>;
   getActiveProviderPresetId():string|undefined;
-  startAgentRun(input:AgentRunInput):Promise<AgentRun>;
-  getAgentRun(runId:string):AgentRun|undefined;
-  interruptAgentRun(runId:string,reason?:string):Promise<AgentRun>;
-  resumeAgentRun(runId:string,userResponse?:string):Promise<AgentRun>;
+  startNovaLife(characterId:CharacterId,conversationId:ConversationId):Promise<NovaLifeState>;
+  stopNovaLife():Promise<NovaLifeState>;
+  getNovaLifeState():NovaLifeState;
+  wakeNovaLife(reason?:NovaLifeWakeReason):Promise<NovaLifeState>;
+  notifyNovaUserMessage(characterId:CharacterId,conversationId:ConversationId,messageId:string):void;
+  subscribeNovaLifeState(listener:(state:NovaLifeState)=>void):()=>void;
+  appendConversationUserMessage(characterId:CharacterId,conversationId:ConversationId,text:string):Promise<Conversation>;
   getChatProviderDiagnostics(providerPresetId?:string):{
     providerPresetId?:string;
     providerId:string;
@@ -304,6 +308,31 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     traceStore
   });
 
+  const novaLife=new NovaLifeRuntime({
+    agentKernel,
+    contextEngine,
+    conversationManager,
+    events,
+    diagnostics:diagnosticsStore,
+    clock:{now:()=>new Date().toISOString()},
+    contextBudget:()=>{
+      const settings=settingsManager.get();
+      return {
+        availableContextTokens:settings.context.availableContextTokens,
+        reservedOutputTokens:settings.context.reservedOutputTokens,
+        systemOverheadTokens:0,
+        safetyMarginTokens:settings.context.safetyMarginTokens
+      };
+    },
+    resolveProviderId:()=>activeProviderId(providerConfiguration),
+    resolveModel:resolveAgentModel,
+    getProviderPresetId:()=>activeProviderPresetId,
+    extractMemory:async request=>{await automaticMemoryAgent.process(request);},
+    memoryExtractionEnabled:()=>settingsManager.get().chat.automaticLongTermMemory,
+    recentConversationMessages:()=>settingsManager.get().context.recentConversationMessages,
+    ...(options.novaLifeRuntime??{})
+  });
+
   const semanticMemoryDeduplicator=new MemorySemanticDeduplicator({
     settings:()=>settingsManager.get(),
     broker:memoryBroker,
@@ -428,18 +457,12 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   };
 
   return {
-    startAgentRun:async input=>{
-      const providerId=input.providerId??activeProviderId(providerConfiguration);
-      const model=input.model??await resolveAgentModel(providerId);
-      const run=await agentKernel.createRun({...input,providerId,model});
-      return agentKernel.run(run.id);
-    },
-    getAgentRun:runId=>agentKernel.getRun(runId),
-    interruptAgentRun:(runId,reason)=>agentKernel.interrupt(runId,reason),
-    resumeAgentRun:async (runId,userResponse)=>{
-      await agentKernel.resume(runId,userResponse);
-      return agentKernel.run(runId);
-    },
+    startNovaLife:(characterId,conversationId)=>novaLife.start(characterId,conversationId),
+    stopNovaLife:()=>novaLife.stop(),
+    getNovaLifeState:()=>novaLife.getState(),
+    wakeNovaLife:(reason="runtime_event")=>novaLife.wake(reason),
+    notifyNovaUserMessage:(characterId,conversationId,messageId)=>novaLife.notifyUserMessage(characterId,conversationId,messageId),
+    subscribeNovaLifeState:listener=>novaLife.subscribe(listener),
     async start(){
       await characterManager.initialize();
       try{await conversationManager.getActiveConversation(await characterManager.getActiveCharacter().then(character=>character.id));}
@@ -455,7 +478,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       await moduleManager.startAll();
       runtimeStatus="running";
     },
-    async stop(){try{semanticMemoryDeduplicator.stop();retrievalIndexer?.stop();await moduleManager.stopAll();}finally{runtimeStatus="stopped";}},
+    async stop(){try{await novaLife.stop();semanticMemoryDeduplicator.stop();retrievalIndexer?.stop();await moduleManager.stopAll();}finally{runtimeStatus="stopped";}},
     diagnostics:snapshot,
     recordDiagnosticError:(source,code,message,metadata)=>diagnosticsStore.recordError(source,code,message,metadata),
     invoke:request=>broker.execute({request,credential:characterCredential}),
@@ -573,6 +596,24 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       const character=await characterManager.setActiveCharacter(id);
       await conversationManager.getActiveConversation(character.id);
       return character;
+    },
+    startNovaLife:(characterId,conversationId)=>novaLife.start(characterId,conversationId),
+    stopNovaLife:()=>novaLife.stop(),
+    getNovaLifeState:()=>novaLife.getState(),
+    wakeNovaLife:(reason="runtime_event")=>novaLife.wake(reason),
+    notifyNovaUserMessage:(characterId,conversationId,messageId)=>novaLife.notifyUserMessage(characterId,conversationId,messageId),
+    subscribeNovaLifeState:listener=>novaLife.subscribe(listener),
+    appendConversationUserMessage:async(characterId,conversationId,text)=>{
+      const normalized=text.trim();
+      if(!normalized)throw new Error("Conversation user message must not be empty.");
+      const conversation=await conversationManager.getConversation(characterId,conversationId);
+      if(!conversation)throw new Error("Conversation was not found.");
+      const message:ChatMessage={
+        id:"user:"+Date.now().toString(36)+":"+conversation.messages.length,
+        role:"user",
+        content:normalized
+      };
+      return conversationManager.updateConversation(characterId,conversationId,{messages:[...conversation.messages,message]});
     },
     createConversation:(characterId,input)=>conversationManager.createConversation(characterId,input),
     listConversations:characterId=>conversationManager.listConversations(characterId),
