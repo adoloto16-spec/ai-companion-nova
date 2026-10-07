@@ -457,12 +457,6 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   };
 
   return {
-    startNovaLife:(characterId,conversationId)=>novaLife.start(characterId,conversationId),
-    stopNovaLife:()=>novaLife.stop(),
-    getNovaLifeState:()=>novaLife.getState(),
-    wakeNovaLife:(reason="runtime_event")=>novaLife.wake(reason),
-    notifyNovaUserMessage:(characterId,conversationId,messageId)=>novaLife.notifyUserMessage(characterId,conversationId,messageId),
-    subscribeNovaLifeState:listener=>novaLife.subscribe(listener),
     async start(){
       await characterManager.initialize();
       try{await conversationManager.getActiveConversation(await characterManager.getActiveCharacter().then(character=>character.id));}
