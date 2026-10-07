@@ -95,6 +95,7 @@ async function main(){
   ok(built.includedCandidates.every(candidate=>candidate.source==="core_book"?candidate.role==="system":true),"Core Book candidates are system context");
   const coreBookMessage=built.messages.find(message=>message.content==="Nova identity");
   equal(coreBookMessage?.role,"system","Core Book message role is system");
+  equal(built.messages.filter(message=>message.content==="alpha"||message.content==="beta"||message.content==="latest").map(message=>message.role),["user","assistant","user"],"Conversation roles are preserved");
   equal(coreBookMessage?.metadata?.contextSource,"core_book","provenance source preserved");
   equal(built.messages.find(message=>message.content==="Nova identity")?.metadata?.contextReferenceId,"always","provenance reference preserved");
 
