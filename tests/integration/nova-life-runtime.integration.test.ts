@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {AgentDecisionProtocolError} from "../../core/src/agent-protocol";
 import {createFoundationRuntime} from "../../runtime/bootstrap/src/index";
 import type {AgentDecision,ChatMessage} from "../../contracts/src/index";
 import type {AgentCognitiveContext,AgentCognitiveDecisionProvider,AgentDecisionResult} from "../../core/src/agent-cognitive-controller";
@@ -21,7 +22,7 @@ class SequenceController implements AgentCognitiveDecisionProvider{
   async decide(context:AgentCognitiveContext):Promise<AgentDecisionResult>{
     this.contexts.push({...context,recentConversationMessages:context.recentConversationMessages.map(message=>({...message,...(message.metadata?{metadata:{...message.metadata}}:{})}))});
     const decision=this.decisions[Math.min(this.calls++,this.decisions.length-1)]!;
-    return {decision,outputMode:"tagged"};
+    return {decision,outputMode:"tagged",modelCalls:1};
   }
 }
 
@@ -38,7 +39,7 @@ class FailingOnceController extends SequenceController{
 }
 
 async function main(){
-  const proactive=new SequenceController([{action:"respond",result:"Привет! Я проснулась."}]);
+  const proactive=new SequenceController([{action:"respond",content:"Привет! Я проснулась."}]);
   const runtime=await createFoundationRuntime({agentCognitiveController:proactive});
   await runtime.start();
   try{
@@ -56,9 +57,9 @@ async function main(){
 
   const waitingController=new SequenceController([
     {action:"wait",waitMs:1},
-    {action:"respond",result:"Я снова проснулась."}
+    {action:"respond",content:"Я снова проснулась."}
   ]);
-  const waitingRuntime=await createFoundationRuntime({agentCognitiveController:waitingController});
+  const waitingRuntime=await createFoundationRuntime({agentCognitiveController:waitingController,novaLifeRuntime:{minimumWakeIntervalMs:1,maximumWakeIntervalMs:100}});
   await waitingRuntime.start();
   try{
     const character=await waitingRuntime.getActiveCharacter();
@@ -73,9 +74,9 @@ async function main(){
 
   const userController=new SequenceController([
     {action:"wait",waitMs:300000},
-    {action:"respond",result:"Получила твоё сообщение через Life Runtime."}
+    {action:"respond",content:"Получила твоё сообщение через Life Runtime."}
   ]);
-  const userRuntime=await createFoundationRuntime({agentCognitiveController:userController});
+  const userRuntime=await createFoundationRuntime({agentCognitiveController:userController,novaLifeRuntime:{minimumWakeIntervalMs:1,maximumWakeIntervalMs:300000}});
   await userRuntime.start();
   try{
     const character=await userRuntime.getActiveCharacter();
@@ -93,9 +94,9 @@ async function main(){
 
   const toolController=new SequenceController([
     {action:"tool_call",toolName:"browser.navigate",arguments:{url:"https://wikipedia.org"},callId:"browser-call-1"},
-    {action:"respond",result:"Инструмент выполнен, результат получен."}
+    {action:"respond",content:"Инструмент выполнен, результат получен."}
   ]);
-  const toolRuntime=await createFoundationRuntime({agentCognitiveController:toolController});
+  const toolRuntime=await createFoundationRuntime({agentCognitiveController:toolController,novaLifeRuntime:{minimumWakeIntervalMs:1}});
   await toolRuntime.start();
   try{
     const character=await toolRuntime.getActiveCharacter();
@@ -112,9 +113,9 @@ async function main(){
 
   const askController=new SequenceController([
     {action:"ask_user",question:"Какая информация нужна?"},
-    {action:"respond",result:"Теперь могу продолжить."}
+    {action:"respond",content:"Теперь могу продолжить."}
   ]);
-  const askRuntime=await createFoundationRuntime({agentCognitiveController:askController});
+  const askRuntime=await createFoundationRuntime({agentCognitiveController:askController,novaLifeRuntime:{minimumWakeIntervalMs:1}});
   await askRuntime.start();
   try{
     const character=await askRuntime.getActiveCharacter();
@@ -131,7 +132,7 @@ async function main(){
     assert.equal(askRuntime.getNovaLifeState().status,"waiting","Life remains on after the answer");
   }finally{await askRuntime.stop();}
 
-  const contextController=new SequenceController([{action:"respond",result:"Контекст собран."}]);
+  const contextController=new SequenceController([{action:"respond",content:"Контекст собран."}]);
   const contextRuntime=await createFoundationRuntime({agentCognitiveController:contextController});
   await contextRuntime.start();
   try{
@@ -167,9 +168,9 @@ async function main(){
 
   const offController=new SequenceController([
     {action:"wait",waitMs:20},
-    {action:"respond",result:"This must not run after OFF."}
+    {action:"respond",content:"This must not run after OFF."}
   ]);
-  const offRuntime=await createFoundationRuntime({agentCognitiveController:offController});
+  const offRuntime=await createFoundationRuntime({agentCognitiveController:offController,novaLifeRuntime:{minimumWakeIntervalMs:1,maximumWakeIntervalMs:100}});
   await offRuntime.start();
   try{
     const character=await offRuntime.getActiveCharacter();
@@ -183,10 +184,11 @@ async function main(){
     assert.equal((await offRuntime.getConversation(character.id,conversation.id))?.messages.length,0, "no proactive assistant result appears after OFF");
   }finally{await offRuntime.stop();}
 
-  const failing=new FailingOnceController(new Error("provider unavailable"),[{action:"respond",result:"Recovered after provider failure."}]);
+  const transientProviderError=Object.assign(new Error("provider unavailable"),{chatError:{requestId:"provider-failure-1",providerId:"fake-chat",retryable:true,details:{category:"network"}}});
+  const failing=new FailingOnceController(transientProviderError,[{action:"respond",content:"Recovered after provider failure."}]);
   const failingRuntime=await createFoundationRuntime({
     agentCognitiveController:failing,
-    novaLifeRuntime:{retryWakeMs:1}
+    novaLifeRuntime:{retryWakeMs:1,minimumWakeIntervalMs:1,maximumWakeIntervalMs:100}
   });
   await failingRuntime.start();
   try{
@@ -197,6 +199,27 @@ async function main(){
     assert.equal(failingRuntime.getNovaLifeState().status,"waiting","provider failure is isolated and Life retries in a controlled wake");
     assert.equal((await failingRuntime.getConversation(character.id,conversation.id))?.messages.at(-1)?.content,"Recovered after provider failure.","controlled retry can recover without restarting Nova");
   }finally{await failingRuntime.stop();}
+
+
+  const parserFailureController:AgentCognitiveDecisionProvider={
+    calls:0,
+    async decide(){
+      this.calls++;
+      throw new AgentDecisionProtocolError("Agent output must contain exactly one NOVA_ACTION block and no surrounding prose.");
+    }
+  };
+  const parserRuntime=await createFoundationRuntime({agentCognitiveController:parserFailureController});
+  await parserRuntime.start();
+  try{
+    const character=await parserRuntime.getActiveCharacter();
+    const conversation=await parserRuntime.getActiveConversation(character.id);
+    await parserRuntime.startNovaLife(character.id,conversation.id);
+    await sleep(50);
+    assert.equal(parserFailureController.calls,1,"parser failure creates exactly one LLM call in the bounded wake");
+    assert.equal(parserRuntime.getNovaLifeState().status,"waiting","parser failure does not enter automatic retry");
+    const diagnostics=(await parserRuntime.diagnostics()).recentErrors.filter(item=>item.code==="AGENT_DECISION_INVALID"||item.code==="NOVA_LIFE_ERROR");
+    assert.ok(diagnostics.length>0,"parser failure is visible in diagnostics");
+  }finally{await parserRuntime.stop();}
 
   const chatRuntime=await createFoundationRuntime();
   await chatRuntime.start();
