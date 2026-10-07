@@ -1,7 +1,7 @@
 import type {AgentDecision,AgentDecisionAction,AgentRun,AgentRunInput,AgentRunLimits,AgentState,AgentStep,ChatMessage,DiagnosticsStore,EventBus,SchemaValidator} from "../../contracts/src/index";
 import {AGENT_DEFAULT_LIMITS,STANDARD_SCHEMAS,StandardContractValidator,createEvent} from "../../contracts/src/index";
 import {AgentDecisionProtocolError} from "./agent-protocol";
-import {AgentModelCallLimitError} from "./agent-cognitive-controller";
+import {AgentModelCallLimitError,getAgentCognitiveErrorMetadata} from "./agent-cognitive-controller";
 import type {AgentCognitiveDecisionProvider,AgentCognitiveContext,AgentDecisionResult} from "./agent-cognitive-controller";
 import type {AgentActionExecutor,AgentActionExecution} from "./agent-action-executor";
 
@@ -83,7 +83,7 @@ export class AgentKernel{
     if(this.runs.has(id))throw new Error("Agent run already exists: "+id);
     const run:AgentRun={
       id,characterId:bounded(input.characterId,200),...(input.conversationId?{conversationId:bounded(input.conversationId,200)}:{}),goal:bounded(input.goal,4000),task:bounded(input.task,4000),wakeReason:bounded(input.wakeReason??"runtime_event",100),
-      state:"starting",status:"running",stepCount:0,modelCallCount:0,startedAt:now,updatedAt:now,limits,
+      state:"starting",status:"running",stepCount:0,attemptedStepCount:0,modelCallCount:0,startedAt:now,updatedAt:now,limits,
       ...(input.providerId?{providerId:input.providerId}:{}),...(input.model?{model:input.model}: {})
     };
     this.runs.set(id,run);this.steps.set(id,[]);this.runtimeContextMessages.set(id,[]);
@@ -105,6 +105,7 @@ export class AgentKernel{
 
     const control=this.controlFor(run);
     const stepIndex=run.stepCount+1,startedAt=this.clock();
+    run.attemptedStepCount=stepIndex;
     await this.setState(run,"thinking");
     await this.events?.publish(createEvent("AgentStepStarted",{runId:run.id,stepIndex},"agent-kernel",this.clock,run.id+":step-started:"+stepIndex));
 
@@ -130,11 +131,11 @@ export class AgentKernel{
       result=await this.options.cognitive.decide(context,{signal:control.controller.signal});
     }catch(error){
       if(error instanceof AgentDecisionProtocolError){
-        this.recordStep(run,stepIndex,startedAt,this.clock(),"failed","respond");
+        const metadata=getAgentCognitiveErrorMetadata(error);
+        run.modelCallCount+=metadata?.modelCalls??0;
         return this.fail(run,"AGENT_DECISION_INVALID","Agent decision parsing failed.",error,"protocol_model_output",stepIndex);
       }
       if(error instanceof AgentModelCallLimitError){
-        this.recordStep(run,stepIndex,startedAt,this.clock(),"failed","respond");
         return this.fail(run,"AGENT_MODEL_CALL_LIMIT_REACHED","Agent model-call budget reached.",error,"budget",stepIndex);
       }
       if(isAbortError(error)){
@@ -142,7 +143,11 @@ export class AgentKernel{
     if(liveState==="interrupted"||liveState==="paused")return this.clone(run);
         if(control.durationExceeded)return this.limitFailure(run,"AGENT_DURATION_LIMIT_REACHED","Agent duration limit reached.");
       }
-      this.diagnostics?.recordError("agent-kernel","AGENT_COGNITION_FAILED","Agent cognition failed.",{runId:run.id});
+      const metadata=getAgentCognitiveErrorMetadata(error);
+      run.modelCallCount+=metadata?.modelCalls??0;
+      this.diagnostics?.recordError("agent-kernel","AGENT_COGNITION_FAILED","Agent cognition failed.",{
+        runId:run.id,step:stepIndex??null,requestId:metadata?.requestId??null,outputMode:metadata?.outputMode??null
+      });
       return this.fail(run,"AGENT_COGNITION_FAILED","Agent cognition failed.",error);
     }
 
