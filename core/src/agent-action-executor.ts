@@ -33,7 +33,7 @@ export class DefaultAgentActionExecutor implements AgentActionExecutor{
     }
     switch(decision.action){
       case "respond":
-        return {outcome:"responded",nextState:"completed",summary:decision.result};
+        return {outcome:"responded",nextState:"completed",summary:decision.content};
       case "wait":
         return {outcome:"waiting",nextState:"waiting",summary:"wait:"+decision.waitMs,waitMs:decision.waitMs};
       case "ask_user":
