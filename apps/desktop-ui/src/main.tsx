@@ -1717,7 +1717,7 @@ function App(){
   const [conversations,setConversations]=React.useState<readonly Conversation[]>([]);
   const [activeConversation,setActiveConversation]=React.useState<Conversation|undefined>();
   const foundationRef=React.useRef<FoundationRuntime|undefined>(undefined);
-  const novaLifeSubscriptionRef=React.useRef<(()=>void)|undefined>();
+  const novaLifeSubscriptionRef=React.useRef<(()=>void)|undefined>(undefined);
   const providerConfigurationErrorRef=React.useRef<string|undefined>(undefined);
   const conversationLoadErrorRef=React.useRef<string|undefined>(undefined);
   const modelProfileLoadErrorRef=React.useRef<string|undefined>(undefined);
