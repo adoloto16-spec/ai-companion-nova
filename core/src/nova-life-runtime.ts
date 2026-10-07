@@ -220,6 +220,7 @@ export class NovaLifeRuntime{
         conversationId,
         goal:"Respond naturally as Nova within the current life context.",
         task,
+        wakeReason:request.reason,
         ...(providerId?{providerId}:{}),
         ...(model?{model}: {})
       };

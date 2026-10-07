@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import {AgentKernel} from "../../core/src/agent-kernel";
 import {parseStructuredDecision,parseTaggedDecision} from "../../core/src/agent-protocol";
 import {StandardContractValidator} from "../../contracts/src/index";
-import type {AgentDecision,AgentCognitiveContext,AgentCognitiveDecisionProvider,AgentDecisionResult,ChatMessage} from "../../contracts/src/index";
+import type {AgentDecision,ChatMessage} from "../../contracts/src/index";
+import type {AgentCognitiveContext,AgentCognitiveDecisionProvider,AgentDecisionResult} from "../../core/src/agent-cognitive-controller";
 
 function equal(actual:unknown,expected:unknown,message:string){assert.equal(actual,expected,message);}
 function ok(value:unknown,message:string){assert.ok(value,message);}

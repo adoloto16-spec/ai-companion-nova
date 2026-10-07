@@ -1,4 +1,4 @@
-import type {AgentDecision,AgentRun,AgentRunInput,AgentRunLimits,AgentState,AgentStep,ChatMessage,DiagnosticsStore,EventBus,SchemaValidator} from "../../contracts/src/index";
+import type {AgentDecision,AgentDecisionAction,AgentRun,AgentRunInput,AgentRunLimits,AgentState,AgentStep,ChatMessage,DiagnosticsStore,EventBus,SchemaValidator} from "../../contracts/src/index";
 import {AGENT_DEFAULT_LIMITS,STANDARD_SCHEMAS,StandardContractValidator,createEvent} from "../../contracts/src/index";
 import {AgentDecisionProtocolError} from "./agent-protocol";
 import type {AgentCognitiveDecisionProvider,AgentCognitiveContext} from "./agent-cognitive-controller";
@@ -81,7 +81,7 @@ export class AgentKernel{
     const now=this.clock(),id=input.id?.trim()||("agent-run:"+Date.now().toString(36)+":"+this.nextId++);
     if(this.runs.has(id))throw new Error("Agent run already exists: "+id);
     const run:AgentRun={
-      id,characterId:bounded(input.characterId,200),...(input.conversationId?{conversationId:bounded(input.conversationId,200)}:{}),goal:bounded(input.goal,4000),task:bounded(input.task,4000),
+      id,characterId:bounded(input.characterId,200),...(input.conversationId?{conversationId:bounded(input.conversationId,200)}:{}),goal:bounded(input.goal,4000),task:bounded(input.task,4000),wakeReason:bounded(input.wakeReason??"runtime_event",100),
       state:"starting",status:"running",stepCount:0,startedAt:now,updatedAt:now,limits,
       ...(input.providerId?{providerId:input.providerId}:{}),...(input.model?{model:input.model}: {})
     };
@@ -117,7 +117,7 @@ export class AgentKernel{
       const userResponse=this.pendingUserResponses.get(run.id);
       if(userResponse!==undefined)this.pendingUserResponses.delete(run.id);
       const context:AgentCognitiveContext={
-        runId:run.id,characterId:run.characterId,goal:run.goal,task:run.task,state:"thinking",stepIndex,
+        runId:run.id,characterId:run.characterId,goal:run.goal,task:run.task,state:"thinking",stepIndex,wakeReason:run.wakeReason,
         ...(run.workingSummary?{workingSummary:run.workingSummary}:{}),
         ...(run.lastAction?{lastAction:run.lastAction}:{}),...(run.lastOutcome?{lastOutcome:run.lastOutcome}:{}),
         ...(run.conversationId?{conversationId:run.conversationId}:{}),
@@ -149,6 +149,7 @@ export class AgentKernel{
     await this.events?.publish(createEvent("AgentDecisionMade",{runId:run.id,stepIndex,action:result.decision.action,outputMode:result.outputMode},"agent-kernel",this.clock,run.id+":decision:"+stepIndex));
     await this.setState(run,"acting");
 
+    const decisionAction=result.decision.action;
     let action:AgentActionExecution;
     try{
       action=await this.options.actionExecutor.execute(run,result.decision,{signal:control.controller.signal});
@@ -160,7 +161,7 @@ export class AgentKernel{
       }
       const failures=(this.consecutiveFailures.get(run.id)??0)+1;
       this.consecutiveFailures.set(run.id,failures);
-      this.recordStep(run,stepIndex,startedAt,this.clock(),"failed");
+      this.recordStep(run,stepIndex,startedAt,this.clock(),"failed",decisionAction);
       if(failures>=run.limits.maxConsecutiveFailures)return this.limitFailure(run,"AGENT_FAILURE_LIMIT_REACHED","Agent consecutive failure limit reached.");
       await this.setState(run,"thinking");
       return this.clone(run);
@@ -273,9 +274,9 @@ export class AgentKernel{
     run.state=next;run.status=status(next);run.updatedAt=this.clock();
     await this.events?.publish(createEvent("AgentStateChanged",{runId:run.id,state:next,previousState:previous},"agent-kernel",this.clock,run.id+":state:"+next+":"+Date.now()));
   }
-  private recordStep(run:AgentRun,stepIndex:number,startedAt:string,completedAt:string,outcome:AgentStep["outcome"]){
+  private recordStep(run:AgentRun,stepIndex:number,startedAt:string,completedAt:string,outcome:AgentStep["outcome"],decisionType:AgentDecisionAction=run.lastAction??"respond"){
     const list=this.steps.get(run.id);if(!list)return;
-    list.push({stepIndex,startedAt,completedAt,decisionType:run.lastAction??"continue",outcome});
+    list.push({stepIndex,startedAt,completedAt,decisionType,outcome});
   }
   private async fail(run:AgentRun,code:string,reason:string,error?:unknown){
     if(TERMINAL.includes(run.state))return this.clone(run);
