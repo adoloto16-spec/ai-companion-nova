@@ -514,7 +514,7 @@ export interface EventPayloadMap{
   NovaLifeWakeStarted:{characterId:string;conversationId:string;wakeCount:number;reason:string;agentRunId:string};
   NovaLifeWakeCompleted:{characterId:string;conversationId:string;wakeCount:number;reason:string;agentRunId?:string;status:string};
   NovaLifeSleeping:{characterId:string;conversationId:string;nextWakeAt:string;reason:string};
-  NovaLifeError:{characterId?:string;conversationId?:string;reason:string;agentRunId?:string};
+  NovaLifeError:{characterId?:string;conversationId?:string;reason:string;agentRunId?:string;category?:string;wakeCount?:number;step?:number;provider?:string;model?:string};
 
   ChatRequestFailed:{requestId:string;conversationId?:string;providerId?:string;code:ChatError["code"]};
 }
