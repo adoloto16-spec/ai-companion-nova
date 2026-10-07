@@ -12,7 +12,8 @@ ok(source.includes("controller.regenerate("),"Regenerate must call the controlle
 ok(source.includes("controller.retry("),"Retry must call the controller retry path");
 ok(source.includes("const persistAfterAction"),"chat UI must centralize persistence after terminal actions");
 ok(source.includes("await onPersist();"),"terminal streaming actions must persist conversation once");
-ok(source.includes('const sending=mode==="chat"?snapshot.sending:agentSnapshot.sending;'),"chat/agent composer must derive disabled state from the active mode");
+ok(source.includes("const lifeActive=novaLifeState.status!==\"off\"&&novaLifeState.status!==\"stopping\";"),"composer must derive its Nova Life path from Life state");
+ok(source.includes("runtime.appendConversationUserMessage"),"Nova ON composer must route user messages through Conversation/Life Runtime");
 ok(source.includes("disabled={sending}"),"composer must disable while the active mode is running");
 ok(!source.includes("Thinking…"),"UI must render the live assistant message instead of a fake Thinking placeholder");
 ok(source.includes('snapshot.status==="streaming"'),"streaming state controls must be state-driven");
