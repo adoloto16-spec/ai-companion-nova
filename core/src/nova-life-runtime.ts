@@ -48,7 +48,7 @@ export interface NovaLifeRuntimeOptions{
   minimumWakeIntervalMs?:number|(()=>number);
   maximumWakeIntervalMs?:number|(()=>number);
   retryWakeMs?:number|(()=>number);
-  idleWakeMs?:number|(()=>number);
+  postResponseWakeMs?:number|(()=>number);
 }
 
 type WakeRequest={reason:NovaLifeWakeReason;messageId?:string};
@@ -63,7 +63,7 @@ export class NovaLifeRuntime{
   private readonly eventUnsubscribers:Array<()=>void>=[];
   private readonly clock:()=>string;
   private readonly retryWakeMs:number|(()=>number);
-  private readonly idleWakeMs:number|(()=>number);
+  private readonly postResponseWakeMs:number|(()=>number);
   private state:NovaLifeState={status:"off",wakeCount:0};
   private timer?:ReturnType<typeof setTimeout>;
   private timerEpoch=0;
@@ -79,7 +79,7 @@ export class NovaLifeRuntime{
   constructor(private readonly options:NovaLifeRuntimeOptions){
     this.clock=options.clock?.now?()=>options.clock!.now():()=>new Date().toISOString();
     this.retryWakeMs=options.retryWakeMs??10000;
-    this.idleWakeMs=options.idleWakeMs??0;
+    this.postResponseWakeMs=options.postResponseWakeMs??30000;
   }
 
   getState():NovaLifeState{return cloneState(this.state);}
@@ -394,9 +394,8 @@ export class NovaLifeRuntime{
       }
       const assistant=await this.appendAssistant(run.id,result,false);
       await this.extractMemoryForUserMessage(run,messageId,assistant);
-      const idleWakeMs=typeof this.idleWakeMs==="function"?this.idleWakeMs():this.idleWakeMs;
-      if(typeof idleWakeMs==="number"&&Number.isFinite(idleWakeMs)&&idleWakeMs>0)this.scheduleWake(idleWakeMs,"scheduled_wake");
-      else this.setWaiting();
+      const postResponseWakeMs=this.resolveDelay(this.postResponseWakeMs,30000);
+      this.scheduleWake(postResponseWakeMs,"scheduled_wake");
       return;
     }
     if(run.lastAction==="ask_user"){
@@ -479,7 +478,7 @@ export class NovaLifeRuntime{
     switch(reason){
       case "user_message":return "Respond to the latest user message using the current conversation, memory, Core Book, retrieval, and life state. Do not ask for information that is already reasonably available."; 
       case "wait_completed":return "Re-evaluate the current life context after the scheduled wait. Speak only when there is a useful user-facing reason; otherwise choose wait."; 
-      case "scheduled_wake":return "Re-evaluate the current life context at the scheduled wake. Speak only when there is a useful user-facing reason; otherwise choose wait."; 
+      case "scheduled_wake":return "Nova has awakened for another life cognition cycle. Do not speak to the user merely because the scheduler woke you. If there is nothing useful or natural to say, choose wait. If there is a useful reason, respond. Use available tools when appropriate."; 
       case "retry":return "Retry the current life cognition after a controlled failure. Re-check the current context before deciding what to do."; 
       case "startup":{
         const proactive=this.options.proactiveEnabled?.()!==false&&this.options.allowProactiveMessages?.()!==false;
