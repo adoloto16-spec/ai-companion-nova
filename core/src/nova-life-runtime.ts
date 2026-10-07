@@ -379,7 +379,7 @@ export class NovaLifeRuntime{
       return;
     }
     if(run.lastAction==="respond"){
-      if(!this.allowsProactive(reason)){this.setWaiting();return;}
+      if(run.stepCount<=1&&!this.allowsProactive(reason)){this.setWaiting();return;}
       const result=run.workingSummary?.trim();
       if(!result){
         this.state={...this.state,status:"error",lastOutcome:"Cognition finished without a user-facing result."};
