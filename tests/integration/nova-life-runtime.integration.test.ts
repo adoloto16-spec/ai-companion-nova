@@ -38,7 +38,7 @@ class FailingOnceController extends SequenceController{
 }
 
 async function main(){
-  const proactive=new SequenceController([{action:"finish",result:"Привет! Я проснулась."}]);
+  const proactive=new SequenceController([{action:"respond",result:"Привет! Я проснулась."}]);
   const runtime=await createFoundationRuntime({agentCognitiveController:proactive});
   await runtime.start();
   try{
@@ -46,7 +46,7 @@ async function main(){
     const conversation=await runtime.getActiveConversation(character.id);
     await runtime.startNovaLife(character.id,conversation.id);
     const life=runtime.getNovaLifeState();
-    assert.equal(life.status,"waiting","finish completes the burst but keeps Nova alive");
+    assert.equal(life.status,"waiting",respond completes the burst but keeps Nova alive");
     assert.equal(life.wakeCount,1,"turning Nova on creates the first wake");
     assert.equal(proactive.calls,1,"first wake creates one bounded cognitive burst");
     const updated=await runtime.getConversation(character.id,conversation.id);
@@ -56,7 +56,7 @@ async function main(){
 
   const waitingController=new SequenceController([
     {action:"wait",waitMs:1},
-    {action:"finish",result:"Я снова проснулась."}
+    {action:"respond",result:"Я снова проснулась."}
   ]);
   const waitingRuntime=await createFoundationRuntime({agentCognitiveController:waitingController});
   await waitingRuntime.start();
@@ -73,7 +73,7 @@ async function main(){
 
   const userController=new SequenceController([
     {action:"wait",waitMs:300000},
-    {action:"finish",result:"Получила твоё сообщение через Life Runtime."}
+    {action:"respond",result:"Получила твоё сообщение через Life Runtime."}
   ]);
   const userRuntime=await createFoundationRuntime({agentCognitiveController:userController});
   await userRuntime.start();
@@ -91,9 +91,28 @@ async function main(){
     assert.equal(userRuntime.getNovaLifeState().wakeCount,2,"user message creates a new bounded wake");
   }finally{await userRuntime.stop();}
 
+  const toolController=new SequenceController([
+    {action:"tool_call",toolName:"browser.navigate",arguments:{url:"https://wikipedia.org"},callId:"browser-call-1"},
+    {action:"respond",result:"Инструмент выполнен, результат получен."}
+  ]);
+  const toolRuntime=await createFoundationRuntime({agentCognitiveController:toolController});
+  await toolRuntime.start();
+  try{
+    const character=await toolRuntime.getActiveCharacter();
+    const conversation=await toolRuntime.getActiveConversation(character.id);
+    await toolRuntime.appendConversationUserMessage(character.id,conversation.id,"Проверь доступность Wikipedia и ответь.");
+    await toolRuntime.startNovaLife(character.id,conversation.id);
+    await waitFor(()=>toolController.calls>=2);
+    const secondContext=toolController.contexts[1]?.recentConversationMessages??[];
+    assert.equal(secondContext.some(message=>message.role==="tool"&&message.toolCallId==="browser-call-1"),true,"next cognition receives ActionBroker tool result");
+    assert.equal(toolController.contexts[1]?.wakeReason,"startup","startup wake reason remains explicit");
+    assert.equal((await toolRuntime.getConversation(character.id,conversation.id))?.messages.at(-1)?.content,"Инструмент выполнен, результат получен.","respond decision is persisted as normal assistant message");
+    assert.equal(toolRuntime.getNovaLifeState().status,"waiting","Life remains on after tool-driven response");
+  }finally{await toolRuntime.stop();}
+
   const askController=new SequenceController([
     {action:"ask_user",question:"Какая информация нужна?"},
-    {action:"finish",result:"Теперь могу продолжить."}
+    {action:"respond",result:"Теперь могу продолжить."}
   ]);
   const askRuntime=await createFoundationRuntime({agentCognitiveController:askController});
   await askRuntime.start();
@@ -112,7 +131,7 @@ async function main(){
     assert.equal(askRuntime.getNovaLifeState().status,"waiting","Life remains on after the answer");
   }finally{await askRuntime.stop();}
 
-  const contextController=new SequenceController([{action:"finish",result:"Контекст собран."}]);
+  const contextController=new SequenceController([{action:"respond",result:"Контекст собран."}]);
   const contextRuntime=await createFoundationRuntime({agentCognitiveController:contextController});
   await contextRuntime.start();
   try{
@@ -148,7 +167,7 @@ async function main(){
 
   const offController=new SequenceController([
     {action:"wait",waitMs:20},
-    {action:"finish",result:"This must not run after OFF."}
+    {action:"respond",result:"This must not run after OFF."}
   ]);
   const offRuntime=await createFoundationRuntime({agentCognitiveController:offController});
   await offRuntime.start();
@@ -164,7 +183,7 @@ async function main(){
     assert.equal((await offRuntime.getConversation(character.id,conversation.id))?.messages.length,0, "no proactive assistant result appears after OFF");
   }finally{await offRuntime.stop();}
 
-  const failing=new FailingOnceController(new Error("provider unavailable"),[{action:"finish",result:"Recovered after provider failure."}]);
+  const failing=new FailingOnceController(new Error("provider unavailable"),[{action:"respond",result:"Recovered after provider failure."}]);
   const failingRuntime=await createFoundationRuntime({
     agentCognitiveController:failing,
     novaLifeRuntime:{retryWakeMs:1}
