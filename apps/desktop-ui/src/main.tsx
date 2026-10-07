@@ -2,7 +2,6 @@ import React from "react";
 import {createRoot} from "react-dom/client";
 import {invoke} from "@tauri-apps/api/core";
 import {ChatSessionController,ConversationSession,InMemoryCharacterStore} from "../../../core/src/index";
-import {AgentChatController} from "./agent-chat";
 
 import {startFoundationRuntime,testProviderPresetConfiguration,listProviderModels} from "../../../runtime/bootstrap/src/index";
 import type {FoundationRuntime} from "../../../runtime/bootstrap/src/index";
@@ -20,7 +19,7 @@ import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
-  type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem, type ErrorDiagnostic,
+  type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem, type ErrorDiagnostic, type NovaLifeState,
   defaultAppSettings, validateAppSettings, StandardContractValidator,
   type ProviderPreset, type ProviderPresetStoreState, type ModelInfo
 } from "../../../contracts/src/index";
@@ -135,169 +134,167 @@ function ConversationSwitcher({conversations,activeConversationId,sending,onSele
   </div>;
 }
 
-function ChatView({controller,runtime,character,modelProfile,conversations,activeConversation,onPersist,onPersistAgentConversation,onClear,onSelectConversation,onCreateConversation,onRenameConversation,onDeleteConversation}:{
+function lifeStatusLabel(status:NovaLifeState["status"]):string{
+  switch(status){
+    case "off":return "OFF";
+    case "starting":return "Starting";
+    case "awake":return "Awake";
+    case "thinking":return "Thinking";
+    case "acting":return "Acting";
+    case "waiting":return "Waiting";
+    case "sleeping":return "Sleeping";
+    case "stopping":return "Stopping";
+    case "error":return "Error";
+  }
+}
+
+function ChatView({controller,runtime,character,modelProfile,conversations,activeConversation,novaLifeState,onPersist,onClear,onRefreshConversation,onSelectConversation,onCreateConversation,onRenameConversation,onDeleteConversation}:{
   controller:ChatSessionController;
   runtime:FoundationRuntime;
   character:Character;
   modelProfile?:ModelProfile;
   conversations:readonly Conversation[];
   activeConversation:Conversation;
+  novaLifeState:NovaLifeState;
   onPersist:()=>Promise<void>;
-  onPersistAgentConversation:(characterId:string,conversationId:string,messages:readonly import("../../../contracts/src/index").ChatMessage[])=>Promise<Conversation>;
   onClear:()=>Promise<void>;
+  onRefreshConversation:()=>Promise<void>;
   onSelectConversation:(id:string)=>Promise<void>;
   onCreateConversation:()=>Promise<void>;
   onRenameConversation:(conversation:Conversation)=>Promise<void>;
   onDeleteConversation:(conversation:Conversation)=>Promise<void>;
 }){
-  const [mode,setMode]=React.useState<"chat"|"agent">("chat");
   const [snapshot,setSnapshot]=React.useState(()=>controller.getSnapshot());
   const [input,setInput]=React.useState("");
   const [editingId,setEditingId]=React.useState<string|undefined>();
   const [editingText,setEditingText]=React.useState("");
   const [persistenceError,setPersistenceError]=React.useState("");
   const bottomRef=React.useRef<HTMLDivElement|null>(null);
-  const agentController=React.useMemo(
-    ()=>new AgentChatController(runtime,character.id,activeConversation,onPersistAgentConversation),
-    [runtime,character.id,activeConversation.id,onPersistAgentConversation]
-  );
-  const [agentSnapshot,setAgentSnapshot]=React.useState(()=>agentController.getSnapshot());
+  const lifeActive=novaLifeState.status!=="off"&&novaLifeState.status!=="stopping";
 
   React.useEffect(()=>{setSnapshot(controller.getSnapshot());return controller.subscribe(setSnapshot)},[controller]);
-  React.useEffect(()=>{setAgentSnapshot(agentController.getSnapshot());return agentController.subscribe(setAgentSnapshot)},[agentController]);
+
   React.useEffect(()=>{
-    agentController.replaceConversation(activeConversation);
-  },[agentController,activeConversation.id,activeConversation.updatedAt]);
-  React.useEffect(()=>{
-    const messages=mode==="chat"?snapshot.messages:agentSnapshot.messages;
     bottomRef.current?.scrollIntoView({block:"end"});
-    void messages;
-  },[mode,snapshot.messages.map(message=>message.content).join("\u0000"),agentSnapshot.messages.map(message=>message.content).join("\u0000"),snapshot.status,agentSnapshot.status]);
+  },[snapshot.messages.map(message=>message.content).join("\u0000"),snapshot.status]);
+
+  React.useEffect(()=>{
+    if(!lifeActive||novaLifeState.wakeCount===0)return;
+    if(novaLifeState.status!=="waiting"&&novaLifeState.status!=="sleeping"&&novaLifeState.status!=="error")return;
+    void onRefreshConversation().catch(error=>{
+      setPersistenceError(error instanceof Error?error.message:"Conversation could not be refreshed.");
+    });
+  },[lifeActive,novaLifeState.wakeCount,novaLifeState.status,onRefreshConversation]);
 
   const persistAfterAction=React.useCallback(async(result:{status:string})=>{
     if(result.status==="rejected")return;
-    try{await onPersist();}
-    catch(error){setPersistenceError(error instanceof Error?error.message:"Conversation could not be saved.");}
+    try{await onPersist()}
+    catch(error){setPersistenceError(error instanceof Error?error.message:"Conversation could not be saved.")}
   },[onPersist]);
 
   const send=React.useCallback(async()=>{
     setPersistenceError("");
-    if(mode==="agent"){
-      const value=input.trim();
-      const result=agentSnapshot.status==="waiting"
-        ?await agentController.resume(value||undefined)
-        :await agentController.submit(input,modelProfile?.providerId,modelProfile?.model??runtime.getActiveChatModel());
-      if(result.status!=="rejected")setInput("");
+    const value=input.trim();
+    if(!value)return;
+
+    if(lifeActive){
+      try{
+        await runtime.appendConversationUserMessage(character.id,activeConversation.id,value);
+        setInput("");
+        await onRefreshConversation();
+      }catch(error){
+        setPersistenceError(error instanceof Error?error.message:"Message could not be sent.");
+      }
       return;
     }
-    const result=await controller.submit(input,runtime.getActiveChatModel());
+
+    const result=await controller.submit(value,runtime.getActiveChatModel());
     if(result.status!=="rejected")setInput("");
     await persistAfterAction(result);
-  },[mode,input,agentSnapshot.status,agentController,modelProfile,controller,runtime,persistAfterAction]);
+  },[activeConversation.id,character.id,controller,input,lifeActive,onRefreshConversation,persistAfterAction,runtime]);
 
   const stop=React.useCallback(async()=>{
+    if(lifeActive)return;
     setPersistenceError("");
-    if(mode==="agent"){
-      await agentController.interrupt();
-      return;
-    }
     const result=await controller.stop();
     await persistAfterAction(result);
-  },[mode,agentController,controller,persistAfterAction]);
+  },[controller,lifeActive,persistAfterAction]);
 
   const continueGeneration=React.useCallback(async()=>{
+    if(lifeActive)return;
     setPersistenceError("");
     const result=await controller.continue(runtime.getActiveChatModel());
     await persistAfterAction(result);
-  },[controller,runtime,persistAfterAction]);
+  },[controller,lifeActive,persistAfterAction,runtime]);
 
   const regenerate=React.useCallback(async()=>{
+    if(lifeActive)return;
     setPersistenceError("");
     const result=await controller.regenerate(runtime.getActiveChatModel());
     await persistAfterAction(result);
-  },[controller,runtime,persistAfterAction]);
+  },[controller,lifeActive,persistAfterAction,runtime]);
 
   const retry=React.useCallback(async()=>{
+    if(lifeActive)return;
     setPersistenceError("");
     const result=await controller.retry(runtime.getActiveChatModel());
     await persistAfterAction(result);
-  },[controller,runtime,persistAfterAction]);
+  },[controller,lifeActive,persistAfterAction,runtime]);
 
   const clear=React.useCallback(async()=>{
+    if(lifeActive)return;
     setPersistenceError("");
-    try{await onClear();}
-    catch(error){setPersistenceError(error instanceof Error?error.message:"Conversation could not be cleared.");}
-  },[onClear]);
+    try{await onClear()}
+    catch(error){setPersistenceError(error instanceof Error?error.message:"Conversation could not be cleared.")}
+  },[lifeActive,onClear]);
 
   const editMessage=React.useCallback(async(id:string)=>{
-    if(mode!=="chat")return;
+    if(lifeActive)return;
     setPersistenceError("");
     try{
       controller.editMessage(id,editingText);
       await onPersist();
       setEditingId(undefined);setEditingText("");
-    }catch(error){setPersistenceError(error instanceof Error?error.message:"Message could not be edited.");}
-  },[mode,controller,editingText,onPersist]);
+    }catch(error){setPersistenceError(error instanceof Error?error.message:"Message could not be edited.")}
+  },[controller,editingText,lifeActive,onPersist]);
 
   const deleteMessage=React.useCallback(async(id:string)=>{
-    if(mode!=="chat")return;
+    if(lifeActive)return;
     if(!window.confirm("Delete this message?"))return;
     setPersistenceError("");
-    try{controller.deleteMessage(id);await onPersist();}
-    catch(error){setPersistenceError(error instanceof Error?error.message:"Message could not be deleted.");}
-  },[mode,controller,onPersist]);
+    try{controller.deleteMessage(id);await onPersist()}
+    catch(error){setPersistenceError(error instanceof Error?error.message:"Message could not be deleted.")}
+  },[controller,lifeActive,onPersist]);
 
-  const messages=mode==="chat"?snapshot.messages:agentSnapshot.messages;
-  const sending=mode==="chat"?snapshot.sending:agentSnapshot.sending;
-  const agentWaiting=mode==="agent"&&agentSnapshot.status==="waiting";
-  const agentNeedsAnswer=agentWaiting&&Boolean(agentSnapshot.question);
+  const messages=snapshot.messages;
+  const sending=snapshot.sending;
+  const lastAssistant=[...messages].reverse().find(message=>message.role==="assistant");
+  const lastAssistantStatus=lastAssistant?messageStreamStatus(lastAssistant):undefined;
+  const showContinue=!lifeActive&&snapshot.status==="interrupted"&&lastAssistantStatus==="interrupted"&&!snapshot.sending;
+  const showRegenerate=!lifeActive&&(snapshot.status==="completed"||snapshot.status==="interrupted")&&(lastAssistantStatus==="complete"||lastAssistantStatus==="interrupted")&&!snapshot.sending;
+  const showRetry=!lifeActive&&snapshot.status==="error"&&!snapshot.sending;
+  const lifeLabel=lifeActive?"Nova is "+lifeStatusLabel(novaLifeState.status).toLowerCase():"Nova is OFF";
   const onKeyDown=(event:React.KeyboardEvent<HTMLTextAreaElement>)=>{
     if(event.key==="Enter"&&!event.shiftKey){
       event.preventDefault();
       if(!sending)void send();
     }
   };
-  const lastAssistant=[...messages].reverse().find(message=>message.role==="assistant");
-  const lastAssistantStatus=lastAssistant?messageStreamStatus(lastAssistant):undefined;
-  const showContinue=mode==="chat"&&snapshot.status==="interrupted"&&lastAssistantStatus==="interrupted"&&!snapshot.sending;
-  const showRegenerate=mode==="chat"&&(snapshot.status==="completed"||snapshot.status==="interrupted")&&(lastAssistantStatus==="complete"||lastAssistantStatus==="interrupted")&&!snapshot.sending;
-  const showRetry=mode==="chat"&&snapshot.status==="error"&&!snapshot.sending;
-  const statusLabel=agentSnapshot.status==="thinking"?"Nova is thinking…"
-    :agentSnapshot.status==="acting"?"Nova is acting on the current step…"
-    :agentSnapshot.status==="starting"?"Starting Agent Run…"
-    :agentSnapshot.status==="waiting"?"Agent Run is waiting."
-    :agentSnapshot.status==="completed"?"Agent Run completed."
-    :agentSnapshot.status==="interrupted"?"Agent Run interrupted."
-    :agentSnapshot.status==="failed"?"Agent Run failed."
-    :"Agent is ready.";
 
   return <section className="chat-panel">
     <div className="chat-toolbar">
       <div>
-        <h2>{mode==="agent"?"Agent":"Chat"} · {character.name}</h2>
-        <p className="chat-subtitle">{activeConversation.title} · persistent and scoped to {character.name}.</p>
+        <h2>Chat · {character.name}</h2>
+        <p className="chat-subtitle">{activeConversation.title} · {lifeLabel}.</p>
       </div>
       <div className="chat-toolbar-actions">
-        <div className="chat-mode-switcher" role="group" aria-label="Chat mode">
-          <button type="button" className={mode==="chat"?"chat-mode-button active":"chat-mode-button"} onClick={()=>setMode("chat")} disabled={sending}>Chat</button>
-          <button type="button" className={mode==="agent"?"chat-mode-button active":"chat-mode-button"} onClick={()=>setMode("agent")} disabled={sending}>Agent</button>
-        </div>
-        {((mode==="chat"&&snapshot.status==="streaming")||(mode==="agent"&&sending))&&<button type="button" onClick={()=>void stop()}>Stop</button>}
+        {((!lifeActive&&snapshot.status==="streaming")||false)&&<button type="button" onClick={()=>void stop()}>Stop</button>}
         {showContinue&&<button type="button" onClick={()=>void continueGeneration()}>Continue</button>}
         {showRegenerate&&<button type="button" onClick={()=>void regenerate()}>Regenerate</button>}
         {showRetry&&<button type="button" onClick={()=>void retry()}>Retry</button>}
-        {mode==="agent"&&agentWaiting&&!agentSnapshot.question&&<button type="button" onClick={()=>void agentController.resume()}>Resume</button>}
-        <button type="button" onClick={()=>void clear()} disabled={sending||messages.length===0}>Clear</button>
+        <button type="button" onClick={()=>void clear()} disabled={lifeActive||sending||messages.length===0}>Clear</button>
       </div>
     </div>
-
-    {mode==="agent"&&<div className="agent-status" role="status" aria-live="polite">
-      <strong>{statusLabel}</strong>
-      {agentSnapshot.runId&&<span> · run {agentSnapshot.runId}</span>}
-      {agentSnapshot.stepCount>0&&<span> · step {agentSnapshot.stepCount}</span>}
-      {agentSnapshot.error&&<div className="chat-error" role="alert">{agentSnapshot.error}</div>}
-      {agentSnapshot.result&&agentSnapshot.status==="completed"&&<div className="agent-result-note">Final result saved to the conversation.</div>}
-    </div>}
 
     <ConversationSwitcher
       conversations={conversations}
@@ -310,10 +307,10 @@ function ChatView({controller,runtime,character,modelProfile,conversations,activ
     />
 
     <div className="message-list" aria-live="polite">
-      {messages.length===0&&<div className="empty-chat">{mode==="agent"?"Describe a task for Nova to work through.":"Write a message to start the conversation."}</div>}
+      {messages.length===0&&<div className="empty-chat">Write a message to start the conversation.</div>}
       {messages.map((message,index)=>{
         const state=messageStreamStatus(message);
-        const editable=mode==="chat"&&(message.role==="user"||message.role==="assistant");
+        const editable=!lifeActive&&(message.role==="user"||message.role==="assistant");
         const isEditing=editingId===message.id;
         return <article className={"chat-message "+message.role} key={message.id??"message-"+index}>
           <div className="message-author">{message.role==="user"?"You":character.name}</div>
@@ -336,21 +333,50 @@ function ChatView({controller,runtime,character,modelProfile,conversations,activ
       })}
       <div ref={bottomRef}/>
     </div>
+
     <form className="chat-composer" onSubmit={event=>{event.preventDefault();if(!sending)void send()}}>
       <textarea value={input} onChange={event=>setInput(event.target.value)}
         onKeyDown={onKeyDown}
-        placeholder={mode==="agent"?(agentNeedsAnswer?"Answer Nova…":"Describe a task for Nova…"):"Write a message…"}
-        aria-label={mode==="agent"?"Agent task or answer":"Chat message"}
+        placeholder={lifeActive?"Write a message for Nova…":"Write a message…"}
+        aria-label="Chat message"
         disabled={sending}
         rows={2}/>
-      <button type="submit" disabled={sending||input.trim().length===0||agentNeedsAnswer&&input.trim().length===0}>
-        {mode==="agent"?(agentNeedsAnswer?"Continue":"Send to Agent"):(sending?"Streaming…":"Send")}
+      <button type="submit" disabled={sending||input.trim().length===0}>
+        {sending?"Streaming…":"Send"}
       </button>
     </form>
     <p className="chat-hint">Enter to send · Shift+Enter for a new line</p>
-    {mode==="chat"&&snapshot.error&&<div className="chat-error" role="alert">{snapshot.error}</div>}
+    {!lifeActive&&snapshot.error&&<div className="chat-error" role="alert">{snapshot.error}</div>}
     {persistenceError&&<div className="chat-error" role="alert">{persistenceError}</div>}
   </section>;
+}
+
+function NovaLifeControl({state,busy,character,conversation,chatBusy,error,onToggle}:{
+  state:NovaLifeState;
+  busy:boolean;
+  character?:Character;
+  conversation?:Conversation;
+  chatBusy:boolean;
+  error:string;
+  onToggle:()=>Promise<void>;
+}){
+  const on=state.status!=="off";
+  const disabled=busy||!character||!conversation||(!on&&chatBusy);
+  return <div className="nova-life-control">
+    <button
+      type="button"
+      className={on?"nova-life-toggle on":"nova-life-toggle"}
+      aria-pressed={on}
+      disabled={disabled}
+      onClick={()=>void onToggle()}>
+      {on?"Nova: ON":"Nova: OFF"}
+    </button>
+    <span className="nova-life-state" aria-live="polite">
+      Status: {lifeStatusLabel(state.status)}
+      {state.nextWakeAt&&<> · next wake {new Date(state.nextWakeAt).toLocaleTimeString()}</>}
+    </span>
+    {error&&<span className="chat-error" role="alert">{error}</span>}
+  </div>;
 }
 
 function CharactersView({characters,activeCharacter,onSelect,onCreate,onRename,onDelete}:{
@@ -1648,6 +1674,9 @@ function credentialSavedEntries(
 function App(){
   const [view,setView]=React.useState<"chat"|"characters"|"memory"|"core-book"|"model-profile"|"settings"|"diagnostics">("chat");
   const [runtime,setRuntime]=React.useState<RuntimeDiagnostics>(preview);
+  const [novaLifeState,setNovaLifeState]=React.useState<NovaLifeState>({status:"off",wakeCount:0});
+  const [novaLifeBusy,setNovaLifeBusy]=React.useState(false);
+  const [novaLifeError,setNovaLifeError]=React.useState("");
   const [saving,setSaving]=React.useState(false);
   const [startupStatus,setStartupStatus]=React.useState<"initializing"|"ready"|"error">("initializing");
   const [startupError,setStartupError]=React.useState("");
@@ -1658,6 +1687,7 @@ function App(){
   const [conversations,setConversations]=React.useState<readonly Conversation[]>([]);
   const [activeConversation,setActiveConversation]=React.useState<Conversation|undefined>();
   const foundationRef=React.useRef<FoundationRuntime|undefined>(undefined);
+  const novaLifeSubscriptionRef=React.useRef<(()=>void)|undefined>();
   const providerConfigurationErrorRef=React.useRef<string|undefined>(undefined);
   const conversationLoadErrorRef=React.useRef<string|undefined>(undefined);
   const modelProfileLoadErrorRef=React.useRef<string|undefined>(undefined);
@@ -1850,6 +1880,20 @@ function App(){
     setChatController(loaded.controller);
   },[controllerForConversation,loadModelProfile]);
 
+  const refreshActiveConversation=React.useCallback(async()=>{
+    const foundation=foundationRef.current;
+    const characterId=activeCharacter?.id;
+    const conversationId=activeConversation?.id;
+    if(!foundation||!characterId||!conversationId)return;
+    const conversation=await foundation.getConversation(characterId,conversationId);
+    if(!conversation)return;
+    const profile=await loadModelProfile(characterId);
+    setActiveConversation(conversation);
+    setConversations(await foundation.listConversations(characterId));
+    setActiveModelProfile(profile);
+    setChatController(controllerForConversation(conversation,profile));
+  },[activeCharacter?.id,activeConversation?.id,controllerForConversation,loadModelProfile]);
+
   const addConfigurationLoadError=React.useCallback((diagnostics:RuntimeDiagnostics):RuntimeDiagnostics=>{
     const recentErrors=[...diagnostics.recentErrors];
     const providerMessage=providerConfigurationErrorRef.current;
@@ -1900,6 +1944,9 @@ function App(){
       activeProviderPresetId:presetState.activePresetId??undefined
     });
     foundationRef.current=next;
+    novaLifeSubscriptionRef.current?.();
+    novaLifeSubscriptionRef.current=next.subscribeNovaLifeState(setNovaLifeState);
+    setNovaLifeError("");
     setRuntime(await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(await next.diagnostics())));
     await syncCharacters(next);
     setRuntime(await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(await next.diagnostics())));
@@ -1959,7 +2006,7 @@ function App(){
         if(active){setStartupStatus("error");setStartupError(safeStartupError(error));setRuntime({...preview,runtimeStatus:"error",coreStatus:"error"});}
       }
     })();
-    return ()=>{active=false;if(timer)clearInterval(timer);void foundationRef.current?.stop();foundationRef.current=undefined};
+    return ()=>{active=false;if(timer)clearInterval(timer);novaLifeSubscriptionRef.current?.();novaLifeSubscriptionRef.current=undefined;void foundationRef.current?.stop();foundationRef.current=undefined};
   },[configurationStore,credentialProfileStore,providerPresetStore,credentialStore,refreshRuntime]);
 
   const selectCharacter=React.useCallback(async(id:string)=>{
@@ -2070,6 +2117,27 @@ function App(){
     if(before?.id===id||before?.id!==nextActive.id)setChatController(loaded.controller);
   },[activeCharacter,chatController,loadActiveConversation,modelProfileStore]);
 
+  const toggleNovaLife=React.useCallback(async()=>{
+    const foundation=foundationRef.current;
+    const character=activeCharacter;
+    const conversation=activeConversation;
+    if(!foundation||!character||!conversation)return;
+    setNovaLifeBusy(true);
+    setNovaLifeError("");
+    try{
+      if(foundation.getNovaLifeState().status==="off"){
+        await foundation.startNovaLife(character.id,conversation.id);
+      }else{
+        await foundation.stopNovaLife();
+      }
+    }catch(error){
+      setNovaLifeError(safeErrorMessage(error,"Nova Life could not change state."));
+    }finally{
+      setNovaLifeState(foundation.getNovaLifeState());
+      setNovaLifeBusy(false);
+    }
+  },[activeCharacter?.id,activeConversation?.id]);
+
   const saveProviderPreset=React.useCallback(async(preset:ProviderPreset,activate:boolean)=>{
     const current=providerPresetStateRef.current;
     const nextState:ProviderPresetStoreState={...current,presets:[...current.presets.filter(item=>item.id!==preset.id),preset],activePresetId:activate?preset.id:current.activePresetId};
@@ -2167,7 +2235,17 @@ function App(){
   return <main className="app-shell">
     <header className="app-header">
       <div><h1>Nova</h1><p>AI Companion</p></div>
-      <nav className="app-nav" aria-label="Primary">
+      <div className="app-header-controls">
+        <NovaLifeControl
+          state={novaLifeState}
+          busy={novaLifeBusy}
+          character={activeCharacter}
+          conversation={activeConversation}
+          chatBusy={chatController?.getSnapshot().sending??false}
+          error={novaLifeError}
+          onToggle={toggleNovaLife}
+        />
+        <nav className="app-nav" aria-label="Primary">
         <button className={view==="chat"?"nav-button active":"nav-button"} onClick={()=>setView("chat")}>Chat</button>
         <button className={view==="characters"?"nav-button active":"nav-button"} onClick={()=>setView("characters")}>Characters</button>
         <button className={view==="memory"?"nav-button active":"nav-button"} onClick={()=>setView("memory")}>Character Memory</button>
@@ -2175,7 +2253,8 @@ function App(){
         <button className={view==="model-profile"?"nav-button active":"nav-button"} onClick={()=>setView("model-profile")}>Model Profile</button>
         <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Settings</button>
         {appSettings.ui.showDiagnosticsInChat&&<button className={view==="diagnostics"?"nav-button active":"nav-button"} onClick={()=>setView("diagnostics")}>Diagnostics</button>}
-      </nav>
+        </nav>
+      </div>
     </header>
     <ViewErrorBoundary key={view} view={view} onError={reportViewError}>
     {view==="model-profile"&&activeCharacter&&activeModelProfile
@@ -2210,10 +2289,10 @@ function App(){
         </section>
       :view==="chat"&&activeCharacter&&chatController&&activeConversation
       ?<ChatView controller={chatController} runtime={foundationRef.current!} character={activeCharacter} modelProfile={activeModelProfile}
-          conversations={conversations} activeConversation={activeConversation}
+          conversations={conversations} activeConversation={activeConversation} novaLifeState={novaLifeState}
           onPersist={()=>persistConversation(chatController!)}
-          onPersistAgentConversation={persistAgentConversation}
           onClear={()=>clearConversation(chatController!)}
+          onRefreshConversation={refreshActiveConversation}
           onSelectConversation={selectConversation}
           onCreateConversation={createConversation}
           onRenameConversation={renameConversation}
