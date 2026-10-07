@@ -47,7 +47,7 @@ export function validateProviderConfiguration(configuration:ProviderConfiguratio
     if(ref.kind!=="api-key")errors.push("Provider credential reference kind must be api-key.");
     if(ref.provider!==undefined&&ref.provider!==OPENAI_COMPATIBLE_PROVIDER_ID)errors.push("Provider credential reference provider does not match providerId.");
   }
-  if(configuration.enabled&&credentialReferences.length===0)errors.push("An enabled provider preset requires at least one credential reference.");
+
   if(configuration.providerId===OPENAI_COMPATIBLE_PROVIDER_ID){
     const providerErrors=validateOpenAICompatibleProviderConfig({
       baseUrl:configuration.baseUrl,
@@ -141,17 +141,23 @@ export function buildProviderForPreset(
   const validation=validateProviderPresetConfiguration(configuration);
   if(!validation.valid)return undefined;
   const credentials=[...(configuration.credentials??[]),...(configuration.credentials?.length?[]:(configuration.credentialReference?[{id:"legacy",label:"Legacy credential",credentialReference:configuration.credentialReference,health:"healthy" as const,failureCount:0}]:[]))];
-  if(credentials.length===0)return undefined;
-  return new ProviderCredentialRouter({
-    presetId:providerPresetId??"provider-preset",
-    credentials,
-    diagnostics,
-    createProvider:credential=>new OpenAICompatibleChatProvider({
-      baseUrl:configuration.baseUrl,model:configuration.model,credential:credential.credentialReference,timeoutMs:configuration.timeoutMs,
-      ...(diagnostics?{diagnostics}:{}),
-      ...(providerPresetId?{providerPresetId}:{})
-    },credentialStore,httpClient)
-  });
+  if(credentials.length>0){
+    return new ProviderCredentialRouter({
+      presetId:providerPresetId??"provider-preset",
+      credentials,
+      diagnostics,
+      createProvider:credential=>new OpenAICompatibleChatProvider({
+        baseUrl:configuration.baseUrl,model:configuration.model,credential:credential.credentialReference,timeoutMs:configuration.timeoutMs,
+        ...(diagnostics?{diagnostics}:{}),
+        ...(providerPresetId?{providerPresetId}:{})
+      },credentialStore,httpClient)
+    });
+  }
+  return new OpenAICompatibleChatProvider({
+    baseUrl:configuration.baseUrl,model:configuration.model,credential:null,timeoutMs:configuration.timeoutMs,
+    ...(diagnostics?{diagnostics}:{}),
+    ...(providerPresetId?{providerPresetId}:{})
+  },credentialStore,httpClient);
 }
 
 export async function testProviderPresetConfiguration(configuration:ProviderConfiguration,credentialStore:CredentialStore,httpClient?:HttpClient):Promise<ProviderConnectionTestResult>{
@@ -171,24 +177,31 @@ export async function testProviderPresetConfiguration(configuration:ProviderConf
 export function buildProviderForDiscovery(configuration:ProviderConfiguration,credentialStore:CredentialStore,httpClient?:HttpClient):ChatProvider|undefined{
   if(configuration.providerId!==OPENAI_COMPATIBLE_PROVIDER_ID)return undefined;
   const credentials=[...(configuration.credentials??[]),...(configuration.credentials?.length?[]:(configuration.credentialReference?[{id:"legacy",label:"Legacy credential",credentialReference:configuration.credentialReference,health:"healthy" as const,failureCount:0}]:[]))];
-  if(credentials.length===0)return undefined;
   if(validateOpenAICompatibleProviderConfig({
     baseUrl:configuration.baseUrl,
     model:configuration.model,
-    credential:credentials[0]!.credentialReference,
+    credential:credentials[0]?.credentialReference??null,
     timeoutMs:configuration.timeoutMs,
     structuredOutput:configuration.structuredOutput
   },{allowEmptyModel:true}).length>0)return undefined;
-  return new ProviderCredentialRouter({
-    presetId:"provider-discovery",
-    credentials,
-    createProvider:credential=>new OpenAICompatibleChatProvider({
-      baseUrl:configuration.baseUrl,
-      model:configuration.model,
-      credential:credential.credentialReference,
-      timeoutMs:configuration.timeoutMs
-    },credentialStore,httpClient)
-  });
+  if(credentials.length>0){
+    return new ProviderCredentialRouter({
+      presetId:"provider-discovery",
+      credentials,
+      createProvider:credential=>new OpenAICompatibleChatProvider({
+        baseUrl:configuration.baseUrl,
+        model:configuration.model,
+        credential:credential.credentialReference,
+        timeoutMs:configuration.timeoutMs
+      },credentialStore,httpClient)
+    });
+  }
+  return new OpenAICompatibleChatProvider({
+    baseUrl:configuration.baseUrl,
+    model:configuration.model,
+    credential:null,
+    timeoutMs:configuration.timeoutMs
+  },credentialStore,httpClient);
 }
 
 export async function testProviderConfigurationForPreset(configuration:ProviderConfiguration,credentialStore:CredentialStore,httpClient?:HttpClient):Promise<ProviderConnectionTestResult>{
@@ -215,17 +228,23 @@ export function buildConfiguredProvider(
   if(!validation.valid)return undefined;
   if(configuration.providerId===OPENAI_COMPATIBLE_PROVIDER_ID){
     const credentials=[...(configuration.credentials??[]),...(configuration.credentials?.length?[]:(configuration.credentialReference?[{id:"legacy",label:"Legacy credential",credentialReference:configuration.credentialReference,health:"healthy" as const,failureCount:0}]:[]))];
-    if(credentials.length===0)return undefined;
-    return new ProviderCredentialRouter({
-      presetId:providerPresetId??"active-provider",
-      credentials,
-      diagnostics,
-      createProvider:credential=>new OpenAICompatibleChatProvider({
-        baseUrl:configuration.baseUrl,model:configuration.model,credential:credential.credentialReference,timeoutMs:configuration.timeoutMs,
-        ...(diagnostics?{diagnostics}:{}),
-        ...(providerPresetId?{providerPresetId}:{})
-      },credentialStore,httpClient)
-    });
+    if(credentials.length>0){
+      return new ProviderCredentialRouter({
+        presetId:providerPresetId??"active-provider",
+        credentials,
+        diagnostics,
+        createProvider:credential=>new OpenAICompatibleChatProvider({
+          baseUrl:configuration.baseUrl,model:configuration.model,credential:credential.credentialReference,timeoutMs:configuration.timeoutMs,
+          ...(diagnostics?{diagnostics}:{}),
+          ...(providerPresetId?{providerPresetId}:{})
+        },credentialStore,httpClient)
+      });
+    }
+    return new OpenAICompatibleChatProvider({
+      baseUrl:configuration.baseUrl,model:configuration.model,credential:null,timeoutMs:configuration.timeoutMs,
+      ...(diagnostics?{diagnostics}:{}),
+      ...(providerPresetId?{providerPresetId}:{})
+    },credentialStore,httpClient);
   }
   return undefined;
 }
