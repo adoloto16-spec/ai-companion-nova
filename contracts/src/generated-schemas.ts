@@ -80,8 +80,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
   },
   "agent-decision": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/agent-decision/v3",
-    "title": "AI Companion Nova Agent Decision v3",
+    "$id": "https://schemas.ai-companion-nova.dev/agent-decision/v4",
+    "title": "AI Companion Nova Agent Decision v4",
     "type": "object",
     "oneOf": [
       {
@@ -133,16 +133,106 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         "additionalProperties": false,
         "required": [
           "action",
-          "waitMs"
+          "intent"
         ],
         "properties": {
           "action": {
-            "const": "wait"
+            "const": "create_intent"
           },
-          "waitMs": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 300000
+          "intent": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "description",
+              "priority"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "priority": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "dueAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        }
+      },
+      {
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "intentId",
+          "intent"
+        ],
+        "properties": {
+          "action": {
+            "const": "update_intent"
+          },
+          "intentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "intent": {
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 1,
+            "properties": {
+              "type": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "priority": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "dueAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        }
+      },
+      {
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "intentId"
+        ],
+        "properties": {
+          "action": {
+            "const": "complete_intent"
+          },
+          "intentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
           }
         }
       },
@@ -162,13 +252,41 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             "maxLength": 2000
           }
         }
+      },
+      {
+        "additionalProperties": false,
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "const": "idle"
+          }
+        }
+      },
+      {
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "waitMs"
+        ],
+        "properties": {
+          "action": {
+            "const": "wait"
+          },
+          "waitMs": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 300000
+          }
+        }
       }
     ]
   },
   "app-settings": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v6",
-    "title": "AI Companion Nova App Settings v6",
+    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v7",
+    "title": "AI Companion Nova App Settings v7",
     "type": "object",
     "additionalProperties": false,
     "required": [
@@ -189,7 +307,7 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         "const": "1"
       },
       "schemaVersion": {
-        "const": "6"
+        "const": "7"
       },
       "chat": {
         "type": "object",
@@ -448,9 +566,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         "additionalProperties": false,
         "required": [
           "lifecycle",
-          "scheduler",
           "cognition",
-          "resourceBudget"
+          "provider"
         ],
         "properties": {
           "lifecycle": {
@@ -458,19 +575,12 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             "additionalProperties": false,
             "required": [
               "enabledAtStartup",
-              "startupBehavior",
               "proactiveEnabled",
               "allowProactiveMessages"
             ],
             "properties": {
               "enabledAtStartup": {
                 "type": "boolean"
-              },
-              "startupBehavior": {
-                "enum": [
-                  "proactive",
-                  "wait"
-                ]
               },
               "proactiveEnabled": {
                 "type": "boolean"
@@ -480,83 +590,14 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
               }
             }
           },
-          "scheduler": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "defaultWaitMs",
-              "postResponseWakeMs",
-              "minimumWakeIntervalMs",
-              "maximumWakeIntervalMs",
-              "retryDelayMs",
-              "eventDebounceMs",
-              "eventWakePolicy"
-            ],
-            "properties": {
-              "defaultWaitMs": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 300000
-              },
-              "postResponseWakeMs": {
-                "type": "integer",
-                "minimum": 1000,
-                "maximum": 300000
-              },
-              "minimumWakeIntervalMs": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 300000
-              },
-              "maximumWakeIntervalMs": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 3600000
-              },
-              "retryDelayMs": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 120000
-              },
-              "eventDebounceMs": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 60000
-              },
-              "eventWakePolicy": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "appChanged",
-                  "windowChanged",
-                  "conversationChanged",
-                  "characterChanged"
-                ],
-                "properties": {
-                  "appChanged": {
-                    "type": "boolean"
-                  },
-                  "windowChanged": {
-                    "type": "boolean"
-                  },
-                  "conversationChanged": {
-                    "type": "boolean"
-                  },
-                  "characterChanged": {
-                    "type": "boolean"
-                  }
-                }
-              }
-            }
-          },
           "cognition": {
             "type": "object",
             "additionalProperties": false,
             "required": [
               "maxSteps",
               "maxDurationMs",
-              "maxConsecutiveFailures",
-              "maxModelCallsPerBurst"
+              "maxModelCallsPerBurst",
+              "maxToolCallsPerBurst"
             ],
             "properties": {
               "maxSteps": {
@@ -569,48 +610,38 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
                 "minimum": 1000,
                 "maximum": 300000
               },
-              "maxConsecutiveFailures": {
+              "maxModelCallsPerBurst": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 10
+                "maximum": 50
               },
-              "maxModelCallsPerBurst": {
+              "maxToolCallsPerBurst": {
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 50
               }
             }
           },
-          "resourceBudget": {
+          "provider": {
             "type": "object",
             "additionalProperties": false,
             "required": [
-              "maxRequestsPerMinute",
-              "maxConcurrentRequests",
-              "backgroundRequestPriority"
+              "activePresetId"
             ],
             "properties": {
-              "maxRequestsPerMinute": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 120
-              },
-              "maxConcurrentRequests": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 8
-              },
-              "backgroundRequestPriority": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 50
+              "activePresetId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 200
               }
             }
           }
         }
       }
     },
-    "schemaVersion": "6"
+    "schemaVersion": "7"
   },
   "assembled-context": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -3281,6 +3312,94 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       },
       "structuredOutput": {
         "type": "boolean"
+      },
+      "credentials": {
+        "type": "array",
+        "maxItems": 20,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "label",
+            "credentialReference",
+            "health",
+            "failureCount"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "credentialReference": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "kind"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "kind": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 50
+                },
+                "provider": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                }
+              }
+            },
+            "health": {
+              "enum": [
+                "healthy",
+                "degraded",
+                "unhealthy",
+                "disabled"
+              ]
+            },
+            "cooldownUntil": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lastSuccessAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lastFailureAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "failureCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "temporarilyDisabledUntil": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
       }
     }
   },
@@ -3412,6 +3531,94 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       "updatedAt": {
         "type": "string",
         "minLength": 1
+      },
+      "credentials": {
+        "type": "array",
+        "maxItems": 20,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "label",
+            "credentialReference",
+            "health",
+            "failureCount"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "credentialReference": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "kind"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "kind": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 50
+                },
+                "provider": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                }
+              }
+            },
+            "health": {
+              "enum": [
+                "healthy",
+                "degraded",
+                "unhealthy",
+                "disabled"
+              ]
+            },
+            "cooldownUntil": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lastSuccessAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lastFailureAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "failureCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "temporarilyDisabledUntil": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
       }
     }
   },
