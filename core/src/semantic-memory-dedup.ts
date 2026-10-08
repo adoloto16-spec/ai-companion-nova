@@ -4,6 +4,7 @@ import type {
 } from "../../contracts/src/index";
 import {MEMORY_SEMANTIC_INDEX_API_VERSION,MEMORY_SEMANTIC_INDEX_SCHEMA_VERSION,STANDARD_SCHEMAS} from "../../contracts/src/index";
 import {AgentOutputRunner} from "./agent-output";
+import type {ModelRequestGovernor} from "./model-request-governor";
 
 export interface SemanticMemoryCandidate{
   memory:MemoryItem;
@@ -39,6 +40,7 @@ export interface MemorySemanticDeduplicationOptions{
   listCharacterIds:()=>Promise<readonly CharacterId[]>;
   clock?:Clock;
   source?:string;
+  requestGovernor?:ModelRequestGovernor;
 }
 
 export const DEFAULT_SEMANTIC_DEDUP_THRESHOLD=0.88;
@@ -397,6 +399,7 @@ export class MemorySemanticDeduplicator{
         model:modelName,
         context:{
           conversationId:"memory-judge:"+memoryId,
+          metadata:{requestPriority:"maintenance"},
           messages:[
             {role:"system",content:judge.prompt.trim()},
             {role:"user",content:buildJudgeInput(newMemory,selected)}
@@ -573,7 +576,7 @@ export class MemorySemanticDeduplicator{
     );
     if(cachedNewIsValid)newVector=newRecord!.vector;
     else{
-      const vectors=await provider.embed([newMemory.content]);
+      const vectors=await this.embed(provider,[newMemory.content],newMemory.id);
       if(vectors.length!==1||!isFiniteVector(vectors[0]))throw new Error("Embedding provider returned an invalid new-memory vector.");
       newVector=vectors[0]!;
       const now=this.options.clock?.now()??new Date().toISOString();
@@ -608,7 +611,7 @@ export class MemorySemanticDeduplicator{
       )records.set(memory.id,record);
     }
     if(stale.length>0){
-      const vectors=await provider.embed(stale.map(memory=>memory.content));
+      const vectors=await this.embed(provider,stale.map(memory=>memory.content),characterId);
       if(vectors.length!==stale.length||vectors.some(vector=>!isFiniteVector(vector)||vector.length!==expectedDimensions))throw new Error("Embedding provider returned inconsistent cached vector dimensions.");
       const now=this.options.clock?.now()??new Date().toISOString();
       for(let i=0;i<stale.length;i++)records.set(stale[i]!.id,makeIndexRecord(stale[i]!,provider,model,vectors[i]!,now));
@@ -651,7 +654,7 @@ export class MemorySemanticDeduplicator{
     }).map(memory=>existing.get(memory.id)!);
     let records=[...keep];
     if(stale.length>0){
-      const vectors=await provider.embed(stale.map(memory=>memory.content));
+      const vectors=await this.embed(provider,stale.map(memory=>memory.content),characterId);
       if(vectors.length!==stale.length||vectors.some(vector=>!isFiniteVector(vector)))throw new Error("Embedding provider returned invalid vectors during rebuild.");
       const dimensions=vectors[0]?.length??expectedDimensions??0;
       if(dimensions<=0||vectors.some(vector=>vector.length!==dimensions))throw new Error("Embedding provider returned inconsistent vector dimensions during rebuild.");
@@ -664,6 +667,13 @@ export class MemorySemanticDeduplicator{
       characterId,
       records:records.sort((a,b)=>a.memoryId.localeCompare(b.memoryId))
     });
+  }
+
+  private async embed(provider:EmbeddingProvider,texts:readonly string[],requestId:string):Promise<number[][]>{
+    if(this.options.requestGovernor){
+      return this.options.requestGovernor.run({id:"memory-embedding:"+requestId,priority:"maintenance",execute:()=>provider.embed([...texts])});
+    }
+    return provider.embed([...texts]);
   }
 
   private async onMemoryCreated(payload:{characterId:string;memoryId:string}):Promise<void>{

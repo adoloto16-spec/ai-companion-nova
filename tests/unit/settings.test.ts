@@ -20,6 +20,8 @@ async function main(){
   const defaults=await manager.initialize();
   equal(defaults,defaultAppSettings(),"missing settings resolve to deterministic defaults");
   equal(DEFAULT_APP_SETTINGS.context.availableContextTokens,4096,"default context size");
+  equal(defaults.novaLife.cognition.maxModelCallsPerBurst,8,"default cognition model-call budget");
+  equal(defaults.novaLife.cognition.maxToolCallsPerBurst,10,"default cognition tool-call budget");
   ok(defaults.semanticDedup.judge.prompt.includes("In structured mode, return only:"),"default Judge prompt declares structured output");
   ok(defaults.semanticDedup.judge.prompt.includes("In plain mode, return only:"),"default Judge prompt declares plain output");
   equal(defaults.semanticDedup.judge.defaultPromptVersion,"2","default Judge prompt version");
@@ -30,6 +32,7 @@ async function main(){
     retrieval:{...defaults.retrieval,candidateLimit:7},
     diagnostics:{...defaults.diagnostics,logLevel:"verbose" as const,keepRecentEntries:25},
     chat:{...defaults.chat,automaticLongTermMemory:false},
+    novaLife:{...defaults.novaLife,cognition:{...defaults.novaLife.cognition,maxModelCallsPerBurst:12}},
     memoryAgent:{...defaults.memoryAgent,enabled:true,providerPresetId:"preset.memory",model:"memory-model",outputMode:"structured" as const,prompt:"Custom full prompt",promptBackup:"Previous prompt",defaultPromptVersion:"1"},
     semanticDedup:{
       ...defaults.semanticDedup,
@@ -54,6 +57,7 @@ async function main(){
   equal((await manager.get()).context.availableContextTokens,8192,"custom context size persists in store");
   equal((await manager.get()).memory.candidateLimit,3,"custom memory candidate limit persists");
   equal((await manager.get()).chat.automaticLongTermMemory,false,"custom extraction toggle persists");
+  equal((await manager.get()).novaLife.cognition.maxModelCallsPerBurst,12,"custom cognition budget persists");
   equal((await manager.get()).memoryAgent.providerPresetId,"preset.memory","agent provider preset persists");
   equal((await manager.get()).memoryAgent.model,"memory-model","agent model persists");
   equal((await manager.get()).memoryAgent.outputMode,"structured","agent output mode persists");
@@ -85,6 +89,9 @@ async function main(){
   let rejected=false;
   try{await manager.set({...defaultAppSettings(),context:{...defaultAppSettings().context,availableContextTokens:999999}} as any)}catch{rejected=true}
   ok(rejected,"unsafe values are rejected");
+  let rejectedCognition=false;
+  try{await manager.set({...defaultAppSettings(),novaLife:{...defaultAppSettings().novaLife,cognition:{...defaultAppSettings().novaLife.cognition,maxToolCallsPerBurst:0}}} as any)}catch{rejectedCognition=true}
+  ok(rejectedCognition,"invalid cognition tool-call budget is rejected");
   const legacy=migrateAppSettings({schemaVersion:"0",contextBudget:8192,recentMessages:12,memoryCandidateLimit:5,diagnosticsLevel:"debug"});
   equal(legacy.context.availableContextTokens,8192,"legacy context budget migrates");
   equal(legacy.context.recentConversationMessages,12,"legacy recent message count migrates");

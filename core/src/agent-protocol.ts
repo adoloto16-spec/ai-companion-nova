@@ -1,0 +1,95 @@
+import type {AgentDecision,SchemaValidator} from "../../contracts/src/index";
+import {STANDARD_SCHEMAS} from "../../contracts/src/index";
+
+const MAX_PROTOCOL_LENGTH=12000;
+
+export class AgentDecisionProtocolError extends Error{
+  readonly code="AGENT_DECISION_INVALID" as const;
+  constructor(message:string){super(message);this.name="AgentDecisionProtocolError";}
+}
+
+function bounded(raw:string){
+  if(raw.length>MAX_PROTOCOL_LENGTH)throw new AgentDecisionProtocolError("Agent decision output exceeds the bounded protocol length.");
+}
+
+export function validateAgentDecision(value:unknown,validator:SchemaValidator):AgentDecision{
+  const result=validator.validate(value,STANDARD_SCHEMAS["agent-decision"]!);
+  if(!result.valid)throw new AgentDecisionProtocolError("Agent decision failed strict schema validation.");
+  return value as AgentDecision;
+}
+
+export function parseStructuredDecision(raw:string,validator:SchemaValidator):AgentDecision{
+  bounded(raw);
+  let value:unknown;
+  try{value=JSON.parse(raw);}catch{throw new AgentDecisionProtocolError("Structured agent decision is not valid JSON.");}
+  return validateAgentDecision(value,validator);
+}
+
+function tagLine(line:string):[string,string]{
+  const i=line.indexOf("=");
+  if(i<=0)throw new AgentDecisionProtocolError("Tagged agent decision contains a malformed field.");
+  const key=line.slice(0,i).trim(),value=line.slice(i+1).trim();
+  if(!key||!value)throw new AgentDecisionProtocolError("Tagged agent decision contains an empty field.");
+  return [key,value];
+}
+
+export function parseTaggedDecision(raw:string,validator:SchemaValidator):AgentDecision{
+  bounded(raw);
+  const match=/^\s*<NOVA_ACTION>\r?\n([\s\S]*?)\r?\n<\/NOVA_ACTION>\s*$/.exec(raw);
+  if(!match)throw new AgentDecisionProtocolError("Agent output must contain exactly one NOVA_ACTION block and no surrounding prose.");
+  const fields:Record<string,string>={};
+  for(const line of match[1]!.split(/\r?\n/)){
+    if(!line.trim())continue;
+    const [key,value]=tagLine(line);
+    if(fields[key]!==undefined)throw new AgentDecisionProtocolError("NOVA_ACTION block contains duplicate fields.");
+    fields[key]=value;
+  }
+  const type=fields.type;
+  const allowed:Record<string,readonly string[]>={
+    respond:["type","content"],
+    tool_call:["type","toolName","arguments","callId"],
+    create_intent:["type","intent"],
+    update_intent:["type","intentId","intent"],
+    complete_intent:["type","intentId"],
+    ask_user:["type","question"],
+    idle:["type"],
+    wait:["type","wait_ms"]
+  };
+  if(!type||!allowed[type])throw new AgentDecisionProtocolError("NOVA_ACTION block contains an unknown action type.");
+  for(const key of Object.keys(fields))if(!allowed[type]!.includes(key))throw new AgentDecisionProtocolError("NOVA_ACTION block contains an unknown field.");
+  let candidate:unknown;
+  switch(type){
+    case "respond":
+      candidate={action:"respond",content:fields.content};break;
+    case "tool_call":{
+      let argumentsValue:unknown;
+      try{argumentsValue=JSON.parse(fields.arguments??"");}catch{throw new AgentDecisionProtocolError("tool_call arguments must be valid JSON.");}
+      if(!argumentsValue||typeof argumentsValue!=="object"||Array.isArray(argumentsValue))throw new AgentDecisionProtocolError("tool_call arguments must be a JSON object.");
+      candidate={action:"tool_call",toolName:fields.toolName,arguments:argumentsValue,callId:fields.callId};break;
+    }
+    case "create_intent":{
+      let value:unknown;try{value=JSON.parse(fields.intent??"");}catch{throw new AgentDecisionProtocolError("create_intent intent must be valid JSON.");}
+      candidate={action:"create_intent",intent:value};break;
+    }
+    case "update_intent":{
+      let value:unknown;try{value=JSON.parse(fields.intent??"");}catch{throw new AgentDecisionProtocolError("update_intent intent must be valid JSON.");}
+      candidate={action:"update_intent",intentId:fields.intentId,intent:value};break;
+    }
+    case "complete_intent":candidate={action:"complete_intent",intentId:fields.intentId};break;
+    case "idle":candidate={action:"idle"};break;
+    case "wait":
+      if(!/^[0-9]+$/.test(fields.wait_ms??""))throw new AgentDecisionProtocolError("wait_ms must be an integer.");
+      candidate={action:"wait",waitMs:Number(fields.wait_ms)};break;
+    case "ask_user":candidate={action:"ask_user",question:fields.question};break;
+    default:throw new AgentDecisionProtocolError("Unsupported NOVA_ACTION type.");
+  }
+  return validateAgentDecision(candidate,validator);
+}
+
+
+export function parseNonStructuredDecision(raw:string,validator:SchemaValidator):AgentDecision{
+  bounded(raw);
+  if(raw.includes("<NOVA_ACTION>")||raw.includes("</NOVA_ACTION>"))return parseTaggedDecision(raw,validator);
+  if(!raw.trim())throw new AgentDecisionProtocolError("Agent response is empty.");
+  return validateAgentDecision({action:"respond",content:raw},validator);
+}

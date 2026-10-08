@@ -108,7 +108,21 @@ export class ConversationManager{
       updatedAt:this.clock.now()
     };
     await this.store.save(next);
+    const priorIds=new Set(current.messages.map((message,index)=>message.id??"message:"+index));
+    const newlyAddedUsers=next.messages.filter((message,index)=>message.role==="user"&&message.content.trim().length>0&&(() => {
+      const id=message.id??"message:"+index;
+      return !priorIds.has(id);
+    })());
     await this.publish("ConversationUpdated",{characterId:scope,conversationId:next.id});
+    for(const message of newlyAddedUsers){
+      if(!message.id)continue;
+      await this.events?.publish(createEvent("UserMessageReceived",{
+        characterId:scope,
+        conversationId:next.id,
+        messageId:message.id,
+        text:message.content
+      },this.source,()=>this.clock.now(),this.source+":user-message:"+message.id));
+    }
     return cloneConversation(next);
   }
 

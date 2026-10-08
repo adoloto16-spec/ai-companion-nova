@@ -13,18 +13,22 @@ async function main(){
     const initial=runtime.getSettings();
     equal(initial.context.recentConversationMessages,8,"runtime loads default recent message setting");
     equal(initial.memory.candidateLimit,8,"runtime loads default memory candidate setting");
+    equal(initial.novaLife.cognition.maxModelCallsPerBurst,8,"runtime loads default cognition model-call budget");
+    equal(initial.novaLife.cognition.maxToolCallsPerBurst,10,"runtime loads default cognition tool-call budget");
 
     const custom={
       ...initial,
       context:{...initial.context,recentConversationMessages:2,availableContextTokens:1024,reservedOutputTokens:256,safetyMarginTokens:32},
       memory:{...initial.memory,candidateLimit:1},
       retrieval:{...initial.retrieval,candidateLimit:5},
-      chat:{...initial.chat,automaticLongTermMemory:false}
+      chat:{...initial.chat,automaticLongTermMemory:false},
+      novaLife:{...initial.novaLife,cognition:{...initial.novaLife.cognition,maxModelCallsPerBurst:4}}
     };
     await runtime.updateSettings(custom);
     equal(runtime.getSettings().context.recentConversationMessages,2,"runtime returns changed recent setting");
     equal(runtime.getSettings().memory.candidateLimit,1,"runtime returns changed memory setting");
     equal(runtime.getSettings().chat.automaticLongTermMemory,false,"runtime returns changed extraction toggle");
+    equal(runtime.getSettings().novaLife.cognition.maxModelCallsPerBurst,4,"runtime returns changed cognition budget");
 
     const character=await runtime.getActiveCharacter();
     const conversation=await runtime.getActiveConversation(character.id);

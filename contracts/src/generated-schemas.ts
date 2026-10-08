@@ -78,10 +78,215 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       }
     }
   },
+  "agent-decision": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.ai-companion-nova.dev/agent-decision/v4",
+    "title": "AI Companion Nova Agent Decision v4",
+    "type": "object",
+    "oneOf": [
+      {
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "content"
+        ],
+        "properties": {
+          "action": {
+            "const": "respond"
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          }
+        }
+      },
+      {
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "toolName",
+          "arguments",
+          "callId"
+        ],
+        "properties": {
+          "action": {
+            "const": "tool_call"
+          },
+          "toolName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "arguments": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "callId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      },
+      {
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "intent"
+        ],
+        "properties": {
+          "action": {
+            "const": "create_intent"
+          },
+          "intent": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "description",
+              "priority"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "priority": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "dueAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        }
+      },
+      {
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "intentId",
+          "intent"
+        ],
+        "properties": {
+          "action": {
+            "const": "update_intent"
+          },
+          "intentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "intent": {
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 1,
+            "properties": {
+              "type": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "priority": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "dueAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        }
+      },
+      {
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "intentId"
+        ],
+        "properties": {
+          "action": {
+            "const": "complete_intent"
+          },
+          "intentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      },
+      {
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "question"
+        ],
+        "properties": {
+          "action": {
+            "const": "ask_user"
+          },
+          "question": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        }
+      },
+      {
+        "additionalProperties": false,
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "const": "idle"
+          }
+        }
+      },
+      {
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "waitMs"
+        ],
+        "properties": {
+          "action": {
+            "const": "wait"
+          },
+          "waitMs": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 300000
+          }
+        }
+      }
+    ]
+  },
   "app-settings": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v5",
-    "title": "AI Companion Nova App Settings v5",
+    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v7",
+    "title": "AI Companion Nova App Settings v7",
     "type": "object",
     "additionalProperties": false,
     "required": [
@@ -94,14 +299,15 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       "diagnostics",
       "ui",
       "semanticDedup",
-      "memoryAgent"
+      "memoryAgent",
+      "novaLife"
     ],
     "properties": {
       "apiVersion": {
         "const": "1"
       },
       "schemaVersion": {
-        "const": "5"
+        "const": "7"
       },
       "chat": {
         "type": "object",
@@ -354,8 +560,88 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             }
           }
         }
+      },
+      "novaLife": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "lifecycle",
+          "cognition",
+          "provider"
+        ],
+        "properties": {
+          "lifecycle": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "enabledAtStartup",
+              "proactiveEnabled",
+              "allowProactiveMessages"
+            ],
+            "properties": {
+              "enabledAtStartup": {
+                "type": "boolean"
+              },
+              "proactiveEnabled": {
+                "type": "boolean"
+              },
+              "allowProactiveMessages": {
+                "type": "boolean"
+              }
+            }
+          },
+          "cognition": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "maxSteps",
+              "maxDurationMs",
+              "maxModelCallsPerBurst",
+              "maxToolCallsPerBurst"
+            ],
+            "properties": {
+              "maxSteps": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 50
+              },
+              "maxDurationMs": {
+                "type": "integer",
+                "minimum": 1000,
+                "maximum": 300000
+              },
+              "maxModelCallsPerBurst": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 50
+              },
+              "maxToolCallsPerBurst": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 50
+              }
+            }
+          },
+          "provider": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "activePresetId"
+            ],
+            "properties": {
+              "activePresetId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 200
+              }
+            }
+          }
+        }
       }
-    }
+    },
+    "schemaVersion": "7"
   },
   "assembled-context": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -3023,6 +3309,97 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       "timeoutMs": {
         "type": "number",
         "minimum": 0.000001
+      },
+      "structuredOutput": {
+        "type": "boolean"
+      },
+      "credentials": {
+        "type": "array",
+        "maxItems": 20,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "label",
+            "credentialReference",
+            "health",
+            "failureCount"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "credentialReference": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "kind"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "kind": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 50
+                },
+                "provider": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                }
+              }
+            },
+            "health": {
+              "enum": [
+                "healthy",
+                "degraded",
+                "unhealthy",
+                "disabled"
+              ]
+            },
+            "cooldownUntil": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lastSuccessAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lastFailureAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "failureCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "temporarilyDisabledUntil": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
       }
     }
   },
@@ -3154,6 +3531,94 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       "updatedAt": {
         "type": "string",
         "minLength": 1
+      },
+      "credentials": {
+        "type": "array",
+        "maxItems": 20,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "label",
+            "credentialReference",
+            "health",
+            "failureCount"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "credentialReference": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "kind"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "kind": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 50
+                },
+                "provider": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                }
+              }
+            },
+            "health": {
+              "enum": [
+                "healthy",
+                "degraded",
+                "unhealthy",
+                "disabled"
+              ]
+            },
+            "cooldownUntil": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lastSuccessAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lastFailureAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "failureCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "temporarilyDisabledUntil": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
       }
     }
   },

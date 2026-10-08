@@ -1,7 +1,7 @@
 import React from "react";
 import {createRoot} from "react-dom/client";
 import {invoke} from "@tauri-apps/api/core";
-import {ChatSessionController,ConversationSession,InMemoryCharacterStore} from "../../../core/src/index";
+import {ChatSessionController,ConversationSession} from "../../../core/src/index";
 
 import {startFoundationRuntime,testProviderPresetConfiguration,listProviderModels} from "../../../runtime/bootstrap/src/index";
 import type {FoundationRuntime} from "../../../runtime/bootstrap/src/index";
@@ -9,7 +9,7 @@ import {IpcCredentialStore,InMemoryCredentialStore} from "../../../host/credenti
 import {IpcCredentialProfileStore,InMemoryCredentialProfileStore,emptyCredentialProfileState} from "../../../host/credential-profiles/src/index";
 import {IpcProviderPresetStore,InMemoryProviderPresetStore,materializeProviderConfiguration,migrateProviderConfiguration,emptyProviderPresetState} from "../../../host/provider-presets/src/index";
 import {IpcProviderConfigurationStore,loadProviderConfigurationSafely} from "../../../host/config/src/index";
-import {IpcCharacterStore} from "../../../host/characters/src/index";
+import {IpcCharacterStore,InMemoryCharacterStore as HostInMemoryCharacterStore} from "../../../host/characters/src/index";
 import {IpcCoreBookStore,InMemoryCoreBookStore} from "../../../host/core-book/src/index";
 import {IpcMemorySemanticIndexStore,IpcMemoryStore,InMemoryMemoryStore} from "../../../host/memory/src/index";
 import {IpcConversationStore,InMemoryConversationStore} from "../../../host/conversations/src/index";
@@ -23,6 +23,7 @@ import {
   defaultAppSettings, validateAppSettings, StandardContractValidator,
   type ProviderPreset, type ProviderPresetStoreState, type ModelInfo
 } from "../../../contracts/src/index";
+import type {NovaLifeState} from "../../../core/src/nova-life-runtime";
 import "./styles.css";
 
 const preview:RuntimeDiagnostics={schemaVersion:"1",timestamp:new Date().toISOString(),runtimeStatus:"stopped",coreStatus:"stopped",modules:[],providers:[],recentErrors:[],capabilities:[]};
@@ -134,14 +135,30 @@ function ConversationSwitcher({conversations,activeConversationId,sending,onSele
   </div>;
 }
 
-function ChatView({controller,runtime,character,conversations,activeConversation,onPersist,onClear,onSelectConversation,onCreateConversation,onRenameConversation,onDeleteConversation}:{
+function lifeStatusLabel(status:NovaLifeState["status"]):string{
+  switch(status){
+    case "off":return "OFF";
+    case "starting":return "Starting";
+    case "thinking":return "Thinking";
+    case "acting":return "Acting";
+    case "idle":return "Idle";
+    case "stopping":return "Stopping";
+    case "error":return "Error";
+  }
+  throw new Error("Unknown Nova Life status: "+status);
+}
+
+function ChatView({controller,runtime,character,modelProfile,conversations,activeConversation,novaLifeState,onPersist,onClear,onRefreshConversation,onSelectConversation,onCreateConversation,onRenameConversation,onDeleteConversation}:{
   controller:ChatSessionController;
   runtime:FoundationRuntime;
   character:Character;
+  modelProfile?:ModelProfile;
   conversations:readonly Conversation[];
   activeConversation:Conversation;
+  novaLifeState:NovaLifeState;
   onPersist:()=>Promise<void>;
   onClear:()=>Promise<void>;
+  onRefreshConversation:()=>Promise<void>;
   onSelectConversation:(id:string)=>Promise<void>;
   onCreateConversation:()=>Promise<void>;
   onRenameConversation:(conversation:Conversation)=>Promise<void>;
@@ -153,104 +170,136 @@ function ChatView({controller,runtime,character,conversations,activeConversation
   const [editingText,setEditingText]=React.useState("");
   const [persistenceError,setPersistenceError]=React.useState("");
   const bottomRef=React.useRef<HTMLDivElement|null>(null);
+  const lifeActive=novaLifeState.status!=="off"&&novaLifeState.status!=="stopping";
 
   React.useEffect(()=>{setSnapshot(controller.getSnapshot());return controller.subscribe(setSnapshot)},[controller]);
+
   React.useEffect(()=>{
     bottomRef.current?.scrollIntoView({block:"end"});
   },[snapshot.messages.map(message=>message.content).join("\u0000"),snapshot.status]);
 
+  React.useEffect(()=>{
+    if(!lifeActive||novaLifeState.wakeCount===0)return;
+    if(novaLifeState.status!=="idle"&&novaLifeState.status!=="error")return;
+    void onRefreshConversation().catch(error=>{
+      setPersistenceError(error instanceof Error?error.message:"Conversation could not be refreshed.");
+    });
+  },[lifeActive,novaLifeState.wakeCount,novaLifeState.status,onRefreshConversation]);
+
   const persistAfterAction=React.useCallback(async(result:{status:string})=>{
     if(result.status==="rejected")return;
-    try{await onPersist();}
-    catch(error){setPersistenceError(error instanceof Error?error.message:"Conversation could not be saved.");}
+    try{await onPersist()}
+    catch(error){setPersistenceError(error instanceof Error?error.message:"Conversation could not be saved.")}
   },[onPersist]);
 
   const send=React.useCallback(async()=>{
     setPersistenceError("");
-    const result=await controller.submit(input,runtime.getActiveChatModel());
+    const value=input.trim();
+    if(!value)return;
+
+    if(lifeActive){
+      try{
+        await runtime.appendConversationUserMessage(character.id,activeConversation.id,value);
+        setInput("");
+        await onRefreshConversation();
+      }catch(error){
+        setPersistenceError(error instanceof Error?error.message:"Message could not be sent.");
+      }
+      return;
+    }
+
+    const result=await controller.submit(value,runtime.getActiveChatModel());
     if(result.status!=="rejected")setInput("");
     await persistAfterAction(result);
-  },[controller,input,runtime,persistAfterAction]);
+  },[activeConversation.id,character.id,controller,input,lifeActive,onRefreshConversation,persistAfterAction,runtime]);
 
   const stop=React.useCallback(async()=>{
+    if(lifeActive)return;
     setPersistenceError("");
     const result=await controller.stop();
     await persistAfterAction(result);
-  },[controller,persistAfterAction]);
+  },[controller,lifeActive,persistAfterAction]);
 
   const continueGeneration=React.useCallback(async()=>{
+    if(lifeActive)return;
     setPersistenceError("");
     const result=await controller.continue(runtime.getActiveChatModel());
     await persistAfterAction(result);
-  },[controller,runtime,persistAfterAction]);
+  },[controller,lifeActive,persistAfterAction,runtime]);
 
   const regenerate=React.useCallback(async()=>{
+    if(lifeActive)return;
     setPersistenceError("");
     const result=await controller.regenerate(runtime.getActiveChatModel());
     await persistAfterAction(result);
-  },[controller,runtime,persistAfterAction]);
+  },[controller,lifeActive,persistAfterAction,runtime]);
 
   const retry=React.useCallback(async()=>{
+    if(lifeActive)return;
     setPersistenceError("");
     const result=await controller.retry(runtime.getActiveChatModel());
     await persistAfterAction(result);
-  },[controller,runtime,persistAfterAction]);
+  },[controller,lifeActive,persistAfterAction,runtime]);
 
   const clear=React.useCallback(async()=>{
+    if(lifeActive)return;
     setPersistenceError("");
-    try{await onClear();}
-    catch(error){setPersistenceError(error instanceof Error?error.message:"Conversation could not be cleared.");}
-  },[onClear]);
+    try{await onClear()}
+    catch(error){setPersistenceError(error instanceof Error?error.message:"Conversation could not be cleared.")}
+  },[lifeActive,onClear]);
+
   const editMessage=React.useCallback(async(id:string)=>{
+    if(lifeActive)return;
     setPersistenceError("");
     try{
       controller.editMessage(id,editingText);
       await onPersist();
       setEditingId(undefined);setEditingText("");
-    }catch(error){setPersistenceError(error instanceof Error?error.message:"Message could not be edited.");}
-  },[controller,editingText,onPersist]);
+    }catch(error){setPersistenceError(error instanceof Error?error.message:"Message could not be edited.")}
+  },[controller,editingText,lifeActive,onPersist]);
 
   const deleteMessage=React.useCallback(async(id:string)=>{
+    if(lifeActive)return;
     if(!window.confirm("Delete this message?"))return;
     setPersistenceError("");
-    try{controller.deleteMessage(id);await onPersist();}
-    catch(error){setPersistenceError(error instanceof Error?error.message:"Message could not be deleted.");}
-  },[controller,onPersist]);
+    try{controller.deleteMessage(id);await onPersist()}
+    catch(error){setPersistenceError(error instanceof Error?error.message:"Message could not be deleted.")}
+  },[controller,lifeActive,onPersist]);
 
-
-
+  const messages=snapshot.messages;
+  const sending=snapshot.sending;
+  const lastAssistant=[...messages].reverse().find(message=>message.role==="assistant");
+  const lastAssistantStatus=lastAssistant?messageStreamStatus(lastAssistant):undefined;
+  const showContinue=!lifeActive&&snapshot.status==="interrupted"&&lastAssistantStatus==="interrupted"&&!snapshot.sending;
+  const showRegenerate=!lifeActive&&(snapshot.status==="completed"||snapshot.status==="interrupted")&&(lastAssistantStatus==="complete"||lastAssistantStatus==="interrupted")&&!snapshot.sending;
+  const showRetry=!lifeActive&&snapshot.status==="error"&&!snapshot.sending;
+  const lifeLabel=lifeActive?"Nova is "+lifeStatusLabel(novaLifeState.status).toLowerCase():"Nova is OFF";
   const onKeyDown=(event:React.KeyboardEvent<HTMLTextAreaElement>)=>{
     if(event.key==="Enter"&&!event.shiftKey){
       event.preventDefault();
-      if(!snapshot.sending)void send();
+      if(!sending)void send();
     }
   };
-
-  const lastAssistant=[...snapshot.messages].reverse().find(message=>message.role==="assistant");
-  const lastAssistantStatus=lastAssistant?messageStreamStatus(lastAssistant):undefined;
-  const showContinue=snapshot.status==="interrupted"&&lastAssistantStatus==="interrupted"&&!snapshot.sending;
-  const showRegenerate=(snapshot.status==="completed"||snapshot.status==="interrupted")&&(lastAssistantStatus==="complete"||lastAssistantStatus==="interrupted")&&!snapshot.sending;
-  const showRetry=snapshot.status==="error"&&!snapshot.sending;
 
   return <section className="chat-panel">
     <div className="chat-toolbar">
       <div>
         <h2>Chat · {character.name}</h2>
-        <p className="chat-subtitle">{activeConversation.title} · persistent and scoped to {character.name}.</p>
+        <p className="chat-subtitle">{activeConversation.title} · {lifeLabel}.</p>
       </div>
       <div className="chat-toolbar-actions">
-        {snapshot.status==="streaming"&&<button type="button" onClick={()=>void stop()}>Stop</button>}
+        {((!lifeActive&&snapshot.status==="streaming")||false)&&<button type="button" onClick={()=>void stop()}>Stop</button>}
         {showContinue&&<button type="button" onClick={()=>void continueGeneration()}>Continue</button>}
         {showRegenerate&&<button type="button" onClick={()=>void regenerate()}>Regenerate</button>}
         {showRetry&&<button type="button" onClick={()=>void retry()}>Retry</button>}
-        <button type="button" onClick={()=>void clear()} disabled={snapshot.sending||snapshot.messages.length===0}>Clear</button>
+        <button type="button" onClick={()=>void clear()} disabled={lifeActive||sending||messages.length===0}>Clear</button>
       </div>
     </div>
 
     <ConversationSwitcher
       conversations={conversations}
       activeConversationId={activeConversation.id}
-      sending={snapshot.sending}
+      sending={sending}
       onSelect={onSelectConversation}
       onCreate={onCreateConversation}
       onRename={onRenameConversation}
@@ -258,10 +307,10 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     />
 
     <div className="message-list" aria-live="polite">
-      {snapshot.messages.length===0&&<div className="empty-chat">Write a message to start the conversation.</div>}
-      {snapshot.messages.map((message,index)=>{
+      {messages.length===0&&<div className="empty-chat">Write a message to start the conversation.</div>}
+      {messages.map((message,index)=>{
         const state=messageStreamStatus(message);
-        const editable=message.role==="user"||message.role==="assistant";
+        const editable=!lifeActive&&(message.role==="user"||message.role==="assistant");
         const isEditing=editingId===message.id;
         return <article className={"chat-message "+message.role} key={message.id??"message-"+index}>
           <div className="message-author">{message.role==="user"?"You":character.name}</div>
@@ -275,7 +324,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
             </div>
             :<div className="message-content">{message.content}</div>}
           {state==="interrupted"&&<div className="message-status">Interrupted</div>}
-          {editable&&!snapshot.sending&&!isEditing&&message.id&&
+          {editable&&!sending&&!isEditing&&message.id&&
             <div className="message-actions">
               <button type="button" onClick={()=>{setEditingId(message.id);setEditingText(message.content)}}>Edit</button>
               <button type="button" onClick={()=>void deleteMessage(message.id!)}>Delete</button>
@@ -284,14 +333,50 @@ function ChatView({controller,runtime,character,conversations,activeConversation
       })}
       <div ref={bottomRef}/>
     </div>
-    <form className="chat-composer" onSubmit={event=>{event.preventDefault();if(!snapshot.sending)void send()}}>
-      <textarea value={input} onChange={event=>setInput(event.target.value)} onKeyDown={onKeyDown} placeholder="Write a message…" aria-label="Chat message" disabled={snapshot.sending} rows={2}/>
-      <button type="submit" disabled={snapshot.sending||input.trim().length===0}>{snapshot.sending?"Streaming…":"Send"}</button>
+
+    <form className="chat-composer" onSubmit={event=>{event.preventDefault();if(!sending)void send()}}>
+      <textarea value={input} onChange={event=>setInput(event.target.value)}
+        onKeyDown={onKeyDown}
+        placeholder={lifeActive?"Write a message for Nova…":"Write a message…"}
+        aria-label="Chat message"
+        disabled={sending}
+        rows={2}/>
+      <button type="submit" disabled={sending||input.trim().length===0}>
+        {sending?"Streaming…":"Send"}
+      </button>
     </form>
     <p className="chat-hint">Enter to send · Shift+Enter for a new line</p>
-    {snapshot.error&&<div className="chat-error" role="alert">{snapshot.error}</div>}
+    {!lifeActive&&snapshot.error&&<div className="chat-error" role="alert">{snapshot.error}</div>}
     {persistenceError&&<div className="chat-error" role="alert">{persistenceError}</div>}
   </section>;
+}
+
+function NovaLifeControl({state,busy,character,conversation,chatBusy,error,onToggle}:{
+  state:NovaLifeState;
+  busy:boolean;
+  character?:Character;
+  conversation?:Conversation;
+  chatBusy:boolean;
+  error:string;
+  onToggle:()=>Promise<void>;
+}){
+  const on=state.status!=="off";
+  const disabled=busy||!character||!conversation||(!on&&chatBusy);
+  return <div className="nova-life-control">
+    <button
+      type="button"
+      className={on?"nova-life-toggle on":"nova-life-toggle"}
+      aria-pressed={on}
+      disabled={disabled}
+      onClick={()=>void onToggle()}>
+      {on?"Nova: ON":"Nova: OFF"}
+    </button>
+    <span className="nova-life-state" aria-live="polite">
+      Status: {lifeStatusLabel(state.status)}
+      {state.nextRelevantDeadline&&<> · next deadline {new Date(state.nextRelevantDeadline).toLocaleTimeString()}</>}
+    </span>
+    {error&&<span className="chat-error" role="alert">{error}</span>}
+  </div>;
 }
 
 function CharactersView({characters,activeCharacter,onSelect,onCreate,onRename,onDelete}:{
@@ -1034,6 +1119,12 @@ function AppSettingsView({
       [section]:{...(settings[section] as Record<string,unknown>),[key]:value}
     } as AppSettings);
   };
+  const setLifeNumber=(key:"maxSteps"|"maxDurationMs"|"maxModelCallsPerBurst"|"maxToolCallsPerBurst",value:number)=>{
+    onChange({...settings,novaLife:{...settings.novaLife,cognition:{...settings.novaLife.cognition,[key]:value}}});
+  };
+  const setLifeBoolean=(key:"enabledAtStartup"|"proactiveEnabled"|"allowProactiveMessages",value:boolean)=>{
+    onChange({...settings,novaLife:{...settings.novaLife,lifecycle:{...settings.novaLife.lifecycle,[key]:value}}});
+  };
   const defaults=defaultAppSettings();
   return <div className="settings-grid">
     <section>
@@ -1121,6 +1212,55 @@ function AppSettingsView({
         <small>Default: {defaults.retrieval.candidateLimit}</small>
       </label>
       <p className="hint">Memory storage, character/conversation isolation, deduplication, and extraction safety rules are not configurable here.</p>
+    </section>
+
+    <section>
+      <h3>Nova Life</h3>
+      <p className="hint">Autonomy is event- and intention-driven. There are no periodic wake controls or local RPM limits.</p>
+      <label className="checkbox">Enabled at startup
+        <input type="checkbox" checked={settings.novaLife.lifecycle.enabledAtStartup}
+          onChange={event=>setLifeBoolean("enabledAtStartup",event.target.checked)} disabled={saving}/>
+      </label>
+      <label className="checkbox">Proactive behavior enabled
+        <input type="checkbox" checked={settings.novaLife.lifecycle.proactiveEnabled}
+          onChange={event=>setLifeBoolean("proactiveEnabled",event.target.checked)} disabled={saving}/>
+      </label>
+      <label className="checkbox">Allow proactive messages
+        <input type="checkbox" checked={settings.novaLife.lifecycle.allowProactiveMessages}
+          onChange={event=>setLifeBoolean("allowProactiveMessages",event.target.checked)} disabled={saving}/>
+      </label>
+
+      <h4>Cognition budget</h4>
+      <div className="core-book-grid">
+        <label>Max steps per cognition
+          <input type="number" min={1} max={50} value={settings.novaLife.cognition.maxSteps}
+            onChange={event=>setLifeNumber("maxSteps",Number(event.target.value))} disabled={saving}/>
+        </label>
+        <label>Max duration (ms)
+          <input type="number" min={1000} max={300000} value={settings.novaLife.cognition.maxDurationMs}
+            onChange={event=>setLifeNumber("maxDurationMs",Number(event.target.value))} disabled={saving}/>
+        </label>
+        <label>Max model calls
+          <input type="number" min={1} max={50} value={settings.novaLife.cognition.maxModelCallsPerBurst}
+            onChange={event=>setLifeNumber("maxModelCallsPerBurst",Number(event.target.value))} disabled={saving}/>
+        </label>
+        <label>Max tool calls
+          <input type="number" min={1} max={50} value={settings.novaLife.cognition.maxToolCallsPerBurst}
+            onChange={event=>setLifeNumber("maxToolCallsPerBurst",Number(event.target.value))} disabled={saving}/>
+        </label>
+      </div>
+
+      <h4>Provider</h4>
+      <label>Active provider preset
+        <select value={settings.novaLife.provider.activePresetId??""}
+          onChange={event=>onChange({...settings,novaLife:{...settings.novaLife,provider:{activePresetId:event.target.value||null}}})} disabled={saving}>
+          <option value="">Default configured preset</option>
+          {providerPresets.map(preset=><option key={preset.id} value={preset.id}>{preset.name||preset.id}</option>)}
+        </select>
+      </label>
+      <div className="actions">
+        <button type="button" onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save Nova Life Settings"}</button>
+      </div>
     </section>
 
     <section>
@@ -1262,6 +1402,8 @@ function TraceCandidate({candidate}:{candidate:any}){
 function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:AppSettings}){
   const [traces,setTraces]=React.useState<readonly ChatTurnTrace[]>([]);
   const [semanticDiagnostics,setSemanticDiagnostics]=React.useState<readonly ErrorDiagnostic[]>([]);
+  const [lifeDiagnostics,setLifeDiagnostics]=React.useState<readonly ErrorDiagnostic[]>([]);
+  const [novaLifeState,setNovaLifeState]=React.useState<NovaLifeState>(runtime.getNovaLifeState());
   const [selectedId,setSelectedId]=React.useState<string|undefined>();
   const [message,setMessage]=React.useState("");
   const [showRaw,setShowRaw]=React.useState(false);
@@ -1271,11 +1413,13 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
     try{
       const next=runtime.listChatTraces(50);
       setTraces(next);
+      setNovaLifeState(runtime.getNovaLifeState());
       setSelectedId(current=>current&&next.some(trace=>trace.turnId===current)?current:next[0]?.turnId);
       setMessage("");
     }catch(error){setMessage(error instanceof Error?error.message:"Diagnostics could not be loaded.");}
     void runtime.diagnostics().then(snapshot=>{
       setSemanticDiagnostics(snapshot.recentErrors.filter(entry=>entry.source==="memory-semantic-deduplication"));
+      setLifeDiagnostics(snapshot.recentErrors.filter(entry=>entry.source==="nova-life").slice(-50).reverse());
     }).catch(error=>{
       setMessage(error instanceof Error?error.message:"Semantic diagnostics could not be loaded.");
     });
@@ -1307,6 +1451,31 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
           </button>
         )}
       {message&&<div className="error">{message}</div>}
+    </section>
+
+    <section>
+      <h2>Nova Life</h2>
+      <div className="status-grid">
+        <span>Life state</span><strong>{lifeStatusLabel(novaLifeState.status)}</strong>
+        <span>Trigger</span><strong>{novaLifeState.trigger??novaLifeState.wakeReason??"—"}</strong>
+        <span>Current focus</span><strong>{novaLifeState.currentFocus??"—"}</strong>
+        <span>Active intentions</span><strong>{novaLifeState.activeIntentions?.length??0}</strong>
+        <span>Active goals</span><strong>{novaLifeState.activeGoals?.length??0}</strong>
+        <span>Pending activities</span><strong>{novaLifeState.pendingActivities?.length??0}</strong>
+        <span>Last cognition</span><strong>{novaLifeState.lastActivityAt?new Date(novaLifeState.lastActivityAt).toLocaleString():"—"}</strong>
+        <span>Decision</span><strong>{novaLifeState.lastDecision?JSON.stringify(novaLifeState.lastDecision):"—"}</strong>
+        <span>Tools</span><strong>{novaLifeState.lastToolName?novaLifeState.lastToolName+" ("+(novaLifeState.toolCallCount??0)+")":(novaLifeState.toolCallCount?String(novaLifeState.toolCallCount):"—")}</strong>
+        <span>Next meaningful deadline</span><strong>{novaLifeState.nextRelevantDeadline?new Date(novaLifeState.nextRelevantDeadline).toLocaleString():"—"}</strong>
+      </div>
+      {lifeDiagnostics.length===0
+        ?<div>No Nova Life diagnostics yet.</div>
+        :lifeDiagnostics.map((entry,index)=>
+          <div className="diagnostic-block" key={entry.timestamp+"-"+entry.code+"-"+index}>
+            <div className="section-header"><strong>{entry.code}</strong><small>{entry.timestamp}</small></div>
+            <div>{entry.message}</div>
+            {entry.metadata&&<pre className="diagnostic-json">{JSON.stringify(entry.metadata,null,2)}</pre>}
+          </div>
+        )}
     </section>
 
     <section>
@@ -1589,6 +1758,9 @@ function credentialSavedEntries(
 function App(){
   const [view,setView]=React.useState<"chat"|"characters"|"memory"|"core-book"|"model-profile"|"settings"|"diagnostics">("chat");
   const [runtime,setRuntime]=React.useState<RuntimeDiagnostics>(preview);
+  const [novaLifeState,setNovaLifeState]=React.useState<NovaLifeState>({status:"off",wakeCount:0});
+  const [novaLifeBusy,setNovaLifeBusy]=React.useState(false);
+  const [novaLifeError,setNovaLifeError]=React.useState("");
   const [saving,setSaving]=React.useState(false);
   const [startupStatus,setStartupStatus]=React.useState<"initializing"|"ready"|"error">("initializing");
   const [startupError,setStartupError]=React.useState("");
@@ -1599,12 +1771,13 @@ function App(){
   const [conversations,setConversations]=React.useState<readonly Conversation[]>([]);
   const [activeConversation,setActiveConversation]=React.useState<Conversation|undefined>();
   const foundationRef=React.useRef<FoundationRuntime|undefined>(undefined);
+  const novaLifeSubscriptionRef=React.useRef<(()=>void)|undefined>(undefined);
   const providerConfigurationErrorRef=React.useRef<string|undefined>(undefined);
   const conversationLoadErrorRef=React.useRef<string|undefined>(undefined);
   const modelProfileLoadErrorRef=React.useRef<string|undefined>(undefined);
   const credentialStore=React.useMemo(()=>new IpcCredentialStore(invoke),[]);
   const configurationStore=React.useMemo(()=>new IpcProviderConfigurationStore(invoke),[]);
-  const characterStore=React.useMemo(()=>isTauriRuntime()?new IpcCharacterStore(invoke):new InMemoryCharacterStore(),[]);
+  const characterStore=React.useMemo(()=>isTauriRuntime()?new IpcCharacterStore(invoke):new HostInMemoryCharacterStore(),[]);
   const coreBookStore=React.useMemo(()=>isTauriRuntime()?new IpcCoreBookStore(invoke):new InMemoryCoreBookStore(),[]);
   const memoryStore=React.useMemo(()=>isTauriRuntime()?new IpcMemoryStore(invoke):new InMemoryMemoryStore(),[]);
   const conversationStore=React.useMemo(()=>isTauriRuntime()?new IpcConversationStore(invoke):new InMemoryConversationStore(),[]);
@@ -1778,6 +1951,20 @@ function App(){
     setChatController(loaded.controller);
   },[controllerForConversation,loadModelProfile]);
 
+  const refreshActiveConversation=React.useCallback(async()=>{
+    const foundation=foundationRef.current;
+    const characterId=activeCharacter?.id;
+    const conversationId=activeConversation?.id;
+    if(!foundation||!characterId||!conversationId)return;
+    const conversation=await foundation.getConversation(characterId,conversationId);
+    if(!conversation)return;
+    const profile=await loadModelProfile(characterId);
+    setActiveConversation(conversation);
+    setConversations(await foundation.listConversations(characterId));
+    setActiveModelProfile(profile);
+    setChatController(controllerForConversation(conversation,profile));
+  },[activeCharacter?.id,activeConversation?.id,controllerForConversation,loadModelProfile]);
+
   const addConfigurationLoadError=React.useCallback((diagnostics:RuntimeDiagnostics):RuntimeDiagnostics=>{
     const recentErrors=[...diagnostics.recentErrors];
     const providerMessage=providerConfigurationErrorRef.current;
@@ -1828,6 +2015,9 @@ function App(){
       activeProviderPresetId:presetState.activePresetId??undefined
     });
     foundationRef.current=next;
+    novaLifeSubscriptionRef.current?.();
+    novaLifeSubscriptionRef.current=next.subscribeNovaLifeState(setNovaLifeState);
+    setNovaLifeError("");
     setRuntime(await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(await next.diagnostics())));
     await syncCharacters(next);
     setRuntime(await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(await next.diagnostics())));
@@ -1887,7 +2077,7 @@ function App(){
         if(active){setStartupStatus("error");setStartupError(safeStartupError(error));setRuntime({...preview,runtimeStatus:"error",coreStatus:"error"});}
       }
     })();
-    return ()=>{active=false;if(timer)clearInterval(timer);void foundationRef.current?.stop();foundationRef.current=undefined};
+    return ()=>{active=false;if(timer)clearInterval(timer);novaLifeSubscriptionRef.current?.();novaLifeSubscriptionRef.current=undefined;void foundationRef.current?.stop();foundationRef.current=undefined};
   },[configurationStore,credentialProfileStore,providerPresetStore,credentialStore,refreshRuntime]);
 
   const selectCharacter=React.useCallback(async(id:string)=>{
@@ -1998,6 +2188,27 @@ function App(){
     if(before?.id===id||before?.id!==nextActive.id)setChatController(loaded.controller);
   },[activeCharacter,chatController,loadActiveConversation,modelProfileStore]);
 
+  const toggleNovaLife=React.useCallback(async()=>{
+    const foundation=foundationRef.current;
+    const character=activeCharacter;
+    const conversation=activeConversation;
+    if(!foundation||!character||!conversation)return;
+    setNovaLifeBusy(true);
+    setNovaLifeError("");
+    try{
+      if(foundation.getNovaLifeState().status==="off"){
+        await foundation.startNovaLife(character.id,conversation.id);
+      }else{
+        await foundation.stopNovaLife();
+      }
+    }catch(error){
+      setNovaLifeError(safeErrorMessage(error,"Nova Life could not change state."));
+    }finally{
+      setNovaLifeState(foundation.getNovaLifeState());
+      setNovaLifeBusy(false);
+    }
+  },[activeCharacter?.id,activeConversation?.id]);
+
   const saveProviderPreset=React.useCallback(async(preset:ProviderPreset,activate:boolean)=>{
     const current=providerPresetStateRef.current;
     const nextState:ProviderPresetStoreState={...current,presets:[...current.presets.filter(item=>item.id!==preset.id),preset],activePresetId:activate?preset.id:current.activePresetId};
@@ -2095,7 +2306,17 @@ function App(){
   return <main className="app-shell">
     <header className="app-header">
       <div><h1>Nova</h1><p>AI Companion</p></div>
-      <nav className="app-nav" aria-label="Primary">
+      <div className="app-header-controls">
+        <NovaLifeControl
+          state={novaLifeState}
+          busy={novaLifeBusy}
+          character={activeCharacter}
+          conversation={activeConversation}
+          chatBusy={chatController?.getSnapshot().sending??false}
+          error={novaLifeError}
+          onToggle={toggleNovaLife}
+        />
+        <nav className="app-nav" aria-label="Primary">
         <button className={view==="chat"?"nav-button active":"nav-button"} onClick={()=>setView("chat")}>Chat</button>
         <button className={view==="characters"?"nav-button active":"nav-button"} onClick={()=>setView("characters")}>Characters</button>
         <button className={view==="memory"?"nav-button active":"nav-button"} onClick={()=>setView("memory")}>Character Memory</button>
@@ -2103,7 +2324,8 @@ function App(){
         <button className={view==="model-profile"?"nav-button active":"nav-button"} onClick={()=>setView("model-profile")}>Model Profile</button>
         <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Settings</button>
         {appSettings.ui.showDiagnosticsInChat&&<button className={view==="diagnostics"?"nav-button active":"nav-button"} onClick={()=>setView("diagnostics")}>Diagnostics</button>}
-      </nav>
+        </nav>
+      </div>
     </header>
     <ViewErrorBoundary key={view} view={view} onError={reportViewError}>
     {view==="model-profile"&&activeCharacter&&activeModelProfile
@@ -2137,10 +2359,11 @@ function App(){
           <div>{startupError}</div>
         </section>
       :view==="chat"&&activeCharacter&&chatController&&activeConversation
-      ?<ChatView controller={chatController} runtime={foundationRef.current!} character={activeCharacter}
-          conversations={conversations} activeConversation={activeConversation}
+      ?<ChatView controller={chatController} runtime={foundationRef.current!} character={activeCharacter} modelProfile={activeModelProfile}
+          conversations={conversations} activeConversation={activeConversation} novaLifeState={novaLifeState}
           onPersist={()=>persistConversation(chatController!)}
           onClear={()=>clearConversation(chatController!)}
+          onRefreshConversation={refreshActiveConversation}
           onSelectConversation={selectConversation}
           onCreateConversation={createConversation}
           onRenameConversation={renameConversation}

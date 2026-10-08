@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.ai-companion-nova.dev/app-settings/v5",
-  "title": "AI Companion Nova App Settings v5",
+  "$id": "https://schemas.ai-companion-nova.dev/app-settings/v7",
+  "title": "AI Companion Nova App Settings v7",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -14,14 +14,15 @@
     "diagnostics",
     "ui",
     "semanticDedup",
-    "memoryAgent"
+    "memoryAgent",
+    "novaLife"
   ],
   "properties": {
     "apiVersion": {
       "const": "1"
     },
     "schemaVersion": {
-      "const": "5"
+      "const": "7"
     },
     "chat": {
       "type": "object",
@@ -274,6 +275,86 @@
           }
         }
       }
+    },
+    "novaLife": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lifecycle",
+        "cognition",
+        "provider"
+      ],
+      "properties": {
+        "lifecycle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabledAtStartup",
+            "proactiveEnabled",
+            "allowProactiveMessages"
+          ],
+          "properties": {
+            "enabledAtStartup": {
+              "type": "boolean"
+            },
+            "proactiveEnabled": {
+              "type": "boolean"
+            },
+            "allowProactiveMessages": {
+              "type": "boolean"
+            }
+          }
+        },
+        "cognition": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "maxSteps",
+            "maxDurationMs",
+            "maxModelCallsPerBurst",
+            "maxToolCallsPerBurst"
+          ],
+          "properties": {
+            "maxSteps": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            },
+            "maxDurationMs": {
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 300000
+            },
+            "maxModelCallsPerBurst": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            },
+            "maxToolCallsPerBurst": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            }
+          }
+        },
+        "provider": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "activePresetId"
+          ],
+          "properties": {
+            "activePresetId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 200
+            }
+          }
+        }
+      }
     }
-  }
+  },
+  "schemaVersion": "7"
 }

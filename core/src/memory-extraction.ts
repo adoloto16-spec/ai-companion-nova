@@ -217,7 +217,7 @@ export class MemoryExtractionService{
       requestId:"memory-extraction:"+request.turnId,
       ...(request.providerId?{providerId:request.providerId}:{}),
       model:request.model,
-      context:{conversationId:request.conversationId,messages:[
+      context:{conversationId:request.conversationId,metadata:{requestPriority:"maintenance"},messages:[
         {role:"system",content:EXTRACTION_SYSTEM_PROMPT},
         {role:"user",content:safeText(JSON.stringify(payload))}
       ]}

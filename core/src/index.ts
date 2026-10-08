@@ -10,6 +10,7 @@ export * from "./security";
 export * from "./tools";
 export * from "./providers";
 export * from "./ai-runtime";
+export * from "./model-request-governor";
 export * from "./action-broker";
 
 export * from "./core-book-manager";
@@ -24,3 +25,12 @@ export * from "./settings";
 
 export * from "./agent-output";
 export * from "./semantic-memory-dedup";
+
+export * from "./agent-protocol";
+export * from "./agent-cognitive-controller";
+export * from "./agent-action-executor";
+export * from "./agent-kernel";
+export * from "./nova-life-runtime";
+export * from "./nova-autonomy-core";
+
+export * from "./provider-router";

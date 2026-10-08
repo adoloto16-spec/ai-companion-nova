@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/agent-decision/v4",
+  "title": "AI Companion Nova Agent Decision v4",
+  "type": "object",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "content"
+      ],
+      "properties": {
+        "action": {
+          "const": "respond"
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "toolName",
+        "arguments",
+        "callId"
+      ],
+      "properties": {
+        "action": {
+          "const": "tool_call"
+        },
+        "toolName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "arguments": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "callId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "intent"
+      ],
+      "properties": {
+        "action": {
+          "const": "create_intent"
+        },
+        "intent": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "description",
+            "priority"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "description": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "priority": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "dueAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "intentId",
+        "intent"
+      ],
+      "properties": {
+        "action": {
+          "const": "update_intent"
+        },
+        "intentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "intent": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "type": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "description": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "priority": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "dueAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "intentId"
+      ],
+      "properties": {
+        "action": {
+          "const": "complete_intent"
+        },
+        "intentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "question"
+      ],
+      "properties": {
+        "action": {
+          "const": "ask_user"
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "required": [
+        "action"
+      ],
+      "properties": {
+        "action": {
+          "const": "idle"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "waitMs"
+      ],
+      "properties": {
+        "action": {
+          "const": "wait"
+        },
+        "waitMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300000
+        }
+      }
+    }
+  ]
+}

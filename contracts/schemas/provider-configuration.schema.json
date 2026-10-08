@@ -1,28 +1,167 @@
 {
-  "$schema":"https://json-schema.org/draft/2020-12/schema",
-  "$id":"https://schemas.ai-companion-nova.dev/provider-configuration/v1",
-  "title":"AI Companion Nova Provider Configuration v1",
-  "type":"object",
-  "additionalProperties":false,
-  "required":["apiVersion","schemaVersion","providerId","enabled","baseUrl","model","credentialReference"],
-  "properties":{
-    "apiVersion":{"enum":["1"]},
-    "schemaVersion":{"enum":["1"]},
-    "providerId":{"type":"string","minLength":1},
-    "enabled":{"type":"boolean"},
-    "baseUrl":{"type":"string","minLength":1},
-    "model":{"type":"string","minLength":1},
-    "credentialReference":{
-      "type":["object","null"],
-      "additionalProperties":false,
-      "required":["id","kind"],
-      "properties":{
-        "id":{"type":"string","minLength":1},
-        "kind":{"type":"string","minLength":1},
-        "provider":{"type":"string","minLength":1},
-        "version":{"type":"string","minLength":1}
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/provider-configuration/v1",
+  "title": "AI Companion Nova Provider Configuration v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "schemaVersion",
+    "providerId",
+    "enabled",
+    "baseUrl",
+    "model",
+    "credentialReference"
+  ],
+  "properties": {
+    "apiVersion": {
+      "enum": [
+        "1"
+      ]
+    },
+    "schemaVersion": {
+      "enum": [
+        "1"
+      ]
+    },
+    "providerId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "baseUrl": {
+      "type": "string",
+      "minLength": 1
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "credentialReference": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
-    "timeoutMs":{"type":"number","minimum":0.000001}
+    "timeoutMs": {
+      "type": "number",
+      "minimum": 0.000001
+    },
+    "structuredOutput": {
+      "type": "boolean"
+    },
+    "credentials": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "label",
+          "credentialReference",
+          "health",
+          "failureCount"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "credentialReference": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "kind": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 50
+              },
+              "provider": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              }
+            }
+          },
+          "health": {
+            "enum": [
+              "healthy",
+              "degraded",
+              "unhealthy",
+              "disabled"
+            ]
+          },
+          "cooldownUntil": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastSuccessAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastFailureAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failureCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "temporarilyDisabledUntil": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    }
   }
 }

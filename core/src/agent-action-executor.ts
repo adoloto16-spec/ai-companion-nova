@@ -1,0 +1,89 @@
+import type {ActionBroker,ActorCredential,AgentDecision,AgentRun,AgentStepOutcome,ChatMessage,Clock,EventBus} from "../../contracts/src/index";
+import {createEvent} from "../../contracts/src/index";
+import {FOUNDATION_SCHEMA_VERSION} from "../../contracts/src/index";
+import type {InMemoryToolRegistry} from "./tools";
+
+export interface AgentActionExecution{
+  outcome:AgentStepOutcome;
+  nextState:"thinking"|"waiting"|"completed";
+  summary?:string;
+  waitMs?:number;
+  contextMessages?:readonly ChatMessage[];
+}
+export interface AgentActionExecutionContext{signal?:AbortSignal;}
+export interface AgentActionExecutor{
+  execute(run:AgentRun,decision:AgentDecision,context?:AgentActionExecutionContext):Promise<AgentActionExecution>;
+}
+
+function serialize(value:unknown):string{
+  try{return JSON.stringify(value);}
+  catch{return String(value);}
+}
+
+export interface DefaultAgentActionExecutorOptions{
+  toolRegistry?:InMemoryToolRegistry;
+  actionBroker?:ActionBroker;
+  credential?:ActorCredential;
+  events?:EventBus;
+  clock?:Clock;
+}
+
+export class DefaultAgentActionExecutor implements AgentActionExecutor{
+  constructor(private readonly options:DefaultAgentActionExecutorOptions){}
+  async execute(_run:AgentRun,decision:AgentDecision,context:AgentActionExecutionContext={}):Promise<AgentActionExecution>{
+    if(context.signal?.aborted){
+      const error=new Error("Agent action operation aborted.");error.name="AbortError";throw error;
+    }
+    switch(decision.action){
+      case "respond":
+        return {outcome:"responded",nextState:"completed",summary:decision.content};
+      case "idle":
+        return {outcome:"waiting",nextState:"waiting",summary:"idle"};
+      case "wait":
+        return {outcome:"waiting",nextState:"waiting",summary:"wait:"+decision.waitMs,waitMs:decision.waitMs};
+      case "ask_user":
+        return {outcome:"waiting",nextState:"waiting",summary:decision.question};
+      case "create_intent":
+      case "update_intent":
+      case "complete_intent":
+        return {outcome:"intent_updated",nextState:"thinking",summary:"intent:"+decision.action};
+      case "tool_call":{
+        if(!this.options.toolRegistry||!this.options.actionBroker||!this.options.credential)throw new Error("Tool execution dependencies are not configured.");
+        const tool=this.options.toolRegistry.get(decision.toolName);
+        if(!tool)throw new Error("Tool not found: "+decision.toolName);
+        const request={
+          id:decision.callId,
+          schemaVersion:FOUNDATION_SCHEMA_VERSION,
+          tool:decision.toolName,
+          arguments:decision.arguments,
+          metadata:{agentRun:true,toolName:decision.toolName}
+        };
+        const result=await this.options.actionBroker.execute({request,credential:this.options.credential});
+        if(context.signal?.aborted){
+          const error=new Error("Agent action operation aborted.");error.name="AbortError";throw error;
+        }
+        const toolMessage:ChatMessage={
+          id:"tool:"+decision.callId,
+          role:"tool",
+          content:serialize(result),
+          toolCallId:decision.callId,
+          metadata:{contextSource:"agent_tool_result",toolName:decision.toolName,callId:decision.callId,status:result.status}
+        };
+        const callMessage:ChatMessage={
+          id:"tool-call:"+decision.callId,
+          role:"assistant",
+          content:"",
+          toolCallId:decision.callId,
+          metadata:{contextSource:"agent_tool_call",toolName:decision.toolName,callId:decision.callId}
+        };
+        await this.options.events?.publish(createEvent("ToolResultReceived",{runId:_run.id,toolName:decision.toolName,callId:decision.callId,status:result.status},"agent-action-executor",()=>this.options.clock?.now()??new Date().toISOString(),_run.id+":tool-result:"+decision.callId));
+        return {
+          outcome:"tool_called",
+          nextState:"thinking",
+          summary:"tool:"+decision.toolName+":"+result.status,
+          contextMessages:[callMessage,toolMessage]
+        };
+      }
+    }
+  }
+}

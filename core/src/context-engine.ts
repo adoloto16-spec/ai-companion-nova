@@ -258,7 +258,7 @@ export class CoreBookCandidateSource implements ContextCandidateSource {
       referenceId:entry.id as CoreBookEntryId,
       characterId:entry.characterId,
       content:entry.content,
-      role:"user" as const,
+      role:"system" as const,
       eligible:false,
       reason:"",
       estimatedTokens:this.estimator.estimate(entry.content),

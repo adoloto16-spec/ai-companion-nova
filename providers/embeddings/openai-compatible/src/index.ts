@@ -8,7 +8,7 @@ export interface EmbeddingHttpRequest{
   headers:Record<string,string>;
   body:string;
 }
-export interface EmbeddingHttpResponse{status:number;body:string;}
+export interface EmbeddingHttpResponse{status:number;body:string;headers?:Readonly<Record<string,string>>;}
 export interface EmbeddingHttpClient{
   request(request:EmbeddingHttpRequest):Promise<EmbeddingHttpResponse>;
 }
@@ -39,11 +39,13 @@ export function validateOpenAICompatibleEmbeddingProviderConfig(
 export class OpenAICompatibleEmbeddingProviderError extends Error{
   readonly code:"INVALID_REQUEST"|"PROVIDER_UNAVAILABLE"|"PROVIDER_ERROR"|"INVALID_RESPONSE";
   readonly category:string;
-  constructor(input:{code:OpenAICompatibleEmbeddingProviderError["code"];message:string;category:string}){
+  readonly retryAfterMs?:number;
+  constructor(input:{code:OpenAICompatibleEmbeddingProviderError["code"];message:string;category:string;retryAfterMs?:number}){
     super(input.message);
     this.name="OpenAICompatibleEmbeddingProviderError";
     this.code=input.code;
     this.category=input.category;
+    this.retryAfterMs=input.retryAfterMs;
   }
 }
 
@@ -89,10 +91,12 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider{
     if(response.status<200||response.status>=300){
       const message=redact(response.body||"");
       const category=response.status===401||response.status===403?"authentication":response.status===429?"rate_limit":response.status>=500?"server":"provider";
+      const retryAfterMs=category==="rate_limit"?parseRetryAfterMs(response.headers):undefined;
       throw new OpenAICompatibleEmbeddingProviderError({
         code:response.status===400||response.status===422?"INVALID_REQUEST":"PROVIDER_ERROR",
         message:"OpenAI-compatible embedding provider returned HTTP "+response.status+"."+((category==="authentication"||category==="rate_limit")?"":" "+message.slice(0,500)),
-        category
+        category,
+        ...(retryAfterMs===undefined?{}:{retryAfterMs})
       });
     }
     let payloadValue:unknown;
@@ -177,6 +181,15 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider{
   }
 }
 
+function parseRetryAfterMs(headers?:Readonly<Record<string,string>>):number|undefined{
+  const raw=headers?.["retry-after"]??headers?.["Retry-After"];
+  if(raw===undefined)return undefined;
+  const seconds=Number(raw.trim());
+  if(Number.isFinite(seconds)&&seconds>=0)return Math.min(600000,Math.round(seconds*1000));
+  const timestamp=Date.parse(raw);
+  return Number.isFinite(timestamp)?Math.min(600000,Math.max(0,timestamp-Date.now())):undefined;
+}
+
 function defaultHttpClient():EmbeddingHttpClient{
   return {
     async request(request){
@@ -186,7 +199,7 @@ function defaultHttpClient():EmbeddingHttpClient{
         body:request.body,
         signal:(request as EmbeddingHttpRequest & {signal?:AbortSignal}).signal
       });
-      return {status:response.status,body:await response.text()};
+      return {status:response.status,body:await response.text(),headers:Object.fromEntries(response.headers.entries())};
     }
   };
 }

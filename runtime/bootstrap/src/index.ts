@@ -1,10 +1,10 @@
-import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryArchiveReason,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,MemorySemanticIndexStore,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider} from "../../../contracts/src/index";
-import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
+import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryArchiveReason,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,MemorySemanticIndexStore,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider,ChatMessage} from "../../../contracts/src/index";
+import {FOUNDATION_SCHEMA_VERSION,createEvent} from "../../../contracts/src/index";
 import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore} from "../../../contracts/src/index";
 import type {Conversation,ConversationCreateInput,ConversationId,ConversationStore,ConversationUpdateInput} from "../../../contracts/src/index";
 import {
-  AiRuntime,AutomaticMemoryAgent,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,MemorySemanticDeduplicator,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,
-  InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,
+  AiRuntime,AutomaticMemoryAgent,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,MemorySemanticDeduplicator,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,ModelRequestGovernor,
+  InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,AgentKernel,AgentCognitiveController,DefaultAgentActionExecutor,NovaLifeRuntime,NovaAutonomyCore,StateStoreNovaAutonomyStore,
   DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
   InMemoryActorIdentityResolver,createMemoryConfig,SettingsManager,InMemoryChatTraceStore
 } from "../../../core/src/index";
@@ -25,6 +25,9 @@ import {InMemoryMemorySemanticIndexStore,InMemoryMemoryStore} from "../../../hos
 import type {CoreBookCreateInput,CoreBookUpdateInput} from "../../../core/src/core-book-manager";
 import {activeProviderId,buildConfiguredProvider,buildEmbeddingProviderForPreset,buildProviderForDiscovery,buildProviderForPreset,testProviderConfiguration} from "./provider-configuration";
 import {RetrievalEventIndexer} from "../../../core/src/retrieval-indexer";
+import type {AgentCognitiveDecisionProvider} from "../../../core/src/agent-cognitive-controller";
+import type {NovaLifeState,NovaLifeWakeReason} from "../../../core/src/nova-life-runtime";
+import type {AgentActionExecutor} from "../../../core/src/agent-action-executor";
 
 
 export interface OpenAICompatibleRuntimeConfig{
@@ -34,6 +37,8 @@ export interface OpenAICompatibleRuntimeConfig{
 }
 
 export interface FoundationRuntimeOptions{
+  agentCognitiveController?:AgentCognitiveDecisionProvider;
+  agentActionExecutor?:AgentActionExecutor;
   providerConfiguration?:ProviderConfiguration;
   settingsStore?:AppSettingsStore;
   credentialStore?:CredentialStore;
@@ -50,6 +55,8 @@ export interface FoundationRuntimeOptions{
   embeddingHttpClient?:import("../../../providers/embeddings/openai-compatible/src").EmbeddingHttpClient;
   providerPresetConfigurations?:readonly {presetId:string;configuration:ProviderConfiguration}[];
   activeProviderPresetId?:string;
+  novaLifeRuntime?:Pick<import("../../../core/src/nova-life-runtime").NovaLifeRuntimeOptions,"resolveAgentRunLimits"|"proactiveEnabled"|"allowProactiveMessages">;
+  novaAutonomyStore?:import("../../../core/src/nova-autonomy-core").NovaAutonomyStore;
 }
 
 export interface FoundationRuntime{
@@ -66,6 +73,13 @@ export interface FoundationRuntime{
   getChatModel(providerId?:string):Promise<string>;
   getChatModelForPreset(providerPresetId:string):Promise<string>;
   getActiveProviderPresetId():string|undefined;
+  startNovaLife(characterId:CharacterId,conversationId:ConversationId):Promise<NovaLifeState>;
+  stopNovaLife():Promise<NovaLifeState>;
+  getNovaLifeState():NovaLifeState;
+  wakeNovaLife(reason?:NovaLifeWakeReason):Promise<NovaLifeState>;
+  notifyNovaUserMessage(characterId:CharacterId,conversationId:ConversationId,messageId:string):void;
+  subscribeNovaLifeState(listener:(state:NovaLifeState)=>void):()=>void;
+  appendConversationUserMessage(characterId:CharacterId,conversationId:ConversationId,text:string):Promise<Conversation>;
   getChatProviderDiagnostics(providerPresetId?:string):{
     providerPresetId?:string;
     providerId:string;
@@ -242,7 +256,16 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   providers.register(new FakeEmbeddingProvider(),["embeddings"]);
   providers.register(new FakeVisionProvider(),["vision"]);
 
-  const aiRuntime=new AiRuntime(providers,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
+  const requestGovernor=new ModelRequestGovernor({maxConcurrentRequests:2,backgroundRequestPriority:10,maxRetries:0,diagnostics:diagnosticsStore});
+  const aiRuntime=new AiRuntime(providers,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString(),requestGovernor});
+  const agentCognitiveController=options.agentCognitiveController??new AgentCognitiveController(aiRuntime,{
+    validator:contractValidator,diagnostics:diagnosticsStore,toolRegistry:tools
+  });
+  const resolveAgentModel=async(providerId?:string):Promise<string>=>{
+    const provider=providerId?providers.get<ChatProvider>(providerId):(providers.list("chat")[0]?.provider as ChatProvider|undefined);
+    if(!provider)return "fake-chat";
+    try{const models=await provider.listModels();return models[0]?.id??"fake-chat";}catch{return "fake-chat";}
+  };
   const extractionChatRuntime={
     chat:async (request:ChatRequest,providerPresetId?:string):Promise<ChatResponse>=>{
       if(providerPresetId){
@@ -253,7 +276,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
           const configured=buildProviderForPreset(effectiveConfiguration,credentialStore,options.httpClient);
           if(configured)scopedProviders.register(configured,["chat"]);
         }
-        const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
+        const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString(),requestGovernor});
         return scopedRuntime.generate({...request,providerId:"openai-compatible"});
       }
       return aiRuntime.generate(request.providerId?request:{...request,providerId:activeProviderId(providerConfiguration)});
@@ -298,7 +321,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     events,
     listCharacterIds:async()=> (await characterManager.listCharacters()).map(character=>character.id),
     clock:{now:()=>new Date().toISOString()},
-    source:"memory-semantic-deduplication"
+    source:"memory-semantic-deduplication",
+    requestGovernor
   });
   semanticMemoryDeduplicator.start();
   // Record the effective production wiring and settings so disabled or unwired dedup is observable without exposing secrets.
@@ -374,6 +398,63 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     schemaValidator:new StandardContractValidator(),diagnostics:diagnosticsStore,targetResolvers,actorResolver
   });
 
+  const agentKernel=new AgentKernel({
+    cognitive:agentCognitiveController,
+    actionExecutor:options.agentActionExecutor??new DefaultAgentActionExecutor({
+      toolRegistry:tools,
+      actionBroker:broker,
+      credential:characterCredential,
+      events,
+      clock:{now:()=>new Date().toISOString()}
+    }),
+    conversationContext:async(characterId,conversationId)=>{
+      const conversation=await conversationManager.getConversation(characterId,conversationId);
+      const limit=Math.max(1,Math.min(32,settingsManager.get().context.recentConversationMessages));
+      return conversation?.messages.slice(-limit)??[];
+    },
+    validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()
+  });
+
+  const autonomy=new NovaAutonomyCore({
+    store:options.novaAutonomyStore??new StateStoreNovaAutonomyStore(_state),
+    clock:{now:()=>new Date().toISOString()},
+    diagnostics:diagnosticsStore
+  });
+  const novaLife=new NovaLifeRuntime({
+    agentKernel,
+    autonomy,
+    contextEngine,
+    conversationManager,
+    events,
+    diagnostics:diagnosticsStore,
+    clock:{now:()=>new Date().toISOString()},
+    contextBudget:()=>{
+      const settings=settingsManager.get();
+      return {
+        availableContextTokens:settings.context.availableContextTokens,
+        reservedOutputTokens:settings.context.reservedOutputTokens,
+        systemOverheadTokens:0,
+        safetyMarginTokens:settings.context.safetyMarginTokens
+      };
+    },
+    resolveProviderId:()=>activeProviderId(providerConfiguration),
+    resolveModel:resolveAgentModel,
+    getProviderPresetId:()=>activeProviderPresetId,
+    extractMemory:async request=>{await automaticMemoryAgent.process(request);},
+    memoryExtractionEnabled:()=>settingsManager.get().chat.automaticLongTermMemory,
+    recentConversationMessages:()=>settingsManager.get().context.recentConversationMessages,
+    resolveAgentRunLimits:()=>({
+      maxSteps:settingsManager.get().novaLife.cognition.maxSteps,
+      maxDurationMs:settingsManager.get().novaLife.cognition.maxDurationMs,
+      maxConsecutiveFailures:3,
+      maxModelCallsPerBurst:settingsManager.get().novaLife.cognition.maxModelCallsPerBurst,
+      maxToolCallsPerBurst:10
+    }),
+    proactiveEnabled:()=>settingsManager.get().novaLife.lifecycle.proactiveEnabled,
+    allowProactiveMessages:()=>settingsManager.get().novaLife.lifecycle.allowProactiveMessages,
+    ...(options.novaLifeRuntime??{})
+  });
+
   let runtimeStatus:RuntimeDiagnostics["runtimeStatus"]="starting";
   const snapshot=async():Promise<RuntimeDiagnostics>=>{
     const moduleHealth=await moduleManager.health().catch(()=>({}));
@@ -418,8 +499,17 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       await moduleManager.initializeAll();
       await moduleManager.startAll();
       runtimeStatus="running";
+      if(settingsManager.get().novaLife.lifecycle.enabledAtStartup){
+        try{
+          const character=await characterManager.getActiveCharacter();
+          const conversation=await conversationManager.getActiveConversation(character.id);
+          await novaLife.start(character.id,conversation.id);
+        }catch(error){
+          diagnosticsStore.recordError("nova-life","STARTUP_WAKE_FAILED",error instanceof Error?error.message:String(error),{errorCategory:"runtime"});
+        }
+      }
     },
-    async stop(){try{semanticMemoryDeduplicator.stop();retrievalIndexer?.stop();await moduleManager.stopAll();}finally{runtimeStatus="stopped";}},
+    async stop(){try{await novaLife.stop();semanticMemoryDeduplicator.stop();retrievalIndexer?.stop();await moduleManager.stopAll();}finally{runtimeStatus="stopped";}},
     diagnostics:snapshot,
     recordDiagnosticError:(source,code,message,metadata)=>diagnosticsStore.recordError(source,code,message,metadata),
     invoke:request=>broker.execute({request,credential:characterCredential}),
@@ -437,7 +527,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
           ...(safeProviderConfigMetadata(effectiveConfiguration)?{...safeProviderConfigMetadata(effectiveConfiguration)}:{}),
           chatTransport:"stream"
         });
-        const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
+        const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString(),requestGovernor});
         try{
           return await scopedRuntime.stream({...request,providerId:"openai-compatible"},handlers,streamOptions);
         }catch(error){
@@ -466,7 +556,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
           const configured=buildProviderForPreset(effectiveConfiguration,credentialStore,options.httpClient);
           if(configured)scopedProviders.register(configured,["chat"]);
         }
-        const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
+        const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString(),requestGovernor});
         return scopedRuntime.generate({...request,providerId:"openai-compatible"});
       }
       return aiRuntime.generate(request.providerId?request:{...request,providerId:activeProviderId(providerConfiguration)});
@@ -501,6 +591,15 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     getSettings:()=>settingsManager.get(),
     updateSettings:async(settings)=>{
       const next=await settingsManager.set(settings);
+      const configuredDefault=providerPresetConfigurations.keys().next().value;
+      const selectedPresetId=next.novaLife.provider.activePresetId??(typeof configuredDefault==="string"?configuredDefault:undefined);
+      if(typeof selectedPresetId==="string"){
+        const configuration=providerPresetConfigurations.get(selectedPresetId);
+        if(configuration){
+          activeProviderPresetId=selectedPresetId;
+          await applyProvider(configuration);
+        }
+      }
       diagnosticsStore.setMaxEntries(next.diagnostics.keepRecentEntries);
       traceStore.configure(next.diagnostics.logLevel,next.diagnostics.keepRecentEntries);
       // Record the values the already-running runtime will use after a Settings Save.
@@ -515,6 +614,15 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     },
     resetSettings:async()=>{
       const next=await settingsManager.reset();
+      const configuredDefault=providerPresetConfigurations.keys().next().value;
+      const selectedPresetId=next.novaLife.provider.activePresetId??(typeof configuredDefault==="string"?configuredDefault:undefined);
+      if(typeof selectedPresetId==="string"){
+        const configuration=providerPresetConfigurations.get(selectedPresetId);
+        if(configuration){
+          activeProviderPresetId=selectedPresetId;
+          await applyProvider(configuration);
+        }
+      }
       diagnosticsStore.setMaxEntries(next.diagnostics.keepRecentEntries);
       traceStore.configure(next.diagnostics.logLevel,next.diagnostics.keepRecentEntries);
       return next;
@@ -522,7 +630,10 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     getChatTraceStore:()=>traceStore,
     listChatTraces:limit=>traceStore.recent(limit),
     clearChatTraces:()=>traceStore.clear(),
-    setProviderPresetConfigurations:(configurations,activePresetId)=>{providerPresetConfigurations=new Map(configurations.map(item=>[item.presetId,item.configuration])); activeProviderPresetId=activePresetId??configurations[0]?.presetId;},
+    setProviderPresetConfigurations:(configurations,activePresetId)=>{
+  providerPresetConfigurations=new Map(configurations.map(item=>[item.presetId,item.configuration]));
+  activeProviderPresetId=activePresetId??configurations[0]?.presetId??activeProviderPresetId;
+},
     listCharacters:()=>characterManager.listCharacters(),
     getCharacter:id=>characterManager.getCharacter(id),
     createCharacter:async input=>{
@@ -537,6 +648,21 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       const character=await characterManager.setActiveCharacter(id);
       await conversationManager.getActiveConversation(character.id);
       return character;
+    },
+    startNovaLife:(characterId,conversationId)=>novaLife.start(characterId,conversationId),
+    stopNovaLife:()=>novaLife.stop(),
+    getNovaLifeState:()=>novaLife.getState(),
+    wakeNovaLife:(reason="runtime_event")=>novaLife.wake(reason),
+    notifyNovaUserMessage:(characterId,conversationId,messageId)=>novaLife.notifyUserMessage(characterId,conversationId,messageId),
+    subscribeNovaLifeState:listener=>novaLife.subscribe(listener),
+    appendConversationUserMessage:async(characterId,conversationId,text)=>{
+      const normalized=text.trim();
+      if(!normalized)throw new Error("Conversation user message must not be empty.");
+      const conversation=await conversationManager.getConversation(characterId,conversationId);
+      if(!conversation)throw new Error("Conversation was not found.");
+      const messageId="user:"+Date.now().toString(36)+":"+conversation.messages.length;
+      const message:ChatMessage={id:messageId,role:"user",content:normalized};
+      return conversationManager.updateConversation(characterId,conversationId,{messages:[...conversation.messages,message]});
     },
     createConversation:(characterId,input)=>conversationManager.createConversation(characterId,input),
     listConversations:characterId=>conversationManager.listConversations(characterId),

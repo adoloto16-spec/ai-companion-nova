@@ -1,9 +1,20 @@
-import type {ProviderConfiguration,ProviderPreset,ProviderPresetStore,ProviderPresetStoreState,CredentialProfile,CredentialReference} from "../../../contracts/src/index";
+import type {ProviderConfiguration,ProviderPreset,ProviderPresetCredential,ProviderPresetStore,ProviderPresetStoreState,CredentialProfile,CredentialReference} from "../../../contracts/src/index";
 
 export type ProviderPresetInvoke=(command:string,args?:Record<string,unknown>)=>Promise<unknown>;
 export const PROVIDER_PRESET_COMMANDS={get:"get_provider_presets",save:"save_provider_presets",remove:"delete_provider_preset"} as const;
 
-function clonePreset(preset:ProviderPreset):ProviderPreset{return {...preset};}
+function normalizeCredential(credential:ProviderPresetCredential){
+  return {
+    ...credential,
+    health:credential.health??"healthy",
+    failureCount:credential.failureCount??0,
+    cooldownUntil:credential.cooldownUntil??null,
+    lastSuccessAt:credential.lastSuccessAt??null,
+    lastFailureAt:credential.lastFailureAt??null,
+    temporarilyDisabledUntil:credential.temporarilyDisabledUntil??null
+  };
+}
+function clonePreset(preset:ProviderPreset):ProviderPreset{return {...preset,...(preset.credentials?{credentials:preset.credentials.map(credential=>normalizeCredential(credential))}: {})};}
 function cloneState(state:ProviderPresetStoreState):ProviderPresetStoreState{return {...state,presets:state.presets.map(clonePreset)};}
 
 export function emptyProviderPresetState():ProviderPresetStoreState{
@@ -26,6 +37,7 @@ export function materializeProviderConfiguration(
     baseUrl:preset.baseUrl,
     model,
     credentialReference,
+    ...(preset.credentials?.length?{credentials:preset.credentials.map(credential=>normalizeCredential(credential))}:{}),
     ...(preset.timeoutMs===undefined?{}:{timeoutMs:preset.timeoutMs})
   };
 }
@@ -35,7 +47,7 @@ export function migrateProviderConfiguration(
   existingCredentialProfileId?:string
 ):{preset:ProviderPreset;credentialProfile:CredentialProfile|undefined}{
   const reference=configuration.credentialReference??undefined;
-  const credentialProfile=reference?{
+  const credentialProfile=reference&&!configuration.credentials?.length?{
     id:"credential-profile:migrated:"+reference.id,
     label:"Migrated "+reference.id,
     providerId:configuration.providerId,
@@ -52,6 +64,7 @@ export function migrateProviderConfiguration(
       baseUrl:configuration.baseUrl,
       ...(credentialProfile?{credentialProfileId:existingCredentialProfileId??credentialProfile.id}:{}),
       ...(configuration.model?{model:configuration.model}:{}),
+      ...(configuration.credentials?.length?{credentials:configuration.credentials.map(credential=>normalizeCredential(credential))}:{}),
       ...(configuration.timeoutMs===undefined?{}:{timeoutMs:configuration.timeoutMs}),
       createdAt:now,
       updatedAt:now

@@ -23,6 +23,15 @@ const MAX_PROVIDER_RESPONSE_CHARS=4000;
 const MAX_PROVIDER_RESPONSE_VALUE_CHARS=2000;
 const PROVIDER_RESPONSE_SAFE_KEYS=["message","type","code","param","error"] as const;
 
+function parseRetryAfterMs(headers?:Readonly<Record<string,string>>):number|undefined{
+  const raw=headers?.["retry-after"]??headers?.["Retry-After"];
+  if(raw===undefined)return undefined;
+  const seconds=Number(raw.trim());
+  if(Number.isFinite(seconds)&&seconds>=0)return Math.min(600000,Math.round(seconds*1000));
+  const timestamp=Date.parse(raw);
+  return Number.isFinite(timestamp)?Math.min(600000,Math.max(0,timestamp-Date.now())):undefined;
+}
+
 function redactProviderResponseText(value:string):string{
   return value
     .replace(/authorization\s*:\s*bearer\s+\S+/gi,"Authorization: Bearer [REDACTED]")
@@ -88,6 +97,7 @@ export interface HttpClientRequest{
 export interface HttpClientResponse{
   status:number;
   body:string;
+  headers?:Readonly<Record<string,string>>;
 }
 export interface HttpClientStreamResponse{
   status:number;
@@ -107,7 +117,7 @@ export class FetchHttpClient implements HttpClient{
       ...(request.body===undefined?{}:{body:request.body}),
       signal:request.signal
     });
-    return {status:response.status,body:await response.text()};
+    return {status:response.status,body:await response.text(),headers:Object.fromEntries(response.headers.entries())};
   }
 
   async stream(request:HttpClientRequest):Promise<HttpClientStreamResponse>{
@@ -149,6 +159,7 @@ export interface OpenAICompatibleProviderConfig{
   model:string;
   credential?:CredentialReference|null;
   timeoutMs?:number;
+  structuredOutput?:boolean;
   diagnostics?:DiagnosticsStore;
   providerPresetId?:string;
 }
@@ -230,7 +241,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     return {
       streaming:true,
       toolCalling:false,
-      structuredOutput:true,
+      structuredOutput:this.config.structuredOutput===true,
       reasoning:false
     };
   }
@@ -322,7 +333,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       const durationMs=Date.now()-started;
       this.recordDiagnostic(request,"CHAT_PROVIDER_HTTP_RESPONSE_RECEIVED","OpenAI-compatible provider HTTP response received","stream",{httpStatus:response.status,durationMs});
 
-      if(response.status<200||response.status>=300)throw this.httpFailure(response.status,request,durationMs,undefined,"stream");
+      if(response.status<200||response.status>=300)throw this.httpFailure(response.status,request,durationMs,undefined,"stream",response.headers);
 
       let buffer="";
       let finishReason:ChatResponse["finishReason"]="unknown";
@@ -578,7 +589,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     }
   }
 
-  async chat(request:ChatRequest):Promise<ChatResponse>{
+  async chat(request:ChatRequest,options:import("../../../../contracts/src/index").ChatRequestOptions={}):Promise<ChatResponse>{
     this.ensureConfig(request);
     if(!request.model.trim()){
       throw this.failure({code:"INVALID_REQUEST",message:"Requested model is not configured for this provider.",request,retryable:false,details:{category:"configuration"}});
@@ -600,7 +611,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
           ...(secret?{Authorization:"Bearer "+secret}:{}),
         },
         body
-      },this.timeoutMs(),request);
+      },this.timeoutMs(),request,options.signal);
     }catch(error){
       if(error instanceof OpenAICompatibleProviderError)throw error;
       const durationMs=Date.now()-started;
@@ -616,7 +627,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     const durationMs=Date.now()-started;
     this.recordDiagnostic(request,"CHAT_PROVIDER_HTTP_RESPONSE_RECEIVED","OpenAI-compatible provider HTTP response received","chat",{httpStatus:response.status,durationMs});
     if(response.status<200||response.status>=300){
-      throw this.httpFailure(response.status,request,durationMs,response.body);
+      throw this.httpFailure(response.status,request,durationMs,response.body,"chat",response.headers);
     }
 
     let payload:unknown;
@@ -734,7 +745,9 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     if(generation?.topP!==undefined)payload.top_p=generation.topP;
     const responseFormat=generation?.responseFormat;
     if(responseFormat?.type==="json"){
-      payload.response_format={type:"json_object"};
+      payload.response_format=this.config.structuredOutput
+        ?{type:"json_schema",json_schema:{name:"nova_agent_decision",strict:true,schema:responseFormat.schema}}
+        :{type:"json_object"};
     }else if(responseFormat?.type==="json-schema"){
       payload.response_format={
         type:"json_schema",
@@ -794,11 +807,18 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
   private async requestWithTimeout(
     request:HttpClientRequest,
     timeoutMs:number,
-    chatRequest:ChatRequest
+    chatRequest:ChatRequest,
+    chatSignal?:AbortSignal
   ):Promise<HttpClientResponse>{
     const controller=new AbortController();
     let timer:ReturnType<typeof setTimeout>|undefined;
     let timedOut=false;
+    const callerSignal=chatSignal;
+    const callerAbort=()=>controller.abort();
+    if(callerSignal){
+      if(callerSignal.aborted)throw createAbortError();
+      callerSignal.addEventListener("abort",callerAbort,{once:true});
+    }
     const timeoutPromise=new Promise<never>((_,reject)=>{
       timer=setTimeout(()=>{
         timedOut=true;
@@ -833,23 +853,27 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       throw error;
     }finally{
       if(timer)clearTimeout(timer);
+      callerSignal?.removeEventListener("abort",callerAbort);
       controller.abort();
     }
   }
 
-  private httpFailure(status:number,request:ChatRequest,durationMs:number,body?:string,chatTransport:"stream"|"chat"="chat"):OpenAICompatibleProviderError{
+  private httpFailure(status:number,request:ChatRequest,durationMs:number,body?:string,chatTransport:"stream"|"chat"="chat",headers?:Readonly<Record<string,string>>):OpenAICompatibleProviderError{
     const diagnosticDetails={
       ...this.diagnosticMetadata(request,chatTransport),
       httpStatus:status,
       durationMs
     };
-    if((status===400||status===422)&&request.generation?.responseFormat?.type==="json-schema"&&this.isStructuredUnsupportedResponse(body)){
-      return this.failure({code:"UNSUPPORTED",message:"OpenAI-compatible provider does not support the requested structured output.",request,retryable:false,details:withProviderResponse({...diagnosticDetails,category:"capability"},body)});
+    if((status===400||status===422)&&(request.generation?.responseFormat?.type==="json"||request.generation?.responseFormat?.type==="json-schema")&&this.isStructuredUnsupportedResponse(body)){
+      return this.failure({code:"UNSUPPORTED",message:"OpenAI-compatible provider does not support the requested structured output.",request,retryable:false,details:withProviderResponse({...diagnosticDetails,category:"capability",structuredOutputUnsupported:true},body)});
     }
     if(status===400)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rejected the chat request.",request,retryable:false,details:withProviderResponse({...diagnosticDetails,category:"bad_request"},body)});
     if(status===401||status===403)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rejected authentication.",request,retryable:false,details:withProviderResponse({...diagnosticDetails,category:"authentication"},body)});
     if(status===404)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible chat endpoint was not found.",request,retryable:false,details:withProviderResponse({...diagnosticDetails,category:"endpoint"},body)});
-    if(status===429)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rate limit was reached.",request,retryable:true,details:withProviderResponse({...diagnosticDetails,category:"rate_limit"},body)});
+    if(status===429){
+      const retryAfterMs=parseRetryAfterMs(headers);
+      return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rate limit was reached.",request,retryable:true,details:withProviderResponse({...diagnosticDetails,category:"rate_limit",...(retryAfterMs===undefined?{}:{retryAfterMs})},body)});
+    }
     if(status>=500)return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider returned a server error.",request,retryable:true,details:withProviderResponse({...diagnosticDetails,category:"server"},body)});
     return this.failure({code:"PROVIDER_ERROR",message:"OpenAI-compatible provider returned an unexpected HTTP status.",request,retryable:false,details:withProviderResponse({...diagnosticDetails,category:"http"},body)});
   }
