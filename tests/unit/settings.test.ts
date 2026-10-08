@@ -2,32 +2,84 @@ import {
   SettingsManager,InMemoryDiagnosticsStore,InMemoryChatTraceStore
 } from "../../core/src";
 import {StandardContractValidator,DEFAULT_APP_SETTINGS,defaultAppSettings,migrateAppSettings,validateAppSettings} from "../../contracts/src";
-import {InMemorySettingsStore} from "../../host/settings/src";
+import {IpcSettingsStore,InMemorySettingsStore} from "../../host/settings/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error(label+" expected "+String(expected)+" got "+String(actual))}
 function ok(value:unknown,label:string){if(!value)throw new Error(label)}
 
 async function main(){
   const validator=new StandardContractValidator();
+  let persistedIpc:unknown;
+  const ipcStore=new IpcSettingsStore(async(command,args)=>{
+    if(command==="get_app_settings")return persistedIpc??null;
+    if(command==="save_app_settings"){persistedIpc=(args as {settings:unknown}).settings;return null;}
+    throw new Error("unexpected settings command: "+command);
+  },validator);
   const store=new InMemorySettingsStore(validator);
   const manager=new SettingsManager(store,validator);
   const defaults=await manager.initialize();
   equal(defaults,defaultAppSettings(),"missing settings resolve to deterministic defaults");
   equal(DEFAULT_APP_SETTINGS.context.availableContextTokens,4096,"default context size");
+  ok(defaults.semanticDedup.judge.prompt.includes("In structured mode, return only:"),"default Judge prompt declares structured output");
+  ok(defaults.semanticDedup.judge.prompt.includes("In plain mode, return only:"),"default Judge prompt declares plain output");
+  equal(defaults.semanticDedup.judge.defaultPromptVersion,"2","default Judge prompt version");
   const custom={
     ...defaults,
     context:{...defaults.context,availableContextTokens:8192,reservedOutputTokens:2048,safetyMarginTokens:256,recentConversationMessages:4},
     memory:{...defaults.memory,candidateLimit:3},
     retrieval:{...defaults.retrieval,candidateLimit:7},
     diagnostics:{...defaults.diagnostics,logLevel:"verbose" as const,keepRecentEntries:25},
-    chat:{...defaults.chat,automaticLongTermMemory:false}
+    chat:{...defaults.chat,automaticLongTermMemory:false},
+    memoryAgent:{...defaults.memoryAgent,enabled:true,providerPresetId:"preset.memory",model:"memory-model",outputMode:"structured" as const,prompt:"Custom full prompt",promptBackup:"Previous prompt",defaultPromptVersion:"1"},
+    semanticDedup:{
+      ...defaults.semanticDedup,
+      enabled:true,
+      embeddingProviderPresetId:"preset.embedding",
+      embeddingModel:"mistral-embed",
+      candidateSimilarityThreshold:0.91,
+      candidateLimit:7,
+      judge:{...defaults.semanticDedup.judge,enabled:true,providerPresetId:"preset.judge",model:"judge-model",outputMode:"plain" as const,prompt:"Judge custom",promptBackup:"Judge previous",defaultPromptVersion:"2"}
+    }
   };
   const errors=validateAppSettings(custom);
   equal(errors,[],"valid custom settings pass semantic validation");
   await manager.set(custom);
+  await ipcStore.save(custom);
+  const persistedIpcSettings=await ipcStore.load();
+  equal(persistedIpcSettings?.semanticDedup.enabled,true,"IpcSettingsStore save/load preserves Semantic Dedup enabled");
+  equal(persistedIpcSettings?.semanticDedup.judge.enabled,true,"IpcSettingsStore save/load preserves Judge enabled");
+  equal(persistedIpcSettings?.semanticDedup.judge.providerPresetId,"preset.judge","IpcSettingsStore save/load preserves Judge preset");
+  equal(persistedIpcSettings?.semanticDedup.judge.model,"judge-model","IpcSettingsStore save/load preserves Judge model");
+  equal(persistedIpcSettings?.semanticDedup.judge.outputMode,"plain","IpcSettingsStore save/load preserves Judge output mode");
   equal((await manager.get()).context.availableContextTokens,8192,"custom context size persists in store");
   equal((await manager.get()).memory.candidateLimit,3,"custom memory candidate limit persists");
   equal((await manager.get()).chat.automaticLongTermMemory,false,"custom extraction toggle persists");
+  equal((await manager.get()).memoryAgent.providerPresetId,"preset.memory","agent provider preset persists");
+  equal((await manager.get()).memoryAgent.model,"memory-model","agent model persists");
+  equal((await manager.get()).memoryAgent.outputMode,"structured","agent output mode persists");
+  equal((await manager.get()).memoryAgent.prompt,"Custom full prompt","full agent prompt persists");
+  equal((await manager.get()).memoryAgent.promptBackup,"Previous prompt","agent prompt backup persists");
+  equal((await manager.get()).semanticDedup.candidateSimilarityThreshold,0.91,"semantic candidate threshold persists");
+  equal((await manager.get()).semanticDedup.candidateLimit,7,"semantic candidate limit persists");
+  equal((await manager.get()).semanticDedup.embeddingModel,"mistral-embed","semantic embedding model persists");
+  equal((await manager.get()).semanticDedup.judge.outputMode,"plain","Memory Judge output mode persists");
+  equal((await manager.get()).semanticDedup.judge.prompt,"Judge custom","Memory Judge prompt persists");
+  equal((await manager.get()).semanticDedup.judge.promptBackup,"Judge previous","Memory Judge prompt backup persists");
+  // Regression: canonical schema v5 migration must preserve the Memory Agent provider/model binding and all current prompt settings.
+  const v5={...defaultAppSettings(),memoryAgent:{...defaultAppSettings().memoryAgent,enabled:false,providerPresetId:"preset.memory",model:"ministral-3b-2512",outputMode:"plain" as const,prompt:"custom prompt",promptBackup:"previous prompt",defaultPromptVersion:"7"}};
+  const migratedV5=migrateAppSettings(JSON.parse(JSON.stringify(v5)));
+  equal(migratedV5.memoryAgent.providerPresetId,"preset.memory","schema v5 migration preserves provider preset");
+  equal(migratedV5.memoryAgent.model,"ministral-3b-2512","schema v5 migration preserves model");
+  equal(migratedV5.memoryAgent.enabled,false,"schema v5 migration preserves enabled");
+  equal(migratedV5.memoryAgent.outputMode,"plain","schema v5 migration preserves output mode");
+  equal(migratedV5.memoryAgent.prompt,"custom prompt","schema v5 migration preserves prompt");
+  equal(migratedV5.memoryAgent.promptBackup,"previous prompt","schema v5 migration preserves prompt backup");
+  equal(migratedV5.memoryAgent.defaultPromptVersion,"7","schema v5 migration preserves prompt version");
+  await manager.set(v5);
+  const reloadedManager=new SettingsManager(store,validator);
+  const reloaded=await reloadedManager.initialize();
+  equal(reloaded.memoryAgent.providerPresetId,"preset.memory","SettingsManager reload preserves provider preset");
+  equal(reloaded.memoryAgent.model,"ministral-3b-2512","SettingsManager reload preserves model");
   const reset=await manager.reset();
   equal(reset,defaultAppSettings(),"reset restores defaults");
   let rejected=false;

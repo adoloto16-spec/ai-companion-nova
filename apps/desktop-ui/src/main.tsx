@@ -7,11 +7,11 @@ import {startFoundationRuntime,testProviderPresetConfiguration,listProviderModel
 import type {FoundationRuntime} from "../../../runtime/bootstrap/src/index";
 import {IpcCredentialStore,InMemoryCredentialStore} from "../../../host/credentials/src/index";
 import {IpcCredentialProfileStore,InMemoryCredentialProfileStore,emptyCredentialProfileState} from "../../../host/credential-profiles/src/index";
-import {IpcProviderPresetStore,InMemoryProviderPresetStore,materializeProviderConfiguration,migrateProviderConfiguration,emptyProviderPresetState} from "../../../host/provider-presets/src/index";
+import {IpcProviderPresetStore,InMemoryProviderPresetStore,materializeProviderConfiguration,migrateProviderConfiguration,emptyProviderPresetState,cloneProviderPresetForSaveAsNew,validateProviderPresetCredentialReferences} from "../../../host/provider-presets/src/index";
 import {IpcProviderConfigurationStore,loadProviderConfigurationSafely} from "../../../host/config/src/index";
 import {IpcCharacterStore} from "../../../host/characters/src/index";
 import {IpcCoreBookStore,InMemoryCoreBookStore} from "../../../host/core-book/src/index";
-import {IpcMemoryStore,InMemoryMemoryStore} from "../../../host/memory/src/index";
+import {IpcMemorySemanticIndexStore,IpcMemoryStore,InMemoryMemoryStore} from "../../../host/memory/src/index";
 import {IpcConversationStore,InMemoryConversationStore} from "../../../host/conversations/src/index";
 import {IpcModelProfileStore,InMemoryModelProfileStore} from "../../../host/model-profiles/src/index";
 import {IpcSettingsStore,InMemorySettingsStore} from "../../../host/settings/src/index";
@@ -19,9 +19,9 @@ import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
-  type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem,
+  type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem, type ErrorDiagnostic,
   defaultAppSettings, validateAppSettings, StandardContractValidator,
-  type ProviderPreset, type ProviderPresetStoreState, type ModelInfo
+  type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo
 } from "../../../contracts/src/index";
 import "./styles.css";
 
@@ -362,89 +362,154 @@ function CharacterMemoryView({runtime,character,originConversationId}:{
   originConversationId?:string;
 }){
   const [items,setItems]=React.useState<readonly MemoryItem[]>([]);
-  const [content,setContent]=React.useState("");
-  const [type,setType]=React.useState<MemoryItem["type"]>("observation");
-  const [importance,setImportance]=React.useState(70);
-  const [confidence,setConfidence]=React.useState(80);
+  const [tab,setTab]=React.useState<"active"|"archived">("active");
+  const [editingId,setEditingId]=React.useState<string|null>(null);
+  const [draft,setDraft]=React.useState<{type:MemoryItem["type"];content:string;tags:string;importance:number;confidence:number;validFrom:string;validUntil:string}>({
+    type:"observation",content:"",tags:"",importance:70,confidence:80,validFrom:"",validUntil:""
+  });
+  const [createDraft,setCreateDraft]=React.useState({type:"observation" as MemoryItem["type"],content:"",tags:"",importance:70,confidence:80,validFrom:"",validUntil:""});
   const [busy,setBusy]=React.useState(false);
   const [message,setMessage]=React.useState("");
 
   const refresh=React.useCallback(async()=>{
-    try{
-      const next=await runtime.listMemory(character.id);
-      setItems(next.filter(item=>item.status==="active"));
-    }catch(error){setMessage(error instanceof Error?error.message:"Character Memory could not be loaded.")}
+    try{setItems(await runtime.listMemory(character.id));}
+    catch(error){setMessage(error instanceof Error?error.message:"Character Memory could not be loaded.")}
   },[runtime,character.id]);
   React.useEffect(()=>{void refresh()},[refresh]);
 
+  const beginEdit=(item:MemoryItem)=>{
+    setEditingId(item.id);
+    setDraft({
+      type:item.type,content:item.content,tags:item.tags.join(", "),importance:item.importance,confidence:item.confidence,
+      validFrom:item.validFrom?item.validFrom.slice(0,19):"",validUntil:item.validUntil?item.validUntil.slice(0,19):""
+    });
+  };
+
+  const saveEdit=async()=>{
+    if(!editingId||!draft.content.trim())return;
+    setBusy(true);setMessage("");
+    try{
+      await runtime.updateMemory(character.id,editingId,{
+        type:draft.type,content:draft.content.trim(),
+        tags:draft.tags.split(",").map(value=>value.trim()).filter(Boolean),
+        importance:draft.importance,confidence:draft.confidence,
+        validFrom:draft.validFrom?new Date(draft.validFrom).toISOString():null,
+        validUntil:draft.validUntil?new Date(draft.validUntil).toISOString():null
+      });
+      setEditingId(null);setMessage("Memory updated.");await refresh();
+    }catch(error){setMessage(error instanceof Error?error.message:"Memory could not be updated.")}
+    finally{setBusy(false)}
+  };
+
   const create=async()=>{
-    if(!content.trim())return;
+    if(!createDraft.content.trim())return;
     setBusy(true);setMessage("");
     try{
       await runtime.createMemory(character.id,{
         originConversationId:originConversationId??null,
-        type,
-        content:content.trim(),
-        tags:[],
-        importance,
-        confidence,
-        source:"user",
-        sourceReference:null,
-        mutationPolicy:"locked",
-        metadata:{origin:"character-memory-ui"}
+        type:createDraft.type,content:createDraft.content.trim(),
+        tags:createDraft.tags.split(",").map(value=>value.trim()).filter(Boolean),
+        importance:createDraft.importance,confidence:createDraft.confidence,
+        validFrom:createDraft.validFrom?new Date(createDraft.validFrom).toISOString():null,
+        validUntil:createDraft.validUntil?new Date(createDraft.validUntil).toISOString():null,
+        source:"user",sourceReference:null,mutationPolicy:"locked",metadata:{origin:"character-memory-ui"}
       });
-      setContent("");
-      setMessage("Memory created.");
-      await refresh();
+      setCreateDraft({...createDraft,content:"",tags:""});
+      setMessage("Memory created.");await refresh();
     }catch(error){setMessage(error instanceof Error?error.message:"Memory could not be created.")}
     finally{setBusy(false)}
   };
 
   const archive=async(item:MemoryItem)=>{
     setBusy(true);setMessage("");
-    try{
-      await runtime.archiveMemory(character.id,originConversationId??"",item.id);
-      setMessage("Memory archived.");
-      await refresh();
-    }catch(error){setMessage(error instanceof Error?error.message:"Memory could not be archived.")}
+    try{await runtime.archiveMemory(character.id,item.id);setMessage("Memory archived.");await refresh();}
+    catch(error){setMessage(error instanceof Error?error.message:"Memory could not be archived.")}
+    finally{setBusy(false)}
+  };
+  const restore=async(item:MemoryItem)=>{
+    setBusy(true);setMessage("");
+    try{await runtime.restoreMemory(character.id,item.id);setMessage("Memory restored.");await refresh();}
+    catch(error){setMessage(error instanceof Error?error.message:"Memory could not be restored.")}
+    finally{setBusy(false)}
+  };
+  const permanentDelete=async(item:MemoryItem)=>{
+    if(!window.confirm("Delete this memory permanently? This cannot be undone."))return;
+    setBusy(true);setMessage("");
+    try{await runtime.deleteMemory(character.id,item.id);setMessage("Memory permanently deleted.");await refresh();}
+    catch(error){setMessage(error instanceof Error?error.message:"Memory could not be deleted.")}
     finally{setBusy(false)}
   };
 
+  const shown=items.filter(item=>tab==="active"?item.status==="active":item.status==="archived");
+  const typeOptions=(
+    <>
+      <option value="observation">Observation</option>
+      <option value="fact">Fact</option>
+      <option value="preference">Preference</option>
+      <option value="relationship">Relationship</option>
+      <option value="event">Event</option>
+      <option value="experience">Experience</option>
+      <option value="goal">Goal</option>
+      <option value="instruction">Instruction</option>
+    </>
+  );
+
   return <section className="characters-panel">
     <div className="characters-toolbar">
-      <div><h2>Character Memory · {character.name}</h2><p className="chat-subtitle">Long-term memory owned by this Character. Conversation is provenance only.</p></div>
+      <div><h2>Character Memory · {character.name}</h2><p className="chat-subtitle">Character-owned long-term memory. Conversation is provenance only.</p></div>
       <button type="button" onClick={()=>void refresh()} disabled={busy}>Refresh</button>
     </div>
-    <div className="character-list" role="listbox" aria-label="Character Memory">
-      {items.length===0&&<div className="core-book-empty">No active long-term memories.</div>}
-      {items.map(item=>
-        <div className="character-row" key={item.id}>
-          <div>
-            <strong>{item.content}</strong>
-            <small>{item.type} · importance {item.importance} · confidence {item.confidence}</small>
-            <small>Origin conversation: {item.originConversationId??"unknown / none"}</small>
+    <div className="actions" role="tablist" aria-label="Memory lifecycle">
+      <button type="button" className={tab==="active"?"active":""} onClick={()=>setTab("active")}>Active ({items.filter(item=>item.status==="active").length})</button>
+      <button type="button" className={tab==="archived"?"active":""} onClick={()=>setTab("archived")}>Archived ({items.filter(item=>item.status==="archived").length})</button>
+    </div>
+    <div className="character-list">
+      {shown.length===0&&<div className="core-book-empty">No {tab} memories.</div>}
+      {shown.map(item=>editingId===item.id
+        ?<div className="character-row" key={item.id}>
+          <div className="settings-grid">
+            <label>Type<select value={draft.type} onChange={event=>setDraft({...draft,type:event.target.value as MemoryItem["type"]})} disabled={busy}>{typeOptions}</select></label>
+            <label>Content<textarea rows={4} value={draft.content} onChange={event=>setDraft({...draft,content:event.target.value})} disabled={busy}/></label>
+            <label>Tags<input value={draft.tags} onChange={event=>setDraft({...draft,tags:event.target.value})} disabled={busy}/></label>
+            <div className="core-book-grid">
+              <label>Importance<input type="number" min={0} max={100} value={draft.importance} onChange={event=>setDraft({...draft,importance:Number(event.target.value)})} disabled={busy}/></label>
+              <label>Confidence<input type="number" min={0} max={100} value={draft.confidence} onChange={event=>setDraft({...draft,confidence:Number(event.target.value)})} disabled={busy}/></label>
+            </div>
+            <div className="core-book-grid">
+              <label>Valid from<input type="datetime-local" value={draft.validFrom} onChange={event=>setDraft({...draft,validFrom:event.target.value})} disabled={busy}/></label>
+              <label>Valid until<input type="datetime-local" value={draft.validUntil} onChange={event=>setDraft({...draft,validUntil:event.target.value})} disabled={busy}/></label>
+            </div>
+            <div className="actions"><button type="button" onClick={()=>void saveEdit()} disabled={busy||!draft.content.trim()}>Save</button><button type="button" onClick={()=>setEditingId(null)} disabled={busy}>Cancel</button></div>
           </div>
-          <button type="button" onClick={()=>void archive(item)} disabled={busy}>Archive</button>
+        </div>
+        :<div className="character-row" key={item.id}>
+          <div><strong>{item.content}</strong><small>{item.type} · importance {item.importance} · confidence {item.confidence}</small>
+            <small>Origin conversation: {item.originConversationId??"none"} · Archive reason: {item.archiveReason??"—"}</small>
+          </div>
+          <div className="actions">
+            {tab==="active"&&<><button type="button" onClick={()=>beginEdit(item)} disabled={busy}>Edit</button><button type="button" onClick={()=>void archive(item)} disabled={busy}>Archive</button></>}
+            {tab==="archived"&&<button type="button" onClick={()=>void restore(item)} disabled={busy}>Restore</button>}
+            <button type="button" onClick={()=>void permanentDelete(item)} disabled={busy}>Delete permanently</button>
+          </div>
         </div>
       )}
     </div>
-    <div className="character-actions">
+    {tab==="active"&&<div className="character-actions">
       <h3>Add long-term memory</h3>
-      <label>Type
-        <select value={type} onChange={event=>setType(event.target.value as MemoryItem["type"])} disabled={busy}>
-          <option value="observation">Observation</option><option value="fact">Fact</option><option value="preference">Preference</option>
-          <option value="relationship">Relationship</option><option value="event">Event</option><option value="experience">Experience</option>
-          <option value="goal">Goal</option><option value="instruction">Instruction</option>
-        </select>
-      </label>
-      <label>Content<textarea value={content} onChange={event=>setContent(event.target.value)} rows={5} disabled={busy}/></label>
+      <label>Type<select value={createDraft.type} onChange={event=>setCreateDraft({...createDraft,type:event.target.value as MemoryItem["type"]})} disabled={busy}>{typeOptions}</select></label>
+      <label>Content<textarea value={createDraft.content} onChange={event=>setCreateDraft({...createDraft,content:event.target.value})} rows={5} disabled={busy}/></label>
+      <label>Tags<input value={createDraft.tags} onChange={event=>setCreateDraft({...createDraft,tags:event.target.value})} placeholder="comma-separated" disabled={busy}/></label>
       <div className="core-book-grid">
-        <label>Importance<input type="number" min={0} max={100} value={importance} onChange={event=>setImportance(Number(event.target.value))} disabled={busy}/></label>
-        <label>Confidence<input type="number" min={0} max={100} value={confidence} onChange={event=>setConfidence(Number(event.target.value))} disabled={busy}/></label>
+        <label>Importance<input type="number" min={0} max={100} value={createDraft.importance} onChange={event=>setCreateDraft({...createDraft,importance:Number(event.target.value)})} disabled={busy}/></label>
+        <label>Confidence<input type="number" min={0} max={100} value={createDraft.confidence} onChange={event=>setCreateDraft({...createDraft,confidence:Number(event.target.value)})} disabled={busy}/></label>
       </div>
-      <div className="actions"><button type="button" onClick={()=>void create()} disabled={busy||!content.trim()}>Create Memory</button></div>
-      {message&&<div className="notice" role="status">{message}</div>}
-    </div>
+      <div className="core-book-grid">
+        <label>Valid from<input type="datetime-local" value={createDraft.validFrom} onChange={event=>setCreateDraft({...createDraft,validFrom:event.target.value})} disabled={busy}/></label>
+        <label>Valid until<input type="datetime-local" value={createDraft.validUntil} onChange={event=>setCreateDraft({...createDraft,validUntil:event.target.value})} disabled={busy}/></label>
+      </div>
+      <div className="actions"><button type="button" onClick={()=>void create()} disabled={busy||!createDraft.content.trim()}>Create Memory</button></div>
+    </div>}
+    {message&&<div className="notice" role="status">{message}</div>}
   </section>;
 }
 
@@ -682,57 +747,111 @@ function ProviderPresetsView({
   onSavePreset:(preset:ProviderPreset,activate:boolean)=>Promise<void>;
   onActivatePreset:(id:string)=>Promise<void>;
   onDeletePreset:(id:string)=>Promise<void>;
-  onCreateCredential:(label:string,secret:string)=>Promise<CredentialProfile>;
+  onCreateCredential:(label:string,secret:string,providerId:string)=>Promise<CredentialProfile>;
   onDeleteCredential:(id:string)=>Promise<void>;
-  onRefreshModels:(preset:ProviderPreset)=>Promise<readonly ModelInfo[]>;
-  onTestPreset:(preset:ProviderPreset)=>Promise<ProviderConnectionTestResult>;
+  onRefreshModels:(preset:ProviderPreset,sourceId:string)=>Promise<readonly ModelInfo[]>;
+  onTestPreset:(preset:ProviderPreset,sourceId:string)=>Promise<ProviderConnectionTestResult>;
 }){
-  const [selectedId,setSelectedId]=React.useState<string|undefined>(presets.find(p=>p.id===activePresetId)?.id??presets[0]?.id);
-  const [draft,setDraft]=React.useState<ProviderPreset>(()=>presets.find(p=>p.id===selectedId)??{
-    id:"provider-preset:new-"+Date.now(),name:"",providerId:"openai-compatible",baseUrl:"https://api.openai.com/v1",
-    createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()
+  const firstPreset=presets.find(p=>p.id===activePresetId)??presets[0];
+  const defaultSource=(now=new Date().toISOString(),providerId:"openai-compatible"|"gemini"="openai-compatible",name="Primary"):ProviderPresetSource=>({
+    id:"source:"+name.toLowerCase().replace(/[^a-z0-9]+/g,"-")+":"+Date.now(),
+    name,
+    providerId,
+    baseUrl:providerId==="gemini"?"https://generativelanguage.googleapis.com/v1beta":"https://api.openai.com/v1",
+    model:"",
+    credentialReference:null,
+    enabled:true,
+    health:"healthy",
+    failureCount:0,
+    cooldownUntil:null,
+    createdAt:now,
+    updatedAt:now
   });
+  const defaultPreset=():ProviderPreset=>{
+    const now=new Date().toISOString();
+    const source=defaultSource(now);
+    return {id:"provider-preset:new-"+Date.now(),name:"",sources:[source],activeSourceId:source.id,createdAt:now,updatedAt:now};
+  };
+  const [selectedId,setSelectedId]=React.useState<string|undefined>(firstPreset?.id);
+  const [draft,setDraft]=React.useState<ProviderPreset>(()=>firstPreset?{...firstPreset,sources:firstPreset.sources.map(source=>({...source,credentialReference:source.credentialReference?{...source.credentialReference}:null}))}:defaultPreset());
+  const [selectedSourceId,setSelectedSourceId]=React.useState<string|undefined>(()=>draft.activeSourceId??draft.sources[0]?.id);
   const [models,setModels]=React.useState<readonly ModelInfo[]>([]);
   const [busy,setBusy]=React.useState(false);
   const [message,setMessage]=React.useState("");
-  const [credentialChoice,setCredentialChoice]=React.useState(draft.credentialProfileId??"");
+  const [addingCredential,setAddingCredential]=React.useState(false);
   const [newCredentialLabel,setNewCredentialLabel]=React.useState("");
   const [newCredentialSecret,setNewCredentialSecret]=React.useState("");
+  const [dirty,setDirty]=React.useState(false);
 
   React.useEffect(()=>{
+    if(dirty)return;
     const next=presets.find(p=>p.id===selectedId)??presets[0];
-    if(next){setSelectedId(next.id);setDraft({...next});setCredentialChoice(next.credentialProfileId??"");}
-  },[selectedId,presets]);
+    if(next){
+      setSelectedId(next.id);
+      setDraft({...next,sources:next.sources.map(source=>({...source,credentialReference:source.credentialReference?{...source.credentialReference}:null}))});
+      const sourceId=next.activeSourceId??next.sources[0]?.id;
+      setSelectedSourceId(sourceId);
+      setAddingCredential(false);
+      setModels([]);
+    }
+  },[dirty,presets,selectedId]);
+
+  const selectedSource=draft.sources.find(source=>source.id===selectedSourceId)??draft.sources[0];
+  React.useEffect(()=>{
+    setAddingCredential(false);
+    setModels([]);
+  },[selectedSourceId,selectedSource?.id]);
+
+  const updateDraft=(next:ProviderPreset)=>{
+    setDirty(true);
+    setDraft({...next,updatedAt:new Date().toISOString()});
+  };
+
+  const updateSource=(sourceId:string,patch:Partial<ProviderPresetSource>)=>{
+    updateDraft({
+      ...draft,
+      sources:draft.sources.map(source=>source.id===sourceId?{...source,...patch,updatedAt:new Date().toISOString()}:source)
+    });
+  };
 
   const save=async(activate:boolean)=>{
     setBusy(true);setMessage("");
     try{
+      if(!draft.name.trim())throw new Error("Provider preset name is required.");
+      if(draft.sources.length===0)throw new Error("Provider preset must contain at least one source.");
+      validateProviderPresetCredentialReferences(draft,credentialProfiles);
+      const sources=draft.sources.map(source=>({
+        ...source,
+        credentialReference:source.credentialReference?{...source.credentialReference}:null
+      }));
       const next:ProviderPreset={
         ...draft,
         name:draft.name.trim(),
-        baseUrl:draft.baseUrl.trim(),
-        providerId:"openai-compatible",
-        credentialProfileId:credentialChoice||undefined,
-        model:draft.model?.trim()||undefined,
+        sources,
+        activeSourceId:draft.activeSourceId&&sources.some(source=>source.id===draft.activeSourceId)?draft.activeSourceId:sources[0]!.id,
         updatedAt:new Date().toISOString()
       };
-      if(!next.name)throw new Error("Provider preset name is required.");
-      await onSavePreset(next,activate);setDraft(next);setSelectedId(next.id);
+      await onSavePreset(next,activate);
+      setDraft(next);setSelectedId(next.id);setDirty(false);
       setMessage(activate?"Provider preset saved and activated.":"Provider preset saved.");
     }catch(error){setMessage("Provider preset could not be saved: "+safeErrorMessage(error))}
     finally{setBusy(false)}
   };
 
   const saveAsNew=async()=>{
-    const now=new Date().toISOString();
-    const next={...draft,id:"provider-preset:"+(draft.name.trim()||"preset").toLowerCase().replace(/[^a-z0-9]+/g,"-")+":"+Date.now(),createdAt:now,updatedAt:now};
-    setDraft(next);setSelectedId(next.id);
-    await (async()=>{
-      setBusy(true);setMessage("");
-      try{await onSavePreset(next,false);setMessage("Provider preset saved as new preset.")}
-      catch(error){setMessage("Provider preset could not be saved: "+safeErrorMessage(error))}
-      finally{setBusy(false)}
-    })();
+    setBusy(true);setMessage("");
+    try{
+      if(!draft.name.trim())throw new Error("Provider preset name is required.");
+      if(draft.sources.length===0)throw new Error("Provider preset must contain at least one source.");
+      validateProviderPresetCredentialReferences(draft,credentialProfiles);
+      const now=new Date().toISOString();
+      const newId="provider-preset:"+(draft.name.trim()||"preset").toLowerCase().replace(/[^a-z0-9]+/g,"-")+":"+Date.now();
+      const next=cloneProviderPresetForSaveAsNew(draft,newId,now);
+      await onSavePreset(next,false);
+      setDraft(next);setSelectedId(next.id);setSelectedSourceId(current=>next.sources.some(source=>source.id===current)?current:next.activeSourceId??next.sources[0]?.id);setDirty(false);
+      setMessage("Provider preset saved as new preset.");
+    }catch(error){setMessage("Provider preset could not be saved: "+safeErrorMessage(error))}
+    finally{setBusy(false)}
   };
 
   const activate=async()=>{
@@ -751,85 +870,176 @@ function ProviderPresetsView({
     finally{setBusy(false)}
   };
 
+  const addSource=()=>{
+    const now=new Date().toISOString();
+    const source=defaultSource(now,selectedSource?.providerId==="gemini"?"gemini":"openai-compatible","Source "+(draft.sources.length+1));
+    updateDraft({...draft,sources:[...draft.sources,source],activeSourceId:draft.activeSourceId??source.id});
+    setSelectedSourceId(source.id);
+  };
+
+  const removeSource=()=>{
+    if(!selectedSource)return;
+    const remaining=draft.sources.filter(source=>source.id!==selectedSource.id);
+    const nextActive=draft.activeSourceId===selectedSource.id?(remaining[0]?.id??null):draft.activeSourceId;
+    updateDraft({...draft,sources:remaining,activeSourceId:nextActive});
+    setSelectedSourceId(remaining[0]?.id);
+  };
+
+  const moveSource=(direction:-1|1)=>{
+    if(!selectedSource)return;
+    const index=draft.sources.findIndex(source=>source.id===selectedSource.id);
+    const nextIndex=index+direction;
+    if(index<0||nextIndex<0||nextIndex>=draft.sources.length)return;
+    const sources=[...draft.sources];
+    const [moved]=sources.splice(index,1);
+    sources.splice(nextIndex,0,moved!);
+    updateDraft({...draft,sources});
+  };
+
+  const setActiveSource=()=>{
+    if(selectedSource)updateDraft({...draft,activeSourceId:selectedSource.id});
+  };
+
   const refresh=async()=>{
+    if(!selectedSource)return;
     setBusy(true);setMessage("");
     try{
-      const result=await onRefreshModels(draft);setModels(result);
+      const result=await onRefreshModels(draft,selectedSource.id);
+      setModels(result);
       setMessage(result.length>0?"Models refreshed.":"Model discovery unavailable; manual model input is active.");
     }catch(error){setModels([]);setMessage("Model discovery failed: "+safeErrorMessage(error))}
     finally{setBusy(false)}
   };
 
   const test=async()=>{
+    if(!selectedSource)return;
     setBusy(true);setMessage("");
     try{
-      const result=await onTestPreset(draft);setMessage(resultLabel(result)+(result.message?" · "+result.message:""));
+      const result=await onTestPreset(draft,selectedSource.id);
+      setMessage(resultLabel(result)+(result.message?" · "+result.message:""));
     }catch(error){setMessage("Provider test failed: "+safeErrorMessage(error))}
     finally{setBusy(false)}
   };
 
   const createCredential=async()=>{
+    if(!selectedSource)return;
     setBusy(true);setMessage("");
     try{
       if(!newCredentialLabel.trim()||!newCredentialSecret)throw new Error("Credential label and API key are required.");
-      const profile=await onCreateCredential(newCredentialLabel.trim(),newCredentialSecret);
-      setCredentialChoice(profile.id);setNewCredentialLabel("");setNewCredentialSecret("");
+      const profile=await onCreateCredential(newCredentialLabel.trim(),newCredentialSecret,selectedSource.providerId);
+      updateSource(selectedSource.id,{credentialReference:{...profile.credentialReference}});
+      setAddingCredential(false);
+      setNewCredentialLabel("");setNewCredentialSecret("");
       setMessage("Credential saved. The API key is no longer displayed.");
     }catch(error){setMessage("Credential could not be saved: "+safeErrorMessage(error))}
     finally{setBusy(false)}
   };
 
   const deleteCredential=async(id:string)=>{
-    const used=presets.filter(p=>p.credentialProfileId===id);
-    if(used.length>0){setMessage("Credential is used by: "+used.map(p=>p.name||p.id).join(", ")+". Reassign the preset before deletion.");return;}
+    const referenceId=credentialProfiles.find(profile=>profile.id===id)?.credentialReference.id;
+    const used=referenceId?presets.filter(p=>p.sources.some(source=>source.credentialReference?.id===referenceId)):[];
+    const usedByDraft=referenceId?draft.sources.some(source=>source.credentialReference?.id===referenceId):false;
+    if(used.length>0||usedByDraft){setMessage("Credential is used by a provider preset. Reassign the source before deletion.");return;}
     setBusy(true);setMessage("");
-    try{await onDeleteCredential(id);if(credentialChoice===id)setCredentialChoice("");setMessage("Credential removed.")}
+    try{await onDeleteCredential(id);setMessage("Credential removed.")}
     catch(error){setMessage("Credential could not be removed: "+safeErrorMessage(error))}
     finally{setBusy(false)}
   };
 
-  const setStarter=(name:string,baseUrl:string)=>{const now=new Date().toISOString();setDraft({id:"provider-preset:"+name.toLowerCase()+":"+Date.now(),name,providerId:"openai-compatible",baseUrl,createdAt:now,updatedAt:now});setCredentialChoice("");setModels([]);};
+  const setStarter=(name:string,providerId:"openai-compatible"|"gemini",baseUrl:string,model="")=>{
+    const now=new Date().toISOString();
+    const source=defaultSource(now,providerId,name);
+    updateDraft({...draft,name,sources:[{...source,baseUrl,model}],activeSourceId:source.id,createdAt:draft.createdAt});
+    setSelectedSourceId(source.id);setAddingCredential(false);setModels([]);
+  };
 
   return <section className="settings-grid">
     <section>
       <h2>Provider Presets</h2>
-      <p className="chat-subtitle">Saved connections. API secrets remain in the OS credential store.</p>
+      <p className="chat-subtitle">Each preset is a pool of independent API sources. API secrets remain in the OS credential store.</p>
       <label>Active preset
         <select value={activePresetId??""} onChange={event=>{if(event.target.value)void onActivatePreset(event.target.value)}} disabled={busy||presets.length===0}>
           {presets.length===0?<option value="">No saved presets</option>:presets.map(p=><option key={p.id} value={p.id}>{p.name||p.id}</option>)}
         </select>
       </label>
       <label>Preset to edit
-        <select value={selectedId??""} onChange={event=>setSelectedId(event.target.value)} disabled={busy||presets.length===0}>
+        <select value={selectedId??""} onChange={event=>{setDirty(false);setSelectedId(event.target.value)}} disabled={busy||presets.length===0}>
           {presets.length===0?<option value="">Create a preset below</option>:presets.map(p=><option key={p.id} value={p.id}>{p.name||p.id}</option>)}
         </select>
       </label>
-      <label>Name<input value={draft.name} onChange={event=>setDraft(current=>({...current,name:event.target.value}))} disabled={busy}/></label>
-      <label>Provider type<select value="openai-compatible" disabled><option value="openai-compatible">OpenAI-compatible</option></select></label>
-      <label>Base URL<input value={draft.baseUrl} onChange={event=>setDraft(current=>({...current,baseUrl:event.target.value}))} disabled={busy}/></label>
-      <label>API credential
-        <select value={credentialChoice} onChange={event=>setCredentialChoice(event.target.value)} disabled={busy}>
-          <option value="">No credential / local server</option>
-          {credentialProfiles.map(profile=><option key={profile.id} value={profile.id}>{profile.label} {credentialSaved[profile.id]?"••••••••":"(not saved)"}</option>)}
-          <option value="__new__">+ Add new credential</option>
+      <label>Name<input value={draft.name} onChange={event=>updateDraft({...draft,name:event.target.value})} disabled={busy}/></label>
+      <div className="actions">
+        <button onClick={()=>void addSource()} disabled={busy}>Add source</button>
+        <button onClick={()=>void removeSource()} disabled={busy||!selectedSource}>Delete source</button>
+        <button onClick={()=>moveSource(-1)} disabled={busy||!selectedSource}>Move up</button>
+        <button onClick={()=>moveSource(1)} disabled={busy||!selectedSource}>Move down</button>
+        <button onClick={setActiveSource} disabled={busy||!selectedSource||draft.activeSourceId===selectedSource.id}>Set active source</button>
+      </div>
+      <label>Source
+        <select value={selectedSource?.id??""} onChange={event=>{setSelectedSourceId(event.target.value);setModels([])}} disabled={busy||draft.sources.length===0}>
+          {draft.sources.map(source=><option key={source.id} value={source.id}>{source.name} · {source.providerId} · {source.health}{source.id===draft.activeSourceId?" · active":""}</option>)}
         </select>
       </label>
-      {credentialChoice==="__new__"&&<div className="character-actions">
-        <label>Label<input value={newCredentialLabel} onChange={event=>setNewCredentialLabel(event.target.value)} disabled={busy}/></label>
-        <label>API key<input type="password" autoComplete="off" value={newCredentialSecret} onChange={event=>setNewCredentialSecret(event.target.value)} disabled={busy}/></label>
-        <button onClick={()=>void createCredential()} disabled={busy}>Save credential</button>
-      </div>}
-      <label>Model
-        {models.length>0
-          ?<select value={draft.model??""} onChange={event=>setDraft(current=>({...current,model:event.target.value||undefined}))} disabled={busy}>
-            {models.map(model=><option key={model.id} value={model.id}>{model.displayName&&model.displayName!==model.id?model.displayName+" · "+model.id:model.id}</option>)}
+      {selectedSource&&<>
+        <label>Source name<input value={selectedSource.name} onChange={event=>updateSource(selectedSource.id,{name:event.target.value})} disabled={busy}/></label>
+        <label>Provider
+          <select value={selectedSource.providerId} onChange={event=>{
+            const providerId=event.target.value as "openai-compatible"|"gemini";
+            updateSource(selectedSource.id,{providerId,credentialReference:null,model:providerId==="gemini"?"gemini-2.5-flash":selectedSource.model});
+            setAddingCredential(false);
+          }} disabled={busy}>
+            <option value="openai-compatible">OpenAI-compatible</option>
+            <option value="gemini">Gemini</option>
           </select>
-          :<input value={draft.model??""} onChange={event=>setDraft(current=>({...current,model:event.target.value||undefined}))} placeholder="model-id" disabled={busy}/>}
-      </label>
-      <label>Timeout (ms)<input type="number" min="1" value={draft.timeoutMs??30000} onChange={event=>setDraft(current=>({...current,timeoutMs:Number(event.target.value)}))} disabled={busy}/></label>
+        </label>
+        <label>Base URL<input value={selectedSource.baseUrl} onChange={event=>updateSource(selectedSource.id,{baseUrl:event.target.value})} disabled={busy}/></label>
+        <label>API credential
+          <select
+            value={selectedSource.credentialReference?.id??""}
+            onChange={event=>{
+              const value=event.target.value;
+              if(value==="__new__"){setAddingCredential(true);return;}
+              setAddingCredential(false);
+              if(!value){updateSource(selectedSource.id,{credentialReference:null});return;}
+              const profile=credentialProfiles.find(candidate=>candidate.credentialReference.id===value);
+              if(!profile){setMessage("Credential profile is unavailable. Re-select or recreate the credential.");return;}
+              updateSource(selectedSource.id,{credentialReference:{...profile.credentialReference}});
+            }}
+            disabled={busy}
+          >
+            <option value="">No credential</option>
+            {selectedSource.credentialReference&&!credentialProfiles.some(profile=>profile.credentialReference.id===selectedSource.credentialReference?.id)&&
+              <option value={selectedSource.credentialReference.id} disabled>Unavailable credential: {selectedSource.credentialReference.id}</option>}
+            {credentialProfiles.filter(profile=>profile.providerId===selectedSource.providerId).map(profile=><option key={profile.id} value={profile.credentialReference.id}>{profile.label} {credentialSaved[profile.id]?"••••••••":"(not saved)"}</option>)}
+            <option value="__new__">+ Add new credential</option>
+          </select>
+        </label>
+        {addingCredential&&<div className="character-actions">
+          <label>Label<input value={newCredentialLabel} onChange={event=>setNewCredentialLabel(event.target.value)} disabled={busy}/></label>
+          <label>API key<input type="password" autoComplete="off" value={newCredentialSecret} onChange={event=>setNewCredentialSecret(event.target.value)} disabled={busy}/></label>
+          <button onClick={()=>void createCredential()} disabled={busy}>Save credential</button>
+        </div>}
+        <label>Model
+          {models.length>0
+            ?<select value={selectedSource.model} onChange={event=>updateSource(selectedSource.id,{model:event.target.value})} disabled={busy}>
+              {models.map(model=><option key={model.id} value={model.id}>{model.displayName&&model.displayName!==model.id?model.displayName+" · "+model.id:model.id}</option>)}
+            </select>
+            :<input value={selectedSource.model} onChange={event=>updateSource(selectedSource.id,{model:event.target.value})} placeholder="model-id" disabled={busy}/>}
+        </label>
+        <label className="checkbox">Enabled
+          <input type="checkbox" checked={selectedSource.enabled} onChange={event=>updateSource(selectedSource.id,{enabled:event.target.checked})} disabled={busy}/>
+        </label>
+        <label>Timeout (ms)<input type="number" min="1" value={selectedSource.timeoutMs??30000} onChange={event=>updateSource(selectedSource.id,{timeoutMs:Number(event.target.value)})} disabled={busy}/></label>
+        <div className="status-grid">
+          <span>Health</span><strong>{selectedSource.health}</strong>
+          <span>Failures</span><strong>{selectedSource.failureCount}</strong>
+          <span>Cooldown</span><strong>{selectedSource.cooldownUntil??"none"}</strong>
+          <span>Active</span><strong>{selectedSource.id===draft.activeSourceId?"yes":"no"}</strong>
+        </div>
+      </>}
       <div className="actions">
-        <button onClick={()=>void refresh()} disabled={busy}>Refresh models</button>
-        <button onClick={()=>void test()} disabled={busy||!draft.name.trim()}>Test provider</button>
+        <button onClick={()=>void refresh()} disabled={busy||!selectedSource}>Refresh models</button>
+        <button onClick={()=>void test()} disabled={busy||!selectedSource}>Test source</button>
         <button onClick={()=>void save(false)} disabled={busy||!draft.name.trim()}>Save</button>
         <button onClick={()=>void save(true)} disabled={busy||!draft.name.trim()}>Save &amp; activate</button>
         <button onClick={()=>void saveAsNew()} disabled={busy||!draft.name.trim()}>Save as new preset</button>
@@ -837,20 +1047,26 @@ function ProviderPresetsView({
         {selectedId&&<button onClick={()=>void removePreset()} disabled={busy}>Delete preset</button>}
       </div>
       <div className="actions">
-        <button onClick={()=>setStarter("Mistral","https://api.mistral.ai/v1")} disabled={busy}>Starter: Mistral</button>
-        <button onClick={()=>setStarter("Groq","https://api.groq.com/openai/v1")} disabled={busy}>Starter: Groq</button>
-        <button onClick={()=>setStarter("OpenAI","https://api.openai.com/v1")} disabled={busy}>Starter: OpenAI</button>
+        <button onClick={()=>setStarter("OpenAI","openai-compatible","https://api.openai.com/v1","") } disabled={busy}>Starter: OpenAI</button>
+        <button onClick={()=>setStarter("Gemini","gemini","https://generativelanguage.googleapis.com/v1beta","gemini-2.5-flash")} disabled={busy}>Starter: Gemini</button>
       </div>
       {message&&<div className="notice" role="status">{message}</div>}
       <p className="hint">API keys are never loaded back into this UI.</p>
     </section>
     <section>
+      <h2>Sources</h2>
+      {draft.sources.length===0?<div>No sources in this preset.</div>:draft.sources.map(source=>
+        <div className="row" key={source.id}>
+          <span>{source.name} · {source.providerId} · {source.model||"no model"} · {source.baseUrl}</span>
+          <span>{source.health}{source.id===draft.activeSourceId?" · active":""}</span>
+        </div>
+      )}
       <h2>Saved API credentials</h2>
       {credentialProfiles.length===0?<div>No saved credential metadata.</div>:credentialProfiles.map(profile=>
-        <div className="row" key={profile.id}><span>{profile.label} {credentialSaved[profile.id]?"••••••••":"(not saved)"}</span><button onClick={()=>void deleteCredential(profile.id)} disabled={busy}>Delete</button></div>
+        <div className="row" key={profile.id}><span>{profile.label} · {profile.providerId} {credentialSaved[profile.id]?"••••••••":"(not saved)"}</span><button onClick={()=>void deleteCredential(profile.id)} disabled={busy}>Delete</button></div>
       )}
       <h2>Runtime</h2>
-      <div className="status-grid"><span>Runtime</span><strong>{runtime.runtimeStatus}</strong><span>Active</span><strong>{activePresetId??"none"}</strong></div>
+      <div className="status-grid"><span>Runtime</span><strong>{runtime.runtimeStatus}</strong><span>Active preset</span><strong>{activePresetId??"none"}</strong></div>
     </section>
   </section>;
 }
@@ -1021,6 +1237,30 @@ function AppSettingsView({
       <label>Memory Agent model override
         <input value={settings.memoryAgent.model} onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,model:event.target.value}})} placeholder="Preset model / discovered model" disabled={saving}/>
       </label>
+      <label>Output Format
+        <select value={settings.memoryAgent.outputMode} onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,outputMode:event.target.value as AppSettings["memoryAgent"]["outputMode"]}})} disabled={saving}>
+          <option value="auto">Auto</option>
+          <option value="structured">Structured</option>
+          <option value="plain">Plain</option>
+        </select>
+        <small>{settings.memoryAgent.outputMode==="auto"?"Structured first; Plain only on explicit capability/unsupported failure.":settings.memoryAgent.outputMode==="structured"?"Structured is explicit; unsupported is terminal.":"Plain text only; no response format is sent."}</small>
+      </label>
+      <label>Agent Prompt
+        <textarea value={settings.memoryAgent.prompt} onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,prompt:event.target.value}})} rows={10} maxLength={12000} disabled={saving}/>
+        <small>{settings.memoryAgent.prompt===defaults.memoryAgent.prompt?"Default prompt":"Custom prompt"} · default version {settings.memoryAgent.defaultPromptVersion}</small>
+      </label>
+      <div className="actions">
+        <button type="button" onClick={()=>{
+          const previous=settings.memoryAgent.prompt===defaults.memoryAgent.prompt?settings.memoryAgent.promptBackup:settings.memoryAgent.prompt;
+          onChange({...settings,memoryAgent:{...settings.memoryAgent,prompt:defaults.memoryAgent.prompt,promptBackup:previous||settings.memoryAgent.promptBackup}});
+        }} disabled={saving}>Reset to Default</button>
+        <button type="button" onClick={()=>{
+          if(settings.memoryAgent.promptBackup){
+            onChange({...settings,memoryAgent:{...settings.memoryAgent,prompt:settings.memoryAgent.promptBackup,promptBackup:settings.memoryAgent.prompt}});
+          }
+        }} disabled={saving||!settings.memoryAgent.promptBackup}>Restore Previous</button>
+        <button type="button" onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save"}</button>
+      </div>
       <label>Memory items
         <input type="number" min={1} max={100} value={settings.memory.candidateLimit}
           onChange={event=>setNumber("memory","candidateLimit",Number(event.target.value))} disabled={saving}/>
@@ -1032,6 +1272,91 @@ function AppSettingsView({
         <small>Default: {defaults.retrieval.candidateLimit}</small>
       </label>
       <p className="hint">Memory storage, character/conversation isolation, deduplication, and extraction safety rules are not configurable here.</p>
+    </section>
+
+    <section>
+      <h3>Semantic Memory Deduplication</h3>
+      <label className="checkbox">Enabled
+        <input type="checkbox" checked={settings.semanticDedup.enabled}
+          onChange={event=>onChange({...settings,semanticDedup:{...settings.semanticDedup,enabled:event.target.checked}})} disabled={saving}/>
+      </label>
+      <label>Embedding Provider Preset
+        <select value={settings.semanticDedup.embeddingProviderPresetId??""}
+          onChange={event=>onChange({...settings,semanticDedup:{...settings.semanticDedup,embeddingProviderPresetId:event.target.value||null}})} disabled={saving}>
+          <option value="">Not configured</option>
+          {settings.semanticDedup.embeddingProviderPresetId&&!providerPresets.some(p=>p.id===settings.semanticDedup.embeddingProviderPresetId)&&
+            <option value={settings.semanticDedup.embeddingProviderPresetId} disabled>Unavailable: {settings.semanticDedup.embeddingProviderPresetId}</option>}
+          {providerPresets.map(preset=><option key={preset.id} value={preset.id}>{preset.name||preset.id}</option>)}
+        </select>
+      </label>
+      <label>Embedding Model
+        <input value={settings.semanticDedup.embeddingModel}
+          onChange={event=>onChange({...settings,semanticDedup:{...settings.semanticDedup,embeddingModel:event.target.value}})}
+          placeholder="Explicit embedding model, e.g. mistral-embed" disabled={saving}/>
+      </label>
+      <div className="core-book-grid">
+        <label>Candidate Similarity Threshold
+          <input type="number" min="0" max="1" step="0.01" value={settings.semanticDedup.candidateSimilarityThreshold}
+            onChange={event=>onChange({...settings,semanticDedup:{...settings.semanticDedup,candidateSimilarityThreshold:Number(event.target.value)}})} disabled={saving}/>
+          <small>Default: {defaults.semanticDedup.candidateSimilarityThreshold}. Heuristic candidate filter only; it is not a duplicate decision.</small>
+        </label>
+        <label>Candidate Limit
+          <input type="number" min="1" max="100" step="1" value={settings.semanticDedup.candidateLimit}
+            onChange={event=>onChange({...settings,semanticDedup:{...settings.semanticDedup,candidateLimit:Number(event.target.value)}})} disabled={saving}/>
+          <small>Default: {defaults.semanticDedup.candidateLimit}. Only the top candidates are sent to the Judge.</small>
+        </label>
+      </div>
+      <p className="hint">Embeddings detect potentially similar active memories for the same character. They are not used for normal Chat memory retrieval.</p>
+    </section>
+
+    <section>
+      <h3>Memory Judge</h3>
+      <label className="checkbox">Enabled
+        <input type="checkbox" checked={settings.semanticDedup.judge.enabled}
+          onChange={event=>onChange({...settings,semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,enabled:event.target.checked}}})} disabled={saving}/>
+      </label>
+      <label>Judge Provider Preset
+        <select value={settings.semanticDedup.judge.providerPresetId??""}
+          onChange={event=>onChange({...settings,semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,providerPresetId:event.target.value||null}}})} disabled={saving}>
+          <option value="">Not configured</option>
+          {settings.semanticDedup.judge.providerPresetId&&!providerPresets.some(p=>p.id===settings.semanticDedup.judge.providerPresetId)&&
+            <option value={settings.semanticDedup.judge.providerPresetId} disabled>Unavailable: {settings.semanticDedup.judge.providerPresetId}</option>}
+          {providerPresets.map(preset=><option key={preset.id} value={preset.id}>{preset.name||preset.id}</option>)}
+        </select>
+      </label>
+      <label>Judge Model
+        <input value={settings.semanticDedup.judge.model}
+          onChange={event=>onChange({...settings,semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,model:event.target.value}}})}
+          placeholder="Explicit judge model" disabled={saving}/>
+      </label>
+      <label>Judge Output Mode
+        <select value={settings.semanticDedup.judge.outputMode}
+          onChange={event=>onChange({...settings,semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,outputMode:event.target.value as AppSettings["semanticDedup"]["judge"]["outputMode"]}}})} disabled={saving}>
+          <option value="auto">Auto</option>
+          <option value="structured">Structured</option>
+          <option value="plain">Plain</option>
+        </select>
+        <small>{settings.semanticDedup.judge.outputMode==="auto"?"Structured first; Plain only on explicit capability/unsupported failure.":settings.semanticDedup.judge.outputMode==="structured"?"Structured is explicit; unsupported is terminal.":"Plain text only; no response format is sent."}</small>
+      </label>
+      <label>Judge Prompt
+        <textarea value={settings.semanticDedup.judge.prompt}
+          onChange={event=>onChange({...settings,semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,prompt:event.target.value}}})}
+          rows={10} maxLength={12000} disabled={saving}/>
+        <small>{settings.semanticDedup.judge.prompt===defaults.semanticDedup.judge.prompt?"Default prompt":"Custom prompt"} · default version {settings.semanticDedup.judge.defaultPromptVersion}</small>
+      </label>
+      <div className="actions">
+        <button type="button" onClick={()=>{
+          const previous=settings.semanticDedup.judge.prompt===defaults.semanticDedup.judge.prompt?settings.semanticDedup.judge.promptBackup:settings.semanticDedup.judge.prompt;
+          onChange({...settings,semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,prompt:defaults.semanticDedup.judge.prompt,promptBackup:previous||settings.semanticDedup.judge.promptBackup}}});
+        }} disabled={saving}>Reset to Default</button>
+        <button type="button" onClick={()=>{
+          if(settings.semanticDedup.judge.promptBackup){
+            onChange({...settings,semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,prompt:settings.semanticDedup.judge.promptBackup,promptBackup:settings.semanticDedup.judge.prompt}}});
+          }
+        }} disabled={saving||!settings.semanticDedup.judge.promptBackup}>Restore Previous</button>
+        <button type="button" onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save"}</button>
+      </div>
+      <p className="hint">The Judge receives only the real candidate IDs and their canonical text. The Judge never archives or edits Memory; deterministic Core validation does.</p>
     </section>
 
     <section>
@@ -1087,17 +1412,24 @@ function TraceCandidate({candidate}:{candidate:any}){
 
 function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:AppSettings}){
   const [traces,setTraces]=React.useState<readonly ChatTurnTrace[]>([]);
+  const [semanticDiagnostics,setSemanticDiagnostics]=React.useState<readonly ErrorDiagnostic[]>([]);
   const [selectedId,setSelectedId]=React.useState<string|undefined>();
   const [message,setMessage]=React.useState("");
   const [showRaw,setShowRaw]=React.useState(false);
 
+  // Bridge the runtime DiagnosticsStore into the existing Diagnostics screen so semantic-memory events are visible with turn traces.
   const refresh=React.useCallback(()=>{
     try{
       const next=runtime.listChatTraces(50);
       setTraces(next);
       setSelectedId(current=>current&&next.some(trace=>trace.turnId===current)?current:next[0]?.turnId);
       setMessage("");
-    }catch(error){setMessage(error instanceof Error?error.message:"Diagnostics could not be loaded.")}
+    }catch(error){setMessage(error instanceof Error?error.message:"Diagnostics could not be loaded.");}
+    void runtime.diagnostics().then(snapshot=>{
+      setSemanticDiagnostics(snapshot.recentErrors.filter(entry=>entry.source==="memory-semantic-deduplication"));
+    }).catch(error=>{
+      setMessage(error instanceof Error?error.message:"Semantic diagnostics could not be loaded.");
+    });
   },[runtime]);
 
   React.useEffect(()=>{
@@ -1111,12 +1443,12 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
   return <div className="settings-grid">
     <section>
       <div className="section-header">
-        <div><h2>Diagnostics</h2><p className="chat-subtitle">Technical turn traces only; no model chain-of-thought is recorded.</p></div>
+        <div><h2>Diagnostics</h2><p className="chat-subtitle">Technical turn traces and semantic-memory diagnostics; no model chain-of-thought is recorded.</p></div>
         <button type="button" onClick={()=>{runtime.clearChatTraces();refresh()}}>Clear Logs</button>
       </div>
       <div className="status-grid">
         <span>Log level</span><strong>{settings.diagnostics.logLevel}</strong>
-        <span>Retained</span><strong>{traces.length}</strong>
+        <span>Retained turn traces</span><strong>{traces.length}</strong>
       </div>
       {traces.length===0
         ?<div>No chat traces yet.</div>
@@ -1126,6 +1458,76 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
           </button>
         )}
       {message&&<div className="error">{message}</div>}
+    </section>
+
+    <section>
+      <h2>Memory Deduplication</h2>
+      {(()=>{
+        const configEntry=semanticDiagnostics.find(entry=>entry.code==="SEMANTIC_DEDUP_SETTINGS_APPLIED"||entry.code==="SEMANTIC_DEDUP_RUNTIME_READY");
+        const metadata=configEntry?.metadata??{};
+        return configEntry&&<div className="status-grid">
+          <span>Semantic Dedup enabled</span><strong>{metadata.semanticDedupEnabled===true?"true":metadata.semanticDedupEnabled===false?"false":"—"}</strong>
+          <span>Judge enabled</span><strong>{metadata.judgeEnabled===true?"true":metadata.judgeEnabled===false?"false":"—"}</strong>
+          <span>Judge preset</span><strong>{String(metadata.judgeProviderPresetId??"—")}</strong>
+          <span>Judge model</span><strong>{String(metadata.judgeModel??"—")||"—"}</strong>
+          <span>Judge output mode</span><strong>{String(metadata.judgeOutputMode??"—")}</strong>
+          <span>MemoryCreated subscribers</span><strong>{String(metadata.memoryCreatedSubscribers??"—")}</strong>
+        </div>;
+      })()}
+      <div className="status-grid">
+        <span>Status</span><strong>{semanticDiagnostics[0]?.code??"No events yet"}</strong>
+        <span>Events</span><strong>{semanticDiagnostics.length}</strong>
+        <span>Last message</span><strong>{semanticDiagnostics[0]?.message??"Create a Memory to observe the production deduplication path."}</strong>
+      </div>
+      {semanticDiagnostics.length===0
+        ?<div>No semantic-memory diagnostics yet.</div>
+        :semanticDiagnostics.map((entry,index)=>{
+          const metadata=entry.metadata??{};
+          const candidates=Array.isArray(metadata.candidateDiagnostics)?metadata.candidateDiagnostics as Array<Record<string,unknown>>:[];
+          const selections=Array.isArray(metadata.judgeSelections)?metadata.judgeSelections as string[]:[];
+          const mapping=Array.isArray(metadata.archiveMapping)?metadata.archiveMapping as Array<Record<string,unknown>>:[];
+          return <div className="diagnostic-block" key={entry.timestamp+"-"+entry.code+"-"+index}>
+            <div className="section-header">
+              <strong>{entry.code}</strong>
+              <small>{entry.timestamp}</small>
+            </div>
+            <div>{entry.message}</div>
+            {candidates.length>0&&<div>
+              <h4>Candidates</h4>
+              {candidates.map((candidate,candidateIndex)=>
+                <div className="diagnostic-candidate" key={String(candidate.memoryId??candidateIndex)}>
+                  <div className="diagnostic-candidate-header">
+                    <strong>#{String(candidate.number??candidateIndex+1)}</strong>
+                    <span>{candidate.containmentMatch===true?"containment match":"semantic match"}</span>
+                    <span>similarity {typeof candidate.similarity==="number"?candidate.similarity.toFixed(3):"—"}</span>
+                  </div>
+                  <div className="diagnostic-candidate-content">{String(candidate.content??"")}</div>
+                  <div className="diagnostic-candidate-meta">memory {String(candidate.memoryId??"—")}</div>
+                </div>
+              )}
+            </div>}
+            {selections.length>0&&<div className="diagnostic-reason">Judge output: {selections.join(", ")}</div>}
+            {mapping.length>0&&<div className="diagnostic-reason">Mapped archive IDs: {mapping.map(item=>String(item.selection)+" → "+String(item.memoryId)).join(", ")}</div>}
+            {typeof metadata.mutationResult==="string"&&<div className="diagnostic-reason">Mutation result: {metadata.mutationResult}</div>}
+            {typeof metadata.reason==="string"&&<div className="diagnostic-reason">Reason: {metadata.reason}</div>}
+            {typeof metadata.fallbackReason==="string"&&<div className="diagnostic-reason">Fallback: {metadata.fallbackReason}</div>}
+            {(metadata.providerId!==undefined||metadata.providerPresetId!==undefined||metadata.model!==undefined||metadata.baseUrlHost!==undefined||metadata.chatTransport!==undefined||metadata.httpStatus!==undefined||metadata.category!==undefined||metadata.timeoutMs!==undefined||metadata.providerResponse!==undefined)&&<div className="diagnostic-block">
+              <h4>Provider Failure Details</h4>
+              <div className="status-grid">
+                {metadata.providerId!==undefined&&<><span>Provider</span><strong>{String(metadata.providerId)}</strong></>}
+                {metadata.providerPresetId!==undefined&&<><span>Preset</span><strong>{String(metadata.providerPresetId)}</strong></>}
+                {metadata.model!==undefined&&<><span>Model</span><strong>{String(metadata.model)}</strong></>}
+                {metadata.baseUrlHost!==undefined&&<><span>Base URL host</span><strong>{String(metadata.baseUrlHost)}</strong></>}
+                {metadata.chatTransport!==undefined&&<><span>Transport</span><strong>{String(metadata.chatTransport)}</strong></>}
+                {metadata.category!==undefined&&<><span>Category</span><strong>{String(metadata.category)}</strong></>}
+                {metadata.httpStatus!==undefined&&<><span>HTTP status</span><strong>{String(metadata.httpStatus)}</strong></>}
+                {metadata.timeoutMs!==undefined&&<><span>Timeout</span><strong>{String(metadata.timeoutMs)} ms</strong></>}
+                {metadata.durationMs!==undefined&&<><span>Duration</span><strong>{String(metadata.durationMs)} ms</strong></>}
+              </div>
+              {metadata.providerResponse!==undefined&&<pre className="diagnostic-json">{JSON.stringify(metadata.providerResponse,null,2)}</pre>}
+            </div>}
+          </div>;
+        })}
     </section>
 
     {selected&&<section>
@@ -1156,6 +1558,31 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
           <span>Generation</span><strong>{JSON.stringify(selected.finalRequest.generation??{})}</strong>
         </div>
         <pre className="diagnostic-json">{JSON.stringify(selected.finalRequest.context.messages,null,2)}</pre>
+      </div>}
+
+      {selected.provider&&<div className="diagnostic-block">
+        <h3>Effective Chat Provider</h3>
+        <div className="status-grid">
+          <span>Preset</span><strong>{selected.provider.chatProviderPresetId??"—"}</strong>
+          <span>Provider</span><strong>{selected.provider.chatProviderId}</strong>
+          <span>Model</span><strong>{selected.provider.chatModel}</strong>
+          <span>Base URL host</span><strong>{selected.provider.chatProviderBaseUrlHost??"—"}</strong>
+          <span>Timeout</span><strong>{selected.provider.chatProviderTimeoutMs===undefined?"—":selected.provider.chatProviderTimeoutMs+" ms"}</strong>
+          <span>Transport</span><strong>{selected.provider.chatTransport}</strong>
+        </div>
+      </div>}
+
+      {selected.providerError&&<div className="diagnostic-block">
+        <h3>Provider Failure Details</h3>
+        <div className="status-grid">
+          <span>Preset</span><strong>{selected.providerError.providerPresetId??"—"}</strong>
+          <span>Provider</span><strong>{selected.providerError.providerId??"—"}</strong>
+          <span>Category</span><strong>{selected.providerError.category??"—"}</strong>
+          <span>HTTP status</span><strong>{selected.providerError.httpStatus??"—"}</strong>
+          <span>Timeout</span><strong>{selected.providerError.timeoutMs===undefined?"—":selected.providerError.timeoutMs+" ms"}</strong>
+          <span>Provider duration</span><strong>{selected.providerError.durationMs===undefined?"—":selected.providerError.durationMs+" ms"}</strong>
+        </div>
+        {selected.providerError.providerResponse!==undefined&&<pre className="diagnostic-json">{JSON.stringify(selected.providerError.providerResponse,null,2)}</pre>}
       </div>}
 
       {selected.providerResponse&&<div className="diagnostic-block">
@@ -1216,6 +1643,7 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
   </div>;
 }
 
+
 class ViewErrorBoundary extends React.Component<{
   view:string;
   onError:(error:Error,info:React.ErrorInfo)=>void;
@@ -1263,10 +1691,10 @@ function SettingsContainerView({
   onSavePreset:(preset:ProviderPreset,activate:boolean)=>Promise<void>;
   onActivatePreset:(id:string)=>Promise<void>;
   onDeletePreset:(id:string)=>Promise<void>;
-  onCreateCredential:(label:string,secret:string)=>Promise<CredentialProfile>;
+  onCreateCredential:(label:string,secret:string,providerId:string)=>Promise<CredentialProfile>;
   onDeleteCredential:(id:string)=>Promise<void>;
-  onRefreshModels:(preset:ProviderPreset)=>Promise<readonly ModelInfo[]>;
-  onTestPreset:(preset:ProviderPreset)=>Promise<ProviderConnectionTestResult>;
+  onRefreshModels:(preset:ProviderPreset,sourceId:string)=>Promise<readonly ModelInfo[]>;
+  onTestPreset:(preset:ProviderPreset,sourceId:string)=>Promise<ProviderConnectionTestResult>;
   onError:(error:Error,info:React.ErrorInfo)=>void;
 }){
   const [tab,setTab]=React.useState<"general"|"provider-presets">("general");
@@ -1291,12 +1719,11 @@ function isTauriRuntime():boolean{
 }
 
 function materializePresetConfigurations(
-  presets:readonly ProviderPreset[],
-  profiles:readonly CredentialProfile[]
+  presets:readonly ProviderPreset[]
 ):readonly {presetId:string;configuration:ProviderConfiguration}[]{
-  return presets.map(preset=>{
-    const credential=profiles.find(profile=>profile.id===preset.credentialProfileId);
-    return {presetId:preset.id,configuration:materializeProviderConfiguration(preset,credential)};
+  return presets.flatMap(preset=>{
+    const source=preset.sources.find(candidate=>candidate.id===preset.activeSourceId)??preset.sources[0];
+    return source?[{presetId:preset.id,configuration:materializeProviderConfiguration(source)}]:[];
   });
 }
 function credentialSavedEntries(
@@ -1341,6 +1768,7 @@ function App(){
   const [providerPresets,setProviderPresets]=React.useState<readonly ProviderPreset[]>([]);
   const [activePresetId,setActivePresetId]=React.useState<string|null>(null);
   const [appSettings,setAppSettings]=React.useState<AppSettings>(()=>defaultAppSettings());
+  const semanticIndexStore=React.useMemo(()=>isTauriRuntime()?new IpcMemorySemanticIndexStore(invoke):undefined,[]);
   const [settingsLoadMessage,setSettingsLoadMessage]=React.useState("");
   const credentialProfileStateRef=React.useRef<CredentialProfileStoreState>(emptyCredentialProfileState());
   const providerPresetStateRef=React.useRef<ProviderPresetStoreState>(emptyProviderPresetState());
@@ -1532,6 +1960,17 @@ function App(){
     return recentErrors.length===diagnostics.recentErrors.length?diagnostics:{...diagnostics,recentErrors};
   },[]);
 
+  const persistProviderPresetPoolState=React.useCallback(async(updated:ProviderPreset)=>{
+    const current=providerPresetStateRef.current;
+    const presets=current.presets.some(preset=>preset.id===updated.id)
+      ?current.presets.map(preset=>preset.id===updated.id?updated:preset)
+      :[...current.presets,updated];
+    const nextState:ProviderPresetStoreState={...current,presets};
+    providerPresetStateRef.current=nextState;
+    setProviderPresets(presets);
+    await providerPresetStore.save(nextState);
+  },[providerPresetStore]);
+
   const refreshRuntime=React.useCallback(async(
     config:ProviderConfiguration|undefined,
     configurationLoadError?:string,
@@ -1544,8 +1983,10 @@ function App(){
     setChatController(null);
     await foundationRef.current?.stop();
     const next=await startFoundationRuntime({
-      providerConfiguration:config,credentialStore,characterStore,coreBookStore,memoryStore,conversationStore,retriever,retrievalIndexWriter:retriever,
-      providerPresetConfigurations:materializePresetConfigurations(presetState.presets,credentialState.profiles),
+      providerConfiguration:config,credentialStore,characterStore,coreBookStore,memoryStore,semanticIndexStore,conversationStore,retriever,retrievalIndexWriter:retriever,
+      providerPresetConfigurations:materializePresetConfigurations(presetState.presets),
+      providerPresetPools:presetState.presets,
+      onProviderPresetPoolStateChange:persistProviderPresetPoolState,
       settingsStore,
       activeProviderPresetId:presetState.activePresetId??undefined
     });
@@ -1555,7 +1996,7 @@ function App(){
     setRuntime(await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(await next.diagnostics())));
     setStartupStatus("ready");
     setStartupError("");
-  },[addConfigurationLoadError,characterStore,coreBookStore,memoryStore,credentialStore,retriever,conversationStore,syncCharacters]);
+  },[addConfigurationLoadError,characterStore,coreBookStore,memoryStore,semanticIndexStore,credentialStore,retriever,conversationStore,syncCharacters,persistProviderPresetPoolState]);
 
   React.useEffect(()=>{
     let active=true;
@@ -1587,8 +2028,8 @@ function App(){
           try{savedMap[profile.id]=await credentialStore.exists(profile.credentialReference)}catch{savedMap[profile.id]=false;}
         }
         const activePreset=presetState.activePresetId?presetState.presets.find(preset=>preset.id===presetState.activePresetId):undefined;
-        const activeCredential=activePreset?.credentialProfileId?credentialState.profiles.find(profile=>profile.id===activePreset.credentialProfileId):undefined;
-        const activeConfiguration=activePreset?materializeProviderConfiguration(activePreset,activeCredential):undefined;
+        const activeSource=activePreset?.sources.find(source=>source.id===activePreset.activeSourceId)??activePreset?.sources[0];
+        const activeConfiguration=activeSource?materializeProviderConfiguration(activeSource):undefined;
         setCredentialProfiles(credentialState.profiles);
         setCredentialSavedMap(savedMap);
         setProviderPresets(presetState.presets);
@@ -1720,59 +2161,107 @@ function App(){
     if(before?.id===id||before?.id!==nextActive.id)setChatController(loaded.controller);
   },[activeCharacter,chatController,loadActiveConversation,modelProfileStore]);
 
+  const activeSourceForPreset=(preset:ProviderPreset):ProviderPresetSource|undefined=>preset.sources.find(source=>source.id===preset.activeSourceId)??preset.sources[0];
+
   const saveProviderPreset=React.useCallback(async(preset:ProviderPreset,activate:boolean)=>{
     const current=providerPresetStateRef.current;
-    const nextState:ProviderPresetStoreState={...current,presets:[...current.presets.filter(item=>item.id!==preset.id),preset],activePresetId:activate?preset.id:current.activePresetId};
-    await providerPresetStore.save(nextState);providerPresetStateRef.current=nextState;setProviderPresets(nextState.presets);setActivePresetId(nextState.activePresetId);
+    const nextState:ProviderPresetStoreState={
+      ...current,
+      presets:current.presets.some(item=>item.id===preset.id)
+        ?current.presets.map(item=>item.id===preset.id?preset:item)
+        :[...current.presets,preset],
+      activePresetId:activate?preset.id:current.activePresetId
+    };
+    await providerPresetStore.save(nextState);
+    providerPresetStateRef.current=nextState;
+    setProviderPresets(nextState.presets);
+    setActivePresetId(nextState.activePresetId);
     if(activate||current.activePresetId===preset.id){
-      const credential=preset.credentialProfileId?credentialProfileStateRef.current.profiles.find(profile=>profile.id===preset.credentialProfileId):undefined;
-      await refreshRuntime(materializeProviderConfiguration(preset,credential),undefined,nextState,credentialProfileStateRef.current);
+      const source=activeSourceForPreset(preset);
+      await refreshRuntime(source?materializeProviderConfiguration(source):undefined,undefined,nextState,credentialProfileStateRef.current);
     }
   },[providerPresetStore,refreshRuntime]);
 
   const activateProviderPreset=React.useCallback(async(id:string)=>{
-    const preset=providerPresetStateRef.current.presets.find(item=>item.id===id);if(!preset)throw new Error("Provider preset was not found.");
-    const nextState={...providerPresetStateRef.current,activePresetId:id};await providerPresetStore.save(nextState);providerPresetStateRef.current=nextState;setProviderPresets(nextState.presets);setActivePresetId(id);
-    const credential=preset.credentialProfileId?credentialProfileStateRef.current.profiles.find(profile=>profile.id===preset.credentialProfileId):undefined;
-    await refreshRuntime(materializeProviderConfiguration(preset,credential),undefined,nextState,credentialProfileStateRef.current);
+    const preset=providerPresetStateRef.current.presets.find(item=>item.id===id);
+    if(!preset)throw new Error("Provider preset was not found.");
+    const nextState={...providerPresetStateRef.current,activePresetId:id};
+    await providerPresetStore.save(nextState);
+    providerPresetStateRef.current=nextState;
+    setProviderPresets(nextState.presets);
+    setActivePresetId(id);
+    const source=activeSourceForPreset(preset);
+    await refreshRuntime(source?materializeProviderConfiguration(source):undefined,undefined,nextState,credentialProfileStateRef.current);
   },[providerPresetStore,refreshRuntime]);
 
   const deleteProviderPreset=React.useCallback(async(id:string)=>{
-    const current=providerPresetStateRef.current;const remaining=current.presets.filter(item=>item.id!==id);const nextActive=current.activePresetId===id?(remaining[0]?.id??null):current.activePresetId;
-    const nextState={...current,presets:remaining,activePresetId:nextActive};await providerPresetStore.save(nextState);providerPresetStateRef.current=nextState;setProviderPresets(remaining);setActivePresetId(nextActive);
-    if(nextActive){const preset=remaining.find(item=>item.id===nextActive)!;const credential=preset.credentialProfileId?credentialProfileStateRef.current.profiles.find(profile=>profile.id===preset.credentialProfileId):undefined;await refreshRuntime(materializeProviderConfiguration(preset,credential),undefined,nextState,credentialProfileStateRef.current)}
-    else await refreshRuntime(undefined,undefined,nextState,credentialProfileStateRef.current);
+    const current=providerPresetStateRef.current;
+    const remaining=current.presets.filter(item=>item.id!==id);
+    const nextActive=current.activePresetId===id?(remaining[0]?.id??null):current.activePresetId;
+    const nextState={...current,presets:remaining,activePresetId:nextActive};
+    await providerPresetStore.save(nextState);
+    providerPresetStateRef.current=nextState;
+    setProviderPresets(remaining);
+    setActivePresetId(nextActive);
+    if(nextActive){
+      const preset=remaining.find(item=>item.id===nextActive)!;
+      const source=activeSourceForPreset(preset);
+      await refreshRuntime(source?materializeProviderConfiguration(source):undefined,undefined,nextState,credentialProfileStateRef.current);
+    }else{
+      await refreshRuntime(undefined,undefined,nextState,credentialProfileStateRef.current);
+    }
   },[providerPresetStore,refreshRuntime]);
 
-  const createCredentialProfile=React.useCallback(async(label:string,secret:string):Promise<CredentialProfile>=>{
-    const now=new Date().toISOString();const reference={id:"credential."+slugId(label)+"."+Date.now(),kind:"api-key",provider:"openai-compatible",version:"1"} as const;
+  const createCredentialProfile=React.useCallback(async(label:string,secret:string,providerId:string):Promise<CredentialProfile>=>{
+    const now=new Date().toISOString();
+    const reference={id:"credential."+slugId(label)+"."+Date.now(),kind:"api-key",provider:providerId,version:"1"} as const;
     await credentialStore.setSecret(reference,secret);
     const saved=await credentialStore.exists(reference);
-    if(!saved){
-      throw new Error("Credential could not be verified after saving.");
-    }
-    const profile:CredentialProfile={id:"credential-profile:"+slugId(label)+":"+Date.now(),label,providerId:"openai-compatible",credentialReference:reference,createdAt:now,updatedAt:now};
-    const nextState={...credentialProfileStateRef.current,profiles:[...credentialProfileStateRef.current.profiles,profile]};await credentialProfileStore.save(nextState);credentialProfileStateRef.current=nextState;setCredentialProfiles(nextState.profiles);setCredentialSavedMap(current=>({...current,[profile.id]:true}));
+    if(!saved)throw new Error("Credential could not be verified after saving.");
+    const profile:CredentialProfile={
+      id:"credential-profile:"+slugId(label)+":"+Date.now(),
+      label,
+      providerId,
+      credentialReference:reference,
+      createdAt:now,
+      updatedAt:now
+    };
+    const nextState={...credentialProfileStateRef.current,profiles:[...credentialProfileStateRef.current.profiles,profile]};
+    await credentialProfileStore.save(nextState);
+    credentialProfileStateRef.current=nextState;
+    setCredentialProfiles(nextState.profiles);
+    setCredentialSavedMap(current=>({...current,[profile.id]:true}));
     return profile;
   },[credentialStore,credentialProfileStore]);
 
   const deleteCredentialProfile=React.useCallback(async(id:string)=>{
-    if(providerPresetStateRef.current.presets.some(preset=>preset.credentialProfileId===id))throw new Error("Credential is still used by a provider preset.");
-    const removed=credentialProfileStateRef.current.profiles.find(profile=>profile.id===id);if(removed)await credentialStore.deleteSecret(removed.credentialReference);
-    const nextState={...credentialProfileStateRef.current,profiles:credentialProfileStateRef.current.profiles.filter(profile=>profile.id!==id)};await credentialProfileStore.save(nextState);credentialProfileStateRef.current=nextState;setCredentialProfiles(nextState.profiles);setCredentialSavedMap(current=>{const next={...current};delete next[id];return next;});
+    const profile=credentialProfileStateRef.current.profiles.find(item=>item.id===id);
+    const referenceId=profile?.credentialReference.id;
+    if(referenceId&&providerPresetStateRef.current.presets.some(preset=>preset.sources.some(source=>source.credentialReference?.id===referenceId))){
+      throw new Error("Credential is still used by a provider preset source.");
+    }
+    if(profile)await credentialStore.deleteSecret(profile.credentialReference);
+    const nextState={...credentialProfileStateRef.current,profiles:credentialProfileStateRef.current.profiles.filter(item=>item.id!==id)};
+    await credentialProfileStore.save(nextState);
+    credentialProfileStateRef.current=nextState;
+    setCredentialProfiles(nextState.profiles);
+    setCredentialSavedMap(current=>{const next={...current};delete next[id];return next;});
   },[credentialProfileStore,credentialStore]);
 
-  const refreshPresetModels=React.useCallback(async(preset:ProviderPreset):Promise<readonly ModelInfo[]>=>{
-    const credential=credentialProfileStateRef.current.profiles.find(profile=>profile.id===preset.credentialProfileId);
-    return listProviderModels(materializeProviderConfiguration(preset,credential),credentialStore);
+  const refreshPresetModels=React.useCallback(async(preset:ProviderPreset,sourceId:string):Promise<readonly ModelInfo[]>=>{
+    const source=preset.sources.find(item=>item.id===sourceId);
+    if(!source)throw new Error("Provider source was not found.");
+    return listProviderModels(materializeProviderConfiguration(source),credentialStore);
   },[credentialStore]);
 
-  const testPreset=React.useCallback(async(preset:ProviderPreset):Promise<ProviderConnectionTestResult>=>{
-    const credential=credentialProfileStateRef.current.profiles.find(profile=>profile.id===preset.credentialProfileId);
-    let config=materializeProviderConfiguration(preset,credential);
+  const testPreset=React.useCallback(async(preset:ProviderPreset,sourceId:string):Promise<ProviderConnectionTestResult>=>{
+    const source=preset.sources.find(item=>item.id===sourceId);
+    if(!source)throw new Error("Provider source was not found.");
+    let config=materializeProviderConfiguration(source);
     if(!config.model){
-      const models=await listProviderModels(config,credentialStore);const first=models[0]?.id;
-      if(!first)return {apiVersion:"1",schemaVersion:"1",status:"configuration_error",providerId:preset.providerId,message:"Model discovery is unavailable; choose a model manually."};
+      const models=await listProviderModels(config,credentialStore);
+      const first=models[0]?.id;
+      if(!first)return {apiVersion:"1",schemaVersion:"1",status:"configuration_error",providerId:source.providerId,message:"Model discovery is unavailable; choose a model manually."};
       config={...config,model:first,enabled:true};
     }
     return testProviderPresetConfiguration(config,credentialStore);

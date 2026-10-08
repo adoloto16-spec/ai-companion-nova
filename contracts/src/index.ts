@@ -47,15 +47,28 @@ export interface CredentialProfileStore{
 }
 
 export const PROVIDER_PRESET_API_VERSION:ApiVersion="1";
-export const PROVIDER_PRESET_SCHEMA_VERSION="1";
-export interface ProviderPreset{
+export const PROVIDER_PRESET_SCHEMA_VERSION="2";
+export type ProviderSourceHealth="healthy"|"cooldown"|"unavailable";
+export interface ProviderPresetSource{
   id:string;
   name:string;
   providerId:string;
   baseUrl:string;
-  credentialProfileId?:string;
-  model?:string;
+  model:string;
+  credentialReference:CredentialReference|null;
+  enabled:boolean;
+  health:ProviderSourceHealth;
+  failureCount:number;
+  cooldownUntil:string|null;
   timeoutMs?:number;
+  createdAt:string;
+  updatedAt:string;
+}
+export interface ProviderPreset{
+  id:string;
+  name:string;
+  sources:readonly ProviderPresetSource[];
+  activeSourceId:string|null;
   createdAt:string;
   updatedAt:string;
 }
@@ -199,12 +212,15 @@ export interface CoreBookStore{
 export type MemoryItemId=string;
 export const MEMORY_API_VERSION:ApiVersion="1";
 export const MEMORY_SCHEMA_VERSION="3";
+export const MEMORY_SEMANTIC_INDEX_API_VERSION:ApiVersion="1";
+export const MEMORY_SEMANTIC_INDEX_SCHEMA_VERSION="1";
 export const MEMORY_EXTRACTION_API_VERSION:ApiVersion="1";
 export const MEMORY_EXTRACTION_SCHEMA_VERSION="1";
 export type MemoryType="fact"|"preference"|"relationship"|"event"|"experience"|"goal"|"instruction"|"observation";
 export type MemoryStatus="active"|"superseded"|"archived";
 export type MemorySource="user"|"conversation"|"file"|"tool"|"model"|"system";
 export type MemoryMutationPolicy="locked"|"suggest"|"auto";
+export type MemoryArchiveReason="manual"|"duplicate"|"superseded"|"other";
 export interface MemoryItem{
   id:MemoryItemId;
   characterId:CharacterId;
@@ -222,6 +238,8 @@ export interface MemoryItem{
   sourceReference:string|null;
   mutationPolicy:MemoryMutationPolicy;
   status:MemoryStatus;
+  archiveReason:MemoryArchiveReason|null;
+  supersededBy?:MemoryItemId|null;
   metadata:Record<string,unknown>;
 }
 export interface MemoryCreateInput{
@@ -254,6 +272,7 @@ export interface MemorySearchQuery{
   limit?:number;
 }
 export interface MemoryUpdateInput{
+  type?:MemoryType;
   content?:string;
   tags?:readonly string[];
   importance?:number;
@@ -264,6 +283,26 @@ export interface MemoryUpdateInput{
   sourceReference?:string|null;
   mutationPolicy?:MemoryMutationPolicy;
   metadata?:Record<string,unknown>;
+}
+export interface MemorySemanticVectorRecord{
+  memoryId:MemoryItemId;
+  characterId:CharacterId;
+  contentHash:string;
+  embeddingProviderId:string;
+  embeddingModel:string;
+  dimensions:number;
+  vector:readonly number[];
+  updatedAt:string;
+}
+export interface MemorySemanticIndexState{
+  apiVersion:ApiVersion;
+  schemaVersion:string;
+  characterId:CharacterId;
+  records:readonly MemorySemanticVectorRecord[];
+}
+export interface MemorySemanticIndexStore{
+  load(characterId:CharacterId):Promise<MemorySemanticIndexState|undefined>;
+  save(state:MemorySemanticIndexState):Promise<void>;
 }
 export interface MemoryMutationAuthority{
   actorId:string;
@@ -334,9 +373,11 @@ export interface MemoryBroker{
   supersede(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
   /** @deprecated Compatibility overload; conversationId is provenance only. */
   supersede(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
-  archive(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  archive(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason,supersededBy?:MemoryItemId|null):Promise<MemoryItem>;
   /** @deprecated Compatibility overload; conversationId is provenance only. */
-  archive(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  archive(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason,supersededBy?:MemoryItemId|null):Promise<MemoryItem>;
+  restore(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  delete(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<void>;
 }
 export interface AutomaticMemoryAgentRequest{
   apiVersion:ApiVersion;
@@ -460,7 +501,9 @@ export interface EventPayloadMap{
   MemoryCreated:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;status:MemoryStatus;updatedAt:string};
   MemoryUpdated:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;status:MemoryStatus;updatedAt:string};
   MemorySuperseded:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;previousMemoryId:string;status:MemoryStatus;updatedAt:string};
-  MemoryArchived:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;status:MemoryStatus;updatedAt:string};
+  MemoryArchived:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;status:MemoryStatus;updatedAt:string;archiveReason?:MemoryArchiveReason};
+  MemoryRestored:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;status:MemoryStatus;updatedAt:string};
+  MemoryDeleted:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string};
   ChatResponseReceived:{requestId:string;conversationId:string;providerId:string;model:string;finishReason:ChatFinishReason};
   ConversationCreated:{characterId:string;conversationId:string};
   ConversationUpdated:{characterId:string;conversationId:string};
@@ -484,6 +527,23 @@ export interface ChatTurnTrace{
     omittedCandidates:readonly ContextCandidate[];
   };
   finalRequest?:ChatRequest;
+  provider?:{
+    chatProviderPresetId?:string;
+    chatProviderId:string;
+    chatModel:string;
+    chatProviderBaseUrlHost?:string;
+    chatProviderTimeoutMs?:number;
+    chatTransport:"stream"|"chat";
+  };
+  providerError?:{
+    providerId?:string;
+    providerPresetId?:string;
+    category?:string;
+    httpStatus?:number;
+    timeoutMs?:number;
+    durationMs?:number;
+    providerResponse?:unknown;
+  };
   automaticMemory?:{
     started:boolean;
     status?:"started"|"completed"|"failed"|"skipped";
@@ -497,6 +557,13 @@ export interface ChatTurnTrace{
     assistantResponsePresent?:boolean;
     result?:string;
     persistence?:{status:"created"|"duplicate"|"rejected"|"none";memoryId?:string;reason?:string};
+    configuredOutputMode?:"auto"|"structured"|"plain";
+    effectiveOutputMode?:"structured"|"plain";
+    structuredAttempt?:boolean;
+    fallback?:boolean;
+    fallbackReason?:string;
+    schemaName?:string;
+    defaultPromptVersion?:string;
     failed?:string;
   };
   providerResponse?:{
@@ -548,7 +615,9 @@ export interface JsonSchema{$schema?:string;type?:string|string[];properties?:Re
 export interface ToolDefinition{id:string;version:string;schemaVersion:string;name:string;description:string;risk:ActionRisk;requiredCapabilities:readonly string[];resourceType:"domain"|"filesystem"|"application"|"resource";action:string;targetResolverId:string;confirmation:"never"|"policy";parameters:JsonSchema}
 export interface ChatMessage{id?:string;role:"system"|"user"|"assistant"|"tool";content:string;toolCallId?:string;metadata?:Record<string,unknown>}
 export interface ChatContext{conversationId:string;messages:readonly ChatMessage[];metadata?:Record<string,unknown>}
-export type ResponseFormat={type:"text"}|{type:"json";schema:Record<string,unknown>}
+export interface StructuredResponseFormat{type:"json-schema";schema:JsonSchema;name?:string;strict?:boolean}
+export type AgentOutputMode="auto"|"structured"|"plain";
+export type ResponseFormat={type:"text"}|{type:"json";schema:Record<string,unknown>}|StructuredResponseFormat;
 export interface ChatGenerationOptions{temperature?:number;maxTokens?:number;topP?:number;responseFormat?:ResponseFormat}
 export interface ChatUsage{promptTokens?:number;completionTokens?:number;totalTokens?:number}
 export type ChatFinishReason="stop"|"length"|"content_filter"|"error"|"unknown"
@@ -648,6 +717,7 @@ export const CONTRACT_VERSIONS={
   credentialProfile:{apiVersion:CREDENTIAL_PROFILE_API_VERSION,schemaVersion:CREDENTIAL_PROFILE_SCHEMA_VERSION},
   credentialProfileStoreState:{apiVersion:CREDENTIAL_PROFILE_API_VERSION,schemaVersion:CREDENTIAL_PROFILE_SCHEMA_VERSION},
   providerPreset:{apiVersion:PROVIDER_PRESET_API_VERSION,schemaVersion:PROVIDER_PRESET_SCHEMA_VERSION},
+  providerPresetSource:{apiVersion:PROVIDER_PRESET_API_VERSION,schemaVersion:PROVIDER_PRESET_SCHEMA_VERSION},
   providerPresetStoreState:{apiVersion:PROVIDER_PRESET_API_VERSION,schemaVersion:PROVIDER_PRESET_SCHEMA_VERSION},
     modelProfileStoreState:{apiVersion:MODEL_PROFILE_API_VERSION,schemaVersion:MODEL_PROFILE_SCHEMA_VERSION},
   retrievalSource:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
@@ -660,3 +730,4 @@ export const CONTRACT_VERSIONS={
 export {STANDARD_SCHEMAS} from "./generated-schemas";
 
 export {MinimalJsonSchemaValidator,StandardContractValidator} from "./schema-validator";
+export * from "./mind-runtime";

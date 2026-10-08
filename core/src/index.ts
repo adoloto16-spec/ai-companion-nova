@@ -21,3 +21,7 @@ export * from "./automatic-memory-agent";
 export * from "./memory-extraction";
 export * from "./retrieval-indexer";
 export * from "./settings";
+
+export * from "./agent-output";
+export * from "./semantic-memory-dedup";
+export * from "./mind-runtime";

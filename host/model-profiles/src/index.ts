@@ -15,6 +15,7 @@ function cloneProfile(profile:ModelProfile):ModelProfile{
     id:profile.id,
     characterId:profile.characterId,
     ...(profile.providerId!==undefined?{providerId:profile.providerId}:{}),
+    ...(profile.providerPresetId!==undefined?{providerPresetId:profile.providerPresetId}:{}),
     ...(profile.model!==undefined?{model:profile.model}:{}),
     generation:{...profile.generation},
     createdAt:profile.createdAt,

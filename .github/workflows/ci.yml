@@ -24,6 +24,7 @@ jobs:
           node-version: 22
       - run: pnpm install --no-frozen-lockfile
       - run: pnpm generate:schemas
+      - run: git diff --exit-code contracts/src/generated-schemas.ts
       - run: pnpm typecheck
       - run: pnpm build
       - run: pnpm test
@@ -109,6 +110,9 @@ jobs:
 
       - name: Generate schemas
         run: pnpm generate:schemas
+
+      - name: Check generated schemas are committed
+        run: git diff --exit-code contracts/src/generated-schemas.ts
 
       - name: Typecheck
         run: pnpm typecheck

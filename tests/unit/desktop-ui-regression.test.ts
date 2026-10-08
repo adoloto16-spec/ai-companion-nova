@@ -15,6 +15,8 @@ function blockBetween(startMarker:string,endMarker:string):string{
 
 const providerPresets=blockBetween("function ProviderPresetsView(","function ModelProfileView(");
 const settingsContainer=blockBetween("function SettingsContainerView(","function isTauriRuntime():boolean");
+const appSettingsView=blockBetween("function AppSettingsView(","function TraceCandidate(");
+const diagnosticsView=blockBetween("function DiagnosticsView(","class ViewErrorBoundary");
 const syncCharacters=blockBetween("const syncCharacters=React.useCallback","const addConfigurationLoadError=React.useCallback");
 const refreshRuntime=blockBetween("const refreshRuntime=React.useCallback","React.useEffect(()=>{");
 const app=source.slice(source.indexOf("function App(){"));
@@ -38,11 +40,33 @@ for(const label of ["General","Provider Presets"]){
 assert.ok(settingsContainer.includes('tab==="general"'),"Settings must have a General tab");
 assert.ok(settingsContainer.includes('tab==="provider-presets"'),"Settings must have a Provider Presets tab");
 assert.ok(settingsContainer.includes("<AppSettingsView "), "General tab must render AppSettingsView");
+assert.ok(diagnosticsView.includes("runtime.diagnostics()"),"DiagnosticsView must bridge runtime DiagnosticsStore");
+assert.ok(diagnosticsView.includes('entry.source==="memory-semantic-deduplication"'),"DiagnosticsView must display semantic-memory diagnostics");
+assert.ok(diagnosticsView.includes("Memory Deduplication"),"DiagnosticsView must expose the Memory Deduplication section");
+assert.ok(diagnosticsView.includes("candidateDiagnostics")&&diagnosticsView.includes("archiveMapping")&&diagnosticsView.includes("mutationResult"),"DiagnosticsView must display dedup candidate/mutation diagnostics");
+assert.ok(diagnosticsView.includes("semanticDedupEnabled")&&diagnosticsView.includes("judgeProviderPresetId")&&diagnosticsView.includes("memoryCreatedSubscribers"),"DiagnosticsView must display effective runtime semantic settings");
+assert.ok(appSettingsView.includes("value={settings.memoryAgent.providerPresetId??\"\"}"),"Settings UI must bind Memory Agent provider preset");
+assert.ok(appSettingsView.includes("providerPresetId:event.target.value||null"),"Memory Agent provider preset selection updates app settings");
+assert.ok(appSettingsView.includes("value={settings.memoryAgent.model}"),"Settings UI must bind Memory Agent model");
+assert.ok(appSettingsView.includes("onClick={()=>void onSave()}"),"Settings UI exposes the existing Save Settings persistence path");
 assert.ok(settingsContainer.includes("<ProviderPresetsView "), "Provider Presets tab must render the existing ProviderPresetsView");
 
 for(const forbidden of ["appSettings","saveAppSettings","resetAppSettings","foundationRef","setSettingsLoadMessage","setSaving"]){
   assert.equal(providerPresets.includes(forbidden),false,"ProviderPresetsView must not access App-local "+forbidden);
 }
+assert.equal(providerPresets.includes("credentialChoice"),false,"ProviderPresetsView must not keep credentialChoice as independent state");
+assert.ok(providerPresets.includes('value={selectedSource.credentialReference?.id??""}'),"Credential selector must derive its value from the source reference");
+assert.ok(providerPresets.includes('updateSource(selectedSource.id,{credentialReference:null})'),"No credential must immediately clear the source reference");
+assert.ok(providerPresets.includes('updateSource(selectedSource.id,{credentialReference:{...profile.credentialReference}})'),"Selecting or creating a credential must immediately update the source reference");
+assert.ok(providerPresets.includes("validateProviderPresetCredentialReferences(draft,credentialProfiles)"),"Save must validate existing source credential references without reconstructing them from UI state");
+assert.ok(providerPresets.includes("cloneProviderPresetForSaveAsNew"),"Save as new must clone the whole current draft rather than only selectedSource");
+assert.equal(providerPresets.includes("selectedSource?{...selectedSource,id:"),false,"Save as new must not copy only selectedSource");
+assert.equal(providerPresets.includes("setCredentialChoice"),false,"ProviderPresetsView must not update independent credential selection state");
+assert.ok(providerPresets.includes("setAddingCredential(true)"),"Add credential remains UI-only state");
+assert.ok(providerPresets.includes("await onSavePreset(next,false)"),"Save as new must persist the complete next preset");
+assert.ok(providerPresets.includes('setDraft(next);setSelectedId(next.id);'),"After successful save the draft must become the saved preset");
+assert.ok(providerPresets.includes('providerId,credentialReference:null'),"Changing provider must clear the previous credential reference");
+assert.ok(providerPresets.includes('setAddingCredential(false)'),"Provider/source changes must reset only the UI add-credential mode");
 assert.ok(providerPresets.includes(`presets.length===0?<option value="">No saved presets</option>`),"Provider Presets must render an empty-state option");
 assert.match(providerPresets,/Model discovery failed:/);
 assert.match(providerPresets,/Models refreshed\./);

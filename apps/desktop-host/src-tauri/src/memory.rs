@@ -21,6 +21,10 @@ pub enum MemoryType{Fact,Preference,Relationship,Event,Experience,Goal,Instructi
 #[serde(rename_all="lowercase",deny_unknown_fields)]
 pub enum MemoryStatus{Active,Superseded,Archived}
 
+#[derive(Debug,Deserialize,Serialize,Clone,PartialEq,Eq)]
+#[serde(rename_all="lowercase",deny_unknown_fields)]
+pub enum MemoryArchiveReason{Manual,Duplicate,Superseded,Other}
+
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(rename_all="lowercase",deny_unknown_fields)]
 pub enum MemorySource{User,Conversation,File,Tool,Model,System}
@@ -57,6 +61,10 @@ pub struct MemoryItem{
     #[serde(rename="mutationPolicy")]
     pub mutation_policy:MutationPolicy,
     pub status:MemoryStatus,
+    #[serde(rename="archiveReason")]
+    pub archive_reason:Option<MemoryArchiveReason>,
+    #[serde(rename="supersededBy",default)]
+    pub superseded_by:Option<String>,
     pub metadata:Map<String,Value>,
 }
 
@@ -74,6 +82,96 @@ pub struct MemoryStoreState{
 
 #[derive(Default)]
 pub struct MemoryWriteLock(pub Mutex<()>);
+
+const SEMANTIC_API_VERSION:&str="1";
+const SEMANTIC_SCHEMA_VERSION:&str="1";
+const MAX_SEMANTIC_RECORDS:usize=10000;
+const MAX_SEMANTIC_DIMENSIONS:usize=10000;
+
+#[derive(Debug,Deserialize,Serialize,Clone)]
+#[serde(deny_unknown_fields)]
+pub struct MemorySemanticVectorRecord{
+    #[serde(rename="memoryId")]
+    pub memory_id:String,
+    #[serde(rename="characterId")]
+    pub character_id:String,
+    #[serde(rename="contentHash")]
+    pub content_hash:String,
+    #[serde(rename="embeddingProviderId")]
+    pub embedding_provider_id:String,
+    #[serde(rename="embeddingModel")]
+    pub embedding_model:String,
+    pub dimensions:usize,
+    pub vector:Vec<f64>,
+    #[serde(rename="updatedAt")]
+    pub updated_at:String,
+}
+
+#[derive(Debug,Deserialize,Serialize,Clone)]
+#[serde(deny_unknown_fields)]
+pub struct MemorySemanticIndexState{
+    #[serde(rename="apiVersion")]
+    pub api_version:String,
+    #[serde(rename="schemaVersion")]
+    pub schema_version:String,
+    #[serde(rename="characterId")]
+    pub character_id:String,
+    pub records:Vec<MemorySemanticVectorRecord>,
+}
+
+fn semantic_file_name(character_id:&str)->String{format!("dynamic-memory-semantic-v1-{}.json",encoded_scope(character_id))}
+pub fn semantic_config_path(app:&tauri::AppHandle,character_id:&str)->Result<PathBuf,String>{
+    let scope=character_id.trim();
+    if scope.is_empty(){return Err("character id must not be empty".to_string());}
+    Ok(config_dir(app)?.join(semantic_file_name(scope)))
+}
+fn validate_semantic(state:&MemorySemanticIndexState,character_id:&str)->Result<(),String>{
+    if state.api_version!=SEMANTIC_API_VERSION||state.schema_version!=SEMANTIC_SCHEMA_VERSION{return Err("unsupported memory semantic index version".to_string());}
+    if state.character_id!=character_id{return Err("memory semantic index character scope mismatch".to_string());}
+    if state.records.len()>MAX_SEMANTIC_RECORDS{return Err("memory semantic index contains too many records".to_string());}
+    let mut ids=HashSet::new();
+    for record in &state.records{
+        if record.character_id!=character_id{return Err("memory semantic record character scope mismatch".to_string());}
+        if record.memory_id.trim().is_empty()||record.memory_id.len()>200{return Err("memory semantic record memoryId is invalid".to_string());}
+        if !ids.insert(record.memory_id.clone()){return Err("memory semantic index contains duplicate memory ids".to_string());}
+        if record.content_hash.trim().is_empty()||record.embedding_provider_id.trim().is_empty()||record.embedding_model.trim().is_empty()||record.updated_at.trim().is_empty(){return Err("memory semantic record metadata is incomplete".to_string());}
+        if record.dimensions==0||record.dimensions>MAX_SEMANTIC_DIMENSIONS||record.vector.len()!=record.dimensions{return Err("memory semantic record dimensions are invalid".to_string());}
+        if record.vector.iter().any(|value|!value.is_finite()){return Err("memory semantic record contains a non-finite vector value".to_string());}
+    }
+    Ok(())
+}
+fn load_semantic_unlocked(app:&tauri::AppHandle,character_id:&str)->Result<Option<MemorySemanticIndexState>,String>{
+    let path=semantic_config_path(app,character_id)?;
+    if !path.exists(){return Ok(None);}
+    let bytes=fs::read(&path).map_err(|e|format!("failed to read memory semantic index: {e}"))?;
+    let state:MemorySemanticIndexState=serde_json::from_slice(&bytes).map_err(|e|format!("invalid memory semantic index file: {e}"))?;
+    if state.api_version!=SEMANTIC_API_VERSION||state.schema_version!=SEMANTIC_SCHEMA_VERSION||state.character_id!=character_id{
+        return Err("invalid memory semantic index version or character scope".to_string());
+    }
+    Ok(Some(state))
+}
+fn save_semantic_unlocked(app:&tauri::AppHandle,state:&MemorySemanticIndexState)->Result<(),String>{
+    validate_semantic(state,&state.character_id)?;
+    let path=semantic_config_path(app,&state.character_id)?;
+    let tmp=path.with_extension("json.tmp");
+    let encoded=serde_json::to_vec_pretty(state).map_err(|e|format!("failed to serialize memory semantic index: {e}"))?;
+    let mut file=fs::File::create(&tmp).map_err(|e|format!("failed to create memory semantic index temp file: {e}"))?;
+    file.write_all(&encoded).map_err(|e|format!("failed to write memory semantic index: {e}"))?;
+    file.sync_all().map_err(|e|format!("failed to flush memory semantic index: {e}"))?;
+    drop(file);
+    if path.exists(){fs::remove_file(&path).map_err(|e|format!("failed to replace memory semantic index: {e}"))?;}
+    fs::rename(&tmp,&path).map_err(|e|format!("failed to commit memory semantic index: {e}"))?;
+    Ok(())
+}
+pub fn load_semantic_index(app:&tauri::AppHandle,character_id:&str,lock:&MemoryWriteLock)->Result<Option<MemorySemanticIndexState>,String>{
+    let _guard=lock.0.lock().map_err(|_|"memory semantic index lock poisoned".to_string())?;
+    load_semantic_unlocked(app,character_id)
+}
+pub fn save_semantic_index(app:&tauri::AppHandle,state:&MemorySemanticIndexState,lock:&MemoryWriteLock)->Result<(),String>{
+    let _guard=lock.0.lock().map_err(|_|"memory semantic index lock poisoned".to_string())?;
+    save_semantic_unlocked(app,state)
+}
+
 
 fn config_dir(app:&tauri::AppHandle)->Result<PathBuf,String>{
     let directory=app.path().app_config_dir().map_err(|e|format!("failed to resolve app config directory: {e}"))?;
@@ -109,6 +207,7 @@ fn validate_item(item:&MemoryItem,character_id:&str)->Result<(),String>{
     if let Some(value)=&item.valid_from{if value.trim().is_empty(){return Err("validFrom must not be empty when present".to_string());}}
     if let Some(value)=&item.valid_until{if value.trim().is_empty(){return Err("validUntil must not be empty when present".to_string());}}
     if let Some(reference)=&item.source_reference{if reference.len()>MAX_SOURCE_REFERENCE{return Err("memory sourceReference exceeds the v1 input limit".to_string());}}
+    if let Some(superseded_by)=&item.superseded_by{if superseded_by.trim().is_empty()||superseded_by.len()>200{return Err("memory supersededBy is invalid".to_string());}}
     match item.source{
         MemorySource::Conversation|MemorySource::File|MemorySource::Tool|MemorySource::Model=>{
             if item.source_reference.as_ref().map(|value|value.trim().is_empty()).unwrap_or(true){return Err("memory sourceReference is required for this provenance".to_string());}
@@ -212,6 +311,8 @@ fn legacy_to_v3(legacy:LegacyMemoryStoreState,origin_conversation_id:&str)->Memo
             source_reference:item.source_reference,
             mutation_policy:item.mutation_policy,
             status:item.status,
+            archive_reason:None,
+            superseded_by:None,
             metadata:item.metadata,
         }).collect()
     }
@@ -231,6 +332,18 @@ fn v2_config_path(app:&tauri::AppHandle,character_id:&str)->Result<PathBuf,Strin
     Ok(config_dir(app)?.join(v2_memory_file_name(scope)))
 }
 
+fn normalize_v3_value(mut value:Value)->Result<MemoryStoreState,String>{
+    let object=value.as_object_mut().ok_or_else(||"dynamic memory v3 storage must be a JSON object".to_string())?;
+    if object.get("apiVersion").and_then(Value::as_str)!=Some(API_VERSION){return Err("unsupported dynamic memory v3 apiVersion".to_string());}
+    if object.get("schemaVersion").and_then(Value::as_str)!=Some(SCHEMA_VERSION){return Err("unsupported dynamic memory v3 schemaVersion".to_string());}
+    let items=object.get_mut("items").and_then(Value::as_array_mut).ok_or_else(||"dynamic memory v3 items must be an array".to_string())?;
+    for item in items{
+        let item_object=item.as_object_mut().ok_or_else(||"dynamic memory v3 item must be an object".to_string())?;
+        item_object.entry("archiveReason").or_insert(Value::Null);
+    }
+    serde_json::from_value(value).map_err(|e|format!("invalid dynamic memory v3 storage: {e}"))
+}
+
 fn migrate_v2_value(mut value:Value)->Result<MemoryStoreState,String>{
     let object=value.as_object_mut().ok_or_else(||"dynamic memory v2 storage must be a JSON object".to_string())?;
     if object.get("apiVersion").and_then(Value::as_str)!=Some(API_VERSION){return Err("unsupported dynamic memory v2 apiVersion".to_string());}
@@ -244,6 +357,7 @@ fn migrate_v2_value(mut value:Value)->Result<MemoryStoreState,String>{
         }else{
             item_object.remove("conversationId");
         }
+        item_object.entry("archiveReason").or_insert(Value::Null);
     }
     object.insert("schemaVersion".to_string(),Value::String(SCHEMA_VERSION.to_string()));
     serde_json::from_value(value).map_err(|e|format!("invalid migrated dynamic memory v2 storage: {e}"))
@@ -254,10 +368,10 @@ fn load_unlocked(app:&tauri::AppHandle,character_id:&str)->Result<Option<MemoryS
     if path.exists(){
         let bytes=fs::read(&path).map_err(|e|format!("failed to read dynamic memory storage: {e}"))?;
         let value:Value=serde_json::from_slice(&bytes).map_err(|e|format!("invalid dynamic memory storage file: {e}"))?;
-        let state=if value.get("schemaVersion").and_then(Value::as_str)==Some("2"){
-            migrate_v2_value(value)?
-        }else{
-            serde_json::from_value(value).map_err(|e|format!("invalid dynamic memory storage file: {e}"))?
+        let state=match value.get("schemaVersion").and_then(Value::as_str){
+            Some("2")=>migrate_v2_value(value)?,
+            Some("3")=>normalize_v3_value(value)?,
+            _=>serde_json::from_value(value).map_err(|e|format!("invalid dynamic memory storage file: {e}"))?
         };
         validate(&state,character_id)?;
         if state.schema_version==SCHEMA_VERSION{
@@ -326,6 +440,7 @@ pub fn supersede(app:&tauri::AppHandle,character_id:&str,previous_memory_id:&str
     let updated_at=replacement.updated_at.clone();
     state.items[index].status=MemoryStatus::Superseded;
     state.items[index].updated_at=updated_at;
+    state.items[index].superseded_by=Some(replacement.id.clone());
     state.items.push(replacement.clone());
     save_unlocked(app,&state)?;
     Ok(replacement)
@@ -334,7 +449,6 @@ pub fn supersede(app:&tauri::AppHandle,character_id:&str,previous_memory_id:&str
 #[cfg(test)]
 mod tests{
     use super::*;
-
     #[test]
     fn legacy_migration_is_lossless_and_preserves_provenance(){
         let legacy=LegacyMemoryStoreState{

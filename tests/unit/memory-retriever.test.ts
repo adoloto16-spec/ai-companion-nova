@@ -12,7 +12,7 @@ function item(overrides:Partial<MemoryItem>):MemoryItem{
     createdAt:overrides.createdAt??"2026-09-26T12:00:00.000Z",updatedAt:overrides.updatedAt??"2026-09-26T12:00:00.000Z",
     validFrom:overrides.validFrom??null,validUntil:overrides.validUntil??null,
     source:overrides.source??"user",sourceReference:overrides.sourceReference??null,
-    mutationPolicy:overrides.mutationPolicy??"locked",status:overrides.status??"active",metadata:overrides.metadata??{}
+    mutationPolicy:overrides.mutationPolicy??"locked",status:overrides.status??"active",archiveReason:overrides.archiveReason??null,metadata:overrides.metadata??{}
   };
 }
 
