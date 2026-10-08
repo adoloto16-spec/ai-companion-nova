@@ -114,6 +114,13 @@ async function main(){
   });
   await cognitiveStep.run({characterId:character.id,state:cognitiveState,signal:new AbortController().signal});
 
+  console.log(JSON.stringify(cognitiveCalls.map(({request,providerPresetId})=>({
+    roles:request.context.messages.map(message=>message.role),
+    count:request.context.messages.length,
+    model:request.model,
+    responseFormat:request.generation?.responseFormat?.type,
+    providerPresetId
+  }))));
   equal(cognitiveCalls.length,3,"cognition request executes for all role sequences");
   equal(cognitiveCalls.map(call=>call.request.model),["cognition-test-model","cognition-test-model","cognition-test-model"],"cognition model remains stable across assistant message");
   equal(cognitiveCalls.map(call=>call.providerPresetId),["cognition-test-preset","cognition-test-preset","cognition-test-preset"],"provider preset remains stable across assistant message");
