@@ -421,7 +421,7 @@ export class DeterministicContextEngine implements ContextEngineContract {
       .sort(stableCompare);
     for(const item of pressurePool){
       if(item.candidate.source==="conversation"&&item.candidate.role==="assistant"){
-        const previous=candidates.find(candidate=>candidate.index===item.index-1)?.candidate;
+        const previous=[...candidates].reverse().find(candidate=>candidate.index<item.index&&candidate.candidate.source==="conversation")?.candidate;
         if(previous&&previous.role!=="user")continue;
         if(previous?.role==="user"&&!included.has(previous.id))continue;
       }
