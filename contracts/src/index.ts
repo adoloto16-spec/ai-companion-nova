@@ -47,15 +47,28 @@ export interface CredentialProfileStore{
 }
 
 export const PROVIDER_PRESET_API_VERSION:ApiVersion="1";
-export const PROVIDER_PRESET_SCHEMA_VERSION="1";
-export interface ProviderPreset{
+export const PROVIDER_PRESET_SCHEMA_VERSION="2";
+export type ProviderSourceHealth="healthy"|"cooldown"|"unavailable";
+export interface ProviderPresetSource{
   id:string;
   name:string;
   providerId:string;
   baseUrl:string;
-  credentialProfileId?:string;
-  model?:string;
+  model:string;
+  credentialReference:CredentialReference|null;
+  enabled:boolean;
+  health:ProviderSourceHealth;
+  failureCount:number;
+  cooldownUntil:string|null;
   timeoutMs?:number;
+  createdAt:string;
+  updatedAt:string;
+}
+export interface ProviderPreset{
+  id:string;
+  name:string;
+  sources:readonly ProviderPresetSource[];
+  activeSourceId:string|null;
   createdAt:string;
   updatedAt:string;
 }
@@ -704,6 +717,7 @@ export const CONTRACT_VERSIONS={
   credentialProfile:{apiVersion:CREDENTIAL_PROFILE_API_VERSION,schemaVersion:CREDENTIAL_PROFILE_SCHEMA_VERSION},
   credentialProfileStoreState:{apiVersion:CREDENTIAL_PROFILE_API_VERSION,schemaVersion:CREDENTIAL_PROFILE_SCHEMA_VERSION},
   providerPreset:{apiVersion:PROVIDER_PRESET_API_VERSION,schemaVersion:PROVIDER_PRESET_SCHEMA_VERSION},
+  providerPresetSource:{apiVersion:PROVIDER_PRESET_API_VERSION,schemaVersion:PROVIDER_PRESET_SCHEMA_VERSION},
   providerPresetStoreState:{apiVersion:PROVIDER_PRESET_API_VERSION,schemaVersion:PROVIDER_PRESET_SCHEMA_VERSION},
     modelProfileStoreState:{apiVersion:MODEL_PROFILE_API_VERSION,schemaVersion:MODEL_PROFILE_SCHEMA_VERSION},
   retrievalSource:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},

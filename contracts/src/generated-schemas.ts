@@ -3069,43 +3069,10 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       }
     }
   },
-  "provider-preset-store-state": {
+  "provider-preset-source": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/provider-preset-store-state/v1",
-    "title": "AI Companion Nova Provider Preset Store State v1",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "apiVersion",
-      "schemaVersion",
-      "presets",
-      "activePresetId"
-    ],
-    "properties": {
-      "apiVersion": {
-        "const": "1"
-      },
-      "schemaVersion": {
-        "const": "1"
-      },
-      "presets": {
-        "type": "array",
-        "items": {
-          "$ref": "https://schemas.ai-companion-nova.dev/provider-preset/v1"
-        }
-      },
-      "activePresetId": {
-        "type": [
-          "string",
-          "null"
-        ]
-      }
-    }
-  },
-  "provider-preset": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/provider-preset/v1",
-    "title": "AI Companion Nova Provider Preset v1",
+    "$id": "https://schemas.ai-companion-nova.dev/provider-preset-source/v2",
+    "title": "AI Companion Nova Provider Preset Source v2",
     "type": "object",
     "additionalProperties": false,
     "required": [
@@ -3113,6 +3080,12 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       "name",
       "providerId",
       "baseUrl",
+      "model",
+      "credentialReference",
+      "enabled",
+      "health",
+      "failureCount",
+      "cooldownUntil",
       "createdAt",
       "updatedAt"
     ],
@@ -3129,23 +3102,133 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       },
       "providerId": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "maxLength": 100
       },
       "baseUrl": {
         "type": "string",
-        "minLength": 1
-      },
-      "credentialProfileId": {
-        "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "maxLength": 2000
       },
       "model": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "credentialReference": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "$ref": "https://schemas.ai-companion-nova.dev/credential-reference/v1"
+          }
+        ]
+      },
+      "enabled": {
+        "type": "boolean"
+      },
+      "health": {
+        "enum": [
+          "healthy",
+          "cooldown",
+          "unavailable"
+        ]
+      },
+      "failureCount": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "cooldownUntil": {
+        "type": [
+          "string",
+          "null"
+        ]
       },
       "timeoutMs": {
         "type": "number",
         "minimum": 0.000001
+      },
+      "createdAt": {
+        "type": "string",
+        "minLength": 1
+      },
+      "updatedAt": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "provider-preset-store-state": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.ai-companion-nova.dev/provider-preset-store-state/v2",
+    "title": "AI Companion Nova Provider Preset Store State v2",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "apiVersion",
+      "schemaVersion",
+      "presets",
+      "activePresetId"
+    ],
+    "properties": {
+      "apiVersion": {
+        "const": "1"
+      },
+      "schemaVersion": {
+        "const": "2"
+      },
+      "presets": {
+        "type": "array",
+        "items": {
+          "$ref": "https://schemas.ai-companion-nova.dev/provider-preset/v2"
+        }
+      },
+      "activePresetId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    }
+  },
+  "provider-preset": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.ai-companion-nova.dev/provider-preset/v2",
+    "title": "AI Companion Nova Provider Preset v2",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "id",
+      "name",
+      "sources",
+      "activeSourceId",
+      "createdAt",
+      "updatedAt"
+    ],
+    "properties": {
+      "id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "sources": {
+        "type": "array",
+        "items": {
+          "$ref": "https://schemas.ai-companion-nova.dev/provider-preset-source/v2"
+        }
+      },
+      "activeSourceId": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "minLength": 1
       },
       "createdAt": {
         "type": "string",
