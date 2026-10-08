@@ -78,7 +78,7 @@ async function statePreservationTest(){
   let index=0;
   const runtime=new MindRuntime({
     cognitiveStep:new DeterministicCognitiveStep(()=>timestamps[index++]??timestamps[timestamps.length-1]!),
-    stepIntervalMs:1,
+    stepIntervalMs:25,
     recentThoughtLimit:3,
     initialFocus:"conversation"
   });
