@@ -820,7 +820,9 @@ function ProviderPresetsView({
       if(!draft.name.trim())throw new Error("Provider preset name is required.");
       if(draft.sources.length===0)throw new Error("Provider preset must contain at least one source.");
       const sources=draft.sources.map(source=>source.id===selectedSource?.id
-        ?{...source,credentialReference:credentialProfiles.find(profile=>profile.id===credentialChoice)?.credentialReference??source.credentialReference,updatedAt:new Date().toISOString()}
+        ?{...source,credentialReference:credentialChoice==="__new__"
+          ?source.credentialReference
+          :credentialProfiles.find(profile=>profile.id===credentialChoice)?.credentialReference??null,updatedAt:new Date().toISOString()}
         :source
       );
       const next:ProviderPreset={
@@ -929,7 +931,8 @@ function ProviderPresetsView({
   };
 
   const deleteCredential=async(id:string)=>{
-    const used=presets.filter(p=>p.sources.some(source=>source.credentialReference?.id===credentialProfiles.find(profile=>profile.id===id)?.credentialReference.id));
+    const referenceId=credentialProfiles.find(profile=>profile.id===id)?.credentialReference.id;
+    const used=referenceId?presets.filter(p=>p.sources.some(source=>source.credentialReference?.id===referenceId)):[];
     if(used.length>0){setMessage("Credential is used by: "+used.map(p=>p.name||p.id).join(", ")+". Reassign the source before deletion.");return;}
     setBusy(true);setMessage("");
     try{await onDeleteCredential(id);if(credentialChoice===id)setCredentialChoice("");setMessage("Credential removed.")}
