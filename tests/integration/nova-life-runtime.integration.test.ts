@@ -20,10 +20,10 @@ class MemoryConversationStore implements ConversationStore{
   async clear(characterId:string,conversationId:string){const conversation=this.conversations.get(conversationId);if(conversation)this.conversations.set(conversationId,{...conversation,messages:[]})}
 }
 
-class MemoryStateStore{
+class MemoryAutonomyStore{
   private readonly values=new Map<string,unknown>();
-  get<T>(key:string){return this.values.get(key) as T|undefined}
-  set<T>(key:string,value:T){this.values.set(key,value)}
+  async load(characterId:string){return this.values.get("nova-autonomy:"+characterId) as any}
+  async save(state:any){this.values.set("nova-autonomy:"+state.characterId,JSON.parse(JSON.stringify(state)))}
 }
 
 class TestEventBus implements EventBus{
@@ -54,7 +54,7 @@ async function createTestRuntime(controller:CaptureController){
   const conversations=new MemoryConversationStore();
   const conversationManager=new ConversationManager(conversations,{events,characterExists:async()=>true});
   const conversation=await conversationManager.getActiveConversation("character:test");
-  const autonomy=new NovaAutonomyCore({store:new MemoryStateStore() as any});
+  const autonomy=new NovaAutonomyCore({store:new MemoryAutonomyStore()});
   const kernel=new AgentKernel({cognitive:controller,actionExecutor:new DefaultAgentActionExecutor({})});
   const contextEngine=new DeterministicContextEngine([new ConversationCandidateSource()]);
   const runtime=new NovaLifeRuntime({
@@ -138,9 +138,9 @@ async function noPollingModelCallTest(){
 }
 
 async function autonomyStorePersistenceTest(){
-  const store=new MemoryStateStore();
+  const store=new MemoryAutonomyStore();
   const clock={now:()=> "2026-10-07T20:00:00.000Z"};
-  const first=new NovaAutonomyCore({store:store as any,clock});
+  const first=new NovaAutonomyCore({store,clock});
   await first.initialize("character:test");
   await first.applyDecision({action:"create_intent",intent:{type:"followup",description:"Persist me",priority:50,dueAt:null}});
   const second=new NovaAutonomyCore({store:store as any,clock});
