@@ -63,7 +63,7 @@ async function main(){
     ok(!sent.url.includes("gemini-test-secret"),"Gemini secret is never placed in URL");
     const body=JSON.parse(sent.body??"{}") as Record<string,unknown>;
     equal((body.systemInstruction as {parts:Array<{text:string}>>).parts[0]?.text,"You are Nova.","system message maps to systemInstruction");
-    const contents=body.contents as Array<{role:string;parts:Array<{text:string}>>};
+    const contents=body.contents as Array<{role:string;parts:Array<{text:string}>}>;
     equal(contents.map(item=>item.role).join(","),"user,model,user","user/assistant history maps to user/model roles");
     const generationConfig=body.generationConfig as Record<string,unknown>;
     equal(generationConfig.temperature,0.7,"temperature maps to Gemini generationConfig");
