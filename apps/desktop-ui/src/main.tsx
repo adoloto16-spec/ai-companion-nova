@@ -1413,7 +1413,7 @@ function TraceCandidate({candidate}:{candidate:any}){
 function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:AppSettings}){
   const [traces,setTraces]=React.useState<readonly ChatTurnTrace[]>([]);
   const [semanticDiagnostics,setSemanticDiagnostics]=React.useState<readonly ErrorDiagnostic[]>([]);
-  const [cognitiveDiagnostics,setCognitiveDiagnostics]=React.useState<readonly ErrorDiagnostic[]>([]);
+  const [runtimeDiagnostics,setRuntimeDiagnostics]=React.useState<readonly ErrorDiagnostic[]>([]);
   const [selectedId,setSelectedId]=React.useState<string|undefined>();
   const [message,setMessage]=React.useState("");
   const [showRaw,setShowRaw]=React.useState(false);
@@ -1427,8 +1427,8 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
       setMessage("");
     }catch(error){setMessage(error instanceof Error?error.message:"Diagnostics could not be loaded.");}
     void runtime.diagnostics().then(snapshot=>{
+      setRuntimeDiagnostics(snapshot.recentErrors);
       setSemanticDiagnostics(snapshot.recentErrors.filter(entry=>entry.source==="memory-semantic-deduplication"));
-      setCognitiveDiagnostics(snapshot.recentErrors.filter(entry=>entry.source==="mind-runtime"&&entry.code==="COGNITIVE_STEP_FAILED"));
     }).catch(error=>{
       setMessage(error instanceof Error?error.message:"Semantic diagnostics could not be loaded.");
     });
@@ -1464,25 +1464,25 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
 
     <section>
       <div className="section-header">
-        <div><h2>Nova Life cognitive errors</h2><p className="chat-subtitle">Safe runtime metadata for the latest cognitive provider failures. Credentials are not recorded.</p></div>
+        <div><h2>Runtime diagnostics</h2><p className="chat-subtitle">Recent runtime errors and provider diagnostics. Recorded metadata is sanitized before it reaches this UI.</p></div>
       </div>
-      {cognitiveDiagnostics.length===0
-        ?<div>No cognitive step failures recorded.</div>
-        :cognitiveDiagnostics.slice(-10).reverse().map(entry=>{
+      {runtimeDiagnostics.length===0
+        ?<div>No runtime diagnostics recorded.</div>
+        :runtimeDiagnostics.slice(-20).reverse().map((entry,index)=>{
           const metadata=entry.metadata??{};
-          return <article className="diagnostic-json" key={entry.timestamp+":"+String(metadata.requestId??"")}>
-            <div><strong>{new Date(entry.timestamp).toLocaleTimeString()}</strong> · {entry.message}</div>
+          return <article className="diagnostic-json" key={entry.timestamp+":"+entry.source+":"+entry.code+":"+index}>
+            <div><strong>{new Date(entry.timestamp).toLocaleString()}</strong> · {entry.source} · {entry.code}</div>
+            <div>{entry.message}</div>
             <div>requestId: {String(metadata.requestId??"—")}</div>
-            <div>chatError.code: {String(metadata.chatErrorCode??"—")}</div>
             <div>providerPresetId: {String(metadata.providerPresetId??"—")}</div>
             <div>sourceId: {String(metadata.sourceId??"—")}</div>
             <div>providerId: {String(metadata.providerId??"—")}</div>
             <div>model: {String(metadata.model??"—")}</div>
-            <div>baseUrlHost: {String(metadata.baseUrlHost??"—")}</div>
             <div>category: {String(metadata.category??"—")}</div>
             <div>httpStatus: {String(metadata.httpStatus??"—")}</div>
             <div>durationMs: {String(metadata.durationMs??"—")}</div>
-            {metadata.providerResponse!==undefined&&<pre>{JSON.stringify(metadata.providerResponse,null,2)}</pre>}
+            <div>baseUrlHost: {String(metadata.baseUrlHost??"—")}</div>
+            {entry.metadata!==undefined&&<pre>{JSON.stringify(entry.metadata,null,2)}</pre>}
           </article>;
         })}
     </section>
@@ -1763,17 +1763,42 @@ function credentialSavedEntries(
   },{});
 }
 
-function ThoughtsView({mindState}:{mindState:MindState}){
+function ThoughtsView({mindState,character,runtime}:{mindState:MindState;character:Character;runtime:FoundationRuntime}){
+  const [message,setMessage]=React.useState("");
+  const deleteThought=React.useCallback((id:string)=>{
+    setMessage("");
+    if(!runtime.deleteThought(id))setMessage("Thought could not be deleted because it is no longer present.");
+  },[runtime]);
+  const clearCurrent=React.useCallback(()=>{
+    if(!window.confirm("Clear all Thoughts for the current character?"))return;
+    setMessage("");
+    runtime.clearCurrentThoughts();
+  },[runtime]);
+  const clearAll=React.useCallback(()=>{
+    if(!window.confirm("Clear all Thoughts for all characters?"))return;
+    setMessage("");
+    runtime.clearAllThoughts();
+  },[runtime]);
   return <section className="thoughts-view">
-    <div className="section-header"><div><h2>Thoughts</h2><p className="chat-subtitle">Technical observer of Nova's internal cognition. Thoughts are not Conversation messages.</p></div>
-      <span className="mind-status-badge">{mindState.lifecycleState.toUpperCase()}</span>
+    <div className="section-header">
+      <div><h2>Thoughts · {character.name}</h2><p className="chat-subtitle">Technical observer of Nova's internal cognition. Thoughts are not Conversation messages.</p></div>
+      <div className="thought-actions">
+        <span className="mind-status-badge">{mindState.lifecycleState.toUpperCase()}</span>
+        <button type="button" onClick={clearCurrent} disabled={mindState.recentThoughts.length===0}>Clear character</button>
+        <button type="button" onClick={clearAll}>Clear all</button>
+      </div>
     </div>
+    {message&&<div className="error">{message}</div>}
     <div className="thought-list">
       {mindState.recentThoughts.length===0
-        ?<div className="empty-state">No internal thoughts yet.</div>
+        ?<div className="empty-state">No internal thoughts for {character.name}.</div>
         :mindState.recentThoughts.map(thought=>
           <article className="thought-entry" key={thought.id}>
-            <div className="thought-meta"><time dateTime={thought.timestamp}>{new Date(thought.timestamp).toLocaleTimeString()}</time><span>{thought.id}</span></div>
+            <div className="thought-meta">
+              <time dateTime={thought.timestamp}>{new Date(thought.timestamp).toLocaleTimeString()}</time>
+              <span>{thought.id}</span>
+              <button type="button" onClick={()=>deleteThought(thought.id)}>Delete</button>
+            </div>
             <div>{thought.content}</div>
           </article>
         )}
@@ -2378,8 +2403,8 @@ function App(){
       </div>
     </header>
     <ViewErrorBoundary key={view} view={view} onError={reportViewError}>
-    {view==="thoughts"
-      ?<ThoughtsView mindState={mindState}/>
+    {view==="thoughts"&&activeCharacter&&foundationRef.current
+      ?<ThoughtsView mindState={mindState} character={activeCharacter} runtime={foundationRef.current}/>
       :view==="model-profile"&&activeCharacter&&activeModelProfile
       ?<ModelProfileView profile={activeModelProfile} runtime={runtime} presets={providerPresets} activePresetId={activePresetId} onSave={saveModelProfile}/>
       :view==="settings"
