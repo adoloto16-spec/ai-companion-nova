@@ -38,7 +38,7 @@ fn invalid_backup_path(path:&std::path::Path)->PathBuf{path.with_file_name("cred
 fn validate_profile(profile:&CredentialProfile)->Result<(),String>{
     if profile.id.trim().is_empty()||profile.id.len()>200{return Err("credential profile id is invalid".to_string());}
     if profile.label.trim().is_empty()||profile.label.len()>200{return Err("credential profile label is invalid".to_string());}
-    if profile.provider_id!="openai-compatible"{return Err("unsupported credential profile provider".to_string());}
+    if profile.provider_id.trim().is_empty()||profile.provider_id.len()>100{return Err("credential profile provider is invalid".to_string());}
     if profile.created_at.trim().is_empty()||profile.updated_at.trim().is_empty(){return Err("credential profile timestamps must not be empty".to_string());}
     if profile.credential_reference.kind!="api-key"{return Err("credential profile credential kind must be api-key".to_string());}
     if profile.credential_reference.provider.as_deref()!=Some(profile.provider_id.as_str()){return Err("credential profile credential provider does not match providerId".to_string());}
