@@ -89,3 +89,5 @@ input,select{padding:9px;border:1px solid #394655;border-radius:7px;background:#
 .thought-entry{padding:12px 14px;border:1px solid var(--border-color);border-radius:8px;background:var(--panel-background)}
 .thought-meta{display:flex;gap:12px;margin-bottom:6px;font-size:11px;opacity:.7}
 .thought-meta span{font-family:monospace}
+.thought-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.thought-actions .mind-status-badge{margin-right:4px}
