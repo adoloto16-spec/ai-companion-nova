@@ -389,16 +389,35 @@ export class DeterministicContextEngine implements ContextEngineContract {
       include(item.candidate);
     }
 
-    // Preserve a contiguous recent suffix as long as it fits.
-    const recent=candidates.filter(item=>item.candidate.zone==="recent_conversation").sort((a,b)=>b.index-a.index);
-    for(const item of recent){
-      if(!include(item.candidate))break;
+    // Preserve recent user/assistant turns without creating an orphan assistant message under pressure.
+    const recent=candidates.filter(item=>item.candidate.zone==="recent_conversation").sort((a,b)=>a.index-b.index);
+    const blockedRecentAssistantIds=new Set<string>();
+    for(let index=recent.length-1;index>=0;index-=1){
+      const current=recent[index]!;
+      if(current.candidate.role==="assistant"){
+        const previous=recent[index-1];
+        if(previous?.candidate.role==="user"){
+          const pairFits=previous.candidate.estimatedTokens+current.candidate.estimatedTokens<=remaining;
+          if(pairFits){
+            include(previous.candidate);
+            include(current.candidate);
+            index-=1;
+          }else{
+            blockedRecentAssistantIds.add(current.candidate.id);
+          }
+          continue;
+        }
+        // An assistant without its preceding user turn in the retained context is not a valid recent suffix.
+        if(index>0)blockedRecentAssistantIds.add(current.candidate.id);
+      }else{
+        include(current.candidate);
+      }
     }
 
     // Remaining budget is shared by Core Book and older conversation. The deterministic
     // selection score is relevance + activationStrength + retentionPriority + recency.
     const pressurePool=candidates
-      .filter(item=>item.candidate.eligible && !included.has(item.candidate.id) && item.candidate.zone!=="system" && item.candidate.zone!=="recent_conversation")
+      .filter(item=>item.candidate.eligible && !included.has(item.candidate.id) && item.candidate.zone!=="system" && item.candidate.zone!=="recent_conversation" && !blockedRecentAssistantIds.has(item.candidate.id))
       .sort(stableCompare);
     for(const item of pressurePool)include(item.candidate);
 
