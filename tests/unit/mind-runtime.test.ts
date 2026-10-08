@@ -174,32 +174,97 @@ async function characterScopedThoughtHistoryTest(){
 }
 
 async function llmCognitiveStepTest(){
-  const calls:ChatRequest[]=[];const thought="A useful internal thought";
+  const calls:ChatRequest[]=[];
+  const contextInputs:Conversation["messages"][]=[];
+  const thought="A useful internal thought";
+  const conversation:Conversation={
+    apiVersion:"1",
+    schemaVersion:"2",
+    id:"conv-1",
+    characterId:"char-1",
+    title:"Test",
+    messages:[],
+    createdAt:"now",
+    updatedAt:"now"
+  };
   const chatRuntime={chat:async(request:ChatRequest)=>{
     calls.push(request);
-    return {apiVersion:"1" as const,schemaVersion:"1",requestId:request.requestId,conversationId:"conv-1",providerId:"fake.chat",model:request.model,message:{id:request.requestId+":assistant",role:"assistant" as const,content:JSON.stringify({thought})},finishReason:"stop" as const};
+    return {
+      apiVersion:"1" as const,
+      schemaVersion:"1",
+      requestId:request.requestId,
+      conversationId:"conv-1",
+      providerId:"fake.chat",
+      model:request.model,
+      message:{id:request.requestId+":assistant",role:"assistant" as const,content:JSON.stringify({thought})},
+      finishReason:"stop" as const
+    };
   }};
   const step=new LLMCognitiveStep({
     runtime:chatRuntime,
     getCharacter:async()=>({id:"char-1",name:"Nova",description:"Test character",createdAt:"now",updatedAt:"now",enabled:true}),
-    getActiveConversation:async()=>({apiVersion:"1",schemaVersion:"2",id:"conv-1",characterId:"char-1",title:"Test",messages:[{id:"u1",role:"user",content:"Hello"}],createdAt:"now",updatedAt:"now"}),
-    buildContext:async()=>({apiVersion:"1",schemaVersion:"1",characterId:"char-1",conversationId:"conv-1",messages:[{id:"cb1",role:"user",content:"Core book context"}],includedCandidates:[],omittedCandidates:[],budget:{availableContextTokens:1000,reservedOutputTokens:256,systemOverheadTokens:0,safetyMarginTokens:0},estimatedTokens:10}),
+    getActiveConversation:async()=>{
+      contextInputs.push(conversation.messages.map(message=>({...message,...(message.metadata?{metadata:{...message.metadata}}:{})})));
+      return conversation;
+    },
+    buildContext:async request=>({
+      apiVersion:"1",
+      schemaVersion:"1",
+      characterId:"char-1",
+      conversationId:"conv-1",
+      messages:[...request.messages.filter(message=>message.role!=="system")].map(message=>({
+        ...message,
+        id:message.id+":assembled"
+      })),
+      includedCandidates:[],
+      omittedCandidates:[],
+      budget:{availableContextTokens:1000,reservedOutputTokens:256,systemOverheadTokens:0,safetyMarginTokens:0},
+      estimatedTokens:10
+    }),
     getContextBudget:()=>({availableContextTokens:1000,reservedOutputTokens:256,systemOverheadTokens:0,safetyMarginTokens:0}),
     getActiveProviderPresetId:()=>undefined,
     getChatModel:()=> "fake-model",
     getChatModelForPreset:async()=> "unused"
   });
-  const first=await step.run({characterId:"char-1",state:{focus:"test",lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"thinking"},signal:new AbortController().signal});
+
+  const state={focus:"test",lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"thinking" as const};
+  const cases:Array<ChatMessage["role"][]>=[
+    ["user"],
+    ["user","assistant"],
+    ["user","assistant","user"],
+    ["user","assistant","user","assistant"]
+  ];
+  const conversations=[
+    [{id:"u1",role:"user" as const,content:"Hello"}],
+    [{id:"u2",role:"user" as const,content:"Hello"},{id:"a2",role:"assistant" as const,content:"Hi",metadata:{streamStatus:"complete"}}],
+    [{id:"u3a",role:"user" as const,content:"First"},{id:"a3",role:"assistant" as const,content:"Reply"},{id:"u3b",role:"user" as const,content:"Follow-up"}],
+    [{id:"u4a",role:"user" as const,content:"First"},{id:"a4a",role:"assistant" as const,content:"Reply"},{id:"u4b",role:"user" as const,content:"Second"},{id:"a4b",role:"assistant" as const,content:"Second reply"}]
+  ];
+  for(let index=0;index<cases.length;index+=1){
+    conversation.messages=conversations[index]!;
+    const before=JSON.stringify(conversation.messages);
+    await step.run({characterId:"char-1",state,signal:new AbortController().signal});
+    const request=calls[index]!;
+    const roles=request.context.messages.map(message=>message.role);
+    equal(roles.slice(-1)[0],"user","cognition request always ends with a synthetic user cue");
+    equal(request.context.messages.at(-1)?.content,"Continue the internal cognition step. Produce exactly one internal thought based on the context above. Do not answer the user.","final message is the internal cognition cue");
+    equal(roles.slice(3),[...cases[index]!.map(role=>role),"user"],"conversation roles are preserved and the cognition cue is appended");
+    equal(JSON.stringify(conversation.messages),before,"synthetic cognition cue is not written into Conversation");
+    equal(contextInputs[index]?.some(message=>message.content.includes("Continue the internal cognition step.")),false,"synthetic cognition cue is absent from ContextEngine input");
+    equal(request.context.messages.slice(3,-1).map(message=>message.content),conversations[index]!.map(message=>message.content),"real conversation content is preserved before the cognition cue");
+    equal(request.context.messages.find(message=>message.content.includes("Continue the internal cognition step."))?.id,"conv-1:cognition:user-cue","cognition cue uses a request-local id");
+    equal(request.context.messages.find(message=>message.content.includes("Continue the internal cognition step."))?.metadata,undefined,"cognition cue has no persistence or memory metadata");
+  }
+
   const firstCall=calls[0]!;
-  equal(first.characterId,"char-1","cognitive Thought carries character scope");
-  equal(first.content,thought,"structured LLM output becomes Thought content");
-  equal(first.expression,"internal","cognitive output is internal");
+  equal(calls.length,4,"all four valid conversation role sequences execute");
   equal(firstCall.metadata?.cognition,true,"cognition request is marked internal");
   equal(firstCall.generation?.responseFormat?.type,"text","cognitive request uses provider-neutral text output");
   equal(firstCall.context.messages.some(message=>message.content.includes("INTERNAL THOUGHT HISTORY")),true,"mind context includes thought history section");
-  equal(firstCall.context.messages.some(message=>message.content==="Core book context"),true,"context engine output is included");
+  equal(firstCall.context.messages.some(message=>message.content==="Core book context"),false,"no unrelated synthetic context is injected by the unit fixture");
+  equal(JSON.stringify(conversation.messages),JSON.stringify(conversations[3]),"final Conversation remains unchanged after cognition requests");
+  equal(thought,"A useful internal thought","LLM response remains the Thought content");
 }
-
 async function cognitiveProviderBadRequestRegressionTest(){
   const calls:ChatRequest[]=[];
   const chatRuntime={
