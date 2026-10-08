@@ -2138,59 +2138,107 @@ function App(){
     if(before?.id===id||before?.id!==nextActive.id)setChatController(loaded.controller);
   },[activeCharacter,chatController,loadActiveConversation,modelProfileStore]);
 
+  const activeSourceForPreset=(preset:ProviderPreset):ProviderPresetSource|undefined=>preset.sources.find(source=>source.id===preset.activeSourceId)??preset.sources[0];
+
   const saveProviderPreset=React.useCallback(async(preset:ProviderPreset,activate:boolean)=>{
     const current=providerPresetStateRef.current;
-    const nextState:ProviderPresetStoreState={...current,presets:[...current.presets.filter(item=>item.id!==preset.id),preset],activePresetId:activate?preset.id:current.activePresetId};
-    await providerPresetStore.save(nextState);providerPresetStateRef.current=nextState;setProviderPresets(nextState.presets);setActivePresetId(nextState.activePresetId);
+    const nextState:ProviderPresetStoreState={
+      ...current,
+      presets:current.presets.some(item=>item.id===preset.id)
+        ?current.presets.map(item=>item.id===preset.id?preset:item)
+        :[...current.presets,preset],
+      activePresetId:activate?preset.id:current.activePresetId
+    };
+    await providerPresetStore.save(nextState);
+    providerPresetStateRef.current=nextState;
+    setProviderPresets(nextState.presets);
+    setActivePresetId(nextState.activePresetId);
     if(activate||current.activePresetId===preset.id){
-      const credential=preset.credentialProfileId?credentialProfileStateRef.current.profiles.find(profile=>profile.id===preset.credentialProfileId):undefined;
-      await refreshRuntime(materializeProviderConfiguration(preset,credential),undefined,nextState,credentialProfileStateRef.current);
+      const source=activeSourceForPreset(preset);
+      await refreshRuntime(source?materializeProviderConfiguration(source):undefined,undefined,nextState,credentialProfileStateRef.current);
     }
   },[providerPresetStore,refreshRuntime]);
 
   const activateProviderPreset=React.useCallback(async(id:string)=>{
-    const preset=providerPresetStateRef.current.presets.find(item=>item.id===id);if(!preset)throw new Error("Provider preset was not found.");
-    const nextState={...providerPresetStateRef.current,activePresetId:id};await providerPresetStore.save(nextState);providerPresetStateRef.current=nextState;setProviderPresets(nextState.presets);setActivePresetId(id);
-    const credential=preset.credentialProfileId?credentialProfileStateRef.current.profiles.find(profile=>profile.id===preset.credentialProfileId):undefined;
-    await refreshRuntime(materializeProviderConfiguration(preset,credential),undefined,nextState,credentialProfileStateRef.current);
+    const preset=providerPresetStateRef.current.presets.find(item=>item.id===id);
+    if(!preset)throw new Error("Provider preset was not found.");
+    const nextState={...providerPresetStateRef.current,activePresetId:id};
+    await providerPresetStore.save(nextState);
+    providerPresetStateRef.current=nextState;
+    setProviderPresets(nextState.presets);
+    setActivePresetId(id);
+    const source=activeSourceForPreset(preset);
+    await refreshRuntime(source?materializeProviderConfiguration(source):undefined,undefined,nextState,credentialProfileStateRef.current);
   },[providerPresetStore,refreshRuntime]);
 
   const deleteProviderPreset=React.useCallback(async(id:string)=>{
-    const current=providerPresetStateRef.current;const remaining=current.presets.filter(item=>item.id!==id);const nextActive=current.activePresetId===id?(remaining[0]?.id??null):current.activePresetId;
-    const nextState={...current,presets:remaining,activePresetId:nextActive};await providerPresetStore.save(nextState);providerPresetStateRef.current=nextState;setProviderPresets(remaining);setActivePresetId(nextActive);
-    if(nextActive){const preset=remaining.find(item=>item.id===nextActive)!;const credential=preset.credentialProfileId?credentialProfileStateRef.current.profiles.find(profile=>profile.id===preset.credentialProfileId):undefined;await refreshRuntime(materializeProviderConfiguration(preset,credential),undefined,nextState,credentialProfileStateRef.current)}
-    else await refreshRuntime(undefined,undefined,nextState,credentialProfileStateRef.current);
+    const current=providerPresetStateRef.current;
+    const remaining=current.presets.filter(item=>item.id!==id);
+    const nextActive=current.activePresetId===id?(remaining[0]?.id??null):current.activePresetId;
+    const nextState={...current,presets:remaining,activePresetId:nextActive};
+    await providerPresetStore.save(nextState);
+    providerPresetStateRef.current=nextState;
+    setProviderPresets(remaining);
+    setActivePresetId(nextActive);
+    if(nextActive){
+      const preset=remaining.find(item=>item.id===nextActive)!;
+      const source=activeSourceForPreset(preset);
+      await refreshRuntime(source?materializeProviderConfiguration(source):undefined,undefined,nextState,credentialProfileStateRef.current);
+    }else{
+      await refreshRuntime(undefined,undefined,nextState,credentialProfileStateRef.current);
+    }
   },[providerPresetStore,refreshRuntime]);
 
-  const createCredentialProfile=React.useCallback(async(label:string,secret:string):Promise<CredentialProfile>=>{
-    const now=new Date().toISOString();const reference={id:"credential."+slugId(label)+"."+Date.now(),kind:"api-key",provider:"openai-compatible",version:"1"} as const;
+  const createCredentialProfile=React.useCallback(async(label:string,secret:string,providerId:string):Promise<CredentialProfile>=>{
+    const now=new Date().toISOString();
+    const reference={id:"credential."+slugId(label)+"."+Date.now(),kind:"api-key",provider:providerId,version:"1"} as const;
     await credentialStore.setSecret(reference,secret);
     const saved=await credentialStore.exists(reference);
-    if(!saved){
-      throw new Error("Credential could not be verified after saving.");
-    }
-    const profile:CredentialProfile={id:"credential-profile:"+slugId(label)+":"+Date.now(),label,providerId:"openai-compatible",credentialReference:reference,createdAt:now,updatedAt:now};
-    const nextState={...credentialProfileStateRef.current,profiles:[...credentialProfileStateRef.current.profiles,profile]};await credentialProfileStore.save(nextState);credentialProfileStateRef.current=nextState;setCredentialProfiles(nextState.profiles);setCredentialSavedMap(current=>({...current,[profile.id]:true}));
+    if(!saved)throw new Error("Credential could not be verified after saving.");
+    const profile:CredentialProfile={
+      id:"credential-profile:"+slugId(label)+":"+Date.now(),
+      label,
+      providerId,
+      credentialReference:reference,
+      createdAt:now,
+      updatedAt:now
+    };
+    const nextState={...credentialProfileStateRef.current,profiles:[...credentialProfileStateRef.current.profiles,profile]};
+    await credentialProfileStore.save(nextState);
+    credentialProfileStateRef.current=nextState;
+    setCredentialProfiles(nextState.profiles);
+    setCredentialSavedMap(current=>({...current,[profile.id]:true}));
     return profile;
   },[credentialStore,credentialProfileStore]);
 
   const deleteCredentialProfile=React.useCallback(async(id:string)=>{
-    if(providerPresetStateRef.current.presets.some(preset=>preset.credentialProfileId===id))throw new Error("Credential is still used by a provider preset.");
-    const removed=credentialProfileStateRef.current.profiles.find(profile=>profile.id===id);if(removed)await credentialStore.deleteSecret(removed.credentialReference);
-    const nextState={...credentialProfileStateRef.current,profiles:credentialProfileStateRef.current.profiles.filter(profile=>profile.id!==id)};await credentialProfileStore.save(nextState);credentialProfileStateRef.current=nextState;setCredentialProfiles(nextState.profiles);setCredentialSavedMap(current=>{const next={...current};delete next[id];return next;});
+    const profile=credentialProfileStateRef.current.profiles.find(item=>item.id===id);
+    const referenceId=profile?.credentialReference.id;
+    if(referenceId&&providerPresetStateRef.current.presets.some(preset=>preset.sources.some(source=>source.credentialReference?.id===referenceId))){
+      throw new Error("Credential is still used by a provider preset source.");
+    }
+    if(profile)await credentialStore.deleteSecret(profile.credentialReference);
+    const nextState={...credentialProfileStateRef.current,profiles:credentialProfileStateRef.current.profiles.filter(item=>item.id!==id)};
+    await credentialProfileStore.save(nextState);
+    credentialProfileStateRef.current=nextState;
+    setCredentialProfiles(nextState.profiles);
+    setCredentialSavedMap(current=>{const next={...current};delete next[id];return next;});
   },[credentialProfileStore,credentialStore]);
 
-  const refreshPresetModels=React.useCallback(async(preset:ProviderPreset):Promise<readonly ModelInfo[]>=>{
-    const credential=credentialProfileStateRef.current.profiles.find(profile=>profile.id===preset.credentialProfileId);
-    return listProviderModels(materializeProviderConfiguration(preset,credential),credentialStore);
+  const refreshPresetModels=React.useCallback(async(preset:ProviderPreset,sourceId:string):Promise<readonly ModelInfo[]>=>{
+    const source=preset.sources.find(item=>item.id===sourceId);
+    if(!source)throw new Error("Provider source was not found.");
+    return listProviderModels(materializeProviderConfiguration(source),credentialStore);
   },[credentialStore]);
 
-  const testPreset=React.useCallback(async(preset:ProviderPreset):Promise<ProviderConnectionTestResult>=>{
-    const credential=credentialProfileStateRef.current.profiles.find(profile=>profile.id===preset.credentialProfileId);
-    let config=materializeProviderConfiguration(preset,credential);
+  const testPreset=React.useCallback(async(preset:ProviderPreset,sourceId:string):Promise<ProviderConnectionTestResult=>{
+    const source=preset.sources.find(item=>item.id===sourceId);
+    if(!source)throw new Error("Provider source was not found.");
+    let config=materializeProviderConfiguration(source);
     if(!config.model){
-      const models=await listProviderModels(config,credentialStore);const first=models[0]?.id;
-      if(!first)return {apiVersion:"1",schemaVersion:"1",status:"configuration_error",providerId:preset.providerId,message:"Model discovery is unavailable; choose a model manually."};
+      const models=await listProviderModels(config,credentialStore);
+      const first=models[0]?.id;
+      if(!first)return {apiVersion:"1",schemaVersion:"1",status:"configuration_error",providerId:source.providerId,message:"Model discovery is unavailable; choose a model manually."};
       config={...config,model:first,enabled:true};
     }
     return testProviderPresetConfiguration(config,credentialStore);
