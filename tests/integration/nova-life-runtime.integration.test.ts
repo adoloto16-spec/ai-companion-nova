@@ -118,14 +118,18 @@ async function resumeIntentAfterUserMessageTest(){
     }
     return{action:"idle"};
   });
-  const {runtime,conversationManager,events,conversation}=await createTestRuntime(controller);
+  let userEvents=0;
+  events.subscribe("UserMessageReceived",()=>{userEvents++});
+  const {runtime,conversationManager,conversation}=await createTestRuntime(controller);
   try{
     await runtime.start("character:test",conversation.id);
     await waitFor(()=>controller.calls>=2);
-    const before=controller.calls;
     await conversationManager.updateConversation("character:test",conversation.id,{messages:[...conversation.messages,{id:"user:1",role:"user",content:"Новый результат по проекту"}]});
-
-    await waitFor(()=>controller.calls>before&&runtime.getState().status==="idle");
+    await waitFor(()=>userEvents>0);
+    await waitFor(()=>controller.contexts.some(context=>context.wakeReason==="user_message")&&runtime.getState().status==="idle"&&runtime.getState().activeIntentions?.length===0,1000,
+      ()=>JSON.stringify({userEvents,calls:controller.calls,wakeReasons:controller.contexts.map(context=>context.wakeReason),state:runtime.getState()}));
+    const userContext=controller.contexts.find(context=>context.wakeReason==="user_message");
+    assert.ok(userContext,"user message triggered a cognition turn");
     assert.equal(runtime.getState().activeIntentions?.length,0,"unfinished intent was completed after user-triggered cognition");
   }finally{await runtime.stop()}
 }
