@@ -1,5 +1,5 @@
 import {DeterministicCognitiveStep,LLMCognitiveStep,MindRuntime,type CognitiveStep,type CognitiveStepContext} from "../../core/src";
-import type {ChatRequest} from "../../contracts/src";
+import type {ChatMessage,ChatRequest,Conversation} from "../../contracts/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error(label+" expected "+String(expected)+" got "+String(actual));}
 function ok(value:unknown,label:string){if(!value)throw new Error(label);}
@@ -247,7 +247,7 @@ async function llmCognitiveStepTest(){
     const request=calls[index]!;
     const roles=request.context.messages.map(message=>message.role);
     equal(roles.slice(-1)[0],"user","cognition request always ends with a synthetic user cue");
-    equal(request.context.messages.at(-1)?.content,"Continue the internal cognition step. Produce exactly one internal thought based on the context above. Do not answer the user.","final message is the internal cognition cue");
+    equal(request.context.messages[request.context.messages.length-1]?.content,"Continue the internal cognition step. Produce exactly one internal thought based on the context above. Do not answer the user.","final message is the internal cognition cue");
     equal(roles.slice(3),[...cases[index]!.map(role=>role),"user"],"conversation roles are preserved and the cognition cue is appended");
     equal(JSON.stringify(conversation.messages),before,"synthetic cognition cue is not written into Conversation");
     equal(contextInputs[index]?.some(message=>message.content.includes("Continue the internal cognition step.")),false,"synthetic cognition cue is absent from ContextEngine input");
