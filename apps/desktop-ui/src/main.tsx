@@ -7,7 +7,7 @@ import {startFoundationRuntime,testProviderPresetConfiguration,listProviderModel
 import type {FoundationRuntime} from "../../../runtime/bootstrap/src/index";
 import {IpcCredentialStore,InMemoryCredentialStore} from "../../../host/credentials/src/index";
 import {IpcCredentialProfileStore,InMemoryCredentialProfileStore,emptyCredentialProfileState} from "../../../host/credential-profiles/src/index";
-import {IpcProviderPresetStore,InMemoryProviderPresetStore,materializeProviderConfiguration,migrateProviderConfiguration,emptyProviderPresetState} from "../../../host/provider-presets/src/index";
+import {IpcProviderPresetStore,InMemoryProviderPresetStore,materializeProviderConfiguration,migrateProviderConfiguration,emptyProviderPresetState,cloneProviderPresetForSaveAsNew,validateProviderPresetCredentialReferences} from "../../../host/provider-presets/src/index";
 import {IpcProviderConfigurationStore,loadProviderConfigurationSafely} from "../../../host/config/src/index";
 import {IpcCharacterStore} from "../../../host/characters/src/index";
 import {IpcCoreBookStore,InMemoryCoreBookStore} from "../../../host/core-book/src/index";
@@ -778,7 +778,7 @@ function ProviderPresetsView({
   const [models,setModels]=React.useState<readonly ModelInfo[]>([]);
   const [busy,setBusy]=React.useState(false);
   const [message,setMessage]=React.useState("");
-  const [credentialChoice,setCredentialChoice]=React.useState(draft.sources.find(source=>source.id===selectedSourceId)?.credentialReference?.id??"");
+  const [addingCredential,setAddingCredential]=React.useState(false);
   const [newCredentialLabel,setNewCredentialLabel]=React.useState("");
   const [newCredentialSecret,setNewCredentialSecret]=React.useState("");
   const [dirty,setDirty]=React.useState(false);
@@ -791,14 +791,14 @@ function ProviderPresetsView({
       setDraft({...next,sources:next.sources.map(source=>({...source,credentialReference:source.credentialReference?{...source.credentialReference}:null}))});
       const sourceId=next.activeSourceId??next.sources[0]?.id;
       setSelectedSourceId(sourceId);
-      setCredentialChoice(next.sources.find(source=>source.id===sourceId)?.credentialReference?.id??"");
+      setAddingCredential(false);
       setModels([]);
     }
   },[dirty,presets,selectedId]);
 
   const selectedSource=draft.sources.find(source=>source.id===selectedSourceId)??draft.sources[0];
   React.useEffect(()=>{
-    setCredentialChoice(selectedSource?.credentialReference?.id??"");
+    setAddingCredential(false);
     setModels([]);
   },[selectedSourceId,selectedSource?.id]);
 
@@ -819,12 +819,11 @@ function ProviderPresetsView({
     try{
       if(!draft.name.trim())throw new Error("Provider preset name is required.");
       if(draft.sources.length===0)throw new Error("Provider preset must contain at least one source.");
-      const sources=draft.sources.map(source=>source.id===selectedSource?.id
-        ?{...source,credentialReference:credentialChoice==="__new__"
-          ?source.credentialReference
-          :credentialProfiles.find(profile=>profile.id===credentialChoice)?.credentialReference??null,updatedAt:new Date().toISOString()}
-        :source
-      );
+      validateProviderPresetCredentialReferences(draft,credentialProfiles);
+      const sources=draft.sources.map(source=>({
+        ...source,
+        credentialReference:source.credentialReference?{...source.credentialReference}:null
+      }));
       const next:ProviderPreset={
         ...draft,
         name:draft.name.trim(),
@@ -840,13 +839,18 @@ function ProviderPresetsView({
   };
 
   const saveAsNew=async()=>{
-    const now=new Date().toISOString();
-    const source=selectedSource?{...selectedSource,id:"source:"+Date.now(),createdAt:now,updatedAt:now}:{...defaultSource(now)};
-    const next={...draft,id:"provider-preset:"+(draft.name.trim()||"preset").toLowerCase().replace(/[^a-z0-9]+/g,"-")+":"+Date.now(),createdAt:now,updatedAt:now,sources:[source],activeSourceId:source.id};
-    setDraft(next);setSelectedId(next.id);setSelectedSourceId(source.id);setDirty(true);
     setBusy(true);setMessage("");
-    try{await onSavePreset(next,false);setDirty(false);setMessage("Provider preset saved as new preset.")}
-    catch(error){setMessage("Provider preset could not be saved: "+safeErrorMessage(error))}
+    try{
+      if(!draft.name.trim())throw new Error("Provider preset name is required.");
+      if(draft.sources.length===0)throw new Error("Provider preset must contain at least one source.");
+      validateProviderPresetCredentialReferences(draft,credentialProfiles);
+      const now=new Date().toISOString();
+      const newId="provider-preset:"+(draft.name.trim()||"preset").toLowerCase().replace(/[^a-z0-9]+/g,"-")+":"+Date.now();
+      const next=cloneProviderPresetForSaveAsNew(draft,newId,now);
+      await onSavePreset(next,false);
+      setDraft(next);setSelectedId(next.id);setSelectedSourceId(current=>next.sources.some(source=>source.id===current)?current:next.activeSourceId??next.sources[0]?.id);setDirty(false);
+      setMessage("Provider preset saved as new preset.");
+    }catch(error){setMessage("Provider preset could not be saved: "+safeErrorMessage(error))}
     finally{setBusy(false)}
   };
 
@@ -923,7 +927,8 @@ function ProviderPresetsView({
     try{
       if(!newCredentialLabel.trim()||!newCredentialSecret)throw new Error("Credential label and API key are required.");
       const profile=await onCreateCredential(newCredentialLabel.trim(),newCredentialSecret,selectedSource.providerId);
-      setCredentialChoice(profile.id);
+      updateSource(selectedSource.id,{credentialReference:{...profile.credentialReference}});
+      setAddingCredential(false);
       setNewCredentialLabel("");setNewCredentialSecret("");
       setMessage("Credential saved. The API key is no longer displayed.");
     }catch(error){setMessage("Credential could not be saved: "+safeErrorMessage(error))}
@@ -933,9 +938,10 @@ function ProviderPresetsView({
   const deleteCredential=async(id:string)=>{
     const referenceId=credentialProfiles.find(profile=>profile.id===id)?.credentialReference.id;
     const used=referenceId?presets.filter(p=>p.sources.some(source=>source.credentialReference?.id===referenceId)):[];
-    if(used.length>0){setMessage("Credential is used by: "+used.map(p=>p.name||p.id).join(", ")+". Reassign the source before deletion.");return;}
+    const usedByDraft=referenceId?draft.sources.some(source=>source.credentialReference?.id===referenceId):false;
+    if(used.length>0||usedByDraft){setMessage("Credential is used by a provider preset. Reassign the source before deletion.");return;}
     setBusy(true);setMessage("");
-    try{await onDeleteCredential(id);if(credentialChoice===id)setCredentialChoice("");setMessage("Credential removed.")}
+    try{await onDeleteCredential(id);setMessage("Credential removed.")}
     catch(error){setMessage("Credential could not be removed: "+safeErrorMessage(error))}
     finally{setBusy(false)}
   };
@@ -944,7 +950,7 @@ function ProviderPresetsView({
     const now=new Date().toISOString();
     const source=defaultSource(now,providerId,name);
     updateDraft({...draft,name,sources:[{...source,baseUrl,model}],activeSourceId:source.id,createdAt:draft.createdAt});
-    setSelectedSourceId(source.id);setCredentialChoice("");setModels([]);
+    setSelectedSourceId(source.id);setAddingCredential(false);setModels([]);
   };
 
   return <section className="settings-grid">
@@ -980,7 +986,7 @@ function ProviderPresetsView({
           <select value={selectedSource.providerId} onChange={event=>{
             const providerId=event.target.value as "openai-compatible"|"gemini";
             updateSource(selectedSource.id,{providerId,credentialReference:null,model:providerId==="gemini"?"gemini-2.5-flash":selectedSource.model});
-            setCredentialChoice("");
+            setAddingCredential(false);
           }} disabled={busy}>
             <option value="openai-compatible">OpenAI-compatible</option>
             <option value="gemini">Gemini</option>
@@ -988,13 +994,27 @@ function ProviderPresetsView({
         </label>
         <label>Base URL<input value={selectedSource.baseUrl} onChange={event=>updateSource(selectedSource.id,{baseUrl:event.target.value})} disabled={busy}/></label>
         <label>API credential
-          <select value={credentialChoice} onChange={event=>setCredentialChoice(event.target.value)} disabled={busy}>
+          <select
+            value={selectedSource.credentialReference?.id??""}
+            onChange={event=>{
+              const value=event.target.value;
+              if(value==="__new__"){setAddingCredential(true);return;}
+              setAddingCredential(false);
+              if(!value){updateSource(selectedSource.id,{credentialReference:null});return;}
+              const profile=credentialProfiles.find(candidate=>candidate.credentialReference.id===value);
+              if(!profile){setMessage("Credential profile is unavailable. Re-select or recreate the credential.");return;}
+              updateSource(selectedSource.id,{credentialReference:{...profile.credentialReference}});
+            }}
+            disabled={busy}
+          >
             <option value="">No credential</option>
-            {credentialProfiles.filter(profile=>profile.providerId===selectedSource.providerId).map(profile=><option key={profile.id} value={profile.id}>{profile.label} {credentialSaved[profile.id]?"••••••••":"(not saved)"}</option>)}
+            {selectedSource.credentialReference&&!credentialProfiles.some(profile=>profile.credentialReference.id===selectedSource.credentialReference?.id)&&
+              <option value={selectedSource.credentialReference.id} disabled>Unavailable credential: {selectedSource.credentialReference.id}</option>}
+            {credentialProfiles.filter(profile=>profile.providerId===selectedSource.providerId).map(profile=><option key={profile.id} value={profile.credentialReference.id}>{profile.label} {credentialSaved[profile.id]?"••••••••":"(not saved)"}</option>)}
             <option value="__new__">+ Add new credential</option>
           </select>
         </label>
-        {credentialChoice==="__new__"&&<div className="character-actions">
+        {addingCredential&&<div className="character-actions">
           <label>Label<input value={newCredentialLabel} onChange={event=>setNewCredentialLabel(event.target.value)} disabled={busy}/></label>
           <label>API key<input type="password" autoComplete="off" value={newCredentialSecret} onChange={event=>setNewCredentialSecret(event.target.value)} disabled={busy}/></label>
           <button onClick={()=>void createCredential()} disabled={busy}>Save credential</button>
