@@ -156,10 +156,7 @@ export class ProviderPoolChatProvider implements ChatProvider{
       if(!source)break;
       attempted.add(source.id);
       const provider=this.options.createProvider(source,this.options.diagnostics);
-      if(!provider){
-        await this.markFailure(source,"configuration");
-        continue;
-      }
+      if(!provider)throw this.configurationError(undefined,source);
       try{
         const models=await provider.listModels();
         await this.markSuccess(source);
@@ -181,10 +178,7 @@ export class ProviderPoolChatProvider implements ChatProvider{
       if(!source)break;
       attempted.add(source.id);
       const provider=this.options.createProvider(source,this.options.diagnostics);
-      if(!provider){
-        await this.markFailure(source,"configuration");
-        continue;
-      }
+      if(!provider)throw this.configurationError(request,source);
       const sourceRequest={...request,providerId:source.providerId,model:source.model};
       try{
         const response=await provider.chat(sourceRequest);
@@ -373,6 +367,19 @@ export class ProviderPoolChatProvider implements ChatProvider{
       category:reason.category,
       ...(reason.httpStatus===undefined?{}:{httpStatus:reason.httpStatus}),
       ...(reason.durationMs===undefined?{}:{durationMs:reason.durationMs})
+    });
+  }
+
+  private configurationError(request:ChatRequest|undefined,source:ProviderPresetSource):ProviderPoolError{
+    return new ProviderPoolError({
+      apiVersion:request?.apiVersion??"1",
+      schemaVersion:request?.schemaVersion??"1",
+      code:"INVALID_REQUEST",
+      message:"Provider source configuration is invalid.",
+      requestId:request?.requestId,
+      providerId:source.providerId,
+      retryable:false,
+      details:{category:"configuration",sourceId:source.id}
     });
   }
 
