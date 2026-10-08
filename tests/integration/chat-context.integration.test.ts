@@ -1,4 +1,4 @@
-import {ChatSessionController,ConversationSession} from "../../core/src";
+import {ChatSessionController,ConversationSession,LLMCognitiveStep} from "../../core/src";
 import type {ChatRequest} from "../../contracts/src";
 import {InMemoryMemoryStore} from "../../host/memory/src";
 import {InMemoryCharacterStore} from "../../host/characters/src";
@@ -55,9 +55,84 @@ async function main(){
     if(!captured)throw new Error("Second ChatRequest was not captured");
     const secondCaptured=captured;
     equal(secondCaptured.context.messages.filter(message=>message.metadata?.contextSource==="memory").length,0,"no-match chat does not inject unrelated memory");
-  }finally{
-    await runtime.stop();
   }
-  console.log("PASS Dynamic Memory chat context integration test");
+
+  const cognitiveCalls:Array<{request:ChatRequest;providerPresetId:string|undefined}>=[];
+
+  const cognitiveStep=new LLMCognitiveStep({
+    runtime:{
+      chat:async(request:ChatRequest,providerPresetId?:string)=>{
+        cognitiveCalls.push({request,providerPresetId});
+        return {
+          apiVersion:"1",
+          schemaVersion:"1",
+          requestId:request.requestId,
+          conversationId:request.context.conversationId,
+          providerId:"test-provider",
+          model:request.model,
+          message:{id:request.requestId+":assistant",role:"assistant",content:"cognitive response"},
+          finishReason:"stop"
+        };
+      }
+    },
+    getCharacter:characterId=>runtime.getCharacter(characterId),
+    getActiveConversation:characterId=>runtime.getActiveConversation(characterId),
+    buildContext:request=>runtime.buildContext(request),
+    getContextBudget:()=>({availableContextTokens:4096,reservedOutputTokens:1024,systemOverheadTokens:0,safetyMarginTokens:128}),
+    getActiveProviderPresetId:()=> "cognition-test-preset",
+    getChatModel:()=> "unused",
+    getChatModelForPreset:async()=> "cognition-test-model",
+    clock:()=> "2026-10-08T12:00:00.000Z"
+  });
+
+  const cognitiveState={
+    focus:null,
+    lastThought:null,
+    lastThoughtAt:null,
+    recentThoughts:[],
+    lifecycleState:"thinking" as const
+  };
+
+  await runtime.updateConversation(character.id,conversation.id,{
+    messages:[{id:"cognition-user-1",role:"user",content:"Hello"}]
+  });
+  await cognitiveStep.run({characterId:character.id,state:cognitiveState,signal:new AbortController().signal});
+
+  await runtime.updateConversation(character.id,conversation.id,{
+    messages:[
+      {id:"cognition-user-2",role:"user",content:"Hello"},
+      {id:"cognition-assistant-2",role:"assistant",content:"Hi there",metadata:{streamStatus:"complete",safeMarker:"assistant-metadata"}}
+    ]
+  });
+  await cognitiveStep.run({characterId:character.id,state:cognitiveState,signal:new AbortController().signal});
+
+  await runtime.updateConversation(character.id,conversation.id,{
+    messages:[
+      {id:"cognition-user-3a",role:"user",content:"First"},
+      {id:"cognition-assistant-3",role:"assistant",content:"Reply",metadata:{streamStatus:"complete"}},
+      {id:"cognition-user-3b",role:"user",content:"Follow-up"}
+    ]
+  });
+  await cognitiveStep.run({characterId:character.id,state:cognitiveState,signal:new AbortController().signal});
+
+  equal(cognitiveCalls.length,3,"cognition request executes for all role sequences");
+  equal(cognitiveCalls.map(call=>call.request.model),["cognition-test-model","cognition-test-model","cognition-test-model"],"cognition model remains stable across assistant message");
+  equal(cognitiveCalls.map(call=>call.providerPresetId),["cognition-test-preset","cognition-test-preset","cognition-test-preset"],"provider preset remains stable across assistant message");
+  equal(cognitiveCalls.map(call=>call.request.generation?.responseFormat?.type),["text","text","text"],"cognition response format remains provider-neutral text");
+  equal(cognitiveCalls[0]?.request.context.messages.map(message=>message.role),["system","system","system","user"],"Case A preserves the user message");
+  equal(cognitiveCalls[1]?.request.context.messages.map(message=>message.role),["system","system","system","user","assistant"],"Case B preserves user then assistant order");
+  equal(cognitiveCalls[1]?.request.context.messages.length,5,"Case B canonical request has three cognition system messages plus conversation");
+  equal(cognitiveCalls[1]?.request.context.messages.find(message=>message.id==="cognition-assistant-2")?.metadata?.safeMarker,"assistant-metadata","assistant metadata survives ContextEngine into canonical request");
+  equal(cognitiveCalls[2]?.request.context.messages.map(message=>message.role),["system","system","system","user","assistant","user"],"Case C preserves user assistant user order");
+  equal(cognitiveCalls[2]?.request.context.messages.map(message=>message.content),[
+    "You are Nova.",
+    "Name: "+character.name+"\\nDescription: "+character.description+"\\n[/IDENTITY / CHARACTER]".replace("\\n","\\n"),
+    cognitiveCalls[2]?.request.context.messages[2]?.content??"",
+    "First",
+    "Reply",
+    "Follow-up"
+  ],"Case C keeps conversation content after cognition system context");
+
+  console.log("PASS cognitive context role regression integration test");
 }
 void main().catch(error=>{console.error(error);process.exitCode=1});
