@@ -1413,6 +1413,7 @@ function TraceCandidate({candidate}:{candidate:any}){
 function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:AppSettings}){
   const [traces,setTraces]=React.useState<readonly ChatTurnTrace[]>([]);
   const [semanticDiagnostics,setSemanticDiagnostics]=React.useState<readonly ErrorDiagnostic[]>([]);
+  const [cognitiveDiagnostics,setCognitiveDiagnostics]=React.useState<readonly ErrorDiagnostic[]>([]);
   const [selectedId,setSelectedId]=React.useState<string|undefined>();
   const [message,setMessage]=React.useState("");
   const [showRaw,setShowRaw]=React.useState(false);
@@ -1427,6 +1428,7 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
     }catch(error){setMessage(error instanceof Error?error.message:"Diagnostics could not be loaded.");}
     void runtime.diagnostics().then(snapshot=>{
       setSemanticDiagnostics(snapshot.recentErrors.filter(entry=>entry.source==="memory-semantic-deduplication"));
+      setCognitiveDiagnostics(snapshot.recentErrors.filter(entry=>entry.source==="mind-runtime"&&entry.code==="COGNITIVE_STEP_FAILED"));
     }).catch(error=>{
       setMessage(error instanceof Error?error.message:"Semantic diagnostics could not be loaded.");
     });
@@ -1458,6 +1460,31 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
           </button>
         )}
       {message&&<div className="error">{message}</div>}
+    </section>
+
+    <section>
+      <div className="section-header">
+        <div><h2>Nova Life cognitive errors</h2><p className="chat-subtitle">Safe runtime metadata for the latest cognitive provider failures. Credentials are not recorded.</p></div>
+      </div>
+      {cognitiveDiagnostics.length===0
+        ?<div>No cognitive step failures recorded.</div>
+        :cognitiveDiagnostics.slice(-10).reverse().map(entry=>{
+          const metadata=entry.metadata??{};
+          return <article className="diagnostic-json" key={entry.timestamp+":"+String(metadata.requestId??"")}>
+            <div><strong>{new Date(entry.timestamp).toLocaleTimeString()}</strong> · {entry.message}</div>
+            <div>requestId: {String(metadata.requestId??"—")}</div>
+            <div>chatError.code: {String(metadata.chatErrorCode??"—")}</div>
+            <div>providerPresetId: {String(metadata.providerPresetId??"—")}</div>
+            <div>sourceId: {String(metadata.sourceId??"—")}</div>
+            <div>providerId: {String(metadata.providerId??"—")}</div>
+            <div>model: {String(metadata.model??"—")}</div>
+            <div>baseUrlHost: {String(metadata.baseUrlHost??"—")}</div>
+            <div>category: {String(metadata.category??"—")}</div>
+            <div>httpStatus: {String(metadata.httpStatus??"—")}</div>
+            <div>durationMs: {String(metadata.durationMs??"—")}</div>
+            {metadata.providerResponse!==undefined&&<pre>{JSON.stringify(metadata.providerResponse,null,2)}</pre>}
+          </article>;
+        })}
     </section>
 
     <section>
