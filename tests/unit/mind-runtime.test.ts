@@ -53,15 +53,15 @@ async function sequentialStepsTest(){
     }
   }
   const step=new Step();
-  const runtime=new MindRuntime({cognitiveStep:step,stepIntervalMs:1,recentThoughtLimit:3});
+  const runtime=new MindRuntime({cognitiveStep:step,stepIntervalMs:1});
   await runtime.start();
   await waitFor(()=>runtime.getState().recentThoughts.length>=4);
   await runtime.stop();
 
   const state=runtime.getState();
   equal(step.maxRunning,1,"only one cognitive step runs at a time");
-  equal(state.recentThoughts.length,3,"recent thought history is bounded");
-  equal(state.recentThoughts[0]?.id,"thought:2","oldest thought is evicted when the limit is reached");
+  equal(state.recentThoughts.length,4,"recent thought history retains multiple thoughts");
+  equal(state.recentThoughts[0]?.id,"thought:1","recent thought history preserves the completed sequence");
   equal(state.lastThought?.id,"thought:4","latest thought is the final completed step");
   equal(seen[0],"none","first cognitive step sees initial state");
   equal(seen[1],"thought:1","second cognitive step sees first thought");
