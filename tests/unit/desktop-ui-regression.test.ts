@@ -4,6 +4,8 @@ import path from "node:path";
 
 const sourcePath=path.resolve(process.cwd(),"apps/desktop-ui/src/main.tsx");
 const source=fs.readFileSync(sourcePath,"utf8");
+const foundationPath=path.resolve(process.cwd(),"runtime/bootstrap/src/index.ts");
+const foundationSource=fs.readFileSync(foundationPath,"utf8");
 
 function blockBetween(startMarker:string,endMarker:string):string{
   const start=source.indexOf(startMarker);
@@ -85,9 +87,9 @@ assert.ok(app.includes("foundation.startLife()"),"global Life control must start
 assert.ok(app.includes("foundation.stopLife()"),"global Life control must stop the Foundation Mind Runtime");
 assert.ok(app.includes("Nova Life:"),"App must expose the global Nova Life control");
 assert.ok(app.includes("<ThoughtsView mindState={mindState} character={activeCharacter} runtime={foundationRef.current}/>"),"Thoughts must remain a character-scoped runtime observer");
-assert.ok(source.includes("deleteThought(thoughtId"),"Foundation runtime must expose point Thought deletion");
-assert.ok(source.includes("clearCurrentThoughts()"),"Foundation runtime must expose current-character Thought clearing");
-assert.ok(source.includes("clearAllThoughts()"),"Foundation runtime must expose all-character Thought clearing");
+assert.ok(foundationSource.includes("deleteThought(thoughtId:string):boolean;"),"Foundation runtime must expose point Thought deletion");
+assert.ok(foundationSource.includes("clearCurrentThoughts():void;"),"Foundation runtime must expose current-character Thought clearing");
+assert.ok(foundationSource.includes("clearAllThoughts():void;"),"Foundation runtime must expose all-character Thought clearing");
 assert.ok(source.includes("window.confirm(\"Clear all Thoughts for all characters?\""),"Mass Thought clearing must use ordinary confirmation");
 assert.ok(source.includes("onClick={()=>deleteThought(thought.id)}"),"Thoughts UI must expose point delete");
 assert.ok(source.includes("subscribeMindState"),"UI must subscribe to runtime mind state rather than own the runtime");
