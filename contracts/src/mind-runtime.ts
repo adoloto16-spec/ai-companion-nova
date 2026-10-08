@@ -3,6 +3,7 @@ export type ThoughtExpression="internal"|"external_candidate";
 export type MindRuntimeLifecycleState="off"|"starting"|"thinking"|"stopping"|"error";
 
 export interface Thought{
+  characterId:string;
   id:ThoughtId;
   timestamp:string;
   content:string;
