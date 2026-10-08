@@ -3,7 +3,7 @@ import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore} from "../../../contracts/src/index";
 import type {Conversation,ConversationCreateInput,ConversationId,ConversationStore,ConversationUpdateInput} from "../../../contracts/src/index";
 import {
-  AiRuntime,AutomaticMemoryAgent,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,MemorySemanticDeduplicator,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,
+  AiRuntime,AutomaticMemoryAgent,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,MemorySemanticDeduplicator,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,MindRuntime,LLMCognitiveStep,
   InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,
   DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
   InMemoryActorIdentityResolver,createMemoryConfig,SettingsManager,InMemoryChatTraceStore
@@ -69,6 +69,11 @@ export interface FoundationRuntime{
   getChatModel(providerId?:string):Promise<string>;
   getChatModelForPreset(providerPresetId:string):Promise<string>;
   getActiveProviderPresetId():string|undefined;
+  startLife():Promise<void>;
+  stopLife():Promise<void>;
+  getMindState():import("../../../contracts/src/index").MindState;
+  subscribeMindState(listener:(state:import("../../../contracts/src/index").MindState)=>void):import("../../../contracts/src/index").Unsubscribe;
+  subscribeThoughts(listener:(thought:import("../../../contracts/src/index").Thought)=>void):import("../../../contracts/src/index").Unsubscribe;
   getChatProviderDiagnostics(providerPresetId?:string):{
     providerPresetId?:string;
     providerId:string;
@@ -326,6 +331,31 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     return pool?.getModel()??resolveChatModelForPreset(providerPresetId);
   };
 
+  const mindRuntime=new MindRuntime({
+    cognitiveStep:new LLMCognitiveStep({
+      runtime:extractionChatRuntime,
+      getActiveCharacter:()=>characterManager.getActiveCharacter(),
+      getActiveConversation:characterId=>conversationManager.getActiveConversation(characterId),
+      buildContext:request=>contextEngine.build(request),
+      getContextBudget:()=>{
+        const settings=settingsManager.get();
+        return {availableContextTokens:settings.context.availableContextTokens,reservedOutputTokens:settings.context.reservedOutputTokens,systemOverheadTokens:0,safetyMarginTokens:settings.context.safetyMarginTokens};
+      },
+      getActiveProviderPresetId:()=>activeProviderPresetId,
+    startLife:()=>mindRuntime.start(),
+    stopLife:()=>mindRuntime.stop(),
+    getMindState:()=>mindRuntime.getState(),
+    subscribeMindState:listener=>mindRuntime.subscribe(listener),
+    subscribeThoughts:listener=>mindRuntime.subscribeThoughts(listener),
+      getChatModel:()=>activeProviderId(providerConfiguration)==="openai-compatible"&&providerConfiguration?providerConfiguration.model:"fake-chat",
+      getChatModelForPreset,
+      clock:()=>new Date().toISOString()
+    }),
+    stepIntervalMs:1000,
+    recentThoughtLimit:50,
+    onError:error=>diagnosticsStore.recordError("mind-runtime","COGNITIVE_STEP_FAILED",error instanceof Error?error.message:String(error))
+  });
+
   const automaticMemoryAgent=new AutomaticMemoryAgent({
     settings:()=>settingsManager.get(),
     broker:memoryBroker,
@@ -474,7 +504,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       await moduleManager.startAll();
       runtimeStatus="running";
     },
-    async stop(){try{semanticMemoryDeduplicator.stop();retrievalIndexer?.stop();await moduleManager.stopAll();}finally{runtimeStatus="stopped";}},
+    async stop(){try{await mindRuntime.stop();semanticMemoryDeduplicator.stop();retrievalIndexer?.stop();await moduleManager.stopAll();}finally{runtimeStatus="stopped";}},
     diagnostics:snapshot,
     recordDiagnosticError:(source,code,message,metadata)=>diagnosticsStore.recordError(source,code,message,metadata),
     invoke:request=>broker.execute({request,credential:characterCredential}),
