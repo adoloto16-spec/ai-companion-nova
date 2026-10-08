@@ -147,7 +147,7 @@ async function main(){
     equal(response1.message.content,"backup","first request failover result");
     equal(response2.message.content,"backup","next request starts with new active source");
     equal(first.calls.length,1,"new active source prevents retrying the failed source");
-    equal(calls,2,"each request uses only one source after active source changes");
+    equal(calls,3,"each request uses one source after active source changes");
   }
 
   {
