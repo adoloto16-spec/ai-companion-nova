@@ -23,4 +23,5 @@ export * from "./retrieval-indexer";
 export * from "./settings";
 
 export * from "./agent-output";
-export * from "./semantic-memory-dedup";export * from "./mind-runtime";
+export * from "./semantic-memory-dedup";
+export * from "./mind-runtime";
