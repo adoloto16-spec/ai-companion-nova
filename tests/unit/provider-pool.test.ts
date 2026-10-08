@@ -152,8 +152,10 @@ async function main(){
 
   {
     const failing=new FakeProvider("source-a",[new PoolFailure("server",500)]);
+    const failingBackup=new FakeProvider("source-b",[new PoolFailure("network")]);
     const {pool,providers}=await build({sources:[source("source-a"),source("source-b")]});
     providers.set("source-a",failing);
+    providers.set("source-b",failingBackup);
     let failed=false;
     try{await pool.chat(request());}catch(error){
       failed=error instanceof ProviderPoolError&&error.chatError.details?.category==="provider_pool_exhausted";
