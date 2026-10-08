@@ -18,8 +18,36 @@ async function llmCognitiveStepTest(){
  const chatRuntime={chat:async(request:ChatRequest)=>{calls.push(request);return {apiVersion:"1" as const,schemaVersion:"1",requestId:request.requestId,conversationId:"conv-1",providerId:"fake.chat",model:request.model,message:{id:request.requestId+":assistant",role:"assistant" as const,content:JSON.stringify({thought})},finishReason:"stop" as const};},getActiveProviderPresetId:()=>"preset-1"};
  const step=new LLMCognitiveStep({runtime:chatRuntime,getActiveCharacter:async()=>({id:"char-1",name:"Nova",description:"Test character",createdAt:"now",updatedAt:"now",enabled:true}),getActiveConversation:async()=>({apiVersion:"1",schemaVersion:"2",id:"conv-1",characterId:"char-1",title:"Test",messages:[{id:"u1",role:"user",content:"Hello"}],createdAt:"now",updatedAt:"now"}),buildContext:async()=>({apiVersion:"1",schemaVersion:"1",characterId:"char-1",conversationId:"conv-1",messages:[{id:"cb1",role:"user",content:"Core book context"}],includedCandidates:[],omittedCandidates:[],budget:{availableContextTokens:1000,reservedOutputTokens:256,systemOverheadTokens:0,safetyMarginTokens:0},estimatedTokens:10}),getContextBudget:()=>({availableContextTokens:1000,reservedOutputTokens:256,systemOverheadTokens:0,safetyMarginTokens:0}),getActiveProviderPresetId:()=>"preset-1",getChatModel:()=> "unused",getChatModelForPreset:async()=> "fake-model"});
  const first=await step.run({state:{focus:"test",lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"thinking"},signal:new AbortController().signal});
- const firstCall=calls[0]!;equal(first.content,thought,"structured LLM output becomes Thought content");equal(first.expression,"internal","cognitive output is internal");equal(firstCall.metadata?.cognition,true,"cognition request is marked internal");equal(firstCall.generation?.responseFormat?.type,"json-schema","structured output is requested");equal(firstCall.context.messages.some(message=>message.content.includes("INTERNAL THOUGHT HISTORY")),true,"mind context includes thought history section");equal(firstCall.context.messages.some(message=>message.content==="Core book context"),true,"context engine output is included");
+ const firstCall=calls[0]!;equal(first.content,thought,"structured LLM output becomes Thought content");equal(first.expression,"internal","cognitive output is internal");equal(firstCall.metadata?.cognition,true,"cognition request is marked internal");equal(firstCall.generation?.responseFormat?.type,"text","cognitive request uses provider-neutral text output");equal(firstCall.context.messages.some(message=>message.content.includes("INTERNAL THOUGHT HISTORY")),true,"mind context includes thought history section");equal(firstCall.context.messages.some(message=>message.content==="Core book context"),true,"context engine output is included");
  const second=await step.run({state:{focus:"test",lastThought:first,lastThoughtAt:first.timestamp,recentThoughts:[first],lifecycleState:"thinking"},signal:new AbortController().signal});const secondCall=calls[1]!;const mindMessage=secondCall.context.messages.find(message=>message.content.includes("INTERNAL THOUGHT HISTORY"));ok(mindMessage?.content.includes(thought),"previous Thought is included in next cognition context");equal(second.expression,"internal","second cognitive step remains internal");
 }
-async function main(){await startRuntimeTest();await sequentialStepsTest();await historyLimitTest();await stopDuringActiveStepTest();await restartAfterStopTest();await errorDoesNotStopLifeTest();await thoughtSubscriptionTest();await llmCognitiveStepTest();console.log("PASS Mind Runtime + LLM cognitive tests");}
+async function cognitiveProviderBadRequestRegressionTest(){
+ const calls:ChatRequest[]=[];
+ const chatRuntime={
+   chat:async(request:ChatRequest)=>{
+     calls.push(request);
+     if(request.generation?.responseFormat?.type==="json-schema"){
+       const error=new Error("OpenAI-compatible provider rejected the chat request.") as Error & {chatError:unknown};
+       error.chatError={apiVersion:"1",schemaVersion:"1",code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rejected the chat request.",requestId:request.requestId,providerId:"openai-compatible",retryable:false,details:{category:"bad_request",httpStatus:400,model:request.model}};
+       throw error;
+     }
+     return {apiVersion:"1" as const,schemaVersion:"1",requestId:request.requestId,conversationId:"conv-regression",providerId:"openai-compatible",model:request.model,message:{id:request.requestId+":assistant",role:"assistant" as const,content:"plain cognitive text"},finishReason:"stop" as const};
+   }
+ };
+ const step=new LLMCognitiveStep({
+   runtime:chatRuntime,
+   getActiveCharacter:async()=>({id:"char-regression",name:"Nova",description:"Test",createdAt:"now",updatedAt:"now",enabled:true}),
+   getActiveConversation:async()=>({apiVersion:"1",schemaVersion:"2",id:"conv-regression",characterId:"char-regression",title:"Main",messages:[{id:"user-1",role:"user",content:"Hello"}],createdAt:"now",updatedAt:"now"}),
+   buildContext:async()=>({apiVersion:"1",schemaVersion:"1",characterId:"char-regression",conversationId:"conv-regression",messages:[],includedCandidates:[],omittedCandidates:[],budget:{availableContextTokens:1000,reservedOutputTokens:256,systemOverheadTokens:0,safetyMarginTokens:0},estimatedTokens:0}),
+   getContextBudget:()=>({availableContextTokens:1000,reservedOutputTokens:256,systemOverheadTokens:0,safetyMarginTokens:0}),
+   getActiveProviderPresetId:()=> "preset-regression",
+   getChatModel:()=> "unused",
+   getChatModelForPreset:async()=> "test-model"
+ });
+ const thought=await step.run({state:{focus:null,lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"thinking"},signal:new AbortController().signal});
+ equal(calls.length,1,"text cognitive request does not trigger structured-output retry path");
+ equal(calls[0]?.generation?.responseFormat?.type,"text","regression request bypasses json-schema");
+ equal(thought.content,"plain cognitive text","plain provider response is parsed as Thought content");
+}
+async function main(){await startRuntimeTest();await sequentialStepsTest();await historyLimitTest();await stopDuringActiveStepTest();await restartAfterStopTest();await errorDoesNotStopLifeTest();await thoughtSubscriptionTest();await llmCognitiveStepTest();await cognitiveProviderBadRequestRegressionTest();console.log("PASS Mind Runtime + LLM cognitive tests");}
 void main().catch(error=>{console.error(error);process.exitCode=1;});
