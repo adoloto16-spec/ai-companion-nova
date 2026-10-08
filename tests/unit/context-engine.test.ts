@@ -50,7 +50,7 @@ async function assistantOnlyUnderPressureRegressionTest(){
       {id:"user-1",role:"user",content:"user"},
       {id:"assistant-1",role:"assistant",content:"a"}
     ],
-    budget:{availableContextTokens:1,reservedOutputTokens:0,systemOverheadTokens:0,safetyMarginTokens:0}
+    budget:{availableContextTokens:4,reservedOutputTokens:0,systemOverheadTokens:0,safetyMarginTokens:0}
   }));
   equal(built.messages.map(message=>message.role),["user"],"context pressure must not leave an orphan assistant message");
   equal(built.messages.map(message=>message.id),["user-1"],"the user turn must survive when assistant-only context would result");
