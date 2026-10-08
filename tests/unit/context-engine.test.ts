@@ -40,6 +40,21 @@ function request(overrides:Partial<ContextBuildRequest>):ContextBuildRequest{
   };
 }
 
+
+async function assistantOnlyUnderPressureRegressionTest(){
+  const engine=new DeterministicContextEngine([
+    new ConversationCandidateSource(({estimate(text:string){return text.length;}} as TokenEstimator))
+  ]);
+  const built=await engine.build(request({
+    messages:[
+      {id:"user-1",role:"user",content:"user"},
+      {id:"assistant-1",role:"assistant",content:"a"}
+    ],
+    budget:{availableContextTokens:1,reservedOutputTokens:0,systemOverheadTokens:0,safetyMarginTokens:0}
+  }));
+  equal(built.messages.map(message=>message.role),["user"],"context pressure must not leave an orphan assistant message");
+  equal(built.messages.map(message=>message.id),["user-1"],"the user turn must survive when assistant-only context would result");
+}
 async function main(){
   const budget=calculateContextBudget(100,10,5,5);
   equal(budget.availableContextTokens,80,"budget calculation");
@@ -210,6 +225,7 @@ async function main(){
   equal(noBudget.includedCandidates.length,0,"insufficient budget omits candidates");
   ok(noBudget.omittedCandidates.length>0,"insufficient budget is explainable");
 
+  await assistantOnlyUnderPressureRegressionTest();
   console.log("PASS Context Engine unit tests");
 }
 void main().catch(error=>{console.error(error);process.exitCode=1;});
