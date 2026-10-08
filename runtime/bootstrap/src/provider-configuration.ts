@@ -47,6 +47,7 @@ export function validateProviderConfiguration(configuration:ProviderConfiguratio
     if(ref.kind!=="api-key")errors.push("Provider credential reference kind must be api-key.");
     if(ref.provider!==undefined&&ref.provider!==OPENAI_COMPATIBLE_PROVIDER_ID)errors.push("Provider credential reference provider does not match providerId.");
   }
+  if(configuration.enabled&&credentialReferences.length===0)errors.push("An enabled provider preset requires at least one credential reference.");
 
   if(configuration.providerId===OPENAI_COMPATIBLE_PROVIDER_ID){
     const providerErrors=validateOpenAICompatibleProviderConfig({
