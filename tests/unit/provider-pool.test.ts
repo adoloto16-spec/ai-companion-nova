@@ -14,7 +14,9 @@ class PoolFailure extends Error{
 class FakeProvider implements ChatProvider{
   readonly id:string;
   readonly calls:{request:ChatRequest}[]=[];
-  constructor(id:string,private readonly outcomes:readonly (ChatResponse|Error)[]){}
+  constructor(id:string,private readonly outcomes:readonly (ChatResponse|Error)[]){
+    this.id=id;
+  }
   metadata(){return {id:this.id,kind:"chat" as const,displayName:this.id,version:"test"};}
   capabilities():ProviderCapabilities{return {streaming:false,toolCalling:false,structuredOutput:false,reasoning:false};}
   async health():Promise<HealthStatus>{return {status:"healthy"};}
@@ -23,7 +25,18 @@ class FakeProvider implements ChatProvider{
     this.calls.push({request});
     const outcome=this.outcomes[Math.min(this.calls.length-1,this.outcomes.length-1)];
     if(outcome instanceof Error)throw outcome;
-    return {...outcome,requestId:request.requestId,conversationId:request.context.conversationId,providerId:this.id,model:request.model};
+    const base=outcome as ChatResponse;
+    return {
+      ...base,
+      apiVersion:base.apiVersion??"1",
+      schemaVersion:base.schemaVersion??"1",
+      requestId:request.requestId,
+      conversationId:request.context.conversationId,
+      providerId:this.id,
+      model:request.model,
+      message:base.message??{role:"assistant",content:""},
+      finishReason:base.finishReason??"stop"
+    };
   }
 }
 class FakeCredentialStore implements CredentialStore{
