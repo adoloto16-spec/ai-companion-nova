@@ -391,7 +391,6 @@ export class DeterministicContextEngine implements ContextEngineContract {
 
     // Preserve recent user/assistant turns without creating an orphan assistant message under pressure.
     const recent=candidates.filter(item=>item.candidate.zone==="recent_conversation").sort((a,b)=>a.index-b.index);
-    const blockedRecentAssistantIds=new Set<string>();
     for(let index=recent.length-1;index>=0;index-=1){
       const current=recent[index]!;
       if(current.candidate.role==="assistant"){
@@ -403,12 +402,10 @@ export class DeterministicContextEngine implements ContextEngineContract {
             include(current.candidate);
             index-=1;
           }else{
-            blockedRecentAssistantIds.add(current.candidate.id);
           }
           continue;
         }
         // An assistant without its preceding user turn in the retained context is not a valid recent suffix.
-        if(index>0)blockedRecentAssistantIds.add(current.candidate.id);
       }else{
         include(current.candidate);
       }
