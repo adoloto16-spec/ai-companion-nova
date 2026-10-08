@@ -5,6 +5,7 @@ import type {CognitiveStep,CognitiveStepContext} from "./mind-runtime";
 export interface CognitiveChatRuntime{chat(request:ChatRequest,providerPresetId?:string):Promise<ChatResponse>;getActiveProviderPresetId?():string|undefined;getChatModel?():string;getChatModelForPreset?(providerPresetId:string):Promise<string>;}
 export interface LLMCognitiveStepOptions{runtime:CognitiveChatRuntime;getCharacter:(characterId:string)=>Promise<Character|undefined>;getActiveConversation:(characterId:string)=>Promise<Conversation|undefined>;buildContext:(request:ContextBuildRequest)=>Promise<AssembledContext>;getContextBudget:()=>ContextBudget;getActiveProviderPresetId:()=>string|undefined;getChatModel:()=>string;getChatModelForPreset:(providerPresetId:string)=>Promise<string>;clock?:()=>string;}
 const COGNITIVE_SYSTEM_PROMPT=["You are Nova.","You are in a continuous internal thinking process.","This step creates exactly one internal thought. You do not need to speak to the user.","A thought may continue or reconsider a previous thought, notice something relevant in the conversation, recall relevant memory, form interest, change focus, notice uncertainty, or simply consider something important to Nova.","Do not create fictional events. Do not claim Nova did something unless that action is present in context.","Do not invent external events that are not present in context.","Do not create meaningless thoughts merely to keep the loop running.","The existence of a new cognitive step is never itself a reason to answer the user.","Return only the thought content. Do not write a chat response, speech, action, tool call, question to the user, goal, intention, plan, or emotion analysis."].join("\n");
+const COGNITIVE_USER_CUE="Continue the internal cognition step. Produce exactly one internal thought based on the context above. Do not answer the user.";
 function requestId():string{return "cognition-"+Date.now()+"-"+Math.random().toString(36).slice(2,10);}
 function parseThoughtContent(content:string):string{
   const trimmed=content.trim();if(!trimmed)throw new Error("Cognitive provider returned an empty thought.");
@@ -23,7 +24,13 @@ export class LLMCognitiveStep implements CognitiveStep{
     const assembled=await this.options.buildContext({apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION,characterId:character.id,conversationId:conversation.id,messages:conversation.messages,budget:this.options.getContextBudget()});
     const mindContext=this.buildMindContext(context.state);
     const identityContext=["[IDENTITY / CHARACTER]","Name: "+character.name,"Description: "+character.description,"[/IDENTITY / CHARACTER]"].join("\n");
-    const contextMessages:ChatMessage[]=[{id:conversation.id+":cognition:system",role:"system",content:COGNITIVE_SYSTEM_PROMPT},{id:conversation.id+":cognition:identity",role:"system",content:identityContext},{id:conversation.id+":cognition:mind",role:"system",content:mindContext},...assembled.messages.map(cloneMessage)];
+    const contextMessages:ChatMessage[]=[
+      {id:conversation.id+":cognition:system",role:"system",content:COGNITIVE_SYSTEM_PROMPT},
+      {id:conversation.id+":cognition:identity",role:"system",content:identityContext},
+      {id:conversation.id+":cognition:mind",role:"system",content:mindContext},
+      ...assembled.messages.map(cloneMessage),
+      {id:conversation.id+":cognition:user-cue",role:"user",content:COGNITIVE_USER_CUE}
+    ];
     const providerPresetId=this.options.getActiveProviderPresetId();const model=providerPresetId?await this.options.getChatModelForPreset(providerPresetId):this.options.getChatModel();
     const baseRequest:ChatRequest={apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION,requestId:requestId(),model,context:{conversationId:conversation.id,messages:contextMessages},generation:{maxTokens:256,responseFormat:{type:"text"}},metadata:{cognition:true}};
     const response=await this.options.runtime.chat(baseRequest,providerPresetId);
