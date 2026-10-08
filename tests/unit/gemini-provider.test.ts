@@ -118,14 +118,16 @@ async function main(){
   }
 
   {
+    const http=new FakeHttpClient([{status:200,body:JSON.stringify({
+      candidates:[{content:{role:"model",parts:[{text:"text response"}]},finishReason:"STOP"}]
+    })}]);
     const provider=new GeminiChatProvider({
       baseUrl:"https://generativelanguage.googleapis.com/v1beta",
       model:"gemini-test-model",
       credential
-    },new FakeCredentialStore(),new FakeHttpClient([]));
-    let rejected=false;
-    try{await provider.chat({...request,generation:{responseFormat:{type:"text"}}});}catch{rejected=true;}
-    ok(!rejected,"plain text response format remains supported");
+    },new FakeCredentialStore(),http);
+    const response=await provider.chat({...request,generation:{responseFormat:{type:"text"}}});
+    equal(response.message.content,"text response","plain text response format remains supported");
     let unsupported=false;
     try{await provider.chat({...request,generation:{responseFormat:{type:"json-schema",schema:{type:"object"}}}} as ChatRequest);}catch(error){
       unsupported=JSON.stringify(error).includes("UNSUPPORTED")||JSON.stringify(error).includes("requested response format");
