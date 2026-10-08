@@ -24,7 +24,7 @@ import {InMemoryCoreBookStore} from "../../../host/core-book/src/index";
 import {InMemoryMemorySemanticIndexStore,InMemoryMemoryStore} from "../../../host/memory/src/index";
 import type {CoreBookCreateInput,CoreBookUpdateInput} from "../../../core/src/core-book-manager";
 import {activeProviderId,buildConfiguredProvider,buildEmbeddingProviderForPreset,buildProviderForDiscovery,buildProviderForPreset,buildChatProviderForSource,testProviderConfiguration} from "./provider-configuration";
-import {ProviderPoolChatProvider,type ProviderPoolSourceDiagnostics} from "./provider-pool";
+import {ProviderPoolChatProvider} from "./provider-pool";
 import {RetrievalEventIndexer} from "../../../core/src/retrieval-indexer";
 
 
@@ -69,12 +69,15 @@ export interface FoundationRuntime{
   getChatModel(providerId?:string):Promise<string>;
   getChatModelForPreset(providerPresetId:string):Promise<string>;
   getActiveProviderPresetId():string|undefined;
-  getChatProviderDiagnostics(providerPresetId?:string):ProviderPoolSourceDiagnostics&{
+  getChatProviderDiagnostics(providerPresetId?:string):{
     providerPresetId?:string;
     providerId:string;
     baseUrlHost?:string;
     timeoutMs?:number;
     sourceId?:string;
+    health?:import("../../../contracts/src/index").ProviderSourceHealth;
+    failureCount?:number;
+    cooldownUntil?:string|null;
   };
   applyProviderConfiguration(configuration:ProviderConfiguration|undefined):Promise<void>;
   testConfiguredProvider():Promise<import("../../../contracts/src/index").ProviderConnectionTestResult>;
