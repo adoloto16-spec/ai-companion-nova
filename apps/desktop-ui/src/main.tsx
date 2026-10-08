@@ -21,7 +21,7 @@ import {
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
   type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem, type ErrorDiagnostic,
   defaultAppSettings, validateAppSettings, StandardContractValidator,
-  type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo
+  type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo, type MindState
 } from "../../../contracts/src/index";
 import "./styles.css";
 
@@ -1736,8 +1736,26 @@ function credentialSavedEntries(
   },{});
 }
 
+function ThoughtsView({mindState}:{mindState:MindState}){
+  return <section className="thoughts-view">
+    <div className="section-header"><div><h2>Thoughts</h2><p className="chat-subtitle">Technical observer of Nova's internal cognition. Thoughts are not Conversation messages.</p></div>
+      <span className="mind-status-badge">{mindState.lifecycleState.toUpperCase()}</span>
+    </div>
+    <div className="thought-list">
+      {mindState.recentThoughts.length===0
+        ?<div className="empty-state">No internal thoughts yet.</div>
+        :mindState.recentThoughts.map(thought=>
+          <article className="thought-entry" key={thought.id}>
+            <div className="thought-meta"><time dateTime={thought.timestamp}>{new Date(thought.timestamp).toLocaleTimeString()}</time><span>{thought.id}</span></div>
+            <div>{thought.content}</div>
+          </article>
+        )}
+    </div>
+  </section>;
+}
+
 function App(){
-  const [view,setView]=React.useState<"chat"|"characters"|"memory"|"core-book"|"model-profile"|"settings"|"diagnostics">("chat");
+  const [view,setView]=React.useState<"chat"|"characters"|"memory"|"core-book"|"model-profile"|"settings"|"diagnostics"|"thoughts">("chat");
   const [runtime,setRuntime]=React.useState<RuntimeDiagnostics>(preview);
   const [saving,setSaving]=React.useState(false);
   const [startupStatus,setStartupStatus]=React.useState<"initializing"|"ready"|"error">("initializing");
@@ -1748,6 +1766,9 @@ function App(){
   const [chatController,setChatController]=React.useState<ChatSessionController|null>(null);
   const [conversations,setConversations]=React.useState<readonly Conversation[]>([]);
   const [activeConversation,setActiveConversation]=React.useState<Conversation|undefined>();
+  const [mindState,setMindState]=React.useState<MindState>({focus:null,lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"off"});
+  const mindUnsubscribeRef=React.useRef<(()=>void)|undefined>();
+  const [lifeBusy,setLifeBusy]=React.useState(false);
   const foundationRef=React.useRef<FoundationRuntime|undefined>(undefined);
   const providerConfigurationErrorRef=React.useRef<string|undefined>(undefined);
   const conversationLoadErrorRef=React.useRef<string|undefined>(undefined);
@@ -1991,6 +2012,9 @@ function App(){
       activeProviderPresetId:presetState.activePresetId??undefined
     });
     foundationRef.current=next;
+    mindUnsubscribeRef.current?.();
+    setMindState(next.getMindState());
+    mindUnsubscribeRef.current=next.subscribeMindState(setMindState);
     setRuntime(await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(await next.diagnostics())));
     await syncCharacters(next);
     setRuntime(await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(await next.diagnostics())));
@@ -2313,11 +2337,24 @@ function App(){
         <button className={view==="core-book"?"nav-button active":"nav-button"} onClick={()=>setView("core-book")}>Core Book</button>
         <button className={view==="model-profile"?"nav-button active":"nav-button"} onClick={()=>setView("model-profile")}>Model Profile</button>
         <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Settings</button>
+        <button className={view==="thoughts"?"nav-button active":"nav-button"} onClick={()=>setView("thoughts")}>Thoughts</button>
         {appSettings.ui.showDiagnosticsInChat&&<button className={view==="diagnostics"?"nav-button active":"nav-button"} onClick={()=>setView("diagnostics")}>Diagnostics</button>}
+      </nav>
+      <div className="life-control">
+        <span className="life-label">Nova Life: <strong>{mindState.lifecycleState.toUpperCase()}</strong></span>
+        <button type="button" onClick={async()=>{
+          const foundation=foundationRef.current;if(!foundation||lifeBusy)return;setLifeBusy(true);
+          try{if(mindState.lifecycleState==="off")await foundation.startLife();else await foundation.stopLife();}
+          catch(error){foundation.recordDiagnosticError("mind-runtime","LIFE_CONTROL_FAILED",safeErrorMessage(error));}
+          finally{setMindState(foundation.getMindState());setLifeBusy(false);}
+        }} disabled={lifeBusy||startupStatus!=="ready"}>{mindState.lifecycleState==="off"?"ON":"OFF"}</button>
+      </div>
       </nav>
     </header>
     <ViewErrorBoundary key={view} view={view} onError={reportViewError}>
-    {view==="model-profile"&&activeCharacter&&activeModelProfile
+    {view==="thoughts"
+      ?<ThoughtsView mindState={mindState}/>
+      :    {view==="model-profile"&&activeCharacter&&activeModelProfile
       ?<ModelProfileView profile={activeModelProfile} runtime={runtime} presets={providerPresets} activePresetId={activePresetId} onSave={saveModelProfile}/>
       :view==="settings"
       ?<SettingsContainerView
