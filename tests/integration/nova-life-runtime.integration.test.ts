@@ -89,7 +89,7 @@ async function persistentIntentDueTest(){
   const {runtime,events,conversationManager,conversation}=await createTestRuntime(controller);
   try{
     await runtime.start("character:test",conversation.id);
-    await waitFor(()=>controller.calls>=4);
+    await waitFor(()=>runtime.getState().status==="idle"&&runtime.getState().activeIntentions?.length===0&&controller.contexts.some(context=>context.wakeReason==="intent_due"));
     const state=runtime.getState();
     assert.equal(state.status,"idle");
     assert.equal(state.activeIntentions?.length,0,"due intent was completed");
