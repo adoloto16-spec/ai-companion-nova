@@ -717,6 +717,7 @@ export const CONTRACT_VERSIONS={
   credentialProfile:{apiVersion:CREDENTIAL_PROFILE_API_VERSION,schemaVersion:CREDENTIAL_PROFILE_SCHEMA_VERSION},
   credentialProfileStoreState:{apiVersion:CREDENTIAL_PROFILE_API_VERSION,schemaVersion:CREDENTIAL_PROFILE_SCHEMA_VERSION},
   providerPreset:{apiVersion:PROVIDER_PRESET_API_VERSION,schemaVersion:PROVIDER_PRESET_SCHEMA_VERSION},
+  providerPresetSource:{apiVersion:PROVIDER_PRESET_API_VERSION,schemaVersion:PROVIDER_PRESET_SCHEMA_VERSION},
   providerPresetStoreState:{apiVersion:PROVIDER_PRESET_API_VERSION,schemaVersion:PROVIDER_PRESET_SCHEMA_VERSION},
     modelProfileStoreState:{apiVersion:MODEL_PROFILE_API_VERSION,schemaVersion:MODEL_PROFILE_SCHEMA_VERSION},
   retrievalSource:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
