@@ -419,7 +419,14 @@ export class DeterministicContextEngine implements ContextEngineContract {
     const pressurePool=candidates
       .filter(item=>item.candidate.eligible && !included.has(item.candidate.id) && item.candidate.zone!=="system" && item.candidate.zone!=="recent_conversation" && !blockedRecentAssistantIds.has(item.candidate.id))
       .sort(stableCompare);
-    for(const item of pressurePool)include(item.candidate);
+    for(const item of pressurePool){
+      if(item.candidate.source==="conversation"&&item.candidate.role==="assistant"){
+        const previous=candidates.find(candidate=>candidate.index===item.index-1)?.candidate;
+        if(previous&&previous.role!=="user")continue;
+        if(previous?.role==="user"&&!included.has(previous.id))continue;
+      }
+      include(item.candidate);
+    }
 
     const includedCandidates=candidates.filter(item=>included.has(item.candidate.id)).map(item=>item.candidate);
     const omittedCandidates=candidates
