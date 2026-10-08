@@ -138,7 +138,7 @@ async function main(){
   const reassignedPreset:ProviderPreset={
     ...noCredentialPreset,
     sources:noCredentialPreset.sources.map(candidate=>candidate.id===uiSource1.id
-      ?{...candidate,credentialReference:{...createdCredential.credentialReference}}
+      ?{...candidate,credentialReference:{...createdCredential.credentialReference},health:"cooldown",failureCount:3,cooldownUntil:"2026-10-08T01:05:00Z",enabled:true}
       :candidate)
   };
   validateProviderPresetCredentialReferences(reassignedPreset,[createdCredential,credential("credential-profile-b","Backup")]);
@@ -151,6 +151,10 @@ async function main(){
   equal(loadedCopy?.sources.find(candidate=>candidate.id===uiSource1.id)?.model,reassignedPreset.sources[0]?.model,"Save as new preserves model");
   equal(loadedCopy?.sources.find(candidate=>candidate.id===uiSource1.id)?.enabled,reassignedPreset.sources[0]?.enabled,"Save as new preserves enabled");
   equal(loadedCopy?.sources.find(candidate=>candidate.id===uiSource1.id)?.timeoutMs,reassignedPreset.sources[0]?.timeoutMs,"Save as new preserves timeoutMs");
+  equal(loadedCopy?.sources.find(candidate=>candidate.id===uiSource1.id)?.health,reassignedPreset.sources[0]?.health,"Save as new preserves health");
+  equal(loadedCopy?.sources.find(candidate=>candidate.id===uiSource1.id)?.failureCount,reassignedPreset.sources[0]?.failureCount,"Save as new preserves failureCount");
+  equal(loadedCopy?.sources.find(candidate=>candidate.id===uiSource1.id)?.cooldownUntil,reassignedPreset.sources[0]?.cooldownUntil,"Save as new preserves cooldownUntil");
+  equal(loadedCopy?.sources.length,reassignedPreset.sources.length,"Save as new preserves every source");
   equal(loadedCopy?.activeSourceId,reassignedPreset.activeSourceId,"Save as new preserves activeSourceId");
 
   const changedFields={...reassignedPreset,sources:reassignedPreset.sources.map(candidate=>candidate.id===uiSource1.id?{
