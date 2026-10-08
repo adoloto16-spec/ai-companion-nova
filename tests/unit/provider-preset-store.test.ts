@@ -1,5 +1,5 @@
 import {
-  IpcProviderPresetStore,InMemoryProviderPresetStore,materializeProviderConfiguration,migrateProviderConfiguration,PROVIDER_PRESET_COMMANDS
+  IpcProviderPresetStore,InMemoryProviderPresetStore,materializeProviderConfiguration,migrateProviderConfiguration,PROVIDER_PRESET_COMMANDS,cloneProviderPresetForSaveAsNew,validateProviderPresetCredentialReferences
 } from "../../host/provider-presets/src";
 import {IpcCredentialProfileStore,InMemoryCredentialProfileStore,CREDENTIAL_PROFILE_COMMANDS} from "../../host/credential-profiles/src";
 import {InMemoryModelProfileStore} from "../../host/model-profiles/src";
@@ -99,7 +99,81 @@ async function main(){
   await reloadedCredentials.save(credentials);
   equal((await reloadedCredentials.load())?.profiles[1]?.credentialReference.id,"credential-profile-b","credential metadata remains an opaque reference");
 
-  const serialized=JSON.stringify(state);
+  const createdCredential=credential("credential-created","Created");
+  const uiSource1=source("source-ui-1","openai-compatible","credential-created");
+  const uiSource2=source("source-ui-2","openai-compatible","credential-b");
+  const uiDraft:ProviderPreset={
+    id:"provider-preset:ui",
+    name:"UI persistence",
+    sources:[
+      {...uiSource1,credentialReference:{...createdCredential.credentialReference}},
+      {...uiSource2,credentialReference:null}
+    ],
+    activeSourceId:uiSource1.id,
+    createdAt:"2026-10-08T00:00:00Z",
+    updatedAt:"2026-10-08T00:00:00Z"
+  };
+  const uiInvoke=async(command:string,args?:Record<string,unknown>):Promise<unknown>=>{
+    if(command===PROVIDER_PRESET_COMMANDS.get)return savedPresetState??null;
+    if(command===PROVIDER_PRESET_COMMANDS.save){savedPresetState=args?.state as ProviderPresetStoreState;return null;}
+    if(command===PROVIDER_PRESET_COMMANDS.remove)return null;
+    throw new Error("unexpected UI preset IPC command "+command);
+  };
+  const uiStore=new IpcProviderPresetStore(uiInvoke);
+  await uiStore.save({apiVersion:"1",schemaVersion:"2",presets:[uiDraft],activePresetId:uiDraft.id});
+  const loadedUi=await uiStore.load();
+  equal(loadedUi?.presets[0]?.sources[0]?.credentialReference?.id,"credential-created","UI-selected credential survives store round-trip");
+
+  const switchedBack=loadedUi!.presets[0]!;
+  equal(switchedBack.sources.find(candidate=>candidate.id===uiSource1.id)?.credentialReference?.id,"credential-created","switching source and back does not clear source credential");
+  equal(switchedBack.sources.find(candidate=>candidate.id===uiSource2.id)?.credentialReference,null,"second source keeps its own empty credential state");
+
+  const noCredentialPreset:ProviderPreset={
+    ...uiDraft,
+    sources:uiDraft.sources.map(candidate=>candidate.id===uiSource1.id?{...candidate,credentialReference:null}:candidate)
+  };
+  await uiStore.save({apiVersion:"1",schemaVersion:"2",presets:[noCredentialPreset],activePresetId:noCredentialPreset.id});
+  equal((await uiStore.load())?.presets[0]?.sources[0]?.credentialReference,null,"No credential is persisted as null");
+
+  const reassignedPreset:ProviderPreset={
+    ...noCredentialPreset,
+    sources:noCredentialPreset.sources.map(candidate=>candidate.id===uiSource1.id
+      ?{...candidate,credentialReference:{...createdCredential.credentialReference}}
+      :candidate)
+  };
+  validateProviderPresetCredentialReferences(reassignedPreset,[createdCredential,credential("credential-profile-b","Backup")]);
+  const copied=cloneProviderPresetForSaveAsNew(reassignedPreset,"provider-preset:ui-copy","2026-10-08T01:00:00Z");
+  await uiStore.save({apiVersion:"1",schemaVersion:"2",presets:[reassignedPreset,copied],activePresetId:copied.id});
+  const loadedCopy=(await uiStore.load())?.presets.find(candidate=>candidate.id===copied.id);
+  equal(loadedCopy?.sources.find(candidate=>candidate.id===uiSource1.id)?.credentialReference?.id,"credential-created","Save as new preserves credential reference");
+  equal(loadedCopy?.sources.find(candidate=>candidate.id===uiSource1.id)?.providerId,reassignedPreset.sources[0]?.providerId,"Save as new preserves providerId");
+  equal(loadedCopy?.sources.find(candidate=>candidate.id===uiSource1.id)?.baseUrl,reassignedPreset.sources[0]?.baseUrl,"Save as new preserves baseUrl");
+  equal(loadedCopy?.sources.find(candidate=>candidate.id===uiSource1.id)?.model,reassignedPreset.sources[0]?.model,"Save as new preserves model");
+  equal(loadedCopy?.sources.find(candidate=>candidate.id===uiSource1.id)?.enabled,reassignedPreset.sources[0]?.enabled,"Save as new preserves enabled");
+  equal(loadedCopy?.sources.find(candidate=>candidate.id===uiSource1.id)?.timeoutMs,reassignedPreset.sources[0]?.timeoutMs,"Save as new preserves timeoutMs");
+  equal(loadedCopy?.activeSourceId,reassignedPreset.activeSourceId,"Save as new preserves activeSourceId");
+
+  const changedFields={...reassignedPreset,sources:reassignedPreset.sources.map(candidate=>candidate.id===uiSource1.id?{
+    ...candidate,model:"changed-model",baseUrl:"https://changed.example/v1"
+  }:candidate)};
+  await uiStore.save({apiVersion:"1",schemaVersion:"2",presets:[changedFields],activePresetId:changedFields.id});
+  equal((await uiStore.load())?.presets[0]?.sources[0]?.credentialReference?.id,"credential-created","credential survives unrelated source edits");
+
+  let missingReferenceError="";
+  try{
+    validateProviderPresetCredentialReferences(reassignedPreset,[]);
+  }catch(error){
+    missingReferenceError=error instanceof Error?error.message:"";
+  }
+  ok(missingReferenceError.includes("unavailable"),"missing credential profile must block save with a clear error");
+
+  const switchedProvider={
+    ...reassignedPreset,
+    sources:reassignedPreset.sources.map(candidate=>candidate.id===uiSource1.id?{...candidate,providerId:"gemini",credentialReference:null}:candidate)
+  };
+  equal(switchedProvider.sources[0]?.credentialReference,null,"changing provider clears the previous credential reference");
+
+    const serialized=JSON.stringify(state);
   ok(!serialized.includes("secret"),"persisted v2 preset state contains no secret value");
   console.log("PASS provider preset v2 store and migration tests");
 }
