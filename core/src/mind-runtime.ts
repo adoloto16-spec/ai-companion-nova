@@ -123,7 +123,7 @@ export class MindRuntime{
           signal
         });
 
-        if(signal.aborted||this.state.lifecycleState==="stopping")break;
+        if(signal.aborted)break;
 
         this.applyThought(thought);
       }catch(error){
