@@ -2349,12 +2349,11 @@ function App(){
           finally{setMindState(foundation.getMindState());setLifeBusy(false);}
         }} disabled={lifeBusy||startupStatus!=="ready"}>{mindState.lifecycleState==="off"?"ON":"OFF"}</button>
       </div>
-      </nav>
     </header>
     <ViewErrorBoundary key={view} view={view} onError={reportViewError}>
     {view==="thoughts"
       ?<ThoughtsView mindState={mindState}/>
-      :    {view==="model-profile"&&activeCharacter&&activeModelProfile
+      :view==="model-profile"&&activeCharacter&&activeModelProfile
       ?<ModelProfileView profile={activeModelProfile} runtime={runtime} presets={providerPresets} activePresetId={activePresetId} onSave={saveModelProfile}/>
       :view==="settings"
       ?<SettingsContainerView
