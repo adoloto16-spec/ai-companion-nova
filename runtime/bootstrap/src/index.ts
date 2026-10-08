@@ -321,10 +321,15 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       return configuration.model||"fake-chat";
     }
   };
+  const getChatModelForPreset=async(providerPresetId:string):Promise<string>=>{
+    const pool=getPoolProvider(providerPresetId);
+    return pool?.getModel()??resolveChatModelForPreset(providerPresetId);
+  };
+
   const automaticMemoryAgent=new AutomaticMemoryAgent({
     settings:()=>settingsManager.get(),
     broker:memoryBroker,
-    runtime:{chat:extractionChatRuntime.chat,getChatModelForPreset:resolveChatModelForPreset},
+    runtime:{chat:extractionChatRuntime.chat,getChatModelForPreset},
     validator:contractValidator,
     diagnostics:diagnosticsStore,
     traceStore
@@ -342,10 +347,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       return buildEmbeddingProviderForPreset(configuration,semanticSettings.embeddingModel,credentialStore,options.embeddingHttpClient);
     },
     judgeRuntime:extractionChatRuntime,
-    getChatModelForPreset:async(providerPresetId:string)=>{
-      const pool=getPoolProvider(providerPresetId);
-      return pool?.getModel()??resolveChatModelForPreset(providerPresetId);
-    },
+    getChatModelForPreset,
     validator:contractValidator,
     diagnostics:diagnosticsStore,
     events,
@@ -578,7 +580,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
         sourceId:""
       };
     },
-    getChatModelForPreset:resolveChatModelForPreset,
+    getChatModelForPreset,
     applyProviderConfiguration:async(configuration)=>{await applyProvider(configuration);},
     getSettings:()=>settingsManager.get(),
     updateSettings:async(settings)=>{
