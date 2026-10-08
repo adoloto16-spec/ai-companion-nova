@@ -13,6 +13,7 @@ import {
   StandardContractValidator,
   type ChatRequest,
   type ChatProvider,
+  type DiagnosticsStore,
   type EmbeddingProvider,
   type CredentialStore,
   type ProviderConfiguration,
@@ -152,7 +153,7 @@ export function buildChatProviderForSource(
   source:ProviderPresetSource,
   credentialStore:CredentialStore,
   httpClient?:HttpClient,
-  diagnostics?:InMemoryDiagnosticsStore,
+  diagnostics?:DiagnosticsStore,
   providerPresetId?:string
 ):ChatProvider|undefined{
   const configuration:ProviderConfiguration={
@@ -192,7 +193,7 @@ export function buildProviderForPreset(
   configuration:ProviderConfiguration,
   credentialStore:CredentialStore,
   httpClient?:HttpClient,
-  diagnostics?:InMemoryDiagnosticsStore,
+  diagnostics?:DiagnosticsStore,
   providerPresetId?:string
 ):ChatProvider|undefined{
   const validation=validateProviderPresetConfiguration(configuration);
@@ -256,7 +257,7 @@ export function buildConfiguredProvider(
   configuration:ProviderConfiguration|undefined,
   credentialStore:CredentialStore,
   httpClient?:HttpClient,
-  diagnostics?:InMemoryDiagnosticsStore,
+  diagnostics?:DiagnosticsStore,
   providerPresetId?:string
 ):ChatProvider|undefined{
   if(!configuration||!configuration.enabled)return undefined;
