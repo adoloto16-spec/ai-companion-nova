@@ -27,7 +27,7 @@ assert.equal(app.includes('view==="provider-settings"'),false,"Provider Settings
 assert.equal(app.includes('view==="provider-presets"'),false,"Provider Presets must not remain a top-level route");
 
 const navigation=app.slice(app.indexOf("<nav className=\"app-nav\""),app.indexOf("</nav>",app.indexOf("<nav className=\"app-nav\"")));
-for(const label of ["Chat","Characters","Core Book","Model Profile","Settings","Diagnostics"]){
+for(const label of ["Chat","Characters","Core Book","Model Profile","Settings","Thoughts","Diagnostics"]){
   assert.ok(navigation.includes(">"+label+"</button>"),"Primary navigation must expose "+label);
 }
 for(const removed of ["Provider Presets","Provider Settings"]){
@@ -76,6 +76,11 @@ assert.ok(syncCharacters.includes("setChatController(loaded.controller);"),"sync
 assert.ok(refreshRuntime.includes("setChatController(null);"),"refreshRuntime must clear the stale controller before runtime replacement");
 assert.ok(refreshRuntime.indexOf("setChatController(null);")<refreshRuntime.indexOf("await foundationRef.current?.stop();"),"stale controller must be cleared before stopping the old runtime");
 assert.ok(refreshRuntime.includes("await syncCharacters(next);"),"new runtime must synchronize a freshly created controller");
+assert.ok(source.includes("startLife:()=>mindRuntime.start()"),"FoundationRuntime must expose the Mind Runtime start control");
+assert.ok(source.includes("stopLife:()=>mindRuntime.stop()"),"FoundationRuntime must expose the Mind Runtime stop control");
+assert.ok(app.includes("Nova Life:"),"App must expose the global Nova Life control");
+assert.ok(app.includes("<ThoughtsView mindState={mindState}/>"),"Thoughts must remain a technical observer of runtime state");
+assert.ok(source.includes("subscribeMindState"),"UI must subscribe to runtime mind state rather than own the runtime");
 
 assert.match(source,/class ViewErrorBoundary extends React\.Component/);
 assert.match(source,/componentDidCatch\(error:Error,info:React\.ErrorInfo\)/);
