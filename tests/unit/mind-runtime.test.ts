@@ -153,7 +153,8 @@ async function characterScopedThoughtHistoryTest(){
   equal(runtime.getState().recentThoughts.length,1,"point delete removes one thought");
   equal(runtime.getState().recentThoughts[0]?.id,aThoughts[1]?.id,"point delete preserves other thoughts");
   await step.run({characterId:"character.a",state:runtime.getState(),signal:new AbortController().signal});
-  const deletionContext=seen.filter(item=>item.characterId==="character.a").at(-1);
+  const deletionContexts=seen.filter(item=>item.characterId==="character.a");
+  const deletionContext=deletionContexts[deletionContexts.length-1];
   equal(deletionContext?.history,[aThoughts[1]?.content],"deleted Thought is absent from the next cognition context");
   equal(runtime.deleteThought(aThoughts[1]!.id),true,"latest point delete reports success");
   equal(runtime.getState().lastThought,null,"deleting latest thought clears last thought");
