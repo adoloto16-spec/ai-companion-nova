@@ -716,3 +716,4 @@ export const CONTRACT_VERSIONS={
 export {STANDARD_SCHEMAS} from "./generated-schemas";
 
 export {MinimalJsonSchemaValidator,StandardContractValidator} from "./schema-validator";
+export * from "./mind-runtime";
