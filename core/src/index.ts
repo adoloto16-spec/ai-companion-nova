@@ -25,3 +25,4 @@ export * from "./settings";
 export * from "./agent-output";
 export * from "./semantic-memory-dedup";
 export * from "./mind-runtime";
+export * from "./llm-cognitive-step";
