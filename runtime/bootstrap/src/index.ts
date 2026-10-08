@@ -1,4 +1,4 @@
-import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryArchiveReason,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,MemorySemanticIndexStore,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider} from "../../../contracts/src/index";
+import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,ProviderPreset,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryArchiveReason,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,MemorySemanticIndexStore,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider} from "../../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore} from "../../../contracts/src/index";
 import type {Conversation,ConversationCreateInput,ConversationId,ConversationStore,ConversationUpdateInput} from "../../../contracts/src/index";
@@ -23,7 +23,8 @@ import {InMemorySettingsStore} from "../../../host/settings/src/index";
 import {InMemoryCoreBookStore} from "../../../host/core-book/src/index";
 import {InMemoryMemorySemanticIndexStore,InMemoryMemoryStore} from "../../../host/memory/src/index";
 import type {CoreBookCreateInput,CoreBookUpdateInput} from "../../../core/src/core-book-manager";
-import {activeProviderId,buildConfiguredProvider,buildEmbeddingProviderForPreset,buildProviderForDiscovery,buildProviderForPreset,testProviderConfiguration} from "./provider-configuration";
+import {activeProviderId,buildConfiguredProvider,buildEmbeddingProviderForPreset,buildProviderForDiscovery,buildProviderForPreset,buildChatProviderForSource,testProviderConfiguration} from "./provider-configuration";
+import {ProviderPoolChatProvider,type ProviderPoolSourceDiagnostics} from "./provider-pool";
 import {RetrievalEventIndexer} from "../../../core/src/retrieval-indexer";
 
 
@@ -49,6 +50,8 @@ export interface FoundationRuntimeOptions{
   semanticIndexStore?:MemorySemanticIndexStore;
   embeddingHttpClient?:import("../../../providers/embeddings/openai-compatible/src").EmbeddingHttpClient;
   providerPresetConfigurations?:readonly {presetId:string;configuration:ProviderConfiguration}[];
+  providerPresetPools?:readonly ProviderPreset[];
+  onProviderPresetPoolStateChange?:(preset:ProviderPreset)=>void|Promise<void>;
   activeProviderPresetId?:string;
 }
 
@@ -66,11 +69,12 @@ export interface FoundationRuntime{
   getChatModel(providerId?:string):Promise<string>;
   getChatModelForPreset(providerPresetId:string):Promise<string>;
   getActiveProviderPresetId():string|undefined;
-  getChatProviderDiagnostics(providerPresetId?:string):{
+  getChatProviderDiagnostics(providerPresetId?:string):ProviderPoolSourceDiagnostics&{
     providerPresetId?:string;
     providerId:string;
     baseUrlHost?:string;
     timeoutMs?:number;
+    sourceId?:string;
   };
   applyProviderConfiguration(configuration:ProviderConfiguration|undefined):Promise<void>;
   testConfiguredProvider():Promise<import("../../../contracts/src/index").ProviderConnectionTestResult>;
@@ -81,6 +85,7 @@ export interface FoundationRuntime{
   listChatTraces(limit?:number):readonly import("../../../contracts/src/index").ChatTurnTrace[];
   clearChatTraces():void;
   setProviderPresetConfigurations(configurations:readonly {presetId:string;configuration:ProviderConfiguration}[],activePresetId?:string):void;
+  setProviderPresetPools(presets:readonly ProviderPreset[],activePresetId?:string):void;
   listCharacters():Promise<readonly Character[]>;
   getCharacter(id:CharacterId):Promise<Character|undefined>;
   createCharacter(input:import("../../../core/src/index").CharacterCreateInput):Promise<Character>;
@@ -185,7 +190,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const conversationManager=new ConversationManager(conversationStore,{characterExists:async characterId=>Boolean(await characterManager.getCharacter(characterId)),events,clock:{now:()=>new Date().toISOString()}});
   const credentialStore=options.credentialStore??options.openAICompatible?.credentialStore??new InMemoryCredentialStore();
   let providerPresetConfigurations=new Map((options.providerPresetConfigurations??[]).map(item=>[item.presetId,item.configuration]));
-  let activeProviderPresetId=options.activeProviderPresetId??options.providerPresetConfigurations?.[0]?.presetId;
+  let providerPresetPools=new Map((options.providerPresetPools??[]).map(preset=>[preset.id,preset]));
+  let activeProviderPresetId=options.activeProviderPresetId??options.providerPresetPools?.[0]?.id??options.providerPresetConfigurations?.[0]?.presetId;
   let providerConfiguration=options.providerConfiguration;
   const audit=new InMemoryAuditService();
   let retrievalDegraded=false;
@@ -242,10 +248,28 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   providers.register(new FakeEmbeddingProvider(),["embeddings"]);
   providers.register(new FakeVisionProvider(),["vision"]);
 
+  const createPoolProvider=(preset:ProviderPreset):ProviderPoolChatProvider=>new ProviderPoolChatProvider({
+    preset,
+    credentialStore,
+    diagnostics:diagnosticsStore,
+    createProvider:(source,diagnostics)=>buildChatProviderForSource(source,credentialStore,options.httpClient,diagnostics,preset.id),
+    onStateChanged:options.onProviderPresetPoolStateChange
+  });
+  const getPoolProvider=(providerPresetId:string):ProviderPoolChatProvider|undefined=>{
+    const preset=providerPresetPools.get(providerPresetId);
+    return preset?createPoolProvider(preset):undefined;
+  };
   const aiRuntime=new AiRuntime(providers,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
   const extractionChatRuntime={
     chat:async (request:ChatRequest,providerPresetId?:string):Promise<ChatResponse>=>{
       if(providerPresetId){
+        const pool=getPoolProvider(providerPresetId);
+        if(pool){
+          const scopedProviders=new ProviderRegistry();
+          scopedProviders.register(pool,["chat"]);
+          const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
+          return scopedRuntime.generate({...request,providerId:pool.id});
+        }
         const configuration=providerPresetConfigurations.get(providerPresetId);
         const effectiveConfiguration=configuration?{...configuration,model:request.model}:undefined;
         const scopedProviders=new ProviderRegistry();
@@ -254,7 +278,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
           if(configured)scopedProviders.register(configured,["chat"]);
         }
         const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
-        return scopedRuntime.generate({...request,providerId:"openai-compatible"});
+        return scopedRuntime.generate({...request,providerId:effectiveConfiguration?.providerId??request.providerId});
       }
       return aiRuntime.generate(request.providerId?request:{...request,providerId:activeProviderId(providerConfiguration)});
     }
@@ -292,7 +316,10 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       return buildEmbeddingProviderForPreset(configuration,semanticSettings.embeddingModel,credentialStore,options.embeddingHttpClient);
     },
     judgeRuntime:extractionChatRuntime,
-    getChatModelForPreset:resolveChatModelForPreset,
+    getChatModelForPreset:async(providerPresetId:string)=>{
+      const pool=getPoolProvider(providerPresetId);
+      return pool?.getModel()??resolveChatModelForPreset(providerPresetId);
+    },
     validator:contractValidator,
     diagnostics:diagnosticsStore,
     events,
@@ -425,6 +452,13 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     invoke:request=>broker.execute({request,credential:characterCredential}),
     stream:async(request,handlers,streamOptions={},providerPresetId)=>{
       if(providerPresetId){
+        const pool=getPoolProvider(providerPresetId);
+        if(pool){
+          const scopedProviders=new ProviderRegistry();
+          scopedProviders.register(pool,["chat"]);
+          const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
+          return scopedRuntime.stream({...request,providerId:pool.id},handlers,streamOptions);
+        }
         const configuration=providerPresetConfigurations.get(providerPresetId);
         const effectiveConfiguration=configuration?{...configuration,model:request.model}:undefined;
         const scopedProviders=new ProviderRegistry();
@@ -433,13 +467,13 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
           if(configured)scopedProviders.register(configured,["chat"]);
         }
         diagnosticsStore.recordError("chat-provider","CHAT_PROVIDER_REQUEST_STARTED","Chat provider stream request started",{
-          requestId:request.requestId,providerId:"openai-compatible",providerPresetId,model:request.model,
+          requestId:request.requestId,providerId:effectiveConfiguration?.providerId??request.providerId??"unknown",providerPresetId,model:request.model,
           ...(safeProviderConfigMetadata(effectiveConfiguration)?{...safeProviderConfigMetadata(effectiveConfiguration)}:{}),
           chatTransport:"stream"
         });
         const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
         try{
-          return await scopedRuntime.stream({...request,providerId:"openai-compatible"},handlers,streamOptions);
+          return await scopedRuntime.stream({...request,providerId:effectiveConfiguration?.providerId??request.providerId},handlers,streamOptions);
         }catch(error){
           recordChatProviderFailure(diagnosticsStore,error,request,providerPresetId,"stream");
           throw error;
@@ -459,6 +493,13 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     },
     chat:async(request,providerPresetId)=>{
       if(providerPresetId){
+        const pool=getPoolProvider(providerPresetId);
+        if(pool){
+          const scopedProviders=new ProviderRegistry();
+          scopedProviders.register(pool,["chat"]);
+          const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
+          return scopedRuntime.generate({...request,providerId:pool.id});
+        }
         const configuration=providerPresetConfigurations.get(providerPresetId);
         const effectiveConfiguration=configuration?{...configuration,model:request.model}:undefined;
         const scopedProviders=new ProviderRegistry();
@@ -467,7 +508,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
           if(configured)scopedProviders.register(configured,["chat"]);
         }
         const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
-        return scopedRuntime.generate({...request,providerId:"openai-compatible"});
+        return scopedRuntime.generate({...request,providerId:effectiveConfiguration?.providerId??request.providerId});
       }
       return aiRuntime.generate(request.providerId?request:{...request,providerId:activeProviderId(providerConfiguration)});
     },
@@ -488,12 +529,27 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     getActiveProviderPresetId:()=>activeProviderPresetId,
     getChatProviderDiagnostics:providerPresetId=>{
       const effectiveId=providerPresetId??activeProviderPresetId;
+      if(effectiveId){
+        const pool=getPoolProvider(effectiveId);
+        if(pool){
+          const poolDiagnostics=pool.getDiagnostics();
+          const activeSource=providerPresetPools.get(effectiveId)?.sources.find(source=>source.id===poolDiagnostics.sourceId);
+          return {
+            ...poolDiagnostics,
+            providerPresetId:effectiveId,
+            providerId:poolDiagnostics.providerId||activeSource?.providerId||"unknown",
+            ...(activeSource?{timeoutMs:activeSource.timeoutMs??30000}:{}),
+            ...(poolDiagnostics.sourceId?{sourceId:poolDiagnostics.sourceId}:{}),
+          };
+        }
+      }
       const configuration=effectiveId?providerPresetConfigurations.get(effectiveId):providerConfiguration;
       return {
-        ...(effectiveId?{providerPresetId:effectiveId}:{}),
+        providerPresetId:effectiveId,
         providerId:configuration?.providerId??activeProviderId(providerConfiguration),
         ...(configuration?{baseUrlHost:safeBaseUrlHost(configuration.baseUrl)}:{}),
         ...(configuration?{timeoutMs:configuration.timeoutMs??30000}:{}),
+        sourceId:""
       };
     },
     getChatModelForPreset:resolveChatModelForPreset,
@@ -523,6 +579,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     listChatTraces:limit=>traceStore.recent(limit),
     clearChatTraces:()=>traceStore.clear(),
     setProviderPresetConfigurations:(configurations,activePresetId)=>{providerPresetConfigurations=new Map(configurations.map(item=>[item.presetId,item.configuration])); activeProviderPresetId=activePresetId??configurations[0]?.presetId;},
+    setProviderPresetPools:(presets,activePresetId)=>{providerPresetPools=new Map(presets.map(preset=>[preset.id,preset])); activeProviderPresetId=activePresetId??presets[0]?.id??activeProviderPresetId;},
     listCharacters:()=>characterManager.listCharacters(),
     getCharacter:id=>characterManager.getCharacter(id),
     createCharacter:async input=>{
