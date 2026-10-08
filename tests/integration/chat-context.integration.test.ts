@@ -131,7 +131,7 @@ async function main(){
     const request=cognitiveCalls[index]!.request;
     equal(request.context.messages.map(message=>message.role),expectedConversationRoles[index],`Case ${index+1} preserves conversation roles and appends a user cognition cue`);
     equal(request.context.messages[request.context.messages.length-1]?.content,"Continue the internal cognition step. Produce exactly one internal thought based on the context above. Do not answer the user.","cognitive request ends with the synthetic user cue");
-    equal(request.context.messages[request.context.messages.length-1]?.id,"conv-1:cognition:user-cue","synthetic cognition cue has a request-local id");
+    equal(request.context.messages[request.context.messages.length-1]?.id,request.context.conversationId+":cognition:user-cue","synthetic cognition cue has a request-local id");
   }
   equal(cognitiveCalls[1]?.request.context.messages.find(message=>message.id==="cognition-assistant-2")?.metadata?.safeMarker,"assistant-metadata","assistant metadata survives ContextEngine into canonical request");
   equal(cognitiveCalls[1]?.request.context.messages.slice(3,-1).map(message=>message.content),["Hello","Hi there"],"Case B preserves user and assistant content before the cue");
