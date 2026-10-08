@@ -2231,7 +2231,7 @@ function App(){
     return listProviderModels(materializeProviderConfiguration(source),credentialStore);
   },[credentialStore]);
 
-  const testPreset=React.useCallback(async(preset:ProviderPreset,sourceId:string):Promise<ProviderConnectionTestResult=>{
+  const testPreset=React.useCallback(async(preset:ProviderPreset,sourceId:string):Promise<ProviderConnectionTestResult>{
     const source=preset.sources.find(item=>item.id===sourceId);
     if(!source)throw new Error("Provider source was not found.");
     let config=materializeProviderConfiguration(source);
