@@ -16,7 +16,8 @@ pub struct CredentialReference{
 
 fn validate_reference(reference:&CredentialReference)->Result<(),String>{
     if reference.kind!="api-key"{return Err("unsupported credential kind".to_string());}
-    if reference.provider.as_deref()!=Some("openai-compatible"){return Err("unsupported credential provider".to_string());}
+    let provider=reference.provider.as_deref().ok_or_else(||"credential provider is required".to_string())?;
+    if provider.trim().is_empty()||provider.len()>100{return Err("invalid credential provider".to_string());}
     if reference.id.is_empty()||reference.id.len()>128||!reference.id.chars().all(|c|c.is_ascii_alphanumeric()||matches!(c,'.'|'_'|'-')){
         return Err("invalid credential reference id".to_string());
     }
@@ -25,7 +26,7 @@ fn validate_reference(reference:&CredentialReference)->Result<(),String>{
 
 fn target_name(reference:&CredentialReference)->Result<String,String>{
     validate_reference(reference)?;
-    Ok(format!("AI Companion Nova::openai-compatible::{}",reference.id))
+    Ok(format!("AI Companion Nova::{}::{}",reference.provider.as_deref().unwrap_or("unknown"),reference.id))
 }
 
 pub struct WindowsCredentialStore;
