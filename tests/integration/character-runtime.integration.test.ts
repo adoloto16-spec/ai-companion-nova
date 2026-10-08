@@ -5,6 +5,13 @@ import {loadProviderConfigurationSafely} from "../../host/config/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error(label+" expected "+String(expected)+" got "+String(actual))}
 function ok(value:unknown,label:string){if(!value)throw new Error(label)}
+async function waitFor(predicate:()=>boolean,timeoutMs=2500):Promise<void>{
+  const deadline=Date.now()+timeoutMs;
+  while(!predicate()){
+    if(Date.now()>=deadline)throw new Error("Timed out waiting for condition.");
+    await new Promise(resolve=>setTimeout(resolve,10));
+  }
+}
 
 async function freshStartupTest(){
   const characterStore=new InMemoryCharacterStore();
@@ -82,8 +89,29 @@ async function main(){
     const nova=await runtime.getActiveCharacter();
     equal(nova.name,"Nova","runtime starts with deterministic Nova");
     const gm=await runtime.createCharacter({name:"GM"});
+
+    await runtime.startLife();
+    await waitFor(()=>runtime.getMindState().recentThoughts.length>=1);
+    await runtime.stopLife();
+    const novaThoughts=runtime.getMindState().recentThoughts;
+    equal(novaThoughts.length>=1,true,"Nova Life produced a thought for the active character");
+    equal(novaThoughts.every(thought=>thought.characterId===nova.id),true,"Nova thoughts are character scoped");
+
     await runtime.setActiveCharacter(gm.id);
     equal((await runtime.getActiveCharacter()).id,gm.id,"runtime switches active character");
+    equal(runtime.getMindState().recentThoughts.length,0,"GM starts with only its own empty thought history");
+
+    await runtime.startLife();
+    await waitFor(()=>runtime.getMindState().recentThoughts.length>=1);
+    await runtime.stopLife();
+    const gmThoughts=runtime.getMindState().recentThoughts;
+    equal(gmThoughts.every(thought=>thought.characterId===gm.id),true,"GM thoughts are character scoped");
+    equal(runtime.getMindState().recentThoughts.some(thought=>novaThoughts.some(previous=>previous.id===thought.id)),false,"GM history does not contain Nova thoughts");
+
+    await runtime.setActiveCharacter(nova.id);
+    equal(runtime.getMindState().recentThoughts.map(thought=>thought.id),novaThoughts.map(thought=>thought.id),"switching back restores Nova thought history");
+    runtime.clearAllThoughts();
+    equal(runtime.getMindState().recentThoughts.length,0,"clear all thoughts works through FoundationRuntime");
 
     const novaSession=new ConversationSession("conversation-nova",nova.id);
     const gmSession=new ConversationSession("conversation-gm",gm.id);
