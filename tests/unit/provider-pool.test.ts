@@ -45,8 +45,10 @@ class FakeCredentialStore implements CredentialStore{
   async deleteSecret():Promise<void>{}
 }
 class FakeDiagnostics implements DiagnosticsStore{
-  readonly entries:readonly unknown[]=[];
-  recordError(_source:string,_code:string,_message:string,_metadata?:Record<string,unknown>):void{}
+  readonly entries:Array<Record<string,unknown>>=[];
+  recordError(source:string,code:string,message:string,metadata?:Record<string,unknown>):void{
+    this.entries.push({source,code,message,...(metadata?{metadata}: {})});
+  }
   recentErrors():readonly never[]{return [];}
 }
 const credential=(id:string,provider="openai-compatible"):CredentialReference=>({id,kind:"api-key",provider,version:"1"});
@@ -204,7 +206,9 @@ async function main(){
     });
     await pool.chat(request());
     const serialized=JSON.stringify(persisted);
+    const diagnosticSerialized=JSON.stringify(diagnostics.entries);
     ok(!serialized.includes("secret"),"persisted pool state contains no API secret");
+    ok(!diagnosticSerialized.includes("secret:"),"provider pool diagnostics contain no API secret");
   }
 
   {
@@ -216,6 +220,17 @@ async function main(){
     ok(error!==undefined,"authentication failure produces an aggregate error when pool is exhausted");
     equal(pool.getPreset().sources[0]?.health,"unavailable","401 marks source unavailable");
     equal(pool.getPreset().sources[0]?.cooldownUntil,null,"401 does not use cooldown retry");
+  }
+
+  {
+    const provider=new FakeProvider("source-a",[new PoolFailure("authentication",403)]);
+    const {pool,providers}=await build({sources:[source("source-a")]});
+    providers.set("source-a",provider);
+    let error:unknown;
+    try{await pool.chat(request());}catch(value){error=value;}
+    ok(error!==undefined,"403 authentication failure produces an aggregate error when pool is exhausted");
+    equal(pool.getPreset().sources[0]?.health,"unavailable","403 marks source unavailable");
+    equal(pool.getPreset().sources[0]?.cooldownUntil,null,"403 does not use cooldown retry");
   }
 
   console.log("PASS provider pool unit tests");
