@@ -62,7 +62,8 @@ async function main(){
     equal(sent.headers["x-goog-api-key"],"gemini-test-secret","Gemini API key uses x-goog-api-key");
     ok(!sent.url.includes("gemini-test-secret"),"Gemini secret is never placed in URL");
     const body=JSON.parse(sent.body??"{}") as Record<string,unknown>;
-    equal((body.systemInstruction as {parts:Array<{text:string}>>).parts[0]?.text,"You are Nova.","system message maps to systemInstruction");
+    const systemInstruction=body.systemInstruction as {parts:Array<{text:string}>};
+    equal(systemInstruction.parts[0]?.text,"You are Nova.","system message maps to systemInstruction");
     const contents=body.contents as Array<{role:string;parts:Array<{text:string}>}>;
     equal(contents.map(item=>item.role).join(","),"user,model,user","user/assistant history maps to user/model roles");
     const generationConfig=body.generationConfig as Record<string,unknown>;
