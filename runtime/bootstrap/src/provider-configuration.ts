@@ -55,7 +55,7 @@ function providerCredentialError(configuration:ProviderConfiguration):string|und
   return undefined;
 }
 
-export function validateProviderConfiguration(configuration:ProviderConfiguration):{valid:boolean;errors:readonly string[]}{
+export function validateProviderConfiguration(configuration:ProviderConfiguration,options:{allowMissingCredentialReference?:boolean}={}):{valid:boolean;errors:readonly string[]}{
   const schemaResult=validator.validate(configuration,STANDARD_SCHEMAS["provider-configuration"]!);
   if(!schemaResult.valid)return {valid:false,errors:[...schemaResult.errors]};
   const errors:string[]=[];
@@ -64,6 +64,7 @@ export function validateProviderConfiguration(configuration:ProviderConfiguratio
   if(configuration.model!==configuration.model.trim()||configuration.model.length===0)errors.push("Provider model must be a non-empty trimmed string.");
   const credentialError=providerCredentialError(configuration);
   if(credentialError)errors.push(credentialError);
+  if(configuration.enabled&&configuration.credentialReference===null&&!options.allowMissingCredentialReference)errors.push("An enabled real provider requires a credential reference.");
   if(configuration.providerId===OPENAI_COMPATIBLE_PROVIDER_ID){
     const providerErrors=validateOpenAICompatibleProviderConfig({
       baseUrl:configuration.baseUrl,
@@ -132,8 +133,11 @@ export async function testProviderConfiguration(configuration:ProviderConfigurat
   }
 }
 
-function validateProviderPresetConfiguration(configuration:ProviderConfiguration):{valid:boolean;errors:readonly string[]}{
-  return validateProviderConfiguration(configuration);
+function validateProviderPresetConfiguration(
+  configuration:ProviderConfiguration,
+  options:{allowMissingCredentialReference?:boolean}={}
+):{valid:boolean;errors:readonly string[]}{
+  return validateProviderConfiguration(configuration,options);
 }
 
 export function buildEmbeddingProviderForPreset(
@@ -166,7 +170,7 @@ export function buildChatProviderForSource(
     ...(source.timeoutMs===undefined?{}:{timeoutMs:source.timeoutMs})
   };
   if(!isSupportedChatProvider(configuration.providerId))return undefined;
-  const validation=validateProviderPresetConfiguration(configuration);
+  const validation=validateProviderPresetConfiguration(configuration,{allowMissingCredentialReference:true});
   if(!validation.valid)return undefined;
   if(configuration.providerId===OPENAI_COMPATIBLE_PROVIDER_ID){
     return new OpenAICompatibleChatProvider({
@@ -195,7 +199,7 @@ export function buildProviderForPreset(
   diagnostics?:DiagnosticsStore,
   providerPresetId?:string
 ):ChatProvider|undefined{
-  const validation=validateProviderPresetConfiguration(configuration);
+  const validation=validateProviderPresetConfiguration(configuration,{allowMissingCredentialReference:true});
   if(!validation.valid||!configuration.enabled)return undefined;
   if(configuration.providerId===OPENAI_COMPATIBLE_PROVIDER_ID){
     return new OpenAICompatibleChatProvider({
