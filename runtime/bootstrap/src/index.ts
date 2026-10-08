@@ -74,6 +74,9 @@ export interface FoundationRuntime{
   getMindState():import("../../../contracts/src/index").MindState;
   subscribeMindState(listener:(state:import("../../../contracts/src/index").MindState)=>void):import("../../../contracts/src/index").Unsubscribe;
   subscribeThoughts(listener:(thought:import("../../../contracts/src/index").Thought)=>void):import("../../../contracts/src/index").Unsubscribe;
+  deleteThought(thoughtId:string):boolean;
+  clearCurrentThoughts():void;
+  clearAllThoughts():void;
   getChatProviderDiagnostics(providerPresetId?:string):{
     providerPresetId?:string;
     providerId:string;
@@ -334,7 +337,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const mindRuntime=new MindRuntime({
     cognitiveStep:new LLMCognitiveStep({
       runtime:extractionChatRuntime,
-      getActiveCharacter:()=>characterManager.getActiveCharacter(),
+      getCharacter:characterId=>characterManager.getCharacter(characterId),
       getActiveConversation:characterId=>conversationManager.getActiveConversation(characterId),
       buildContext:request=>contextEngine.build(request),
       getContextBudget:()=>{
@@ -506,6 +509,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   return {
     async start(){
       await characterManager.initialize();
+      const initialCharacter=await characterManager.getActiveCharacter();
+      mindRuntime.setActiveCharacter(initialCharacter.id);
       try{await conversationManager.getActiveConversation(await characterManager.getActiveCharacter().then(character=>character.id));}
       catch(error){diagnosticsStore.recordError("conversation-storage","LOAD_FAILED",error instanceof Error?error.message:String(error));}
       retrievalIndexer?.start();
@@ -605,6 +610,9 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     getMindState:()=>mindRuntime.getState(),
     subscribeMindState:listener=>mindRuntime.subscribe(listener),
     subscribeThoughts:listener=>mindRuntime.subscribeThoughts(listener),
+    deleteThought:thoughtId=>mindRuntime.deleteThought(thoughtId),
+    clearCurrentThoughts:()=>mindRuntime.clearCurrentThoughts(),
+    clearAllThoughts:()=>mindRuntime.clearAllThoughts(),
     getChatProviderDiagnostics:providerPresetId=>{
       const effectiveId=providerPresetId??activeProviderPresetId;
       if(effectiveId){
@@ -679,6 +687,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     getActiveCharacter:()=>characterManager.getActiveCharacter(),
     setActiveCharacter:async id=>{
       const character=await characterManager.setActiveCharacter(id);
+      mindRuntime.setActiveCharacter(character.id);
       await conversationManager.getActiveConversation(character.id);
       return character;
     },
