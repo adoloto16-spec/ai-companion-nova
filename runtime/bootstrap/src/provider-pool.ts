@@ -203,10 +203,7 @@ export class ProviderPoolChatProvider implements ChatProvider{
       if(!source)break;
       attempted.add(source.id);
       const provider=this.options.createProvider(source,this.options.diagnostics);
-      if(!provider){
-        await this.markFailure(source,"configuration");
-        continue;
-      }
+      if(!provider)throw this.configurationError(request,source);
       const sourceRequest={...request,providerId:source.providerId,model:source.model};
       let emittedDelta=false;
       const forwardingHandlers:ChatStreamHandlers={
