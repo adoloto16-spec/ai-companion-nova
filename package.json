@@ -12,6 +12,7 @@
     "desktop:dev": "pnpm exec tauri dev --config apps/desktop-host/src-tauri/tauri.conf.json"
   },
   "workspaces": [
+    "providers/chat/gemini",
     "apps/*",
     "contracts",
     "sdk/typescript",
