@@ -21,7 +21,7 @@ import {
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
   type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem, type ErrorDiagnostic,
   defaultAppSettings, validateAppSettings, StandardContractValidator,
-  type ProviderPreset, type ProviderPresetStoreState, type ModelInfo
+  type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo
 } from "../../../contracts/src/index";
 import "./styles.css";
 
@@ -758,7 +758,7 @@ function ProviderPresetsView({
     name,
     providerId,
     baseUrl:providerId==="gemini"?"https://generativelanguage.googleapis.com/v1beta":"https://api.openai.com/v1",
-    model:providerId==="gemini"?"gemini-2.5-flash":"",
+    model:"",
     credentialReference:null,
     enabled:true,
     health:"healthy",
@@ -910,7 +910,7 @@ function ProviderPresetsView({
     setBusy(true);setMessage("");
     try{
       const result=await onTestPreset(draft,selectedSource.id);
-      setMessage=resultLabel(result)+(result.message?" · "+result.message:"");
+      setMessage(resultLabel(result)+(result.message?" · "+result.message:""));
     }catch(error){setMessage("Provider test failed: "+safeErrorMessage(error))}
     finally{setBusy(false)}
   };
@@ -940,7 +940,7 @@ function ProviderPresetsView({
   const setStarter=(name:string,providerId:"openai-compatible"|"gemini",baseUrl:string,model="")=>{
     const now=new Date().toISOString();
     const source=defaultSource(now,providerId,name);
-    updateDraft({...draft,name,providerId:undefined as never,sources:[{...source,baseUrl,model}],activeSourceId:source.id,createdAt:draft.createdAt});
+    updateDraft({...draft,name,sources:[{...source,baseUrl,model}],activeSourceId:source.id,createdAt:draft.createdAt});
     setSelectedSourceId(source.id);setCredentialChoice("");setModels([]);
   };
 
