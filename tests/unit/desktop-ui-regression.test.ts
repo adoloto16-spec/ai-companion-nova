@@ -54,6 +54,19 @@ assert.ok(settingsContainer.includes("<ProviderPresetsView "), "Provider Presets
 for(const forbidden of ["appSettings","saveAppSettings","resetAppSettings","foundationRef","setSettingsLoadMessage","setSaving"]){
   assert.equal(providerPresets.includes(forbidden),false,"ProviderPresetsView must not access App-local "+forbidden);
 }
+assert.equal(providerPresets.includes("credentialChoice"),false,"ProviderPresetsView must not keep credentialChoice as independent state");
+assert.ok(providerPresets.includes('value={selectedSource.credentialReference?.id??""}'),"Credential selector must derive its value from the source reference");
+assert.ok(providerPresets.includes('updateSource(selectedSource.id,{credentialReference:null})'),"No credential must immediately clear the source reference");
+assert.ok(providerPresets.includes('updateSource(selectedSource.id,{credentialReference:{...profile.credentialReference}})'),"Selecting or creating a credential must immediately update the source reference");
+assert.ok(providerPresets.includes("validateProviderPresetCredentialReferences(draft,credentialProfiles)"),"Save must validate existing source credential references without reconstructing them from UI state");
+assert.ok(providerPresets.includes("cloneProviderPresetForSaveAsNew"),"Save as new must clone the whole current draft rather than only selectedSource");
+assert.ok(providerPresets.includes("selectedSource?{...selectedSource,id:"),false,"Save as new must not copy only selectedSource");
+assert.equal(providerPresets.includes("setCredentialChoice"),false,"ProviderPresetsView must not update independent credential selection state");
+assert.ok(providerPresets.includes("setAddingCredential(true)"),"Add credential remains UI-only state");
+assert.ok(providerPresets.includes("await onSavePreset(next,false)"),"Save as new must persist the complete next preset");
+assert.ok(providerPresets.includes('setDraft(next);setSelectedId(next.id);'),"After successful save the draft must become the saved preset");
+assert.ok(providerPresets.includes('providerId,credentialReference:null'),"Changing provider must clear the previous credential reference");
+assert.ok(providerPresets.includes('setAddingCredential(false)'),"Provider/source changes must reset only the UI add-credential mode");
 assert.ok(providerPresets.includes(`presets.length===0?<option value="">No saved presets</option>`),"Provider Presets must render an empty-state option");
 assert.match(providerPresets,/Model discovery failed:/);
 assert.match(providerPresets,/Models refreshed\./);
