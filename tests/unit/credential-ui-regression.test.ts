@@ -32,6 +32,17 @@ ok(setSecretIndex>=0,"createCredentialProfile must call credentialStore.setSecre
 ok(existsIndex>setSecretIndex,"credential existence verification must happen after setSecret.");
 ok(guardIndex>existsIndex,"credential verification failure must throw before metadata creation.");
 ok(metadataIndex>guardIndex,"CredentialProfile metadata must be created only after verification.");
+const providerPresetsStart=source.indexOf("function ProviderPresetsView(");
+const providerPresetsEnd=source.indexOf("function ModelProfileView(",providerPresetsStart);
+const providerPresets=source.slice(providerPresetsStart,providerPresetsEnd);
+ok(providerPresets.includes("updateSource(selectedSource.id,{credentialReference:{...profile.credentialReference}})"),"new credentials must immediately update the current source reference");
+ok(providerPresets.includes("setAddingCredential(false)"),"creating a credential must close only the UI add-credential state");
+ok(providerPresets.includes("value={selectedSource.credentialReference?.id??\"\"\"}"),"credential select value must be derived from source credential reference");
+ok(providerPresets.includes("updateSource(selectedSource.id,{credentialReference:null})"),"No credential must clear the source reference immediately");
+ok(providerPresets.includes("providerId,credentialReference:null"),"provider changes must clear the previous credential reference");
+ok(providerPresets.includes("cloneProviderPresetForSaveAsNew(draft"),"Save as new must use the entire current draft");
+ok(providerPresets.includes("validateProviderPresetCredentialReferences(draft,credentialProfiles)"),"save must reject missing credential metadata instead of silently nulling it");
+ok(!providerPresets.includes("credentialChoice"),"credentialChoice must not be an independent source of truth");
 
 async function main(){
 const reference:CredentialReference={id:"credential.test.1",kind:"api-key",provider:"openai-compatible",version:"1"};
