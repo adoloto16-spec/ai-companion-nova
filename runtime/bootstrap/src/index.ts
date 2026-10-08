@@ -248,16 +248,25 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   providers.register(new FakeEmbeddingProvider(),["embeddings"]);
   providers.register(new FakeVisionProvider(),["vision"]);
 
+  const providerPoolProviders=new Map<string,ProviderPoolChatProvider>();
   const createPoolProvider=(preset:ProviderPreset):ProviderPoolChatProvider=>new ProviderPoolChatProvider({
     preset,
     credentialStore,
     diagnostics:diagnosticsStore,
     createProvider:(source,diagnostics)=>buildChatProviderForSource(source,credentialStore,options.httpClient,diagnostics,preset.id),
-    onStateChanged:options.onProviderPresetPoolStateChange
+    onStateChanged:async updated=>{
+      providerPresetPools.set(updated.id,updated);
+      await options.onProviderPresetPoolStateChange?.(updated);
+    }
   });
   const getPoolProvider=(providerPresetId:string):ProviderPoolChatProvider|undefined=>{
     const preset=providerPresetPools.get(providerPresetId);
-    return preset?createPoolProvider(preset):undefined;
+    if(!preset)return undefined;
+    const existing=providerPoolProviders.get(providerPresetId);
+    if(existing)return existing;
+    const created=createPoolProvider(preset);
+    providerPoolProviders.set(providerPresetId,created);
+    return created;
   };
   const aiRuntime=new AiRuntime(providers,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
   const extractionChatRuntime={
@@ -579,7 +588,16 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     listChatTraces:limit=>traceStore.recent(limit),
     clearChatTraces:()=>traceStore.clear(),
     setProviderPresetConfigurations:(configurations,activePresetId)=>{providerPresetConfigurations=new Map(configurations.map(item=>[item.presetId,item.configuration])); activeProviderPresetId=activePresetId??configurations[0]?.presetId;},
-    setProviderPresetPools:(presets,activePresetId)=>{providerPresetPools=new Map(presets.map(preset=>[preset.id,preset])); activeProviderPresetId=activePresetId??presets[0]?.id??activeProviderPresetId;},
+    setProviderPresetPools:(presets,activePresetId)=>{
+      const next=new Map(presets.map(preset=>[preset.id,preset]));
+      for(const id of providerPoolProviders.keys())if(!next.has(id))providerPoolProviders.delete(id);
+      for(const preset of presets){
+        providerPresetPools.set(preset.id,preset);
+        providerPoolProviders.delete(preset.id);
+      }
+      providerPresetPools=next;
+      activeProviderPresetId=activePresetId??presets[0]?.id??activeProviderPresetId;
+    },
     listCharacters:()=>characterManager.listCharacters(),
     getCharacter:id=>characterManager.getCharacter(id),
     createCharacter:async input=>{
