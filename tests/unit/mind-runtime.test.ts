@@ -191,14 +191,13 @@ async function llmCognitiveStepTest(){
   });
   const first=await step.run({characterId:"char-1",state:{focus:"test",lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"thinking"},signal:new AbortController().signal});
   const firstCall=calls[0]!;
-  console.log(JSON.stringify(firstCall?.context.messages.map(message=>({id:message.id,role:message.role,content:message.content}))));
   equal(first.characterId,"char-1","cognitive Thought carries character scope");
   equal(first.content,thought,"structured LLM output becomes Thought content");
   equal(first.expression,"internal","cognitive output is internal");
   equal(firstCall.metadata?.cognition,true,"cognition request is marked internal");
   equal(firstCall.generation?.responseFormat?.type,"text","cognitive request uses provider-neutral text output");
   equal(firstCall.context.messages.some(message=>message.content.includes("INTERNAL THOUGHT HISTORY")),true,"mind context includes thought history section");
-  equal(firstCall.context.messages.some(message=>message.content==="Core Book context"),true,"context engine output is included");
+  equal(firstCall.context.messages.some(message=>message.content==="Core book context"),true,"context engine output is included");
 }
 
 async function cognitiveProviderBadRequestRegressionTest(){
