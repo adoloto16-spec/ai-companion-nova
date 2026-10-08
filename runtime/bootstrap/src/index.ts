@@ -342,11 +342,6 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
         return {availableContextTokens:settings.context.availableContextTokens,reservedOutputTokens:settings.context.reservedOutputTokens,systemOverheadTokens:0,safetyMarginTokens:settings.context.safetyMarginTokens};
       },
       getActiveProviderPresetId:()=>activeProviderPresetId,
-    startLife:()=>mindRuntime.start(),
-    stopLife:()=>mindRuntime.stop(),
-    getMindState:()=>mindRuntime.getState(),
-    subscribeMindState:listener=>mindRuntime.subscribe(listener),
-    subscribeThoughts:listener=>mindRuntime.subscribeThoughts(listener),
       getChatModel:()=>activeProviderId(providerConfiguration)==="openai-compatible"&&providerConfiguration?providerConfiguration.model:"fake-chat",
       getChatModelForPreset,
       clock:()=>new Date().toISOString()
@@ -585,6 +580,11 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       }
     },
     getActiveProviderPresetId:()=>activeProviderPresetId,
+    startLife:()=>mindRuntime.start(),
+    stopLife:()=>mindRuntime.stop(),
+    getMindState:()=>mindRuntime.getState(),
+    subscribeMindState:listener=>mindRuntime.subscribe(listener),
+    subscribeThoughts:listener=>mindRuntime.subscribeThoughts(listener),
     getChatProviderDiagnostics:providerPresetId=>{
       const effectiveId=providerPresetId??activeProviderPresetId;
       if(effectiveId){
