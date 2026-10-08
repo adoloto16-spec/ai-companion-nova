@@ -37,7 +37,7 @@ const providerPresetsEnd=source.indexOf("function ModelProfileView(",providerPre
 const providerPresets=source.slice(providerPresetsStart,providerPresetsEnd);
 ok(providerPresets.includes("updateSource(selectedSource.id,{credentialReference:{...profile.credentialReference}})"),"new credentials must immediately update the current source reference");
 ok(providerPresets.includes("setAddingCredential(false)"),"creating a credential must close only the UI add-credential state");
-ok(providerPresets.includes("value={selectedSource.credentialReference?.id??\"\"\"}"),"credential select value must be derived from source credential reference");
+ok(providerPresets.includes('value={selectedSource.credentialReference?.id??""}'),"credential select value must be derived from source credential reference");
 ok(providerPresets.includes("updateSource(selectedSource.id,{credentialReference:null})"),"No credential must clear the source reference immediately");
 ok(providerPresets.includes("providerId,credentialReference:null"),"provider changes must clear the previous credential reference");
 ok(providerPresets.includes("cloneProviderPresetForSaveAsNew(draft"),"Save as new must use the entire current draft");
