@@ -120,7 +120,7 @@ async function resumeIntentAfterUserMessageTest(){
   });
   let userEvents=0;
   events.subscribe("UserMessageReceived",()=>{userEvents++});
-  const {runtime,conversationManager,conversation}=await createTestRuntime(controller);
+  const {runtime,conversationManager,events,conversation}=await createTestRuntime(controller);
   try{
     await runtime.start("character:test",conversation.id);
     await waitFor(()=>controller.calls>=2);
