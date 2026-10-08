@@ -401,7 +401,6 @@ export class DeterministicContextEngine implements ContextEngineContract {
             include(previous.candidate);
             include(current.candidate);
             index-=1;
-          }else{
           }
           continue;
         }
@@ -414,7 +413,7 @@ export class DeterministicContextEngine implements ContextEngineContract {
     // Remaining budget is shared by Core Book and older conversation. The deterministic
     // selection score is relevance + activationStrength + retentionPriority + recency.
     const pressurePool=candidates
-      .filter(item=>item.candidate.eligible && !included.has(item.candidate.id) && item.candidate.zone!=="system" && item.candidate.zone!=="recent_conversation" && !blockedRecentAssistantIds.has(item.candidate.id))
+      .filter(item=>item.candidate.eligible && !included.has(item.candidate.id) && item.candidate.zone!=="system" && item.candidate.zone!=="recent_conversation")
       .sort(stableCompare);
     for(const item of pressurePool){
       if(item.candidate.source==="conversation"&&item.candidate.role==="assistant"){
