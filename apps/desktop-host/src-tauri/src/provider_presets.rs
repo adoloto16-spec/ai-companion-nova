@@ -189,8 +189,8 @@ fn migrate_legacy_state(
             version:profile.credential_reference.version.clone()
         });
         let source_id=format!("source:{}:primary",preset.id);
-        let model=preset.model.unwrap_or_else(||"unconfigured".to_string());
         let enabled=preset.model.as_deref().map(|value|!value.trim().is_empty()).unwrap_or(false);
+        let model=preset.model.unwrap_or_else(||"unconfigured".to_string());
         let source=ProviderPresetSource{
             id:source_id.clone(),
             name:if preset.name.trim().is_empty(){"Primary".to_string()}else{preset.name.clone()},
