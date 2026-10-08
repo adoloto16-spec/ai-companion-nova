@@ -747,42 +747,91 @@ function ProviderPresetsView({
   onSavePreset:(preset:ProviderPreset,activate:boolean)=>Promise<void>;
   onActivatePreset:(id:string)=>Promise<void>;
   onDeletePreset:(id:string)=>Promise<void>;
-  onCreateCredential:(label:string,secret:string)=>Promise<CredentialProfile>;
+  onCreateCredential:(label:string,secret:string,providerId:string)=>Promise<CredentialProfile>;
   onDeleteCredential:(id:string)=>Promise<void>;
-  onRefreshModels:(preset:ProviderPreset)=>Promise<readonly ModelInfo[]>;
-  onTestPreset:(preset:ProviderPreset)=>Promise<ProviderConnectionTestResult>;
+  onRefreshModels:(preset:ProviderPreset,sourceId:string)=>Promise<readonly ModelInfo[]>;
+  onTestPreset:(preset:ProviderPreset,sourceId:string)=>Promise<ProviderConnectionTestResult>;
 }){
-  const [selectedId,setSelectedId]=React.useState<string|undefined>(presets.find(p=>p.id===activePresetId)?.id??presets[0]?.id);
-  const [draft,setDraft]=React.useState<ProviderPreset>(()=>presets.find(p=>p.id===selectedId)??{
-    id:"provider-preset:new-"+Date.now(),name:"",providerId:"openai-compatible",baseUrl:"https://api.openai.com/v1",
-    createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()
+  const firstPreset=presets.find(p=>p.id===activePresetId)??presets[0];
+  const defaultSource=(now=new Date().toISOString(),providerId:"openai-compatible"|"gemini"="openai-compatible",name="Primary"):ProviderPresetSource=>({
+    id:"source:"+name.toLowerCase().replace(/[^a-z0-9]+/g,"-")+":"+Date.now(),
+    name,
+    providerId,
+    baseUrl:providerId==="gemini"?"https://generativelanguage.googleapis.com/v1beta":"https://api.openai.com/v1",
+    model:providerId==="gemini"?"gemini-2.5-flash":"",
+    credentialReference:null,
+    enabled:true,
+    health:"healthy",
+    failureCount:0,
+    cooldownUntil:null,
+    createdAt:now,
+    updatedAt:now
   });
+  const defaultPreset=():ProviderPreset=>{
+    const now=new Date().toISOString();
+    const source=defaultSource(now);
+    return {id:"provider-preset:new-"+Date.now(),name:"",sources:[source],activeSourceId:source.id,createdAt:now,updatedAt:now};
+  };
+  const [selectedId,setSelectedId]=React.useState<string|undefined>(firstPreset?.id);
+  const [draft,setDraft]=React.useState<ProviderPreset>(()=>firstPreset?{...firstPreset,sources:firstPreset.sources.map(source=>({...source,credentialReference:source.credentialReference?{...source.credentialReference}:null}))}:defaultPreset());
+  const [selectedSourceId,setSelectedSourceId]=React.useState<string|undefined>(()=>draft.activeSourceId??draft.sources[0]?.id);
   const [models,setModels]=React.useState<readonly ModelInfo[]>([]);
   const [busy,setBusy]=React.useState(false);
   const [message,setMessage]=React.useState("");
-  const [credentialChoice,setCredentialChoice]=React.useState(draft.credentialProfileId??"");
+  const [credentialChoice,setCredentialChoice]=React.useState(draft.sources.find(source=>source.id===selectedSourceId)?.credentialReference?.id??"");
   const [newCredentialLabel,setNewCredentialLabel]=React.useState("");
   const [newCredentialSecret,setNewCredentialSecret]=React.useState("");
+  const [dirty,setDirty]=React.useState(false);
 
   React.useEffect(()=>{
+    if(dirty)return;
     const next=presets.find(p=>p.id===selectedId)??presets[0];
-    if(next){setSelectedId(next.id);setDraft({...next});setCredentialChoice(next.credentialProfileId??"");}
-  },[selectedId,presets]);
+    if(next){
+      setSelectedId(next.id);
+      setDraft({...next,sources:next.sources.map(source=>({...source,credentialReference:source.credentialReference?{...source.credentialReference}:null}))});
+      const sourceId=next.activeSourceId??next.sources[0]?.id;
+      setSelectedSourceId(sourceId);
+      setCredentialChoice(next.sources.find(source=>source.id===sourceId)?.credentialReference?.id??"");
+      setModels([]);
+    }
+  },[dirty,presets,selectedId]);
+
+  const selectedSource=draft.sources.find(source=>source.id===selectedSourceId)??draft.sources[0];
+  React.useEffect(()=>{
+    setCredentialChoice(selectedSource?.credentialReference?.id??"");
+    setModels([]);
+  },[selectedSourceId,selectedSource?.id]);
+
+  const updateDraft=(next:ProviderPreset)=>{
+    setDirty(true);
+    setDraft({...next,updatedAt:new Date().toISOString()});
+  };
+
+  const updateSource=(sourceId:string,patch:Partial<ProviderPresetSource>)=>{
+    updateDraft({
+      ...draft,
+      sources:draft.sources.map(source=>source.id===sourceId?{...source,...patch,updatedAt:new Date().toISOString()}:source)
+    });
+  };
 
   const save=async(activate:boolean)=>{
     setBusy(true);setMessage("");
     try{
+      if(!draft.name.trim())throw new Error("Provider preset name is required.");
+      if(draft.sources.length===0)throw new Error("Provider preset must contain at least one source.");
+      const sources=draft.sources.map(source=>source.id===selectedSource?.id
+        ?{...source,credentialReference:credentialProfiles.find(profile=>profile.id===credentialChoice)?.credentialReference??source.credentialReference,updatedAt:new Date().toISOString()}
+        :source
+      );
       const next:ProviderPreset={
         ...draft,
         name:draft.name.trim(),
-        baseUrl:draft.baseUrl.trim(),
-        providerId:"openai-compatible",
-        credentialProfileId:credentialChoice||undefined,
-        model:draft.model?.trim()||undefined,
+        sources,
+        activeSourceId:draft.activeSourceId&&sources.some(source=>source.id===draft.activeSourceId)?draft.activeSourceId:sources[0]!.id,
         updatedAt:new Date().toISOString()
       };
-      if(!next.name)throw new Error("Provider preset name is required.");
-      await onSavePreset(next,activate);setDraft(next);setSelectedId(next.id);
+      await onSavePreset(next,activate);
+      setDraft(next);setSelectedId(next.id);setDirty(false);
       setMessage(activate?"Provider preset saved and activated.":"Provider preset saved.");
     }catch(error){setMessage("Provider preset could not be saved: "+safeErrorMessage(error))}
     finally{setBusy(false)}
@@ -790,14 +839,13 @@ function ProviderPresetsView({
 
   const saveAsNew=async()=>{
     const now=new Date().toISOString();
-    const next={...draft,id:"provider-preset:"+(draft.name.trim()||"preset").toLowerCase().replace(/[^a-z0-9]+/g,"-")+":"+Date.now(),createdAt:now,updatedAt:now};
-    setDraft(next);setSelectedId(next.id);
-    await (async()=>{
-      setBusy(true);setMessage("");
-      try{await onSavePreset(next,false);setMessage("Provider preset saved as new preset.")}
-      catch(error){setMessage("Provider preset could not be saved: "+safeErrorMessage(error))}
-      finally{setBusy(false)}
-    })();
+    const source=selectedSource?{...selectedSource,id:"source:"+Date.now(),createdAt:now,updatedAt:now}:{...defaultSource(now)};
+    const next={...draft,id:"provider-preset:"+(draft.name.trim()||"preset").toLowerCase().replace(/[^a-z0-9]+/g,"-")+":"+Date.now(),createdAt:now,updatedAt:now,sources:[source],activeSourceId:source.id};
+    setDraft(next);setSelectedId(next.id);setSelectedSourceId(source.id);setDirty(true);
+    setBusy(true);setMessage("");
+    try{await onSavePreset(next,false);setDirty(false);setMessage("Provider preset saved as new preset.")}
+    catch(error){setMessage("Provider preset could not be saved: "+safeErrorMessage(error))}
+    finally{setBusy(false)}
   };
 
   const activate=async()=>{
@@ -816,85 +864,159 @@ function ProviderPresetsView({
     finally{setBusy(false)}
   };
 
+  const addSource=()=>{
+    const now=new Date().toISOString();
+    const source=defaultSource(now,selectedSource?.providerId==="gemini"?"gemini":"openai-compatible","Source "+(draft.sources.length+1));
+    updateDraft({...draft,sources:[...draft.sources,source],activeSourceId:draft.activeSourceId??source.id});
+    setSelectedSourceId(source.id);
+  };
+
+  const removeSource=()=>{
+    if(!selectedSource)return;
+    const remaining=draft.sources.filter(source=>source.id!==selectedSource.id);
+    const nextActive=draft.activeSourceId===selectedSource.id?(remaining[0]?.id??null):draft.activeSourceId;
+    updateDraft({...draft,sources:remaining,activeSourceId:nextActive});
+    setSelectedSourceId(remaining[0]?.id);
+  };
+
+  const moveSource=(direction:-1|1)=>{
+    if(!selectedSource)return;
+    const index=draft.sources.findIndex(source=>source.id===selectedSource.id);
+    const nextIndex=index+direction;
+    if(index<0||nextIndex<0||nextIndex>=draft.sources.length)return;
+    const sources=[...draft.sources];
+    const [moved]=sources.splice(index,1);
+    sources.splice(nextIndex,0,moved!);
+    updateDraft({...draft,sources});
+  };
+
+  const setActiveSource=()=>{
+    if(selectedSource)updateDraft({...draft,activeSourceId:selectedSource.id});
+  };
+
   const refresh=async()=>{
+    if(!selectedSource)return;
     setBusy(true);setMessage("");
     try{
-      const result=await onRefreshModels(draft);setModels(result);
+      const result=await onRefreshModels(draft,selectedSource.id);
+      setModels(result);
       setMessage(result.length>0?"Models refreshed.":"Model discovery unavailable; manual model input is active.");
     }catch(error){setModels([]);setMessage("Model discovery failed: "+safeErrorMessage(error))}
     finally{setBusy(false)}
   };
 
   const test=async()=>{
+    if(!selectedSource)return;
     setBusy(true);setMessage("");
     try{
-      const result=await onTestPreset(draft);setMessage(resultLabel(result)+(result.message?" · "+result.message:""));
+      const result=await onTestPreset(draft,selectedSource.id);
+      setMessage=resultLabel(result)+(result.message?" · "+result.message:"");
     }catch(error){setMessage("Provider test failed: "+safeErrorMessage(error))}
     finally{setBusy(false)}
   };
 
   const createCredential=async()=>{
+    if(!selectedSource)return;
     setBusy(true);setMessage("");
     try{
       if(!newCredentialLabel.trim()||!newCredentialSecret)throw new Error("Credential label and API key are required.");
-      const profile=await onCreateCredential(newCredentialLabel.trim(),newCredentialSecret);
-      setCredentialChoice(profile.id);setNewCredentialLabel("");setNewCredentialSecret("");
+      const profile=await onCreateCredential(newCredentialLabel.trim(),newCredentialSecret,selectedSource.providerId);
+      setCredentialChoice(profile.id);
+      setNewCredentialLabel("");setNewCredentialSecret("");
       setMessage("Credential saved. The API key is no longer displayed.");
     }catch(error){setMessage("Credential could not be saved: "+safeErrorMessage(error))}
     finally{setBusy(false)}
   };
 
   const deleteCredential=async(id:string)=>{
-    const used=presets.filter(p=>p.credentialProfileId===id);
-    if(used.length>0){setMessage("Credential is used by: "+used.map(p=>p.name||p.id).join(", ")+". Reassign the preset before deletion.");return;}
+    const used=presets.filter(p=>p.sources.some(source=>source.credentialReference?.id===credentialProfiles.find(profile=>profile.id===id)?.credentialReference.id));
+    if(used.length>0){setMessage("Credential is used by: "+used.map(p=>p.name||p.id).join(", ")+". Reassign the source before deletion.");return;}
     setBusy(true);setMessage("");
     try{await onDeleteCredential(id);if(credentialChoice===id)setCredentialChoice("");setMessage("Credential removed.")}
     catch(error){setMessage("Credential could not be removed: "+safeErrorMessage(error))}
     finally{setBusy(false)}
   };
 
-  const setStarter=(name:string,baseUrl:string)=>{const now=new Date().toISOString();setDraft({id:"provider-preset:"+name.toLowerCase()+":"+Date.now(),name,providerId:"openai-compatible",baseUrl,createdAt:now,updatedAt:now});setCredentialChoice("");setModels([]);};
+  const setStarter=(name:string,providerId:"openai-compatible"|"gemini",baseUrl:string,model="")=>{
+    const now=new Date().toISOString();
+    const source=defaultSource(now,providerId,name);
+    updateDraft({...draft,name,providerId:undefined as never,sources:[{...source,baseUrl,model}],activeSourceId:source.id,createdAt:draft.createdAt});
+    setSelectedSourceId(source.id);setCredentialChoice("");setModels([]);
+  };
 
   return <section className="settings-grid">
     <section>
       <h2>Provider Presets</h2>
-      <p className="chat-subtitle">Saved connections. API secrets remain in the OS credential store.</p>
+      <p className="chat-subtitle">Each preset is a pool of independent API sources. API secrets remain in the OS credential store.</p>
       <label>Active preset
         <select value={activePresetId??""} onChange={event=>{if(event.target.value)void onActivatePreset(event.target.value)}} disabled={busy||presets.length===0}>
           {presets.length===0?<option value="">No saved presets</option>:presets.map(p=><option key={p.id} value={p.id}>{p.name||p.id}</option>)}
         </select>
       </label>
       <label>Preset to edit
-        <select value={selectedId??""} onChange={event=>setSelectedId(event.target.value)} disabled={busy||presets.length===0}>
+        <select value={selectedId??""} onChange={event=>{setDirty(false);setSelectedId(event.target.value)}} disabled={busy||presets.length===0}>
           {presets.length===0?<option value="">Create a preset below</option>:presets.map(p=><option key={p.id} value={p.id}>{p.name||p.id}</option>)}
         </select>
       </label>
-      <label>Name<input value={draft.name} onChange={event=>setDraft(current=>({...current,name:event.target.value}))} disabled={busy}/></label>
-      <label>Provider type<select value="openai-compatible" disabled><option value="openai-compatible">OpenAI-compatible</option></select></label>
-      <label>Base URL<input value={draft.baseUrl} onChange={event=>setDraft(current=>({...current,baseUrl:event.target.value}))} disabled={busy}/></label>
-      <label>API credential
-        <select value={credentialChoice} onChange={event=>setCredentialChoice(event.target.value)} disabled={busy}>
-          <option value="">No credential / local server</option>
-          {credentialProfiles.map(profile=><option key={profile.id} value={profile.id}>{profile.label} {credentialSaved[profile.id]?"••••••••":"(not saved)"}</option>)}
-          <option value="__new__">+ Add new credential</option>
+      <label>Name<input value={draft.name} onChange={event=>updateDraft({...draft,name:event.target.value})} disabled={busy}/></label>
+      <div className="actions">
+        <button onClick={()=>void addSource()} disabled={busy}>Add source</button>
+        <button onClick={()=>void removeSource()} disabled={busy||!selectedSource}>Delete source</button>
+        <button onClick={()=>moveSource(-1)} disabled={busy||!selectedSource}>Move up</button>
+        <button onClick={()=>moveSource(1)} disabled={busy||!selectedSource}>Move down</button>
+        <button onClick={setActiveSource} disabled={busy||!selectedSource||draft.activeSourceId===selectedSource.id}>Set active source</button>
+      </div>
+      <label>Source
+        <select value={selectedSource?.id??""} onChange={event=>{setSelectedSourceId(event.target.value);setModels([])}} disabled={busy||draft.sources.length===0}>
+          {draft.sources.map(source=><option key={source.id} value={source.id}>{source.name} · {source.providerId} · {source.health}{source.id===draft.activeSourceId?" · active":""}</option>)}
         </select>
       </label>
-      {credentialChoice==="__new__"&&<div className="character-actions">
-        <label>Label<input value={newCredentialLabel} onChange={event=>setNewCredentialLabel(event.target.value)} disabled={busy}/></label>
-        <label>API key<input type="password" autoComplete="off" value={newCredentialSecret} onChange={event=>setNewCredentialSecret(event.target.value)} disabled={busy}/></label>
-        <button onClick={()=>void createCredential()} disabled={busy}>Save credential</button>
-      </div>}
-      <label>Model
-        {models.length>0
-          ?<select value={draft.model??""} onChange={event=>setDraft(current=>({...current,model:event.target.value||undefined}))} disabled={busy}>
-            {models.map(model=><option key={model.id} value={model.id}>{model.displayName&&model.displayName!==model.id?model.displayName+" · "+model.id:model.id}</option>)}
+      {selectedSource&&<>
+        <label>Source name<input value={selectedSource.name} onChange={event=>updateSource(selectedSource.id,{name:event.target.value})} disabled={busy}/></label>
+        <label>Provider
+          <select value={selectedSource.providerId} onChange={event=>{
+            const providerId=event.target.value as "openai-compatible"|"gemini";
+            updateSource(selectedSource.id,{providerId,credentialReference:null,model:providerId==="gemini"?"gemini-2.5-flash":selectedSource.model});
+            setCredentialChoice("");
+          }} disabled={busy}>
+            <option value="openai-compatible">OpenAI-compatible</option>
+            <option value="gemini">Gemini</option>
           </select>
-          :<input value={draft.model??""} onChange={event=>setDraft(current=>({...current,model:event.target.value||undefined}))} placeholder="model-id" disabled={busy}/>}
-      </label>
-      <label>Timeout (ms)<input type="number" min="1" value={draft.timeoutMs??30000} onChange={event=>setDraft(current=>({...current,timeoutMs:Number(event.target.value)}))} disabled={busy}/></label>
+        </label>
+        <label>Base URL<input value={selectedSource.baseUrl} onChange={event=>updateSource(selectedSource.id,{baseUrl:event.target.value})} disabled={busy}/></label>
+        <label>API credential
+          <select value={credentialChoice} onChange={event=>setCredentialChoice(event.target.value)} disabled={busy}>
+            <option value="">No credential</option>
+            {credentialProfiles.filter(profile=>profile.providerId===selectedSource.providerId).map(profile=><option key={profile.id} value={profile.id}>{profile.label} {credentialSaved[profile.id]?"••••••••":"(not saved)"}</option>)}
+            <option value="__new__">+ Add new credential</option>
+          </select>
+        </label>
+        {credentialChoice==="__new__"&&<div className="character-actions">
+          <label>Label<input value={newCredentialLabel} onChange={event=>setNewCredentialLabel(event.target.value)} disabled={busy}/></label>
+          <label>API key<input type="password" autoComplete="off" value={newCredentialSecret} onChange={event=>setNewCredentialSecret(event.target.value)} disabled={busy}/></label>
+          <button onClick={()=>void createCredential()} disabled={busy}>Save credential</button>
+        </div>}
+        <label>Model
+          {models.length>0
+            ?<select value={selectedSource.model} onChange={event=>updateSource(selectedSource.id,{model:event.target.value})} disabled={busy}>
+              {models.map(model=><option key={model.id} value={model.id}>{model.displayName&&model.displayName!==model.id?model.displayName+" · "+model.id:model.id}</option>)}
+            </select>
+            :<input value={selectedSource.model} onChange={event=>updateSource(selectedSource.id,{model:event.target.value})} placeholder="model-id" disabled={busy}/>}
+        </label>
+        <label className="checkbox">Enabled
+          <input type="checkbox" checked={selectedSource.enabled} onChange={event=>updateSource(selectedSource.id,{enabled:event.target.checked})} disabled={busy}/>
+        </label>
+        <label>Timeout (ms)<input type="number" min="1" value={selectedSource.timeoutMs??30000} onChange={event=>updateSource(selectedSource.id,{timeoutMs:Number(event.target.value)})} disabled={busy}/></label>
+        <div className="status-grid">
+          <span>Health</span><strong>{selectedSource.health}</strong>
+          <span>Failures</span><strong>{selectedSource.failureCount}</strong>
+          <span>Cooldown</span><strong>{selectedSource.cooldownUntil??"none"}</strong>
+          <span>Active</span><strong>{selectedSource.id===draft.activeSourceId?"yes":"no"}</strong>
+        </div>
+      </>}
       <div className="actions">
-        <button onClick={()=>void refresh()} disabled={busy}>Refresh models</button>
-        <button onClick={()=>void test()} disabled={busy||!draft.name.trim()}>Test provider</button>
+        <button onClick={()=>void refresh()} disabled={busy||!selectedSource}>Refresh models</button>
+        <button onClick={()=>void test()} disabled={busy||!selectedSource}>Test source</button>
         <button onClick={()=>void save(false)} disabled={busy||!draft.name.trim()}>Save</button>
         <button onClick={()=>void save(true)} disabled={busy||!draft.name.trim()}>Save &amp; activate</button>
         <button onClick={()=>void saveAsNew()} disabled={busy||!draft.name.trim()}>Save as new preset</button>
@@ -902,20 +1024,26 @@ function ProviderPresetsView({
         {selectedId&&<button onClick={()=>void removePreset()} disabled={busy}>Delete preset</button>}
       </div>
       <div className="actions">
-        <button onClick={()=>setStarter("Mistral","https://api.mistral.ai/v1")} disabled={busy}>Starter: Mistral</button>
-        <button onClick={()=>setStarter("Groq","https://api.groq.com/openai/v1")} disabled={busy}>Starter: Groq</button>
-        <button onClick={()=>setStarter("OpenAI","https://api.openai.com/v1")} disabled={busy}>Starter: OpenAI</button>
+        <button onClick={()=>setStarter("OpenAI","openai-compatible","https://api.openai.com/v1","") } disabled={busy}>Starter: OpenAI</button>
+        <button onClick={()=>setStarter("Gemini","gemini","https://generativelanguage.googleapis.com/v1beta","gemini-2.5-flash")} disabled={busy}>Starter: Gemini</button>
       </div>
       {message&&<div className="notice" role="status">{message}</div>}
       <p className="hint">API keys are never loaded back into this UI.</p>
     </section>
     <section>
+      <h2>Sources</h2>
+      {draft.sources.length===0?<div>No sources in this preset.</div>:draft.sources.map(source=>
+        <div className="row" key={source.id}>
+          <span>{source.name} · {source.providerId} · {source.model||"no model"} · {source.baseUrl}</span>
+          <span>{source.health}{source.id===draft.activeSourceId?" · active":""}</span>
+        </div>
+      )}
       <h2>Saved API credentials</h2>
       {credentialProfiles.length===0?<div>No saved credential metadata.</div>:credentialProfiles.map(profile=>
-        <div className="row" key={profile.id}><span>{profile.label} {credentialSaved[profile.id]?"••••••••":"(not saved)"}</span><button onClick={()=>void deleteCredential(profile.id)} disabled={busy}>Delete</button></div>
+        <div className="row" key={profile.id}><span>{profile.label} · {profile.providerId} {credentialSaved[profile.id]?"••••••••":"(not saved)"}</span><button onClick={()=>void deleteCredential(profile.id)} disabled={busy}>Delete</button></div>
       )}
       <h2>Runtime</h2>
-      <div className="status-grid"><span>Runtime</span><strong>{runtime.runtimeStatus}</strong><span>Active</span><strong>{activePresetId??"none"}</strong></div>
+      <div className="status-grid"><span>Runtime</span><strong>{runtime.runtimeStatus}</strong><span>Active preset</span><strong>{activePresetId??"none"}</strong></div>
     </section>
   </section>;
 }
