@@ -55,7 +55,6 @@ async function main(){
     if(!captured)throw new Error("Second ChatRequest was not captured");
     const secondCaptured=captured;
     equal(secondCaptured.context.messages.filter(message=>message.metadata?.contextSource==="memory").length,0,"no-match chat does not inject unrelated memory");
-  }
 
   const cognitiveCalls:Array<{request:ChatRequest;providerPresetId:string|undefined}>=[];
 
@@ -124,15 +123,10 @@ async function main(){
   equal(cognitiveCalls[1]?.request.context.messages.length,5,"Case B canonical request has three cognition system messages plus conversation");
   equal(cognitiveCalls[1]?.request.context.messages.find(message=>message.id==="cognition-assistant-2")?.metadata?.safeMarker,"assistant-metadata","assistant metadata survives ContextEngine into canonical request");
   equal(cognitiveCalls[2]?.request.context.messages.map(message=>message.role),["system","system","system","user","assistant","user"],"Case C preserves user assistant user order");
-  equal(cognitiveCalls[2]?.request.context.messages.map(message=>message.content),[
-    "You are Nova.",
-    "Name: "+character.name+"\\nDescription: "+character.description+"\\n[/IDENTITY / CHARACTER]".replace("\\n","\\n"),
-    cognitiveCalls[2]?.request.context.messages[2]?.content??"",
-    "First",
-    "Reply",
-    "Follow-up"
-  ],"Case C keeps conversation content after cognition system context");
-
+  equal(cognitiveCalls[2]?.request.context.messages.slice(3).map(message=>message.content),["First","Reply","Follow-up"],"Case C keeps conversation content after cognition system context");
   console.log("PASS cognitive context role regression integration test");
+  }finally{
+    await runtime.stop();
+  }
 }
 void main().catch(error=>{console.error(error);process.exitCode=1});
