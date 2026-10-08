@@ -190,8 +190,8 @@ async function llmCognitiveStepTest(){
     getChatModelForPreset:async()=> "unused"
   });
   const first=await step.run({characterId:"char-1",state:{focus:"test",lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"thinking"},signal:new AbortController().signal});
-  console.log(JSON.stringify(firstCall?.context.messages.map(message=>({id:message.id,role:message.role,content:message.content}))));
   const firstCall=calls[0]!;
+  console.log(JSON.stringify(firstCall?.context.messages.map(message=>({id:message.id,role:message.role,content:message.content}))));
   equal(first.characterId,"char-1","cognitive Thought carries character scope");
   equal(first.content,thought,"structured LLM output becomes Thought content");
   equal(first.expression,"internal","cognitive output is internal");
