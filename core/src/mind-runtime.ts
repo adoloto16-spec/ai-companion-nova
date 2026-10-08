@@ -42,6 +42,7 @@ export class MindRuntime{
   private readonly recentThoughtLimit:number;
   private readonly onError?:MindRuntimeOptions["onError"];
   private readonly state:MindState;
+  private readonly initialFocus:string|null;
   private readonly characterStates=new Map<string,CharacterMindState>();
   private readonly listeners=new Set<(state:MindState)=>void>();
   private readonly thoughtListeners=new Set<(thought:Thought)=>void>();
@@ -58,7 +59,8 @@ export class MindRuntime{
     this.stepIntervalMs=options.stepIntervalMs??DEFAULT_STEP_INTERVAL_MS;
     this.recentThoughtLimit=options.recentThoughtLimit??DEFAULT_RECENT_THOUGHTS;
     this.onError=options.onError;
-    this.state={focus:options.initialFocus??null,lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"off"};
+    this.initialFocus=options.initialFocus??null;
+    this.state={focus:this.initialFocus,lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"off"};
   }
 
   getState():MindState{return cloneState(this.state);}
@@ -77,7 +79,9 @@ export class MindRuntime{
     const normalized=characterId.trim();
     if(!normalized)throw new Error("Mind Runtime active character id must not be empty.");
     this.activeCharacterId=normalized;
-    if(!this.characterStates.has(normalized))this.characterStates.set(normalized,createCharacterMindState());
+    if(!this.characterStates.has(normalized)){
+      this.characterStates.set(normalized,createCharacterMindState(this.characterStates.size===0?this.initialFocus:null));
+    }
     this.syncActiveState();
     this.notify();
   }
