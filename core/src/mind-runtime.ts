@@ -36,10 +36,6 @@ function cloneState(state:MindState):MindState{
 function createCharacterMindState(focus:string|null=null):CharacterMindState{
   return {focus,lastThought:null,lastThoughtAt:null,recentThoughts:[]};
 }
-function cloneCharacterMindState(state:CharacterMindState):CharacterMindState{
-  return {focus:state.focus,lastThought:state.lastThought,lastThoughtAt:state.lastThoughtAt,recentThoughts:[...state.recentThoughts]};
-}
-
 export class MindRuntime{
   private readonly cognitiveStep:CognitiveStep;
   private readonly stepIntervalMs:number;
@@ -81,7 +77,7 @@ export class MindRuntime{
     const normalized=characterId.trim();
     if(!normalized)throw new Error("Mind Runtime active character id must not be empty.");
     this.activeCharacterId=normalized;
-    if(!this.characterStates.has(normalized))this.characterStates.set(normalized,createCharacterMindState(this.state.focus));
+    if(!this.characterStates.has(normalized))this.characterStates.set(normalized,createCharacterMindState());
     this.syncActiveState();
     this.notify();
   }
@@ -202,7 +198,6 @@ export class MindRuntime{
     this.state.recentThoughts=[...characterState.recentThoughts];
   }
 
-  private setLifecycleStateOnly(lifecycleState:MindRuntimeLifecycleState):void{this.state.lifecycleState=lifecycleState;}
 
   private notify():void{
     const snapshot=this.getState();
