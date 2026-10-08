@@ -41,6 +41,11 @@ assert.ok(settingsContainer.includes('tab==="general"'),"Settings must have a Ge
 assert.ok(settingsContainer.includes('tab==="provider-presets"'),"Settings must have a Provider Presets tab");
 assert.ok(settingsContainer.includes("<AppSettingsView "), "General tab must render AppSettingsView");
 assert.ok(diagnosticsView.includes("runtime.diagnostics()"),"DiagnosticsView must bridge runtime DiagnosticsStore");
+assert.ok(diagnosticsView.includes("setRuntimeDiagnostics(snapshot.recentErrors)"),"DiagnosticsView must expose all recent runtime diagnostics separately");
+assert.ok(diagnosticsView.includes("Runtime diagnostics"),"DiagnosticsView must label general runtime diagnostics");
+for(const field of ["timestamp","source","code","message","requestId","providerPresetId","sourceId","providerId","model","category","httpStatus","durationMs","baseUrlHost"]){
+  assert.ok(diagnosticsView.includes(field), "DiagnosticsView must expose "+field);
+}
 assert.ok(diagnosticsView.includes('entry.source==="memory-semantic-deduplication"'),"DiagnosticsView must display semantic-memory diagnostics");
 assert.ok(diagnosticsView.includes("Memory Deduplication"),"DiagnosticsView must expose the Memory Deduplication section");
 assert.ok(diagnosticsView.includes("candidateDiagnostics")&&diagnosticsView.includes("archiveMapping")&&diagnosticsView.includes("mutationResult"),"DiagnosticsView must display dedup candidate/mutation diagnostics");
@@ -79,7 +84,12 @@ assert.ok(refreshRuntime.includes("await syncCharacters(next);"),"new runtime mu
 assert.ok(app.includes("foundation.startLife()"),"global Life control must start the Foundation Mind Runtime");
 assert.ok(app.includes("foundation.stopLife()"),"global Life control must stop the Foundation Mind Runtime");
 assert.ok(app.includes("Nova Life:"),"App must expose the global Nova Life control");
-assert.ok(app.includes("<ThoughtsView mindState={mindState}/>"),"Thoughts must remain a technical observer of runtime state");
+assert.ok(app.includes("<ThoughtsView mindState={mindState} character={activeCharacter} runtime={foundationRef.current}/>"),"Thoughts must remain a character-scoped runtime observer");
+assert.ok(source.includes("deleteThought(thoughtId"),"Foundation runtime must expose point Thought deletion");
+assert.ok(source.includes("clearCurrentThoughts()"),"Foundation runtime must expose current-character Thought clearing");
+assert.ok(source.includes("clearAllThoughts()"),"Foundation runtime must expose all-character Thought clearing");
+assert.ok(source.includes("window.confirm(\"Clear all Thoughts for all characters?\""),"Mass Thought clearing must use ordinary confirmation");
+assert.ok(source.includes("onClick={()=>deleteThought(thought.id)}"),"Thoughts UI must expose point delete");
 assert.ok(source.includes("subscribeMindState"),"UI must subscribe to runtime mind state rather than own the runtime");
 
 assert.match(source,/class ViewErrorBoundary extends React\.Component/);
