@@ -82,7 +82,7 @@ async function waitFor(predicate:()=>boolean,timeoutMs=1000,describe?:()=>string
 async function persistentIntentDueTest(){
   const controller=new CaptureController((context,index)=>{
     if(index===0)return{action:"create_intent",intent:{type:"finish_test_activity",description:"Finish the test activity",priority:90,dueAt:"2020-01-01T00:00:00.000Z"}};
-    const autonomyContext=JSON.parse(context.recentConversationMessages.find(message=>message.id.startsWith("nova-life-context:"))?.content??"{}") as any;
+    const autonomyContext=JSON.parse(context.recentConversationMessages.find(message=>message.id?.startsWith("nova-life-context:")===true)?.content??"{}") as any;
     if(context.wakeReason==="intent_due"&&autonomyContext.novaLife.activeIntentions?.[0])return{action:"complete_intent",intentId:autonomyContext.novaLife.activeIntentions[0].id};
     return{action:"idle"};
   });
