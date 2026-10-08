@@ -255,7 +255,9 @@ export class ProviderPoolChatProvider implements ChatProvider{
   }
 
   getDiagnostics():ProviderPoolSourceDiagnostics{
-    const source=this.selectSource(new Set())??this.preset.sources[0];
+    const source=this.preset.activeSourceId
+      ?this.preset.sources.find(item=>item.id===this.preset.activeSourceId)
+      :this.preset.sources[0];
     if(!source){
       return {providerPresetId:this.preset.id,sourceId:"",providerId:"",model:"",health:"unavailable",failureCount:0,cooldownUntil:null};
     }
