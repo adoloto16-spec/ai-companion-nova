@@ -130,7 +130,7 @@ async function main(){
   try{
     const result=await geminiRuntime.chat({...request,requestId:"mixed-provider"},"preset-mixed");
     equal(result.message.content,"gemini response","mixed provider pool can select Gemini");
-    equal(result.providerId,"gemini","Gemini source remains the concrete provider");
+    equal(result.providerId,"provider-pool:preset-mixed","mixed-provider response exposes the stable pool id");
   }finally{
     await geminiRuntime.stop();
   }
