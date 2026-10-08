@@ -113,6 +113,13 @@ async function main(){
     runtime.clearAllThoughts();
     equal(runtime.getMindState().recentThoughts.length,0,"clear all thoughts works through FoundationRuntime");
 
+    const transient=await runtime.createCharacter({name:"Transient"});
+    await runtime.setActiveCharacter(transient.id);
+    await runtime.deleteCharacter(transient.id);
+    const replacementCharacter=await runtime.getActiveCharacter();
+    equal(replacementCharacter.id===transient.id,false,"deleting active character selects a remaining character");
+    equal(runtime.getMindState().recentThoughts.length,0,"deleting active character resyncs Mind Runtime state");
+
     const novaSession=new ConversationSession("conversation-nova",nova.id);
     const gmSession=new ConversationSession("conversation-gm",gm.id);
     const makeResponse=(request:ChatRequest):ChatResponse=>({
