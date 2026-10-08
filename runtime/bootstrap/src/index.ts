@@ -348,7 +348,27 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     }),
     stepIntervalMs:1000,
     recentThoughtLimit:50,
-    onError:error=>diagnosticsStore.recordError("mind-runtime","COGNITIVE_STEP_FAILED",error instanceof Error?error.message:String(error))
+    onError:error=>{
+      const chatError=error&&typeof error==="object"&&"chatError" in error
+        ?(error as {chatError?:{requestId?:unknown;code?:unknown;message?:unknown;providerId?:unknown;details?:Record<string,unknown>}}).chatError
+        :undefined;
+      const details=chatError?.details;
+      const diagnosedPresetId=typeof details?.providerPresetId==="string"?details.providerPresetId:activeProviderPresetId;
+      const poolDiagnostics=diagnosedPresetId?getPoolProvider(diagnosedPresetId)?.getDiagnostics():undefined;
+      diagnosticsStore.recordError("mind-runtime","COGNITIVE_STEP_FAILED",typeof chatError?.message==="string"?chatError.message:error instanceof Error?error.message:String(error),{
+        ...(typeof chatError?.requestId==="string"?{requestId:chatError.requestId}:{}),
+        ...(typeof chatError?.code==="string"?{chatErrorCode:chatError.code}:{}),
+        ...(diagnosedPresetId?{providerPresetId:diagnosedPresetId}:{}),
+        ...(typeof details?.sourceId==="string"?{sourceId:details.sourceId}:poolDiagnostics?.sourceId?{sourceId:poolDiagnostics.sourceId}:{}),
+        ...(typeof chatError?.providerId==="string"?{providerId:chatError.providerId}:poolDiagnostics?.providerId?{providerId:poolDiagnostics.providerId}:{}),
+        ...(typeof details?.model==="string"?{model:details.model}:poolDiagnostics?.model?{model:poolDiagnostics.model}:{}),
+        ...(poolDiagnostics?.baseUrlHost?{baseUrlHost:poolDiagnostics.baseUrlHost}:{}),
+        ...(typeof details?.category==="string"?{category:details.category}:{}),
+        ...(typeof details?.httpStatus==="number"?{httpStatus:details.httpStatus}:{}),
+        ...(typeof details?.durationMs==="number"?{durationMs:details.durationMs}:{}),
+        ...(typeof details?.providerResponse!=="undefined"?{providerResponse:details.providerResponse}:{})
+      });
+    }
   });
 
   const automaticMemoryAgent=new AutomaticMemoryAgent({
