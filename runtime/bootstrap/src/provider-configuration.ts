@@ -64,7 +64,6 @@ export function validateProviderConfiguration(configuration:ProviderConfiguratio
   if(configuration.model!==configuration.model.trim()||configuration.model.length===0)errors.push("Provider model must be a non-empty trimmed string.");
   const credentialError=providerCredentialError(configuration);
   if(credentialError)errors.push(credentialError);
-  if(configuration.enabled&&configuration.credentialReference===null)errors.push("An enabled real provider requires a credential reference.");
   if(configuration.providerId===OPENAI_COMPATIBLE_PROVIDER_ID){
     const providerErrors=validateOpenAICompatibleProviderConfig({
       baseUrl:configuration.baseUrl,
