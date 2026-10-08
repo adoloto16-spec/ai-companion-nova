@@ -12,6 +12,28 @@ function cloneSource(source:ProviderPresetSource):ProviderPresetSource{
 function clonePreset(preset:ProviderPreset):ProviderPreset{
   return {...preset,sources:preset.sources.map(cloneSource)};
 }
+
+export function cloneProviderPresetForSaveAsNew(preset:ProviderPreset,id:string,now=new Date().toISOString()):ProviderPreset{
+  const cloned=clonePreset(preset);
+  return {...cloned,id,createdAt:now,updatedAt:now};
+}
+
+export function validateProviderPresetCredentialReferences(
+  preset:ProviderPreset,
+  profiles:readonly CredentialProfile[]
+):void{
+  for(const source of preset.sources){
+    const reference=source.credentialReference;
+    if(!reference)continue;
+    const profile=profiles.find(candidate=>candidate.credentialReference.id===reference.id);
+    if(!profile){
+      throw new Error(`Credential reference "${reference.id}" for source "${source.name}" is unavailable. Re-select or recreate the credential before saving.`);
+    }
+    if(profile.providerId!==source.providerId||profile.credentialReference.provider!==reference.provider){
+      throw new Error(`Credential reference "${reference.id}" does not belong to provider "${source.providerId}". Re-select the credential before saving.`);
+    }
+  }
+}
 function cloneState(state:ProviderPresetStoreState):ProviderPresetStoreState{
   return {...state,presets:state.presets.map(clonePreset)};
 }
