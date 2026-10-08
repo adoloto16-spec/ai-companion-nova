@@ -373,7 +373,7 @@ function NovaLifeControl({state,busy,character,conversation,chatBusy,error,onTog
     </button>
     <span className="nova-life-state" aria-live="polite">
       Status: {lifeStatusLabel(state.status)}
-      {state.nextWakeAt&&<> · next wake {new Date(state.nextWakeAt).toLocaleTimeString()}</>}
+      {state.nextRelevantDeadline&&<> · next deadline {new Date(state.nextRelevantDeadline).toLocaleTimeString()}</>}
     </span>
     {error&&<span className="chat-error" role="alert">{error}</span>}
   </div>;
@@ -1119,26 +1119,11 @@ function AppSettingsView({
       [section]:{...(settings[section] as Record<string,unknown>),[key]:value}
     } as AppSettings);
   };
-  const setLifeNumber=(section:"scheduler"|"cognition"|"resourceBudget",key:string,value:number)=>{
-    onChange({
-      ...settings,
-      novaLife:{
-        ...settings.novaLife,
-        [section]:{...settings.novaLife[section],[key]:value}
-      }
-    } as AppSettings);
+  const setLifeNumber=(key:"maxSteps"|"maxDurationMs"|"maxModelCallsPerBurst"|"maxToolCallsPerBurst",value:number)=>{
+    onChange({...settings,novaLife:{...settings.novaLife,cognition:{...settings.novaLife.cognition,[key]:value}}});
   };
   const setLifeBoolean=(key:"enabledAtStartup"|"proactiveEnabled"|"allowProactiveMessages",value:boolean)=>{
     onChange({...settings,novaLife:{...settings.novaLife,lifecycle:{...settings.novaLife.lifecycle,[key]:value}}});
-  };
-  const setWakePolicy=(key:"appChanged"|"windowChanged"|"conversationChanged"|"characterChanged",value:boolean)=>{
-    onChange({
-      ...settings,
-      novaLife:{
-        ...settings.novaLife,
-        scheduler:{...settings.novaLife.scheduler,eventWakePolicy:{...settings.novaLife.scheduler.eventWakePolicy,[key]:value}}
-      }
-    });
   };
   const defaults=defaultAppSettings();
   return <div className="settings-grid">
@@ -1231,17 +1216,10 @@ function AppSettingsView({
 
     <section>
       <h3>Nova Life</h3>
-      <p className="hint">These controls are runtime inputs, not decorative UI. Changes apply after Save.</p>
+      <p className="hint">Autonomy is event- and intention-driven. There are no periodic wake controls or local RPM limits.</p>
       <label className="checkbox">Enabled at startup
         <input type="checkbox" checked={settings.novaLife.lifecycle.enabledAtStartup}
           onChange={event=>setLifeBoolean("enabledAtStartup",event.target.checked)} disabled={saving}/>
-      </label>
-      <label>Startup behavior
-        <select value={settings.novaLife.lifecycle.startupBehavior}
-          onChange={event=>onChange({...settings,novaLife:{...settings.novaLife,lifecycle:{...settings.novaLife.lifecycle,startupBehavior:event.target.value as AppSettings["novaLife"]["lifecycle"]["startupBehavior"]}}})} disabled={saving}>
-          <option value="wait">Wait</option>
-          <option value="proactive">Proactive</option>
-        </select>
       </label>
       <label className="checkbox">Proactive behavior enabled
         <input type="checkbox" checked={settings.novaLife.lifecycle.proactiveEnabled}
@@ -1252,79 +1230,34 @@ function AppSettingsView({
           onChange={event=>setLifeBoolean("allowProactiveMessages",event.target.checked)} disabled={saving}/>
       </label>
 
-      <h4>Scheduler</h4>
+      <h4>Cognition budget</h4>
       <div className="core-book-grid">
-        <label>Default wait (ms)
-          <input type="number" min={1} max={300000} value={settings.novaLife.scheduler.defaultWaitMs}
-            onChange={event=>setLifeNumber("scheduler","defaultWaitMs",Number(event.target.value))} disabled={saving}/>
-          <small>Default: {defaults.novaLife.scheduler.defaultWaitMs}</small>
-        </label>
-        <label>Wake after response (ms)
-          <input type="number" min={1000} max={300000} value={settings.novaLife.scheduler.postResponseWakeMs}
-            onChange={event=>setLifeNumber("scheduler","postResponseWakeMs",Number(event.target.value))} disabled={saving}/>
-          <small>Default: {defaults.novaLife.scheduler.postResponseWakeMs}</small>
-        </label>
-        <label>Minimum wake interval (ms)
-          <input type="number" min={1} max={300000} value={settings.novaLife.scheduler.minimumWakeIntervalMs}
-            onChange={event=>setLifeNumber("scheduler","minimumWakeIntervalMs",Number(event.target.value))} disabled={saving}/>
-        </label>
-        <label>Maximum wake interval (ms)
-          <input type="number" min={1} max={3600000} value={settings.novaLife.scheduler.maximumWakeIntervalMs}
-            onChange={event=>setLifeNumber("scheduler","maximumWakeIntervalMs",Number(event.target.value))} disabled={saving}/>
-        </label>
-        <label>Retry delay (ms)
-          <input type="number" min={0} max={120000} value={settings.novaLife.scheduler.retryDelayMs}
-            onChange={event=>setLifeNumber("scheduler","retryDelayMs",Number(event.target.value))} disabled={saving}/>
-        </label>
-        <label>Event debounce (ms)
-          <input type="number" min={0} max={60000} value={settings.novaLife.scheduler.eventDebounceMs}
-            onChange={event=>setLifeNumber("scheduler","eventDebounceMs",Number(event.target.value))} disabled={saving}/>
-        </label>
-      </div>
-      <div className="core-book-grid">
-        {(["appChanged","windowChanged","conversationChanged","characterChanged"] as const).map(key=>
-          <label className="checkbox" key={key}>{key}
-            <input type="checkbox" checked={settings.novaLife.scheduler.eventWakePolicy[key]}
-              onChange={event=>setWakePolicy(key,event.target.checked)} disabled={saving}/>
-          </label>
-        )}
-      </div>
-
-      <h4>Cognition</h4>
-      <div className="core-book-grid">
-        <label>Max steps per burst
+        <label>Max steps per cognition
           <input type="number" min={1} max={50} value={settings.novaLife.cognition.maxSteps}
-            onChange={event=>setLifeNumber("cognition","maxSteps",Number(event.target.value))} disabled={saving}/>
+            onChange={event=>setLifeNumber("maxSteps",Number(event.target.value))} disabled={saving}/>
         </label>
         <label>Max duration (ms)
           <input type="number" min={1000} max={300000} value={settings.novaLife.cognition.maxDurationMs}
-            onChange={event=>setLifeNumber("cognition","maxDurationMs",Number(event.target.value))} disabled={saving}/>
+            onChange={event=>setLifeNumber("maxDurationMs",Number(event.target.value))} disabled={saving}/>
         </label>
-        <label>Max consecutive failures
-          <input type="number" min={1} max={10} value={settings.novaLife.cognition.maxConsecutiveFailures}
-            onChange={event=>setLifeNumber("cognition","maxConsecutiveFailures",Number(event.target.value))} disabled={saving}/>
-        </label>
-        <label>Max model calls per wake
+        <label>Max model calls
           <input type="number" min={1} max={50} value={settings.novaLife.cognition.maxModelCallsPerBurst}
-            onChange={event=>setLifeNumber("cognition","maxModelCallsPerBurst",Number(event.target.value))} disabled={saving}/>
+            onChange={event=>setLifeNumber("maxModelCallsPerBurst",Number(event.target.value))} disabled={saving}/>
+        </label>
+        <label>Max tool calls
+          <input type="number" min={1} max={50} value={settings.novaLife.cognition.maxToolCallsPerBurst}
+            onChange={event=>setLifeNumber("maxToolCallsPerBurst",Number(event.target.value))} disabled={saving}/>
         </label>
       </div>
 
-      <h4>Resource budget</h4>
-      <div className="core-book-grid">
-        <label>Requests per minute
-          <input type="number" min={1} max={120} value={settings.novaLife.resourceBudget.maxRequestsPerMinute}
-            onChange={event=>setLifeNumber("resourceBudget","maxRequestsPerMinute",Number(event.target.value))} disabled={saving}/>
-        </label>
-        <label>Concurrency limit
-          <input type="number" min={1} max={8} value={settings.novaLife.resourceBudget.maxConcurrentRequests}
-            onChange={event=>setLifeNumber("resourceBudget","maxConcurrentRequests",Number(event.target.value))} disabled={saving}/>
-        </label>
-        <label>Background request priority
-          <input type="number" min={0} max={50} value={settings.novaLife.resourceBudget.backgroundRequestPriority}
-            onChange={event=>setLifeNumber("resourceBudget","backgroundRequestPriority",Number(event.target.value))} disabled={saving}/>
-        </label>
-      </div>
+      <h4>Provider</h4>
+      <label>Active provider preset
+        <select value={settings.novaLife.provider.activePresetId??""}
+          onChange={event=>onChange({...settings,novaLife:{...settings.novaLife,provider:{activePresetId:event.target.value||null}}})} disabled={saving}>
+          <option value="">Default configured preset</option>
+          {providerPresets.map(preset=><option key={preset.id} value={preset.id}>{preset.name||preset.id}</option>)}
+        </select>
+      </label>
       <div className="actions">
         <button type="button" onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save Nova Life Settings"}</button>
       </div>
