@@ -1671,10 +1671,10 @@ function SettingsContainerView({
   onSavePreset:(preset:ProviderPreset,activate:boolean)=>Promise<void>;
   onActivatePreset:(id:string)=>Promise<void>;
   onDeletePreset:(id:string)=>Promise<void>;
-  onCreateCredential:(label:string,secret:string)=>Promise<CredentialProfile>;
+  onCreateCredential:(label:string,secret:string,providerId:string)=>Promise<CredentialProfile>;
   onDeleteCredential:(id:string)=>Promise<void>;
-  onRefreshModels:(preset:ProviderPreset)=>Promise<readonly ModelInfo[]>;
-  onTestPreset:(preset:ProviderPreset)=>Promise<ProviderConnectionTestResult>;
+  onRefreshModels:(preset:ProviderPreset,sourceId:string)=>Promise<readonly ModelInfo[]>;
+  onTestPreset:(preset:ProviderPreset,sourceId:string)=>Promise<ProviderConnectionTestResult>;
   onError:(error:Error,info:React.ErrorInfo)=>void;
 }){
   const [tab,setTab]=React.useState<"general"|"provider-presets">("general");
