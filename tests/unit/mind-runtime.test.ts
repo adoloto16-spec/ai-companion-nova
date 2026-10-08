@@ -53,7 +53,7 @@ async function sequentialStepsTest(){
     }
   }
   const step=new Step();
-  const runtime=new MindRuntime({cognitiveStep:step,stepIntervalMs:1});
+  const runtime=new MindRuntime({cognitiveStep:step,stepIntervalMs:25});
   await runtime.start();
   await waitFor(()=>runtime.getState().recentThoughts.length>=4);
   await runtime.stop();
@@ -132,7 +132,7 @@ async function stopDuringActiveStepTest(){
 
 async function restartAfterStopTest(){
   const step=new DeterministicCognitiveStep();
-  const runtime=new MindRuntime({cognitiveStep:step,stepIntervalMs:1});
+  const runtime=new MindRuntime({cognitiveStep:step,stepIntervalMs:25});
   await runtime.start();
   await waitFor(()=>runtime.getState().recentThoughts.length>=2);
   await runtime.stop();
