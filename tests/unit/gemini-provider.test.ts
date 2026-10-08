@@ -81,7 +81,7 @@ async function main(){
     },new FakeCredentialStore(),http);
     let failed=false;
     try{await provider.chat(request);}catch(error){
-      failed=error&&typeof error==="object"&&"chatError" in error&&JSON.stringify(error).includes("authentication");
+      failed=Boolean(error&&typeof error==="object"&&"chatError" in error&&JSON.stringify(error).includes("authentication"));
       ok(!JSON.stringify(error).includes("gemini-test-secret"),"Gemini provider error does not expose secret");
     }
     ok(Boolean(failed),"Gemini HTTP auth error becomes canonical provider error");
