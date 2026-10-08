@@ -179,8 +179,8 @@ async function cognitionAssistantRoleRegressionTest(){
   const body=http.requests[0]?.body;
   if(body===undefined)throw new Error("expected cognition role regression body");
   const sent=JSON.parse(body) as {messages:Array<{role:string;content:string}>};
-  equal(sent.messages.map(message=>message.role),["system","user","assistant"],"OpenAI-compatible adapter preserves system user assistant roles");
-  equal(sent.messages.map(message=>message.content),["cognition system","hello","previous reply"],"OpenAI-compatible adapter preserves cognition message order");
+  equal(sent.messages.map(message=>message.role).join("|"),"system|user|assistant","OpenAI-compatible adapter preserves system user assistant roles");
+  equal(sent.messages.map(message=>message.content).join("|"),"cognition system|hello|previous reply","OpenAI-compatible adapter preserves cognition message order");
 }
 async function structuredRequestMappingTest(){
   const http=new FakeHttpClient();
