@@ -97,7 +97,7 @@ async function main(){
 
   const reloadedCredentials=new InMemoryCredentialProfileStore();
   await reloadedCredentials.save(credentials);
-  equal((await reloadedCredentials.load())?.profiles[1]?.credentialReference.id,"credential-b","credential metadata remains an opaque reference");
+  equal((await reloadedCredentials.load())?.profiles[1]?.credentialReference.id,"credential-profile-b","credential metadata remains an opaque reference");
 
   const serialized=JSON.stringify(state);
   ok(!serialized.includes("secret"),"persisted v2 preset state contains no secret value");
