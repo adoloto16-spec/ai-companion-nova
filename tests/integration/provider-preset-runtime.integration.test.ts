@@ -90,7 +90,7 @@ async function main(){
   try{
     const response=await runtime.chat(request,"preset-pool");
     equal(response.message.content,"backup response","runtime routes providerPresetId through pool failover");
-    equal(response.providerId,"openai-compatible","canonical response preserves concrete provider id");
+    equal(response.providerId,"provider-pool:preset-pool","canonical response exposes the stable provider pool id");
     ok(http.requests.some(item=>item.url==="https://primary.example/v1/chat/completions"),"primary source was attempted first");
     ok(http.requests.some(item=>item.url==="https://backup.example/v1/chat/completions"),"backup source was attempted after primary 429");
 
