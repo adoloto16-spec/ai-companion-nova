@@ -1,4 +1,4 @@
-import {ProviderPoolChatProvider} from "../../runtime/bootstrap/src/provider-pool";
+import {ProviderPoolChatProvider,ProviderPoolError} from "../../runtime/bootstrap/src/provider-pool";
 import type {ChatProvider,ChatRequest,ChatResponse,CredentialReference,ProviderCapabilities,ProviderPreset,ProviderPresetSource,CredentialStore,DiagnosticsStore,HealthStatus,ChatError,ModelInfo} from "../../contracts/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error(label+" expected "+JSON.stringify(expected)+" got "+JSON.stringify(actual));}
@@ -155,7 +155,9 @@ async function main(){
     const {pool,providers}=await build({sources:[source("source-a"),source("source-b")]});
     providers.set("source-a",failing);
     let failed=false;
-    try{await pool.chat(request());}catch(error){failed=error instanceof Error&&JSON.stringify(error).includes("provider_pool_exhausted");}
+    try{await pool.chat(request());}catch(error){
+      failed=error instanceof ProviderPoolError&&error.chatError.details?.category==="provider_pool_exhausted";
+    }
     ok(failed,"exhausted pool returns an aggregated error");
     equal(failing.calls.length,1,"one failing source is never retried within one request");
   }
