@@ -1767,7 +1767,7 @@ function App(){
   const [conversations,setConversations]=React.useState<readonly Conversation[]>([]);
   const [activeConversation,setActiveConversation]=React.useState<Conversation|undefined>();
   const [mindState,setMindState]=React.useState<MindState>({focus:null,lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"off"});
-  const mindUnsubscribeRef=React.useRef<(()=>void)|undefined>();
+  const mindUnsubscribeRef=React.useRef<(()=>void)|undefined>(undefined);
   const [lifeBusy,setLifeBusy]=React.useState(false);
   const foundationRef=React.useRef<FoundationRuntime|undefined>(undefined);
   const providerConfigurationErrorRef=React.useRef<string|undefined>(undefined);
