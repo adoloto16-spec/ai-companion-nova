@@ -76,8 +76,8 @@ assert.ok(syncCharacters.includes("setChatController(loaded.controller);"),"sync
 assert.ok(refreshRuntime.includes("setChatController(null);"),"refreshRuntime must clear the stale controller before runtime replacement");
 assert.ok(refreshRuntime.indexOf("setChatController(null);")<refreshRuntime.indexOf("await foundationRef.current?.stop();"),"stale controller must be cleared before stopping the old runtime");
 assert.ok(refreshRuntime.includes("await syncCharacters(next);"),"new runtime must synchronize a freshly created controller");
-assert.ok(source.includes("startLife:()=>mindRuntime.start()"),"FoundationRuntime must expose the Mind Runtime start control");
-assert.ok(source.includes("stopLife:()=>mindRuntime.stop()"),"FoundationRuntime must expose the Mind Runtime stop control");
+assert.ok(app.includes("foundation.startLife()"),"global Life control must start the Foundation Mind Runtime");
+assert.ok(app.includes("foundation.stopLife()"),"global Life control must stop the Foundation Mind Runtime");
 assert.ok(app.includes("Nova Life:"),"App must expose the global Nova Life control");
 assert.ok(app.includes("<ThoughtsView mindState={mindState}/>"),"Thoughts must remain a technical observer of runtime state");
 assert.ok(source.includes("subscribeMindState"),"UI must subscribe to runtime mind state rather than own the runtime");
