@@ -55,7 +55,10 @@ export function validateProviderConfiguration(configuration:ProviderConfiguratio
       credential:credentialReferences[0]??null,
       timeoutMs:configuration.timeoutMs
     });
-    for(const error of providerErrors)if(!errors.includes(error))errors.push(error);
+    for(const error of providerErrors){
+      if(!configuration.enabled&&error.toLowerCase().includes("credential"))continue;
+      if(!errors.includes(error))errors.push(error);
+    }
   }
   return {valid:errors.length===0,errors};
 }
