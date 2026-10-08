@@ -1696,12 +1696,11 @@ function isTauriRuntime():boolean{
 }
 
 function materializePresetConfigurations(
-  presets:readonly ProviderPreset[],
-  profiles:readonly CredentialProfile[]
+  presets:readonly ProviderPreset[]
 ):readonly {presetId:string;configuration:ProviderConfiguration}[]{
-  return presets.map(preset=>{
-    const credential=profiles.find(profile=>profile.id===preset.credentialProfileId);
-    return {presetId:preset.id,configuration:materializeProviderConfiguration(preset,credential)};
+  return presets.flatMap(preset=>{
+    const source=preset.sources.find(candidate=>candidate.id===preset.activeSourceId)??preset.sources[0];
+    return source?[{presetId:preset.id,configuration:materializeProviderConfiguration(source)}]:[];
   });
 }
 function credentialSavedEntries(
