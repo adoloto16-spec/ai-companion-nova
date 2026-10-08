@@ -683,7 +683,11 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       return character;
     },
     updateCharacter:(id,input)=>characterManager.updateCharacter(id,input),
-    deleteCharacter:id=>characterManager.deleteCharacter(id),
+    deleteCharacter:async id=>{
+      await characterManager.deleteCharacter(id);
+      const active=await characterManager.getActiveCharacter();
+      mindRuntime.setActiveCharacter(active.id);
+    },
     getActiveCharacter:()=>characterManager.getActiveCharacter(),
     setActiveCharacter:async id=>{
       const character=await characterManager.setActiveCharacter(id);
