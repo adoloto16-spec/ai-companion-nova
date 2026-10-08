@@ -47,15 +47,28 @@ export interface CredentialProfileStore{
 }
 
 export const PROVIDER_PRESET_API_VERSION:ApiVersion="1";
-export const PROVIDER_PRESET_SCHEMA_VERSION="1";
-export interface ProviderPreset{
+export const PROVIDER_PRESET_SCHEMA_VERSION="2";
+export type ProviderSourceHealth="healthy"|"cooldown"|"unavailable";
+export interface ProviderPresetSource{
   id:string;
   name:string;
   providerId:string;
   baseUrl:string;
-  credentialProfileId?:string;
-  model?:string;
+  model:string;
+  credentialReference:CredentialReference|null;
+  enabled:boolean;
+  health:ProviderSourceHealth;
+  failureCount:number;
+  cooldownUntil:string|null;
   timeoutMs?:number;
+  createdAt:string;
+  updatedAt:string;
+}
+export interface ProviderPreset{
+  id:string;
+  name:string;
+  sources:readonly ProviderPresetSource[];
+  activeSourceId:string|null;
   createdAt:string;
   updatedAt:string;
 }
