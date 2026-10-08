@@ -238,6 +238,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const applyProvider=async(configuration:ProviderConfiguration|undefined)=>{
     providerConfiguration=configuration;
     providers.unregister("openai-compatible");
+    providers.unregister("gemini");
     const configured=configuration?buildConfiguredProvider(configuration,credentialStore,options.httpClient,diagnosticsStore,activeProviderPresetId):undefined;
     if(configured)providers.register(configured,["chat"]);
   };
@@ -259,6 +260,19 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     createProvider:(source,diagnostics)=>buildChatProviderForSource(source,credentialStore,options.httpClient,diagnostics,preset.id),
     onStateChanged:async updated=>{
       providerPresetPools.set(updated.id,updated);
+      const source=updated.sources.find(item=>item.id===updated.activeSourceId)??updated.sources[0];
+      if(source){
+        providerPresetConfigurations.set(updated.id,{
+          apiVersion:"1",
+          schemaVersion:"1",
+          providerId:source.providerId,
+          enabled:source.enabled&&source.model.trim().length>0,
+          baseUrl:source.baseUrl,
+          model:source.model,
+          credentialReference:source.credentialReference?{...source.credentialReference}:null,
+          ...(source.timeoutMs===undefined?{}:{timeoutMs:source.timeoutMs})
+        });
+      }
       await options.onProviderPresetPoolStateChange?.(updated);
     }
   });
