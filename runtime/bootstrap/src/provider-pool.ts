@@ -208,15 +208,22 @@ export class ProviderPoolChatProvider implements ChatProvider{
         continue;
       }
       const sourceRequest={...request,providerId:source.providerId,model:source.model};
+      let emittedDelta=false;
+      const forwardingHandlers:ChatStreamHandlers={
+        onEvent:async event=>{
+          if(event.type==="delta")emittedDelta=true;
+          await handlers.onEvent(event);
+        }
+      };
       try{
         if(provider.stream){
-          const response=await provider.stream(sourceRequest,handlers,options);
+          const response=await provider.stream(sourceRequest,forwardingHandlers,options);
           await this.markSuccess(source);
           return response;
         }
         const response=await provider.chat(sourceRequest);
         if(options.signal?.aborted)throw new DOMException("The operation was aborted.","AbortError");
-        await handlers.onEvent({
+        await forwardingHandlers.onEvent({
           apiVersion:request.apiVersion,
           schemaVersion:"1",
           requestId:request.requestId,
@@ -241,7 +248,7 @@ export class ProviderPoolChatProvider implements ChatProvider{
         return response;
       }catch(error){
         lastError=error;
-        if(isAbortError(error))throw error;
+        if(isAbortError(error)||emittedDelta)throw error;
         if(!isFailoverEligible(error))throw error;
         await this.markFailure(source,failureCategory(error));
         this.recordFailoverFailure(source,error);
