@@ -92,47 +92,53 @@ async function main(){
     lifecycleState:"thinking" as const
   };
 
-  await runtime.updateConversation(character.id,conversation.id,{
-    messages:[{id:"cognition-user-1",role:"user",content:"Hello"}]
-  });
-  await cognitiveStep.run({characterId:character.id,state:cognitiveState,signal:new AbortController().signal});
-
-  await runtime.updateConversation(character.id,conversation.id,{
-    messages:[
-      {id:"cognition-user-2",role:"user",content:"Hello"},
-      {id:"cognition-assistant-2",role:"assistant",content:"Hi there",metadata:{streamStatus:"complete",safeMarker:"assistant-metadata"}}
+  const conversationCases=[
+    [
+      {id:"cognition-user-1",role:"user" as const,content:"Hello"}
+    ],
+    [
+      {id:"cognition-user-2",role:"user" as const,content:"Hello"},
+      {id:"cognition-assistant-2",role:"assistant" as const,content:"Hi there",metadata:{streamStatus:"complete",safeMarker:"assistant-metadata"}}
+    ],
+    [
+      {id:"cognition-user-3a",role:"user" as const,content:"First"},
+      {id:"cognition-assistant-3",role:"assistant" as const,content:"Reply",metadata:{streamStatus:"complete"}},
+      {id:"cognition-user-3b",role:"user" as const,content:"Follow-up"}
+    ],
+    [
+      {id:"cognition-user-4a",role:"user" as const,content:"First"},
+      {id:"cognition-assistant-4a",role:"assistant" as const,content:"Reply",metadata:{streamStatus:"complete"}},
+      {id:"cognition-user-4b",role:"user" as const,content:"Second"},
+      {id:"cognition-assistant-4b",role:"assistant" as const,content:"Second reply",metadata:{streamStatus:"complete"}}
     ]
-  });
-  await cognitiveStep.run({characterId:character.id,state:cognitiveState,signal:new AbortController().signal});
+  ] as const;
+  for(const messages of conversationCases){
+    await runtime.updateConversation(character.id,conversation.id,{messages:[...messages]});
+    await cognitiveStep.run({characterId:character.id,state:cognitiveState,signal:new AbortController().signal});
+  }
 
-  await runtime.updateConversation(character.id,conversation.id,{
-    messages:[
-      {id:"cognition-user-3a",role:"user",content:"First"},
-      {id:"cognition-assistant-3",role:"assistant",content:"Reply",metadata:{streamStatus:"complete"}},
-      {id:"cognition-user-3b",role:"user",content:"Follow-up"}
-    ]
-  });
-  await cognitiveStep.run({characterId:character.id,state:cognitiveState,signal:new AbortController().signal});
-
-  console.log(JSON.stringify(cognitiveCalls.map(({request,providerPresetId})=>({
-    roles:request.context.messages.map(message=>message.role),
-    count:request.context.messages.length,
-    model:request.model,
-    responseFormat:request.generation?.responseFormat?.type,
-    providerPresetId
-  }))));
-  equal(cognitiveCalls.length,3,"cognition request executes for all role sequences");
-  equal(cognitiveCalls.map(call=>call.request.model),["cognition-test-model","cognition-test-model","cognition-test-model"],"cognition model remains stable across assistant message");
-  equal(cognitiveCalls.map(call=>call.providerPresetId),["cognition-test-preset","cognition-test-preset","cognition-test-preset"],"provider preset remains stable across assistant message");
-  equal(cognitiveCalls.map(call=>call.request.generation?.responseFormat?.type),["text","text","text"],"cognition response format remains provider-neutral text");
-  equal(cognitiveCalls[0]?.request.context.messages.map(message=>message.role),["system","system","system","user"],"Case A preserves the user message");
-  equal(cognitiveCalls[1]?.request.context.messages.map(message=>message.role),["system","system","system","user","assistant"],"Case B preserves user then assistant order");
-  equal(cognitiveCalls[1]?.request.context.messages.length,5,"Case B canonical request has three cognition system messages plus conversation");
+  const expectedConversationRoles=[
+    ["system","system","system","user","user"],
+    ["system","system","system","user","assistant","user"],
+    ["system","system","system","user","assistant","user","user"],
+    ["system","system","system","user","assistant","user","assistant","user"]
+  ];
+  equal(cognitiveCalls.length,4,"cognition request executes for all four role sequences");
+  equal(cognitiveCalls.map(call=>call.request.model),["cognition-test-model","cognition-test-model","cognition-test-model","cognition-test-model"],"cognition model remains stable across assistant message");
+  equal(cognitiveCalls.map(call=>call.providerPresetId),["cognition-test-preset","cognition-test-preset","cognition-test-preset","cognition-test-preset"],"provider preset remains stable across assistant message");
+  equal(cognitiveCalls.map(call=>call.request.generation?.responseFormat?.type),["text","text","text","text"],"cognition response format remains provider-neutral text");
+  for(let index=0;index<expectedConversationRoles.length;index+=1){
+    const request=cognitiveCalls[index]!.request;
+    equal(request.context.messages.map(message=>message.role),expectedConversationRoles[index],`Case ${index+1} preserves conversation roles and appends a user cognition cue`);
+    equal(request.context.messages[request.context.messages.length-1]?.content,"Continue the internal cognition step. Produce exactly one internal thought based on the context above. Do not answer the user.","cognitive request ends with the synthetic user cue");
+    equal(request.context.messages[request.context.messages.length-1]?.id,"conv-1:cognition:user-cue","synthetic cognition cue has a request-local id");
+  }
   equal(cognitiveCalls[1]?.request.context.messages.find(message=>message.id==="cognition-assistant-2")?.metadata?.safeMarker,"assistant-metadata","assistant metadata survives ContextEngine into canonical request");
-  equal(cognitiveCalls[2]?.request.context.messages.map(message=>message.role),["system","system","system","user","assistant","user"],"Case C preserves user assistant user order");
-  equal(cognitiveCalls[2]?.request.context.messages.slice(3).map(message=>message.content),["First","Reply","Follow-up"],"Case C keeps conversation content after cognition system context");
-  console.log("PASS cognitive context role regression integration test");
-  }finally{
+  equal(cognitiveCalls[1]?.request.context.messages.slice(3,-1).map(message=>message.content),["Hello","Hi there"],"Case B preserves user and assistant content before the cue");
+  equal(cognitiveCalls[3]?.request.context.messages.slice(3,-1).map(message=>message.content),["First","Reply","Second","Second reply"],"Case D preserves the full conversation before the cue");
+  equal((await runtime.getActiveConversation(character.id))?.messages.map(message=>message.content),["First","Reply","Second","Second reply"],"synthetic cue is not written to Conversation");
+  equal((await runtime.getActiveConversation(character.id))?.messages.some(message=>message.content.includes("Continue the internal cognition step.")),false,"synthetic cue does not enter stored Conversation");
+  console.log("PASS cognitive context role regression integration test");  }finally{
     await runtime.stop();
   }
 }
