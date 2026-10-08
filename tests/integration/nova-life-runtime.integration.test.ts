@@ -111,7 +111,7 @@ async function resumeIntentAfterUserMessageTest(){
     if(index===0)return{action:"create_intent",intent:{type:"conversation_followup",description:"Continue unfinished project discussion",priority:70,dueAt:null}};
     if(context.wakeReason==="startup")return{action:"respond",content:"I will keep this thread open."};
     if(context.wakeReason==="user_message"){
-      const system=JSON.parse(context.recentConversationMessages.find(message=>message.metadata?.contextSource==="nova_life")?.content??"{}") as any;
+      const system=JSON.parse(context.recentConversationMessages.find(message=>message.id?.startsWith("nova-life-context:")===true)?.content??"{}") as any;
       assert.equal(system.novaLife.activeIntentions.length,1,"user-triggered cognition receives the persistent intent");
       assert.equal(system.novaLife.activeIntentions[0].type,"conversation_followup");
       return{action:"complete_intent",intentId:system.novaLife.activeIntentions[0].id};
@@ -119,8 +119,8 @@ async function resumeIntentAfterUserMessageTest(){
     return{action:"idle"};
   });
   let userEvents=0;
-  events.subscribe("UserMessageReceived",()=>{userEvents++});
   const {runtime,conversationManager,events,conversation}=await createTestRuntime(controller);
+  events.subscribe("UserMessageReceived",()=>{userEvents++});
   try{
     await runtime.start("character:test",conversation.id);
     await waitFor(()=>controller.calls>=2);
