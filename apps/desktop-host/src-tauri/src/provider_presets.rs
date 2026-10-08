@@ -314,7 +314,7 @@ fn credential_state()->super::super::credential_profiles::CredentialProfileStore
     }
 }
 fn source(id:&str)->ProviderPresetSource{ProviderPresetSource{id:id.to_string(),name:"Main".to_string(),provider_id:"openai-compatible".to_string(),base_url:"https://api.example.test/v1".to_string(),model:"model".to_string(),credential_reference:Some(reference("credential-a","openai-compatible")),enabled:true,health:"healthy".to_string(),failure_count:0,cooldown_until:None,timeout_ms:Some(30000.0),created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
-fn preset(id:&str)->ProviderPreset{ProviderPreset{id:id.to_string(),name:id.to_string(),sources:vec![source("source:"+id+":primary")],active_source_id:Some("source:".to_string()+id+":primary"),created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
+fn preset(id:&str)->ProviderPreset{let source_id=format!("source:{}:primary",id);ProviderPreset{id:id.to_string(),name:id.to_string(),sources:vec![source(&source_id)],active_source_id:Some(source_id),created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
 fn state()->ProviderPresetStoreState{ProviderPresetStoreState{api_version:API_VERSION.to_string(),schema_version:SCHEMA_VERSION.to_string(),presets:vec![preset("preset-a")],active_preset_id:Some("preset-a".to_string())}}
 
 #[test]fn rejects_unknown_fields(){
