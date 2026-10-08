@@ -1937,6 +1937,17 @@ function App(){
     return recentErrors.length===diagnostics.recentErrors.length?diagnostics:{...diagnostics,recentErrors};
   },[]);
 
+  const persistProviderPresetPoolState=React.useCallback(async(updated:ProviderPreset)=>{
+    const current=providerPresetStateRef.current;
+    const presets=current.presets.some(preset=>preset.id===updated.id)
+      ?current.presets.map(preset=>preset.id===updated.id?updated:preset)
+      :[...current.presets,updated];
+    const nextState:ProviderPresetStoreState={...current,presets};
+    providerPresetStateRef.current=nextState;
+    setProviderPresets(presets);
+    await providerPresetStore.save(nextState);
+  },[providerPresetStore]);
+
   const refreshRuntime=React.useCallback(async(
     config:ProviderConfiguration|undefined,
     configurationLoadError?:string,
@@ -1950,7 +1961,9 @@ function App(){
     await foundationRef.current?.stop();
     const next=await startFoundationRuntime({
       providerConfiguration:config,credentialStore,characterStore,coreBookStore,memoryStore,semanticIndexStore,conversationStore,retriever,retrievalIndexWriter:retriever,
-      providerPresetConfigurations:materializePresetConfigurations(presetState.presets,credentialState.profiles),
+      providerPresetConfigurations:materializePresetConfigurations(presetState.presets),
+      providerPresetPools:presetState.presets,
+      onProviderPresetPoolStateChange:persistProviderPresetPoolState,
       settingsStore,
       activeProviderPresetId:presetState.activePresetId??undefined
     });
@@ -1960,7 +1973,7 @@ function App(){
     setRuntime(await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(await next.diagnostics())));
     setStartupStatus("ready");
     setStartupError("");
-  },[addConfigurationLoadError,characterStore,coreBookStore,memoryStore,semanticIndexStore,credentialStore,retriever,conversationStore,syncCharacters]);
+  },[addConfigurationLoadError,characterStore,coreBookStore,memoryStore,semanticIndexStore,credentialStore,retriever,conversationStore,syncCharacters,persistProviderPresetPoolState]);
 
   React.useEffect(()=>{
     let active=true;
@@ -1992,8 +2005,8 @@ function App(){
           try{savedMap[profile.id]=await credentialStore.exists(profile.credentialReference)}catch{savedMap[profile.id]=false;}
         }
         const activePreset=presetState.activePresetId?presetState.presets.find(preset=>preset.id===presetState.activePresetId):undefined;
-        const activeCredential=activePreset?.credentialProfileId?credentialState.profiles.find(profile=>profile.id===activePreset.credentialProfileId):undefined;
-        const activeConfiguration=activePreset?materializeProviderConfiguration(activePreset,activeCredential):undefined;
+        const activeSource=activePreset?.sources.find(source=>source.id===activePreset.activeSourceId)??activePreset?.sources[0];
+        const activeConfiguration=activeSource?materializeProviderConfiguration(activeSource):undefined;
         setCredentialProfiles(credentialState.profiles);
         setCredentialSavedMap(savedMap);
         setProviderPresets(presetState.presets);
