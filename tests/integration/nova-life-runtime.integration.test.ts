@@ -73,10 +73,10 @@ async function createTestRuntime(controller:CaptureController){
   return {runtime,events,conversationManager,conversation}
 }
 
-async function waitFor(predicate:()=>boolean,timeoutMs=1000){
+async function waitFor(predicate:()=>boolean,timeoutMs=1000,describe?:()=>string){
   const deadline=Date.now()+timeoutMs;
   while(Date.now()<deadline){if(predicate())return;await new Promise(resolve=>setTimeout(resolve,5))}
-  throw new Error("Timed out waiting for integration condition.");
+  throw new Error("Timed out waiting for integration condition."+(describe?": "+describe():""));
 }
 
 async function persistentIntentDueTest(){
@@ -89,7 +89,11 @@ async function persistentIntentDueTest(){
   const {runtime,events,conversationManager,conversation}=await createTestRuntime(controller);
   try{
     await runtime.start("character:test",conversation.id);
-    await waitFor(()=>runtime.getState().status==="idle"&&runtime.getState().activeIntentions?.length===0&&controller.contexts.some(context=>context.wakeReason==="intent_due"));
+    await waitFor(
+      ()=>runtime.getState().status==="idle"&&runtime.getState().activeIntentions?.length===0&&controller.contexts.some(context=>context.wakeReason==="intent_due"),
+      1000,
+      ()=>JSON.stringify({calls:controller.calls,wakeReasons:controller.contexts.map(context=>context.wakeReason),state:runtime.getState()})
+    );
     const state=runtime.getState();
     assert.equal(state.status,"idle");
     assert.equal(state.activeIntentions?.length,0,"due intent was completed");
