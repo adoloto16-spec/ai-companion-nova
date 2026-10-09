@@ -3,8 +3,11 @@ use std::{collections::HashSet,fs,io::Write,path::{Path,PathBuf}};
 use tauri::Manager;
 
 const API_VERSION:&str="1";
-const SCHEMA_VERSION:&str="2";
+const SCHEMA_VERSION:&str="3";
+const V2_SCHEMA_VERSION:&str="2";
 const LEGACY_SCHEMA_VERSION:&str="1";
+
+fn default_preset_type()->String{"pool".to_string()}
 
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(deny_unknown_fields)]
@@ -46,9 +49,21 @@ pub struct ProviderPresetSource{
 pub struct ProviderPreset{
     pub id:String,
     pub name:String,
+    #[serde(rename="type",default="default_preset_type")]
+    pub preset_type:String,
     pub sources:Vec<ProviderPresetSource>,
     #[serde(rename="activeSourceId")]
     pub active_source_id:Option<String>,
+    #[serde(rename="providerId")]
+    pub provider_id:Option<String>,
+    #[serde(rename="baseUrl")]
+    pub base_url:Option<String>,
+    pub model:Option<String>,
+    #[serde(rename="credentialReference")]
+    pub credential_reference:Option<CredentialReference>,
+    pub enabled:Option<bool>,
+    #[serde(rename="timeoutMs")]
+    pub timeout_ms:Option<f64>,
     #[serde(rename="createdAt")]
     pub created_at:String,
     #[serde(rename="updatedAt")]
@@ -142,8 +157,35 @@ fn validate_preset(preset:&ProviderPreset)->Result<(),String>{
         validate_source(source)?;
         if !source_ids.insert(source.id.clone()){return Err("provider preset contains duplicate source ids".to_string());}
     }
-    if let Some(active)=&preset.active_source_id{
-        if !preset.sources.iter().any(|source|&source.id==active){return Err("activeSourceId must reference an existing provider source".to_string());}
+    match preset.preset_type.as_str(){
+        "pool"=>{
+            if preset.sources.is_empty(){return Err("pool preset must contain at least one source".to_string());}
+            if preset.provider_id.is_some()||preset.base_url.is_some()||preset.model.is_some()||preset.credential_reference.is_some()||preset.enabled.is_some()||preset.timeout_ms.is_some(){
+                return Err("pool preset must not contain direct single-provider configuration fields".to_string());
+            }
+            if let Some(active)=&preset.active_source_id{
+                if !preset.sources.iter().any(|source|&source.id==active){return Err("activeSourceId must reference an existing provider source".to_string());}
+            }
+        },
+        "single"=>{
+            if !preset.sources.is_empty(){return Err("single preset must not contain pool sources".to_string());}
+            if preset.active_source_id.is_some(){return Err("single preset activeSourceId must be null".to_string());}
+            let provider=preset.provider_id.as_deref().ok_or_else(||"single preset providerId is required".to_string())?;
+            if provider!="openai-compatible"&&provider!="gemini"{return Err("single preset providerId is unsupported".to_string());}
+            let base=preset.base_url.as_deref().ok_or_else(||"single preset baseUrl is required".to_string())?;
+            if base.trim()!=base{return Err("single preset base URL must not have surrounding whitespace".to_string());}
+            let url=url::Url::parse(base).map_err(|_|"single preset base URL is invalid".to_string())?;
+            if url.scheme()!="http"&&url.scheme()!="https"{return Err("single preset base URL must use HTTP or HTTPS".to_string());}
+            if !url.username().is_empty()||url.password().is_some(){return Err("single preset base URL must not contain credentials".to_string());}
+            if url.query().is_some()||url.fragment().is_some(){return Err("single preset base URL must not contain query or fragment".to_string());}
+            let model=preset.model.as_deref().ok_or_else(||"single preset model is required".to_string())?;
+            if model.trim().is_empty()||model.len()>200{return Err("single preset model is invalid".to_string());}
+            let reference=preset.credential_reference.as_ref().ok_or_else(||"single preset credentialReference is required".to_string())?;
+            validate_reference(reference,provider)?;
+            if preset.enabled.is_none(){return Err("single preset enabled state is required".to_string());}
+            if let Some(timeout)=preset.timeout_ms{if !timeout.is_finite()||timeout<=0.0{return Err("single preset timeout must be finite and positive".to_string());}}
+        },
+        _=>return Err("unsupported provider preset type".to_string())
     }
     Ok(())
 }
@@ -209,8 +251,15 @@ fn migrate_legacy_state(
         ProviderPreset{
             id:preset.id,
             name:preset.name,
+            preset_type:"pool".to_string(),
             sources:vec![source],
             active_source_id:Some(source_id),
+            provider_id:None,
+            base_url:None,
+            model:None,
+            credential_reference:None,
+            enabled:None,
+            timeout_ms:None,
             created_at:preset.created_at,
             updated_at:preset.updated_at,
         }
@@ -314,7 +363,7 @@ fn credential_state()->super::super::credential_profiles::CredentialProfileStore
     }
 }
 fn source(id:&str)->ProviderPresetSource{ProviderPresetSource{id:id.to_string(),name:"Main".to_string(),provider_id:"openai-compatible".to_string(),base_url:"https://api.example.test/v1".to_string(),model:"model".to_string(),credential_reference:Some(reference("credential-a","openai-compatible")),enabled:true,health:"healthy".to_string(),failure_count:0,cooldown_until:None,timeout_ms:Some(30000.0),created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
-fn preset(id:&str)->ProviderPreset{let source_id=format!("source:{}:primary",id);ProviderPreset{id:id.to_string(),name:id.to_string(),sources:vec![source(&source_id)],active_source_id:Some(source_id),created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
+fn preset(id:&str)->ProviderPreset{let source_id=format!("source:{}:primary",id);ProviderPreset{id:id.to_string(),name:id.to_string(),preset_type:"pool".to_string(),sources:vec![source(&source_id)],active_source_id:Some(source_id),provider_id:None,base_url:None,model:None,credential_reference:None,enabled:None,timeout_ms:None,created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
 fn state()->ProviderPresetStoreState{ProviderPresetStoreState{api_version:API_VERSION.to_string(),schema_version:SCHEMA_VERSION.to_string(),presets:vec![preset("preset-a")],active_preset_id:Some("preset-a".to_string())}}
 
 #[test]fn rejects_unknown_fields(){
