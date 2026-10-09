@@ -41,7 +41,7 @@ for(const label of ["General","Chat","Provider Presets"]){
 }
 assert.ok(settingsContainer.includes('tab==="general"'),"Settings must have a General tab");
 assert.ok(settingsContainer.includes('tab==="chat"')&&settingsContainer.includes("<ChatSettingsView "),"Settings must expose the Chat response-mode settings tab");
-assert.ok(settingsContainer.includes('settings.chat.responseMode')&&settingsContainer.includes('value="structured"')&&settingsContainer.includes('value="plain"'),"Chat settings bind both response modes");
+assert.ok(appSettingsView.includes('settings.chat.responseMode')&&appSettingsView.includes('value="structured"')&&appSettingsView.includes('value="plain"'),"Chat settings bind both response modes");
 assert.ok(settingsContainer.includes('tab==="provider-presets"'),"Settings must have a Provider Presets tab");
 assert.ok(settingsContainer.includes("<AppSettingsView "), "General tab must render AppSettingsView");
 assert.ok(diagnosticsView.includes("runtime.diagnostics()"),"DiagnosticsView must bridge runtime DiagnosticsStore");
