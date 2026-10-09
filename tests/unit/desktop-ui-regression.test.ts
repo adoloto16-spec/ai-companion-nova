@@ -36,10 +36,12 @@ for(const removed of ["Provider Presets","Provider Settings"]){
   assert.equal(navigation.includes(">"+removed+"</button>"),false,"Primary navigation must not expose "+removed);
 }
 
-for(const label of ["General","Provider Presets"]){
+for(const label of ["General","Chat","Provider Presets"]){
   assert.ok(settingsContainer.includes(">"+label+"</button>"),"Settings sub-navigation must expose "+label);
 }
 assert.ok(settingsContainer.includes('tab==="general"'),"Settings must have a General tab");
+assert.ok(settingsContainer.includes('tab==="chat"')&&settingsContainer.includes("<ChatSettingsView "),"Settings must expose the Chat response-mode settings tab");
+assert.ok(settingsContainer.includes('settings.chat.responseMode')&&settingsContainer.includes('value="structured"')&&settingsContainer.includes('value="plain"'),"Chat settings bind both response modes");
 assert.ok(settingsContainer.includes('tab==="provider-presets"'),"Settings must have a Provider Presets tab");
 assert.ok(settingsContainer.includes("<AppSettingsView "), "General tab must render AppSettingsView");
 assert.ok(diagnosticsView.includes("runtime.diagnostics()"),"DiagnosticsView must bridge runtime DiagnosticsStore");
@@ -96,7 +98,11 @@ assert.equal(source.includes("publishExpression"),false,"old expression publishe
 assert.equal(foundationSource.includes("setMindExpressionPublisher"),false,"old expression publisher is removed from runtime API");
 assert.ok(source.includes("Show technical data"),"Chat exposes a technical data switch");
 assert.ok(source.includes("parsedTurn.speech"),"NovaTurn messages render only public speech");
-assert.ok(source.includes("parsedTurn.thoughts"),"private thoughts are only rendered inside technical details");
+assert.ok(source.includes("parseResult?.fields.thoughts")&&source.includes("isNovaTurn&&showTechnicalData"),"private thoughts are only rendered in technical mode");
+assert.ok(source.includes("shouldRenderNovaTurn(parseResult,showTechnicalData)"),"a persisted NovaTurn is hidden only when technical mode is off and no safe speech exists");
+assert.ok(source.includes("Unrecognized / raw output (bounded)")&&source.includes("slice(0,4000)"),"technical mode shows bounded raw output for malformed turns");
+for(const heading of ["Situation","Thoughts (private)","Emotion","Tool calls","Tool results","Speech","Next wake","Protocol diagnostics"]){assert.ok(source.includes("<strong>"+heading+"</strong>"),"technical mode always supplies the "+heading+" section");}
+assert.ok(source.includes("countVisibleSpeechMessages(conversation.messages)")&&source.includes("stored records"),"conversation counter distinguishes stored records from visible speech messages");
 assert.ok(source.includes("commitNovaTurn"),"Chat persists the canonical NovaTurn record");
 assert.ok(source.includes("setNovaTurnSink"),"UI registers the single canonical turn sink");
 assert.ok(source.includes("subscribeMindState"),"UI must subscribe to runtime mind state rather than own the runtime");
