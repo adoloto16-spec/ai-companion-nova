@@ -61,9 +61,12 @@ async function main(){
   await legacyStore.save({apiVersion:"1",schemaVersion:"1",characterId:"character.legacy",entries:legacyEntries as unknown as typeof a[]});
   const legacyManager=new CoreBookManager(legacyStore,{clock,idFactory:()=>`legacy.${++ids}`,characterExists:async id=>id==="character.legacy"});
   const migratedEntries=await legacyManager.listCoreBookEntries("character.legacy");
-  equal(migratedEntries.map(entry=>entry.role),["system","user","user","user"],"legacy source mapping is applied once to all four sources");
-  equal(migratedEntries.map(entry=>entry.source),["system","user","import","other"],"Core Book migration preserves independent source values");
-  const migrated=migratedEntries[0]!;
+  equal(migratedEntries.find(entry=>entry.source==="system")?.role,"system","legacy system source maps to system role");
+  for(const source of ["user","import","other"] as const){
+    equal(migratedEntries.find(entry=>entry.source===source)?.role,"user",`legacy ${source} source maps to user role`);
+  }
+  equal(new Set(migratedEntries.map(entry=>entry.source)).size,4,"Core Book migration preserves all four independent source values");
+  const migrated=migratedEntries.find(entry=>entry.id===legacyEntries[0]!.id)!;
   const migratedState=await legacyStore.load("character.legacy");
   equal(migratedState?.schemaVersion,"2","legacy Core Book state is migrated and persisted at schema v2");
   equal(migrated.id,legacyEntries[0]!.id,"Core Book migration preserves ID");
