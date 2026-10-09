@@ -953,6 +953,8 @@ function ProviderPresetsView({
         if(draft.providerId!=="openai-compatible"&&draft.providerId!=="gemini")throw new Error("Choose a supported provider.");
         if(!draft.baseUrl?.trim()||!draft.model?.trim())throw new Error("Base URL and model are required for a single preset.");
         if(!draft.credentialReference)throw new Error("Select or create a saved API credential.");
+        const savedCredential=credentialProfiles.find(profile=>profile.credentialReference.id===draft.credentialReference?.id&&profile.providerId===draft.providerId);
+        if(!savedCredential||!credentialSaved[savedCredential.id])throw new Error("The selected credential is not available in CredentialStore.");
         const url=new URL(draft.baseUrl);
         if((url.protocol!=="https:"&&url.protocol!=="http:")||url.username||url.password||url.search||url.hash)throw new Error("Base URL must use HTTP(S) and must not contain credentials, query, or fragment.");
         next={...draft,name:draft.name.trim(),type:"single",sources:[],activeSourceId:null,providerId:draft.providerId,baseUrl:url.toString().replace(/\/$/,""),model:draft.model.trim(),credentialReference:{...draft.credentialReference},enabled:draft.enabled??true,timeoutMs:draft.timeoutMs??30000,updatedAt:new Date().toISOString()};
@@ -976,6 +978,8 @@ function ProviderPresetsView({
       await validateProviderPresetCredentialReferences(draft,credentialProfiles);
       if(draft.type==="single"){
         if(draft.sources.length!==0||draft.activeSourceId!==null||!draft.providerId||!draft.baseUrl?.trim()||!draft.model?.trim()||!draft.credentialReference)throw new Error("Single preset requires one complete API configuration and a saved credential reference.");
+        const savedCredential=credentialProfiles.find(profile=>profile.credentialReference.id===draft.credentialReference?.id&&profile.providerId===draft.providerId);
+        if(!savedCredential||!credentialSaved[savedCredential.id])throw new Error("The selected credential is not available in CredentialStore.");
         const url=new URL(draft.baseUrl);
         if((url.protocol!=="https:"&&url.protocol!=="http:")||url.username||url.password||url.search||url.hash)throw new Error("Base URL must use HTTP(S) and must not contain credentials, query, or fragment.");
       }else if(draft.sources.length===0)throw new Error("Pool presets must contain at least one source.");
