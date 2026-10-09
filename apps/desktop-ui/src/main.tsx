@@ -306,9 +306,9 @@ function ChatView({controller,runtime,character,conversations,activeConversation
       {snapshot.messages.length===0&&<div className="empty-chat">Write a message to start the conversation.</div>}
       {snapshot.messages.map((message,index)=>{
         const state=messageStreamStatus(message);
-        const editable=message.role==="user"||message.role==="assistant";
-        const isEditing=editingId===message.id;
         const isNovaTurn=message.metadata?.novaTurnVersion===1;
+        const editable=message.role==="user"||(message.role==="assistant"&&!isNovaTurn);
+        const isEditing=editingId===message.id;
         const parseResult=isNovaTurn?parseNovaTurn(message.content):undefined;
         const parsedTurn=parseResult?.turn;
         if(isNovaTurn&&parseResult&&!shouldRenderNovaTurn(parseResult,showTechnicalData))return null;
@@ -368,6 +368,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     </div>
     {snapshot.lifeTurn?.status==="persisting"&&<p className="chat-hint" role="status">Saving your message for Nova Life…</p>}
     {snapshot.lifeTurn?.status==="awaiting"&&<p className="chat-hint" role="status">Nova is thinking…</p>}
+    {snapshot.lifeTurn?.status==="failed"&&<p className="chat-error" role="alert">Nova Life failed to produce a valid reply. The turn remains failed and can be retried with Retry Nova Life.</p>}
     <form className="chat-composer" onSubmit={event=>{event.preventDefault();if(!chatBusy)void send()}}>
       <textarea value={input} onChange={event=>setInput(event.target.value)} onKeyDown={onKeyDown} placeholder="Write a message…" aria-label="Chat message" disabled={chatBusy} rows={2}/>
       <button type="submit" disabled={chatBusy||input.trim().length===0}>{snapshot.sending?"Streaming…":lifeTurnBusy?"Nova is thinking…":"Send"}</button>
