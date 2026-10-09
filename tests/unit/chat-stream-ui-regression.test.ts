@@ -20,6 +20,10 @@ ok(source.includes('snapshot.status==="streaming"'),"streaming state controls mu
 ok(source.includes('showContinue'),"interrupted state must expose Continue");
 ok(source.includes('showRegenerate'),"completed/interrupted state must expose Regenerate");
 ok(source.includes('showRetry'),"error state must expose Retry");
+ok(source.includes('showContinue&&!chatBusy&&lifeState==="off"'),"ordinary Continue must be hidden while Nova Life owns responses");
+ok(source.includes('showRegenerate&&!chatBusy&&lifeState==="off"'),"ordinary Regenerate must be hidden while Nova Life owns responses");
+ok(source.includes('Normal Chat continuation is unavailable while Nova Life owns responses.'),"Continue handler must reject ordinary generation while Life is active");
+ok(source.includes('Ordinary Chat regeneration is unavailable while Nova Life owns responses.'),"Regenerate handler must reject ordinary generation while Life is active");
 ok(source.includes('stream:(request,handlers,options,providerPresetId)=>'),"desktop controller must use FoundationRuntime.stream");
 
 console.log("PASS chat streaming UI regression test");
