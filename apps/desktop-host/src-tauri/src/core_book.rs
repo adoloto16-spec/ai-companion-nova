@@ -4,7 +4,8 @@ use std::{collections::HashSet,fs,io::Write,path::PathBuf};
 use tauri::Manager;
 
 const API_VERSION:&str="1";
-const SCHEMA_VERSION:&str="1";
+const SCHEMA_VERSION:&str="2";
+const LEGACY_SCHEMA_VERSION:&str="1";
 
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(tag="kind",deny_unknown_fields)]
@@ -32,6 +33,10 @@ pub enum CoreBookActivation{
 pub enum MutationPolicy{Locked,Suggest,Auto}
 
 #[derive(Debug,Deserialize,Serialize,Clone)]
+#[serde(rename_all="lowercase",deny_unknown_fields)]
+pub enum EntryRole{System,User,Assistant}
+
+#[derive(Debug,Deserialize,Serialize,Clone)]
 pub enum EntrySource{#[serde(rename="user")] User,#[serde(rename="import")] Import,#[serde(rename="system")] System,#[serde(rename="other")] Other}
 
 #[derive(Debug,Deserialize,Serialize,Clone)]
@@ -52,6 +57,7 @@ pub struct CoreBookEntry{
     pub mutation_policy:MutationPolicy,
     pub enabled:bool,
     pub source:EntrySource,
+    pub role:EntryRole,
     pub metadata:Map<String,Value>,
     #[serde(rename="createdAt")]
     pub created_at:String,
@@ -126,8 +132,25 @@ pub fn load(app:&tauri::AppHandle,character_id:&str)->Result<Option<CoreBookStor
     let path=config_path(app,character_id)?;
     if !path.exists(){return Ok(None);}
     let bytes=fs::read(&path).map_err(|e|format!("failed to read core book storage: {e}"))?;
-    let state:CoreBookStoreState=serde_json::from_slice(&bytes).map_err(|e|format!("invalid core book storage file: {e}"))?;
+    let mut value:Value=serde_json::from_slice(&bytes).map_err(|e|format!("invalid core book storage file: {e}"))?;
+    let stored_version=value.get("schemaVersion").and_then(Value::as_str).unwrap_or_default();
+    let migrated=if stored_version==LEGACY_SCHEMA_VERSION{
+        value["schemaVersion"]=Value::String(SCHEMA_VERSION.to_string());
+        let entries=value.get_mut("entries").and_then(Value::as_array_mut)
+            .ok_or_else(||"invalid core book storage: entries must be an array".to_string())?;
+        for entry in entries{
+            let object=entry.as_object_mut().ok_or_else(||"invalid core book storage: entry must be an object".to_string())?;
+            if !object.contains_key("role"){
+                let role=if object.get("source").and_then(Value::as_str)==Some("system"){"system"}else{"user"};
+                object.insert("role".to_string(),Value::String(role.to_string()));
+            }
+        }
+        true
+    }else if stored_version==SCHEMA_VERSION{false}
+    else{return Err("unsupported core book storage version".to_string());};
+    let state:CoreBookStoreState=serde_json::from_value(value).map_err(|e|format!("invalid core book storage file: {e}"))?;
     validate(&state,character_id)?;
+    if migrated{save(app,&state)?;}
     Ok(Some(state))
 }
 
