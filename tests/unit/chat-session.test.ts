@@ -416,6 +416,29 @@ async function main(){
   const longExpression=await expressionController.publishExpression({...expression,expressionId:"expr-long",content:"x".repeat(2001)},async()=>undefined);
   equal(longExpression,{status:"suppressed",reason:"invalid-expression"},"overlong expressions are rejected");
   equal(expressionPersistCalls,1,"invalid and duplicate expressions do not invoke persistence");
+  const failedPersistController=new ChatSessionController(new ConversationSession("conversation.persist-fail","character.persist-fail"),{
+    async chat(request:ChatRequest):Promise<ChatResponse>{expressionLlmCalls++;return responseFor(request,"normal chat after failure");}
+  });
+  const failedPublication=await failedPersistController.publishExpression({
+    characterId:"character.persist-fail",conversationId:"conversation.persist-fail",expressionId:"expr-failed",content:"not saved"
+  },async()=>{throw new Error("storage unavailable");});
+  equal(failedPublication,{status:"failed",reason:"publication-failed",errorCode:"PERSIST_FAILED"},"persistence failure is returned without throwing");
+  equal(failedPersistController.getSnapshot().messages.length,0,"failed persistence rolls back the optimistic message");
+  equal(failedPersistController.isBusy(),false,"failed persistence releases Chat busy state");
+  const normalAfterFailure=await failedPersistController.submit("continue normal Chat","fake");
+  equal(normalAfterFailure.status,"sent","normal Chat remains usable after expression persistence failure");
+  equal(failedPersistController.getSnapshot().messages.at(-1)?.content,"normal chat after failure","normal Chat response is intact after expression failure");
+
+  const cancelledExpressionController=new ChatSessionController(new ConversationSession("conversation.cancel","character.cancel"),{
+    async chat(request:ChatRequest):Promise<ChatResponse>{return responseFor(request,"unused");}
+  });
+  const cancelledExpressionControllerAbort=new AbortController();
+  cancelledExpressionControllerAbort.abort();
+  const cancelledPublication=await cancelledExpressionController.publishExpression({
+    characterId:"character.cancel",conversationId:"conversation.cancel",expressionId:"expr-cancelled",content:"stale",signal:cancelledExpressionControllerAbort.signal
+  },async()=>undefined);
+  equal(cancelledPublication,{status:"suppressed",reason:"cancelled"},"cancelled expression is rejected before entering Chat");
+  equal(cancelledExpressionController.getSnapshot().messages.length,0,"cancelled expression cannot append a stale message");
 
   let finishPersistence:()=>void=()=>undefined;
   let signalPersistenceStarted:()=>void=()=>undefined;
