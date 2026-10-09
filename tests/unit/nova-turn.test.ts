@@ -58,6 +58,20 @@ assert.equal(duplicateSpeech.turn,undefined,"duplicate speech is never chosen ar
 assert.equal(duplicateSpeech.fields.speech.status,"invalid");
 assert.ok(duplicateSpeech.diagnostics.some(value=>value.includes("SPEECH-duplicate")));
 
+const mismatchedSpeech=parseNovaTurn("<SPEECH>do not expose ambiguous content</PUBLIC_SPEECH>");
+assert.equal(mismatchedSpeech.turn,undefined,"mismatched explicit aliases are not accepted as speech");
+assert.equal(mismatchedSpeech.fields.speech.status,"invalid");
+assert.ok(mismatchedSpeech.diagnostics.includes("SPEECH-tag-mismatch"));
+
+const missingWrapper=parseNovaTurn("<SPEECH>Recovered after missing wrapper</SPEECH>");
+assert.equal(missingWrapper.turn?.speech,"Recovered after missing wrapper","valid speech survives a missing outer wrapper");
+assert.equal(missingWrapper.fields.speech.status,"recovered");
+assert.ok(missingWrapper.diagnostics.includes("NOVA_TURN-wrapper-invalid"));
+
+const damagedSpeechTag=parseNovaTurn("<NOVA_TURN version=\"1\"><SPEECH>private malformed protocol");
+assert.equal(damagedSpeechTag.turn,undefined,"unclosed speech is not public");
+assert.equal(damagedSpeechTag.fields.speech.status,"invalid");
+
 const missingSpeech=parseNovaTurn(serialized.replace(/<SPEECH>[\s\S]*?<\/SPEECH>/,""));
 assert.equal(missingSpeech.turn,undefined,"missing speech is not inferred from other fields");
 assert.equal(missingSpeech.fields.speech.status,"missing");
