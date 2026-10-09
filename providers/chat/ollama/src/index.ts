@@ -148,7 +148,7 @@ export function validateOllamaProviderConfig(config: OllamaProviderConfig, optio
   const errors = validateOllamaBaseUrl(config.baseUrl ?? OLLAMA_DEFAULT_BASE_URL);
   if (!options.allowEmptyModel && (!config.model || config.model.trim().length === 0)) errors.push("Ollama model is not configured.");
   if (config.model !== undefined && config.model !== config.model.trim()) errors.push("Ollama model must not have surrounding whitespace.");
-  if (config.timeoutMs !== undefined && (!Number.isFinite(config.timeoutMs) || config.timeoutMs <= 0)) errors.push("Ollama timeout must be a finite positive number.");
+  if (config.timeoutMs !== undefined && (!Number.isFinite(config.timeoutMs) || config.timeoutMs < 100)) errors.push("Ollama timeout must be at least 100 milliseconds.");
   if (config.numCtx !== undefined && (!Number.isInteger(config.numCtx) || config.numCtx < 1)) errors.push("Ollama num_ctx must be a positive integer.");
   if (config.numPredict !== undefined && (!Number.isInteger(config.numPredict) || config.numPredict < 1)) errors.push("Ollama num_predict must be a positive integer.");
   if (config.keepAlive !== undefined && !(typeof config.keepAlive === "string" && config.keepAlive.trim().length > 0) &&
@@ -183,6 +183,15 @@ function abortError(): Error {
   const error = new Error("The operation was aborted.");
   error.name = "AbortError";
   return error;
+}
+
+function withAbortSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(abortError());
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortError());
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
 }
 
 export class OllamaChatProvider implements ChatProvider {
@@ -249,7 +258,7 @@ export class OllamaChatProvider implements ChatProvider {
     const messages = this.mapMessages(request.context.messages, request);
     const responseFormat = request.generation?.responseFormat;
     const schema = responseFormat?.type === "json-schema" || responseFormat?.type === "json" ? responseFormat.schema : undefined;
-    if (schema) this.ensureSupportedSchema(schema, request);
+    if (schema) this.ensureSupportedSchema(schema as JsonSchema, request);
     const response = await this.requestWithTimeout({
       url: this.url("/api/chat"),
       method: "POST",
@@ -312,12 +321,12 @@ export class OllamaChatProvider implements ChatProvider {
     };
 
     try {
-      const response = await this.httpClient.stream({
+      const response = await withAbortSignal(this.httpClient.stream({
         url: this.url("/api/chat"), method: "POST",
         headers: { Accept: "application/x-ndjson", "Content-Type": "application/json" },
         body: JSON.stringify(this.mapRequest(request, messages, true)),
         signal: controller.signal
-      });
+      }), controller.signal);
       status = response.status;
       if (status < 200 || status >= 300) {
         for await (const chunk of response.body) responseForFailure += chunk;
@@ -357,7 +366,7 @@ export class OllamaChatProvider implements ChatProvider {
       while (true) {
         if (callerSignal?.aborted) throw abortError();
         if (timedOut) throw this.failure(request, "PROVIDER_ERROR", "Ollama streaming request timed out.", "timeout", true, { timeoutMs: this.timeoutMs() });
-        const item = await iterator.next();
+        const item = await withAbortSignal(iterator.next(), controller.signal);
         if (item.done) break;
         buffer += item.value;
         while (true) {
@@ -478,7 +487,7 @@ export class OllamaChatProvider implements ChatProvider {
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
     try {
-      return await this.httpClient.request({ ...request, signal: controller.signal });
+      return await withAbortSignal(this.httpClient.request({ ...request, signal: controller.signal }), controller.signal);
     } catch (error) {
       if (callerSignal?.aborted) throw abortError();
       if (timedOut) throw this.failure(chatRequest, "PROVIDER_ERROR", "Ollama request timed out.", "timeout", true, { timeoutMs });
