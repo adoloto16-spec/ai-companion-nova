@@ -205,7 +205,7 @@ export class NovaHttpClient implements CompatibleHttpClient {
   private usesNativeOllamaRoute(request: CompatibleHttpClientRequest): boolean {
     try {
       const url = new URL(request.url);
-      const hostname = url.hostname.toLowerCase().replace(/^\\[|\\]$/g, "");
+      const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
       if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "::1"].includes(hostname)) return false;
       if (url.username || url.password || url.search || url.hash) return false;
       if (!["/api/tags", "/api/version", "/api/chat"].includes(url.pathname)) return false;
