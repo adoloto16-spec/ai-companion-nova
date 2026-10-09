@@ -1,6 +1,6 @@
 import type {
   AssembledContext,ChatErrorCode,ChatGenerationOptions,ChatMessage,ChatRequest,ChatResponse,ChatStreamEvent,
-  ChatStreamHandlers,ChatStreamOptions,ChatUsage,CharacterId,ChatTraceStore,ContextBuildRequest,ContextBudget,MemoryExtractionRequest,ModelProfile,Unsubscribe
+  ChatStreamHandlers,ChatStreamOptions,ChatUsage,CharacterId,ChatTraceStore,ContextBuildRequest,ContextBudget,MemoryExtractionRequest,MindExpressionPublication,MindExpressionPublishResult,ModelProfile,Unsubscribe
 } from "../../contracts/src/index";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,DEFAULT_APP_SETTINGS} from "../../contracts/src/index";
 
@@ -182,6 +182,8 @@ export class ChatSessionController{
   private errorCode?:ChatErrorCode;
   private activeRun?:ActiveRun;
   private runSequence=0;
+  private publishingExpression=false;
+  private readonly expressionPublications=new Map<string,Promise<MindExpressionPublishResult>>();
 
   constructor(
     private readonly session:ConversationSession,
@@ -225,8 +227,54 @@ export class ChatSessionController{
     this.listeners.add(listener);
     return ()=>{this.listeners.delete(listener)};
   }
+  isBusy():boolean{return this.sending||this.publishingExpression;}
+
+  publishExpression(
+    expression:MindExpressionPublication,
+    persist:(snapshot:ConversationSnapshot)=>Promise<void>
+  ):Promise<MindExpressionPublishResult>{
+    if(expression.characterId!==this.session.characterId||expression.conversationId!==this.session.conversationId){
+      return Promise.resolve({status:"suppressed",reason:"wrong-conversation"});
+    }
+    const content=typeof expression.content==="string"?expression.content.trim():"";
+    if(!expression.expressionId.trim()||!content||content.length>2000){
+      return Promise.resolve({status:"suppressed",reason:"invalid-expression"});
+    }
+    const existing=this.session.getMessages().find(message=>message.role==="assistant"&&message.metadata?.source==="nova-life"&&message.metadata?.expressionId===expression.expressionId);
+    if(existing?.id)return Promise.resolve({status:"published",messageId:existing.id,conversationId:this.session.conversationId});
+    const pending=this.expressionPublications.get(expression.expressionId);
+    if(pending)return pending;
+    if(this.isBusy())return Promise.resolve({status:"suppressed",reason:"chat-busy"});
+    this.publishingExpression=true;
+    const messageId="nova-life:"+expression.expressionId;
+    const operation=Promise.resolve().then(async():Promise<MindExpressionPublishResult>=>{
+      const collision=this.session.getMessages().find(message=>message.id===messageId);
+      if(collision)return {status:"suppressed",reason:"wrong-conversation"};
+      const message:ChatMessage={id:messageId,role:"assistant",content,metadata:{streamStatus:"complete",source:"nova-life",expressionId:expression.expressionId}};
+      this.session.addMessage(message);
+      this.status="completed";
+      this.error=undefined;this.errorCode=undefined;
+      this.notify();
+      try{
+        await persist(this.getSnapshot());
+        return {status:"published",messageId,conversationId:this.session.conversationId};
+      }catch{
+        this.session.removeMessage(messageId);
+        this.recomputeStatus();
+        return {status:"failed",reason:"publication-failed",errorCode:"PERSIST_FAILED"};
+      }finally{
+        this.publishingExpression=false;
+        this.notify();
+      }
+    });
+    this.expressionPublications.set(expression.expressionId,operation);
+    return operation.finally(()=>{
+      if(this.expressionPublications.get(expression.expressionId)===operation)this.expressionPublications.delete(expression.expressionId);
+    });
+  }
+
   clear():void{
-    if(this.sending)return;
+    if(this.isBusy())return;
     this.session.clear();
     this.error=undefined;
     this.errorCode=undefined;
@@ -235,7 +283,7 @@ export class ChatSessionController{
   }
 
   editMessage(id:string,content:string):void{
-    if(this.sending)throw new Error("Cannot edit a message while a response is streaming.");
+    if(this.isBusy())throw new Error("Cannot edit a message while Chat is busy.");
     const text=content.trim();
     if(!text)throw new Error("Message content must not be empty.");
     const current=this.session.getMessages().find(message=>message.id===id);
@@ -248,7 +296,7 @@ export class ChatSessionController{
   }
 
   deleteMessage(id:string):void{
-    if(this.sending)throw new Error("Cannot delete a message while a response is streaming.");
+    if(this.isBusy())throw new Error("Cannot delete a message while Chat is busy.");
     if(!this.session.getMessages().some(message=>message.id===id))throw new Error("Conversation message was not found.");
     this.session.removeMessage(id);
     this.recomputeStatus();
@@ -260,7 +308,7 @@ export class ChatSessionController{
   async submit(content:string,model:string):Promise<ChatSubmitResult>{
     const text=content.trim();
     if(!text)return {status:"rejected",reason:"empty"};
-    if(this.sending)return {status:"rejected",reason:"busy"};
+    if(this.isBusy())return {status:"rejected",reason:"busy"};
     const requestId=this.requestIdFactory();
     const userMessage:ChatMessage={id:requestId+":user",role:"user",content:text};
     this.session.addMessage(userMessage);
@@ -276,14 +324,14 @@ export class ChatSessionController{
   }
 
   async continue(model:string):Promise<ChatActionResult>{
-    if(this.sending)return {status:"rejected",reason:"busy"};
+    if(this.isBusy())return {status:"rejected",reason:"busy"};
     const {assistant,user}=this.lastTurn();
     if(!assistant||!user||!assistant.id||streamStatus(assistant)!=="interrupted")return {status:"rejected",reason:"no-continuation"};
     return this.startRun("continue",this.requestIdFactory(),model,user,assistant);
   }
 
   async regenerate(model:string):Promise<ChatActionResult>{
-    if(this.sending)return {status:"rejected",reason:"busy"};
+    if(this.isBusy())return {status:"rejected",reason:"busy"};
     const {assistant,user}=this.lastTurn();
     const interrupted=assistant?streamStatus(assistant)==="interrupted":false;
     const complete=assistant?streamStatus(assistant)==="complete":false;
@@ -292,7 +340,7 @@ export class ChatSessionController{
   }
 
   async retry(model:string):Promise<ChatActionResult>{
-    if(this.sending||this.status!=="error")return {status:"rejected",reason:this.sending?"busy":"no-retry"};
+    if(this.isBusy()||this.status!=="error")return {status:"rejected",reason:this.isBusy()?"busy":"no-retry"};
     const {assistant,user}=this.lastTurn();
     if(!user||!user.id)return {status:"rejected",reason:"no-retry"};
     return this.startRun("retry",this.requestIdFactory(),model,user,assistant&&assistant.id?assistant:undefined);
