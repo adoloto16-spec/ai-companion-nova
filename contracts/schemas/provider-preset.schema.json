@@ -52,19 +52,32 @@
       ]
     },
     "providerId": {
-      "enum": [
-        "openai-compatible",
-        "gemini"
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "enum": [
+            "openai-compatible",
+            "gemini"
+          ]
+        }
       ]
     },
     "baseUrl": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "minLength": 1,
       "maxLength": 2000,
       "format": "uri"
     },
     "model": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "minLength": 1,
       "maxLength": 200
     },
@@ -79,10 +92,16 @@
       ]
     },
     "enabled": {
-      "type": "boolean"
+      "type": [
+        "boolean",
+        "null"
+      ]
     },
     "timeoutMs": {
-      "type": "number",
+      "type": [
+        "number",
+        "null"
+      ],
       "exclusiveMinimum": 0
     }
   },
@@ -109,32 +128,62 @@
             {
               "required": [
                 "providerId"
-              ]
+              ],
+              "properties": {
+                "providerId": {
+                  "type": "string"
+                }
+              }
             },
             {
               "required": [
                 "baseUrl"
-              ]
+              ],
+              "properties": {
+                "baseUrl": {
+                  "type": "string"
+                }
+              }
             },
             {
               "required": [
                 "model"
-              ]
+              ],
+              "properties": {
+                "model": {
+                  "type": "string"
+                }
+              }
             },
             {
               "required": [
                 "credentialReference"
-              ]
+              ],
+              "properties": {
+                "credentialReference": {
+                  "$ref": "https://schemas.ai-companion-nova.dev/credential-reference/v1"
+                }
+              }
             },
             {
               "required": [
                 "enabled"
-              ]
+              ],
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                }
+              }
             },
             {
               "required": [
                 "timeoutMs"
-              ]
+              ],
+              "properties": {
+                "timeoutMs": {
+                  "type": "number"
+                }
+              }
             }
           ]
         }
@@ -184,14 +233,7 @@
             "maxLength": 200
           },
           "credentialReference": {
-            "anyOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "https://schemas.ai-companion-nova.dev/credential-reference/v1"
-              }
-            ]
+            "$ref": "https://schemas.ai-companion-nova.dev/credential-reference/v1"
           },
           "enabled": {
             "type": "boolean"
