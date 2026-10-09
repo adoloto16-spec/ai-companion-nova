@@ -127,7 +127,10 @@ export function parseNovaTurn(content: string): NovaTurnParseResult {
   const version = wrappers.length === 1 ? wrappers[0]![1]!.match(/\bversion\s*=\s*["'](\d+)["']/i)?.[1] : undefined;
   const wrapperValid = wrappers.length === 1 && closers.length === 1 && closers[0]!.index! > wrappers[0]!.index! && version === "1";
   if (wrappers.length !== 1 || closers.length !== 1) diagnostics.push("NOVA_TURN-wrapper-invalid");
-  else if (version !== "1") diagnostics.push("unsupported-protocol-version");
+  else if (version !== "1") {
+    diagnostics.push("unsupported-protocol-version");
+    return {complete:false, diagnostics};
+  }
 
   const body = wrapperValid
     ? content.slice(wrappers[0]!.index! + wrappers[0]![0].length, closers[0]!.index)
@@ -180,9 +183,9 @@ export function parseNovaTurn(content: string): NovaTurnParseResult {
 
   const toolResults: NovaToolResult[] = [];
   if (toolResultsField.value !== undefined) {
-    const rawResults = [...toolResultsField.value.matchAll(/<tool_result>([\\s\\S]*?)<\\/tool_result>/gi)];
+    const rawResults = [...toolResultsField.value.matchAll(/<tool_result>([\s\S]*?)<\/tool_result>/gi)];
     if (rawResults.length > FIELD_LIMITS.TOOL_RESULTS) diagnostics.push("TOOL_RESULTS-too-many");
-    const residue = toolResultsField.value.replace(/<tool_result>[\\s\\S]*?<\\/tool_result>/gi, "").trim();
+    const residue = toolResultsField.value.replace(/<tool_result>[\s\S]*?<\/tool_result>/gi, "").trim();
     if (residue) diagnostics.push("TOOL_RESULTS-malformed-content");
     for (const match of rawResults.slice(0, FIELD_LIMITS.TOOL_RESULTS)) {
       const json = unescapeXml(match[1]!).trim();

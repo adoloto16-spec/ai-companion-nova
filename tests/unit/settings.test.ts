@@ -85,6 +85,13 @@ async function main(){
   equal(migratedV5.memoryAgent.prompt,"custom prompt","schema v5 migration preserves prompt");
   equal(migratedV5.memoryAgent.promptBackup,"previous prompt","schema v5 migration preserves prompt backup");
   equal(migratedV5.memoryAgent.defaultPromptVersion,"7","schema v5 migration preserves prompt version");
+  const oldDefaultV8=JSON.parse(JSON.stringify(defaultAppSettings())) as Record<string,any>;
+  oldDefaultV8.schemaVersion="8";
+  oldDefaultV8.cognitiveSchedule={...defaultAppSettings().cognitiveSchedule,minIntervalMs:10000,maxIntervalMs:900000,maxRequestsPerHour:120};
+  const migratedOldDefaults=migrateAppSettings(oldDefaultV8);
+  equal(migratedOldDefaults.cognitiveSchedule.minIntervalMs,3000,"legacy built-in minimum interval migrates to 3000 ms");
+  equal(migratedOldDefaults.cognitiveSchedule.maxIntervalMs,300000,"legacy built-in maximum interval migrates to 300000 ms");
+  equal(migratedOldDefaults.cognitiveSchedule.maxRequestsPerHour,null,"legacy built-in hourly quota is disabled");
   // Pre-v9 default quota is migrated to an explicitly disabled quota; customized quotas survive.
   const v8=JSON.parse(JSON.stringify(defaultAppSettings())) as Record<string,any>;
   v8.schemaVersion="8";

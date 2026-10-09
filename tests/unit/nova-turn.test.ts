@@ -16,7 +16,7 @@ const roundTrip = parseNovaTurn(serialized);
 assert.equal(roundTrip.complete, true);
 assert.deepEqual(roundTrip.turn, source);
 
-const damaged = serialized.replace(/<SITUATION>[\\s\\S]*?<\\/SITUATION>/, "<SITUATION>broken");
+const damaged = serialized.replace(/<SITUATION>[\s\S]*?<\/SITUATION>/, "<SITUATION>broken");
 const recovered = parseNovaTurn(damaged);
 assert.equal(recovered.complete, false);
 assert.equal(recovered.turn?.speech, source.speech);
@@ -25,7 +25,9 @@ assert.ok(recovered.diagnostics.length > 0);
 
 assert.equal(parseNovaTurn('{"thought":"plain JSON"}').turn, undefined);
 assert.equal(parseNovaTurn("plain text only").turn, undefined);
-assert.equal(parseNovaTurn(serialized.replace('version="1"', 'version="2"')).complete, false);
+const unsupportedVersion=parseNovaTurn(serialized.replace('version="1"', 'version="2"'));
+assert.equal(unsupportedVersion.complete, false);
+assert.equal(unsupportedVersion.turn, undefined, "unsupported protocol versions cannot recover speech as a valid NovaTurn");
 assert.equal(parseNovaTurn(serialized.replace("<NEXT_WAKE_MS>30000</NEXT_WAKE_MS>", "<NEXT_WAKE_MS>3.5</NEXT_WAKE_MS>")).turn?.nextWakeMs, 30_000);
 assert.equal(parseNovaTurn(serialized + serialized).turn?.speech, undefined);
 console.log("NovaTurn protocol tests passed.");
