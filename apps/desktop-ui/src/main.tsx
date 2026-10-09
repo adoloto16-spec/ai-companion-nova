@@ -1518,6 +1518,41 @@ function AppSettingsView({
   </div>;
 }
 
+function ChatSettingsView({settings,onChange,onSave,onReset,saving,message}:{
+  settings:AppSettings;
+  onChange:(settings:AppSettings)=>void;
+  onSave:()=>Promise<void>;
+  onReset:()=>Promise<void>;
+  saving:boolean;
+  message:string;
+}){
+  const defaults=defaultAppSettings();
+  return <div className="settings-grid">
+    <section>
+      <div className="section-header">
+        <div><h2>Chat</h2><p className="chat-subtitle">Choose the output format used for the next Nova Life cognitive request.</p></div>
+        <button type="button" onClick={()=>void onReset()} disabled={saving}>Reset to Defaults</button>
+      </div>
+      <label>Chat response mode
+        <select value={settings.chat.responseMode}
+          onChange={event=>onChange({...settings,chat:{...settings.chat,responseMode:event.target.value as AppSettings["chat"]["responseMode"]}})} disabled={saving}>
+          <option value="structured">Structured protocol (recommended)</option>
+          <option value="plain">Plain text (fallback)</option>
+        </select>
+      </label>
+      {settings.chat.responseMode==="structured"
+        ?<p className="hint">Uses the versioned NOVA_TURN v1 protocol with validated tool calls, separate user-facing speech, and a model-proposed next wake interval.</p>
+        :<p className="hint">Uses a separate plain-text prompt. The entire response is user-facing speech; model-requested tools and protocol interpretation are disabled. Background replies may be suppressed only by the exact [[NOVA_SILENT]] sentinel. A silent reactive reply fails and can be retried.</p>}
+      <p className="hint">This setting is saved independently of technical-data visibility. It applies on the next cognitive request and does not change previously saved Conversation messages.</p>
+      <p className="hint">Default: {defaults.chat.responseMode==="structured"?"Structured protocol (recommended)":"Plain text (fallback)"}.</p>
+      <div className="actions">
+        <button type="button" onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save Settings"}</button>
+      </div>
+      {message&&<div className="notice" role="status">{message}</div>}
+    </section>
+  </div>;
+}
+
 function TraceCandidate({candidate}:{candidate:any}){
   return <div className="diagnostic-candidate">
     <div className="diagnostic-candidate-header">
@@ -1847,21 +1882,26 @@ function SettingsContainerView({
   onTestPreset:(preset:ProviderPreset,sourceId:string)=>Promise<ProviderConnectionTestResult>;
   onError:(error:Error,info:React.ErrorInfo)=>void;
 }){
-  const [tab,setTab]=React.useState<"general"|"provider-presets">("general");
+  const [tab,setTab]=React.useState<"general"|"chat"|"provider-presets">("general");
   return <section className="settings-container" aria-label="Settings">
     <div className="settings-subnav" role="tablist" aria-label="Settings sections">
       <button type="button" role="tab" aria-selected={tab==="general"} className={tab==="general"?"nav-button active":"nav-button"} onClick={()=>setTab("general")}>General</button>
+      <button type="button" role="tab" aria-selected={tab==="chat"} className={tab==="chat"?"nav-button active":"nav-button"} onClick={()=>setTab("chat")}>Chat</button>
       <button type="button" role="tab" aria-selected={tab==="provider-presets"} className={tab==="provider-presets"?"nav-button active":"nav-button"} onClick={()=>setTab("provider-presets")}>Provider Presets</button>
     </div>
     {tab==="general"
       ?<ViewErrorBoundary key="settings-general" view="settings-general" onError={onError}>
         <AppSettingsView settings={appSettings} onChange={onAppSettingsChange} onSave={onSaveSettings} onReset={onResetSettings} saving={settingsSaving} message={settingsLoadMessage} providerPresets={providerPresets} activePresetId={activePresetId}/>
       </ViewErrorBoundary>
-      :<ViewErrorBoundary key="settings-provider-presets" view="settings-provider-presets" onError={onError}>
-        <ProviderPresetsView presets={providerPresets} activePresetId={activePresetId} credentialProfiles={credentialProfiles} credentialSaved={credentialSavedMap}
-          runtime={runtime} onSavePreset={onSavePreset} onActivatePreset={onActivatePreset} onDeletePreset={onDeletePreset}
-          onCreateCredential={onCreateCredential} onDeleteCredential={onDeleteCredential} onRefreshModels={onRefreshModels} onTestPreset={onTestPreset}/>
-      </ViewErrorBoundary>}
+      :tab==="chat"
+        ?<ViewErrorBoundary key="settings-chat" view="settings-chat" onError={onError}>
+          <ChatSettingsView settings={appSettings} onChange={onAppSettingsChange} onSave={onSaveSettings} onReset={onResetSettings} saving={settingsSaving} message={settingsLoadMessage}/>
+        </ViewErrorBoundary>
+        :<ViewErrorBoundary key="settings-provider-presets" view="settings-provider-presets" onError={onError}>
+          <ProviderPresetsView presets={providerPresets} activePresetId={activePresetId} credentialProfiles={credentialProfiles} credentialSaved={credentialSavedMap}
+            runtime={runtime} onSavePreset={onSavePreset} onActivatePreset={onActivatePreset} onDeletePreset={onDeletePreset}
+            onCreateCredential={onCreateCredential} onDeleteCredential={onDeleteCredential} onRefreshModels={onRefreshModels} onTestPreset={onTestPreset}/>
+        </ViewErrorBoundary>}
   </section>;
 }
 function isTauriRuntime():boolean{
