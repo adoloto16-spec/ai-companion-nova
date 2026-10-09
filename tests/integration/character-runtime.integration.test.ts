@@ -91,34 +91,32 @@ async function main(){
     const gm=await runtime.createCharacter({name:"GM"});
 
     await runtime.startLife();
-    await waitFor(()=>runtime.getMindState().recentThoughts.length>=1);
+    await waitFor(()=>Boolean(runtime.getMindState().recentTrace?.length));
     await runtime.stopLife();
-    const novaThoughts=runtime.getMindState().recentThoughts;
-    equal(novaThoughts.length>=1,true,"Nova Life produced a thought for the active character");
-    equal(novaThoughts.every(thought=>thought.characterId===nova.id),true,"Nova thoughts are character scoped");
+    const novaTrace=runtime.getMindState().recentTrace??[];
+    equal(novaTrace.length>=1,true,"Nova Life records cognitive turns in general diagnostics");
+    equal(novaTrace.at(-1)?.characterId,nova.id,"Nova cognitive diagnostics retain their character scope");
+    equal("recentThoughts" in runtime.getMindState(),false,"MindState no longer stores a parallel Thought history");
 
     await runtime.setActiveCharacter(gm.id);
     equal((await runtime.getActiveCharacter()).id,gm.id,"runtime switches active character");
-    equal(runtime.getMindState().recentThoughts.length,0,"GM starts with only its own empty thought history");
-
     await runtime.startLife();
-    await waitFor(()=>runtime.getMindState().recentThoughts.length>=1);
+    await waitFor(()=>Boolean(runtime.getMindState().recentTrace?.some(entry=>entry.characterId===gm.id)));
     await runtime.stopLife();
-    const gmThoughts=runtime.getMindState().recentThoughts;
-    equal(gmThoughts.every(thought=>thought.characterId===gm.id),true,"GM thoughts are character scoped");
-    equal(runtime.getMindState().recentThoughts.some(thought=>novaThoughts.some(previous=>previous.id===thought.id)),false,"GM history does not contain Nova thoughts");
+    const gmTrace=runtime.getMindState().recentTrace??[];
+    equal(gmTrace.some(entry=>entry.characterId===gm.id),true,"GM cognitive diagnostics record the selected character");
+    equal("lastThought" in runtime.getMindState(),false,"MindState no longer duplicates the latest Thought");
 
     await runtime.setActiveCharacter(nova.id);
-    equal(runtime.getMindState().recentThoughts.map(thought=>thought.id),novaThoughts.map(thought=>thought.id),"switching back restores Nova thought history");
-    runtime.clearAllThoughts();
-    equal(runtime.getMindState().recentThoughts.length,0,"clear all thoughts works through FoundationRuntime");
+    equal((await runtime.getActiveCharacter()).id,nova.id,"switching back selects Nova without a separate Thought journal");
+    equal("recentThoughts" in runtime.getMindState(),false,"character changes do not recreate removed Thought-only state");
 
     const transient=await runtime.createCharacter({name:"Transient"});
     await runtime.setActiveCharacter(transient.id);
     await runtime.deleteCharacter(transient.id);
     const replacementCharacter=await runtime.getActiveCharacter();
     equal(replacementCharacter.id===transient.id,false,"deleting active character selects a remaining character");
-    equal(runtime.getMindState().recentThoughts.length,0,"deleting active character resyncs Mind Runtime state");
+    equal((await runtime.getActiveCharacter()).id!==transient.id,true,"deleting active character switches away from the removed character");
     await runtime.setActiveCharacter(gm.id);
     equal((await runtime.getActiveCharacter()).id,gm.id,"restart fixture explicitly selects the character it expects to persist");
 
