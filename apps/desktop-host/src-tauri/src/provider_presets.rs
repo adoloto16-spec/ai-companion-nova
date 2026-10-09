@@ -274,16 +274,28 @@ fn migrate_legacy_state(
     Ok(migrated)
 }
 
-fn decode(bytes:&[u8])->Result<Result<ProviderPresetStoreState,LegacyProviderPresetStoreState>,String>{
+enum DecodedProviderPresetState{
+    Current(ProviderPresetStoreState),
+    Version2(ProviderPresetStoreState),
+    Legacy(LegacyProviderPresetStoreState),
+}
+fn decode(bytes:&[u8])->Result<DecodedProviderPresetState,String>{
     let value:serde_json::Value=serde_json::from_slice(bytes).map_err(|e|format!("invalid provider preset storage file: {e}"))?;
     let schema=value.get("schemaVersion").and_then(serde_json::Value::as_str).unwrap_or_default();
     if schema==SCHEMA_VERSION{
         let state:ProviderPresetStoreState=serde_json::from_value(value).map_err(|e|format!("invalid provider preset storage file: {e}"))?;
         validate_state(&state)?;
-        Ok(Ok(state))
+        Ok(DecodedProviderPresetState::Current(state))
+    }else if schema==V2_SCHEMA_VERSION{
+        let mut state:ProviderPresetStoreState=serde_json::from_value(value).map_err(|e|format!("invalid v2 provider preset storage file: {e}"))?;
+        state.schema_version=SCHEMA_VERSION.to_string();
+        // The serde default maps a missing discriminator to the legacy pool type. All source
+        // ordering, activeSourceId and CredentialStore references remain untouched.
+        validate_state(&state)?;
+        Ok(DecodedProviderPresetState::Version2(state))
     }else if schema==LEGACY_SCHEMA_VERSION{
         let state:LegacyProviderPresetStoreState=serde_json::from_value(value).map_err(|e|format!("invalid legacy provider preset storage file: {e}"))?;
-        Ok(Err(state))
+        Ok(DecodedProviderPresetState::Legacy(state))
     }else{
         Err("unsupported provider preset storage version".to_string())
     }
@@ -300,8 +312,12 @@ fn load_from_path(path:&Path,credential_state:Option<&super::credential_profiles
     if !path.exists(){return Ok(None);}
     let bytes=fs::read(path).map_err(|e|format!("failed to read provider preset storage: {e}"))?;
     match decode(&bytes){
-        Ok(Ok(state))=>Ok(Some(state)),
-        Ok(Err(legacy))=>{
+        Ok(DecodedProviderPresetState::Current(state))=>Ok(Some(state)),
+        Ok(DecodedProviderPresetState::Version2(state))=>{
+            save_to_path(path,&state)?;
+            Ok(Some(state))
+        },
+        Ok(DecodedProviderPresetState::Legacy(legacy))=>{
             let state=migrate_legacy_state(legacy,credential_state)?;
             save_to_path(path,&state)?;
             Ok(Some(state))
