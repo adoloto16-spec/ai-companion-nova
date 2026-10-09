@@ -1182,6 +1182,7 @@ function ProviderPresetsView({
           <span>Active</span><strong>{selectedSource.id===draft.activeSourceId?"yes":"no"}</strong>
         </div>
       </>}
+      </>}
       {draft.type==="single"&&<div className="provider-single-config">
         <label>Provider
           <select value={singleProviderId} onChange={event=>{
