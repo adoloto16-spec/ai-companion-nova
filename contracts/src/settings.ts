@@ -25,7 +25,7 @@ const LEGACY_MEMORY_JUDGE_PROMPT="You are a memory deduplication judge.\n\nCompa
 
 export interface AppSettings{
   apiVersion:"1";
-  schemaVersion:"8";
+  schemaVersion:"9";
   cognitiveSchedule:CognitiveScheduleSettings;
   chat:{
     automaticLongTermMemory:boolean;
