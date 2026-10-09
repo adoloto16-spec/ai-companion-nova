@@ -188,13 +188,11 @@ function abortError(): Error {
 export class OllamaChatProvider implements ChatProvider {
   readonly id = OLLAMA_PROVIDER_ID;
   private readonly config: OllamaProviderConfig;
-  private readonly credentialStore: CredentialStore;
   private readonly httpClient: OllamaHttpClient;
   private modelsCache?: { expiresAt: number; models: ModelInfo[] };
 
-  constructor(config: OllamaProviderConfig, credentialStore: CredentialStore, httpClient: OllamaHttpClient = new FetchOllamaHttpClient()) {
+  constructor(config: OllamaProviderConfig, _credentialStore: CredentialStore, httpClient: OllamaHttpClient = new FetchOllamaHttpClient()) {
     this.config = { ...config, baseUrl: config.baseUrl ?? OLLAMA_DEFAULT_BASE_URL };
-    this.credentialStore = credentialStore;
     this.httpClient = httpClient;
   }
 
@@ -237,6 +235,7 @@ export class OllamaChatProvider implements ChatProvider {
 
   async health(): Promise<HealthStatus> {
     try {
+      this.ensureConfiguration(undefined, true);
       const response = await this.requestWithTimeout({ url: this.url("/api/tags"), method: "GET", headers: { Accept: "application/json" } }, this.timeoutMs(), undefined);
       if (response.status >= 200 && response.status < 300) return { status: "healthy", message: "Ollama is reachable." };
       return { status: "unavailable", message: this.httpMessage(response.status, response.body) };
@@ -512,8 +511,7 @@ export class OllamaChatProvider implements ChatProvider {
   }
 
   private networkFailure(error: unknown, request?: ChatRequest, durationMs?: number): OllamaProviderError {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message === "AbortError" || error instanceof Error && error.name === "AbortError") return this.failure(request, "PROVIDER_ERROR", "Ollama request was cancelled.", "cancelled");
+    if (error instanceof Error && error.name === "AbortError") return this.failure(request, "PROVIDER_ERROR", "Ollama request was cancelled.", "cancelled");
     return this.failure(request, "PROVIDER_UNAVAILABLE", "Cannot connect to local Ollama. Start Ollama and verify the URL " + this.config.baseUrl + ".", "network", true, durationMs === undefined ? {} : { durationMs });
   }
 
