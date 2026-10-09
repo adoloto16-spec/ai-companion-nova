@@ -106,6 +106,8 @@ assert.ok(source.includes("countVisibleSpeechMessages(conversation.messages)")&&
 assert.ok(source.includes("commitNovaTurn"),"Chat persists the canonical NovaTurn record");
 assert.ok(source.includes("setNovaTurnSink"),"UI registers the single canonical turn sink");
 assert.ok(source.includes("subscribeMindState"),"UI must subscribe to runtime mind state rather than own the runtime");
+assert.ok(source.includes('message.role==="assistant"&&!isNovaTurn'),"NovaTurn internals cannot be exposed by opening the raw record in the editor");
+assert.ok(source.includes("Nova Life failed to produce a valid reply")&&source.includes("Retry Nova Life"),"failed reactive turns display a failed state and retry path");
 
 assert.match(source,/class ViewErrorBoundary extends React\.Component/);
 assert.match(source,/componentDidCatch\(error:Error,info:React\.ErrorInfo\)/);
