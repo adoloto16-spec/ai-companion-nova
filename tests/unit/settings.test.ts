@@ -20,6 +20,9 @@ async function main(){
   const defaults=await manager.initialize();
   equal(defaults,defaultAppSettings(),"missing settings resolve to deterministic defaults");
   equal(DEFAULT_APP_SETTINGS.context.availableContextTokens,4096,"default context size");
+  equal(defaults.cognitiveSchedule,{mode:"adaptive",defaultIntervalMs:30000,minIntervalMs:10000,maxIntervalMs:900000,maxRequestsPerHour:120},"cognitive schedule defaults");
+  const isolatedDefaults=defaultAppSettings();isolatedDefaults.cognitiveSchedule.defaultIntervalMs=45000;
+  equal(defaultAppSettings().cognitiveSchedule.defaultIntervalMs,30000,"nested cognitive settings are deep-copied");
   ok(defaults.semanticDedup.judge.prompt.includes("In structured mode, return only:"),"default Judge prompt declares structured output");
   ok(defaults.semanticDedup.judge.prompt.includes("In plain mode, return only:"),"default Judge prompt declares plain output");
   equal(defaults.semanticDedup.judge.defaultPromptVersion,"2","default Judge prompt version");
@@ -30,6 +33,7 @@ async function main(){
     retrieval:{...defaults.retrieval,candidateLimit:7},
     diagnostics:{...defaults.diagnostics,logLevel:"verbose" as const,keepRecentEntries:25},
     chat:{...defaults.chat,automaticLongTermMemory:false},
+    cognitiveSchedule:{mode:"fixed" as const,defaultIntervalMs:60000,minIntervalMs:10000,maxIntervalMs:300000,maxRequestsPerHour:60},
     memoryAgent:{...defaults.memoryAgent,enabled:true,providerPresetId:"preset.memory",model:"memory-model",outputMode:"structured" as const,prompt:"Custom full prompt",promptBackup:"Previous prompt",defaultPromptVersion:"1"},
     semanticDedup:{
       ...defaults.semanticDedup,
@@ -52,6 +56,9 @@ async function main(){
   equal(persistedIpcSettings?.semanticDedup.judge.model,"judge-model","IpcSettingsStore save/load preserves Judge model");
   equal(persistedIpcSettings?.semanticDedup.judge.outputMode,"plain","IpcSettingsStore save/load preserves Judge output mode");
   equal((await manager.get()).context.availableContextTokens,8192,"custom context size persists in store");
+  equal((await manager.get()).cognitiveSchedule.mode,"fixed","cognitive schedule mode persists");
+  equal((await manager.get()).cognitiveSchedule.defaultIntervalMs,60000,"cognitive default interval persists");
+  equal(persistedIpcSettings?.cognitiveSchedule.maxRequestsPerHour,60,"IpcSettingsStore persists the cognitive hourly quota");
   equal((await manager.get()).memory.candidateLimit,3,"custom memory candidate limit persists");
   equal((await manager.get()).chat.automaticLongTermMemory,false,"custom extraction toggle persists");
   equal((await manager.get()).memoryAgent.providerPresetId,"preset.memory","agent provider preset persists");
@@ -65,9 +72,12 @@ async function main(){
   equal((await manager.get()).semanticDedup.judge.outputMode,"plain","Memory Judge output mode persists");
   equal((await manager.get()).semanticDedup.judge.prompt,"Judge custom","Memory Judge prompt persists");
   equal((await manager.get()).semanticDedup.judge.promptBackup,"Judge previous","Memory Judge prompt backup persists");
-  // Regression: canonical schema v5 migration must preserve the Memory Agent provider/model binding and all current prompt settings.
-  const v5={...defaultAppSettings(),memoryAgent:{...defaultAppSettings().memoryAgent,enabled:false,providerPresetId:"preset.memory",model:"ministral-3b-2512",outputMode:"plain" as const,prompt:"custom prompt",promptBackup:"previous prompt",defaultPromptVersion:"7"}};
-  const migratedV5=migrateAppSettings(JSON.parse(JSON.stringify(v5)));
+  // Schema v5 had no cognitiveSchedule; migration keeps its existing fields and supplies the v6 defaults.
+  const v5=JSON.parse(JSON.stringify(defaultAppSettings())) as Record<string,unknown>;
+  delete v5.cognitiveSchedule;v5.schemaVersion="5";
+  v5.memoryAgent={...defaultAppSettings().memoryAgent,enabled:false,providerPresetId:"preset.memory",model:"ministral-3b-2512",outputMode:"plain",prompt:"custom prompt",promptBackup:"previous prompt",defaultPromptVersion:"7"};
+  const migratedV5=migrateAppSettings(v5);
+  equal(migratedV5.cognitiveSchedule,DEFAULT_APP_SETTINGS.cognitiveSchedule,"schema v5 migration inserts cognitive defaults");
   equal(migratedV5.memoryAgent.providerPresetId,"preset.memory","schema v5 migration preserves provider preset");
   equal(migratedV5.memoryAgent.model,"ministral-3b-2512","schema v5 migration preserves model");
   equal(migratedV5.memoryAgent.enabled,false,"schema v5 migration preserves enabled");
@@ -75,16 +85,20 @@ async function main(){
   equal(migratedV5.memoryAgent.prompt,"custom prompt","schema v5 migration preserves prompt");
   equal(migratedV5.memoryAgent.promptBackup,"previous prompt","schema v5 migration preserves prompt backup");
   equal(migratedV5.memoryAgent.defaultPromptVersion,"7","schema v5 migration preserves prompt version");
-  await manager.set(v5);
+  const currentSettings={...defaultAppSettings(),memoryAgent:{...defaultAppSettings().memoryAgent,enabled:false,providerPresetId:"preset.memory",model:"ministral-3b-2512",outputMode:"plain" as const,prompt:"custom prompt",promptBackup:"previous prompt",defaultPromptVersion:"7"}};
+  await manager.set(currentSettings);
   const reloadedManager=new SettingsManager(store,validator);
   const reloaded=await reloadedManager.initialize();
   equal(reloaded.memoryAgent.providerPresetId,"preset.memory","SettingsManager reload preserves provider preset");
   equal(reloaded.memoryAgent.model,"ministral-3b-2512","SettingsManager reload preserves model");
+  equal(reloaded.cognitiveSchedule.mode,"adaptive","SettingsManager reload preserves default schedule");
   const reset=await manager.reset();
   equal(reset,defaultAppSettings(),"reset restores defaults");
   let rejected=false;
   try{await manager.set({...defaultAppSettings(),context:{...defaultAppSettings().context,availableContextTokens:999999}} as any)}catch{rejected=true}
   ok(rejected,"unsafe values are rejected");
+  const invalidSchedule={...defaultAppSettings(),cognitiveSchedule:{...defaultAppSettings().cognitiveSchedule,minIntervalMs:120000,maxIntervalMs:60000}};
+  ok(validateAppSettings(invalidSchedule).some(error=>error.includes("minimum interval")),"inconsistent cognitive interval bounds are rejected");
   const legacy=migrateAppSettings({schemaVersion:"0",contextBudget:8192,recentMessages:12,memoryCandidateLimit:5,diagnosticsLevel:"debug"});
   equal(legacy.context.availableContextTokens,8192,"legacy context budget migrates");
   equal(legacy.context.recentConversationMessages,12,"legacy recent message count migrates");

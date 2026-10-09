@@ -1216,6 +1216,41 @@ function AppSettingsView({
     </section>
 
     <section>
+      <h3>Cognitive Schedule</h3>
+      <label>Scheduling mode
+        <select value={settings.cognitiveSchedule.mode}
+          onChange={event=>onChange({...settings,cognitiveSchedule:{...settings.cognitiveSchedule,mode:event.target.value as AppSettings["cognitiveSchedule"]["mode"]}})} disabled={saving}>
+          <option value="adaptive">Adaptive (model proposes the next wake)</option>
+          <option value="fixed">Fixed interval</option>
+        </select>
+        <small>Default: {defaults.cognitiveSchedule.mode}. Fixed mode ignores the model's interval proposal.</small>
+      </label>
+      <div className="core-book-grid">
+        <label>Default interval (ms)
+          <input type="number" min={1000} max={3600000} step={1000} value={settings.cognitiveSchedule.defaultIntervalMs}
+            onChange={event=>onChange({...settings,cognitiveSchedule:{...settings.cognitiveSchedule,defaultIntervalMs:Number(event.target.value)}})} disabled={saving}/>
+          <small>Default: {defaults.cognitiveSchedule.defaultIntervalMs} ms</small>
+        </label>
+        <label>Minimum interval (ms)
+          <input type="number" min={1000} max={3600000} step={1000} value={settings.cognitiveSchedule.minIntervalMs}
+            onChange={event=>onChange({...settings,cognitiveSchedule:{...settings.cognitiveSchedule,minIntervalMs:Number(event.target.value)}})} disabled={saving}/>
+          <small>Default: {defaults.cognitiveSchedule.minIntervalMs} ms</small>
+        </label>
+        <label>Maximum interval (ms)
+          <input type="number" min={1000} max={3600000} step={1000} value={settings.cognitiveSchedule.maxIntervalMs}
+            onChange={event=>onChange({...settings,cognitiveSchedule:{...settings.cognitiveSchedule,maxIntervalMs:Number(event.target.value)}})} disabled={saving}/>
+          <small>Default: {defaults.cognitiveSchedule.maxIntervalMs} ms</small>
+        </label>
+        <label>Background requests per hour
+          <input type="number" min={1} max={3600} step={1} value={settings.cognitiveSchedule.maxRequestsPerHour}
+            onChange={event=>onChange({...settings,cognitiveSchedule:{...settings.cognitiveSchedule,maxRequestsPerHour:Number(event.target.value)}})} disabled={saving}/>
+          <small>Default: {defaults.cognitiveSchedule.maxRequestsPerHour} requests/hour</small>
+        </label>
+      </div>
+      <p className="hint">The hourly quota applies only to background cognitive steps. Regular Chat remains available while Life is on or off.</p>
+    </section>
+
+    <section>
       <h3>Memory</h3>
       <label className="checkbox">Automatic long-term memory extraction
         <input type="checkbox" checked={settings.chat.automaticLongTermMemory}
@@ -1789,6 +1824,9 @@ function ThoughtsView({mindState,character,runtime}:{mindState:MindState;charact
       </div>
     </div>
     {message&&<div className="error">{message}</div>}
+    <p className="chat-subtitle">{mindState.lifecycleState==="waiting"&&mindState.nextWakeAt
+      ? "Next cognitive wake: "+new Date(mindState.nextWakeAt).toLocaleTimeString()
+      : mindState.lifecycleState==="thinking" ? "Nova is thinking…" : "Next cognitive wake: —"}</p>
     <div className="thought-list">
       {mindState.recentThoughts.length===0
         ?<div className="empty-state">No internal thoughts for {character.name}.</div>
@@ -1803,6 +1841,24 @@ function ThoughtsView({mindState,character,runtime}:{mindState:MindState;charact
           </article>
         )}
     </div>
+    <section className="diagnostic-block">
+      <h3>Recent cognitive trace</h3>
+      {(mindState.recentTrace??[]).length===0
+        ?<div className="empty-state">No cognitive runs recorded yet.</div>
+        :[...(mindState.recentTrace??[])].reverse().map(entry=>
+          <article className="diagnostic-candidate" key={entry.runId}>
+            <div className="diagnostic-candidate-header">
+              <strong>{entry.result.toUpperCase()}</strong>
+              <span>{entry.wakeReason}</span>
+              <time>{new Date(entry.startedAt).toLocaleTimeString()}</time>
+            </div>
+            <div className="diagnostic-candidate-meta">Character {entry.characterId} · {entry.durationMs} ms{entry.appliedIntervalMs===undefined?"":" · next "+entry.appliedIntervalMs+" ms"}</div>
+            {entry.requestedNextWakeInMs!==undefined&&<div className="diagnostic-reason">Model interval: {entry.requestedNextWakeInMs} ms</div>}
+            {entry.intervalDecision&&<div className="diagnostic-reason">Interval decision: {entry.intervalDecision}</div>}
+            {(entry.requestId||entry.providerId||entry.errorCode)&&<div className="diagnostic-candidate-meta">{entry.requestId? "Request "+entry.requestId+" · ":""}{entry.providerId?"Provider "+entry.providerId+" · ":""}{entry.errorCode?"Code "+entry.errorCode:""}</div>}
+          </article>
+        )}
+    </section>
   </section>;
 }
 
@@ -1911,7 +1967,17 @@ function App(){
       memoryExtractionEnabled:()=>{
         return foundationRef.current?.getSettings().chat.automaticLongTermMemory??true;
       },
-      traceStore:foundationRef.current?.getChatTraceStore()
+      traceStore:foundationRef.current?.getChatTraceStore(),
+      beforeUserMessage:async snapshot=>{
+        const foundation=foundationRef.current;
+        if(!foundation)return;
+        try{
+          await foundation.updateConversation(snapshot.characterId,snapshot.conversationId,{messages:snapshot.messages});
+          foundation.wakeMind();
+        }catch(error){
+          foundation.recordDiagnosticError("conversation-storage","PRE_SEND_PERSIST_FAILED",safeErrorMessage(error,"User message could not be persisted before the cognitive wake"));
+        }
+      }
     }
   ),[]);
 
@@ -2393,7 +2459,7 @@ function App(){
         {appSettings.ui.showDiagnosticsInChat&&<button className={view==="diagnostics"?"nav-button active":"nav-button"} onClick={()=>setView("diagnostics")}>Diagnostics</button>}
       </nav>
       <div className="life-control">
-        <span className="life-label">Nova Life: <strong>{mindState.lifecycleState.toUpperCase()}</strong></span>
+        <span className="life-label">Nova Life: <strong>{mindState.lifecycleState.toUpperCase()}</strong>{mindState.lifecycleState==="waiting"&&mindState.nextWakeAt&&<small> · next wake {new Date(mindState.nextWakeAt).toLocaleTimeString()}</small>}</span>
         <button type="button" onClick={async()=>{
           const foundation=foundationRef.current;if(!foundation||lifeBusy)return;setLifeBusy(true);
           try{if(mindState.lifecycleState==="off")await foundation.startLife();else await foundation.stopLife();}

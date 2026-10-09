@@ -80,13 +80,14 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
   },
   "app-settings": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v5",
-    "title": "AI Companion Nova App Settings v5",
+    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v6",
+    "title": "AI Companion Nova App Settings v6",
     "type": "object",
     "additionalProperties": false,
     "required": [
       "apiVersion",
       "schemaVersion",
+      "cognitiveSchedule",
       "chat",
       "context",
       "memory",
@@ -101,7 +102,7 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         "const": "1"
       },
       "schemaVersion": {
-        "const": "5"
+        "const": "6"
       },
       "chat": {
         "type": "object",
@@ -352,6 +353,45 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
                 "maxLength": 32
               }
             }
+          }
+        }
+      },
+      "cognitiveSchedule": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "mode",
+          "defaultIntervalMs",
+          "minIntervalMs",
+          "maxIntervalMs",
+          "maxRequestsPerHour"
+        ],
+        "properties": {
+          "mode": {
+            "enum": [
+              "adaptive",
+              "fixed"
+            ]
+          },
+          "defaultIntervalMs": {
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 3600000
+          },
+          "minIntervalMs": {
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 3600000
+          },
+          "maxIntervalMs": {
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 3600000
+          },
+          "maxRequestsPerHour": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3600
           }
         }
       }

@@ -43,6 +43,7 @@ class FakeCredentialStore implements CredentialStore{
 class FakeHttpClient implements HttpClient{
   requests:HttpClientRequest[]=[];
   lastStreamSignal?:AbortSignal;
+  lastRequestSignal?:AbortSignal;
   next:HttpClientResponse|Error|(()=>Promise<HttpClientResponse>)={
     status:200,
     body:JSON.stringify({
@@ -63,6 +64,7 @@ class FakeHttpClient implements HttpClient{
   };
   async request(request:HttpClientRequest):Promise<HttpClientResponse>{
     this.requests.push(request);
+    this.lastRequestSignal=request.signal;
     if(this.next instanceof Error)throw this.next;
     if(typeof this.next==="function")return this.next();
     return this.next;
@@ -361,6 +363,23 @@ async function httpStatusTest(){
       "HTTP "+status
     );
   }
+}
+
+async function chatAbortTest(){
+  const http=new FakeHttpClient();
+  http.next=()=>new Promise<HttpClientResponse>(()=>{});
+  const signalController=new AbortController();
+  const pending=provider(http).chat(request(),{signal:signalController.signal});
+  for(let attempt=0;attempt<30&&http.lastRequestSignal===undefined;attempt++)await new Promise(resolve=>setTimeout(resolve,1));
+  const httpSignal=http.lastRequestSignal;
+  if(!httpSignal)throw new Error("provider must pass a caller-cancellable AbortSignal to HTTP chat transport");
+  signalController.abort();
+  await throwsAsync(
+    ()=>pending,
+    error=>error instanceof Error&&error.name==="AbortError",
+    "caller abort cancels HTTP chat generation"
+  );
+  equal(httpSignal.aborted,true,"caller cancellation reaches the HTTP request signal");
 }
 
 async function timeoutAndConnectionTest(){
@@ -665,6 +684,7 @@ void (async()=>{
     ["HTTP status normalization",httpStatusTest],
     ["HTTP 400 provider response diagnostics",http400ResponseBodyPropagationTest],
     ["Timeout and connection",timeoutAndConnectionTest],
+    ["Chat abort",chatAbortTest],
     ["Credential and unsupported inputs",credentialAndUnsupportedTest],
     ["Secret safety",secretSafetyTest],
     ["Streaming",streamingTest],

@@ -8,10 +8,8 @@ async function waitFor(predicate:()=>boolean,timeoutMs=1000):Promise<void>{const
 async function startRuntimeTest(){
   const runtime=new MindRuntime({cognitiveStep:new DeterministicCognitiveStep(),stepIntervalMs:2});
   runtime.setActiveCharacter("character.a");
-  await runtime.start();
-  await waitFor(()=>runtime.getState().recentThoughts.length>=3);
-  equal(runtime.getState().lifecycleState,"thinking","runtime stays thinking between cognitive steps");
-  await runtime.stop();
+  try{await runtime.start();await waitFor(()=>runtime.getState().recentThoughts.length>=3&&runtime.getState().lifecycleState==="waiting");equal(runtime.getState().lifecycleState,"waiting","runtime waits between cognitive steps");}
+  finally{await runtime.stop();}
   equal(runtime.getState().lifecycleState,"off","stop transitions runtime to off");
 }
 
@@ -21,23 +19,14 @@ async function sequentialStepsTest(){
     running=0;maxRunning=0;
     async run(context:CognitiveStepContext){
       this.running+=1;this.maxRunning=Math.max(this.maxRunning,this.running);
-      try{
-        await new Promise(resolve=>setTimeout(resolve,4));
-        const sequence=seen.length+1;
-        seen.push(context.state.lastThought?.id??"none");
-        return {characterId:context.characterId,id:"thought:"+sequence,timestamp:new Date().toISOString(),content:"step "+sequence,expression:"internal" as const};
-      }finally{this.running-=1;}
+      try{await new Promise(resolve=>setTimeout(resolve,4));const sequence=seen.length+1;seen.push(context.state.lastThought?.id??"none");return {characterId:context.characterId,id:"thought:"+sequence,timestamp:new Date().toISOString(),content:"step "+sequence,expression:"internal" as const};}
+      finally{this.running-=1;}
     }
   }
   const step=new Step();const runtime=new MindRuntime({cognitiveStep:step,stepIntervalMs:2,recentThoughtLimit:50});
   runtime.setActiveCharacter("character.a");
-  await runtime.start();await waitFor(()=>runtime.getState().recentThoughts.length>=4);await runtime.stop();
-  const state=runtime.getState();
-  equal(step.maxRunning,1,"only one cognitive step runs at a time");
-  ok(state.recentThoughts.length>=4,"recent thought history retains multiple thoughts");
-  equal(seen[0],"none","first cognitive step sees initial state");
-  equal(seen[1],"thought:1","second cognitive step sees first thought");
-  equal(seen[2],"thought:2","third cognitive step sees second thought");
+  try{await runtime.start();await waitFor(()=>runtime.getState().recentThoughts.length>=4);}finally{await runtime.stop();}
+  const state=runtime.getState();equal(step.maxRunning,1,"only one cognitive step runs at a time");ok(state.recentThoughts.length>=4,"recent thought history retains multiple thoughts");equal(seen[0],"none","first cognitive step sees initial state");equal(seen[1],"thought:1","second cognitive step sees first thought");equal(seen[2],"thought:2","third cognitive step sees second thought");
 }
 
 async function historyLimitTest(){
@@ -53,65 +42,31 @@ async function historyLimitTest(){
 
 async function stopDuringActiveStepTest(){
   let started=0;
-  const step:CognitiveStep={run:({signal,characterId})=>{
-    started+=1;
-    return new Promise((_,reject)=>{
-      signal.addEventListener("abort",()=>reject(MindRuntime.createAbortError()),{once:true});
-      void characterId;
-    });
-  }};
-  const runtime=new MindRuntime({cognitiveStep:step,stepIntervalMs:1});
-  runtime.setActiveCharacter("character.a");
-  await runtime.start();
-  await waitFor(()=>started===1);
-  const stopPromise=runtime.stop();
-  equal(runtime.getState().lifecycleState,"stopping","stop marks an active step as stopping");
-  await stopPromise;
-  equal(runtime.getState().lifecycleState,"off","runtime stops after an active cognitive step");
-  equal(runtime.getState().recentThoughts.length,0,"aborted active step cannot publish a thought");
+  const step:CognitiveStep={run:({signal,characterId})=>{started+=1;return new Promise((_,reject)=>{signal.addEventListener("abort",()=>reject(MindRuntime.createAbortError()),{once:true});void characterId;});}};
+  const runtime=new MindRuntime({cognitiveStep:step,stepIntervalMs:1});runtime.setActiveCharacter("character.a");
+  try{await runtime.start();await waitFor(()=>started===1);const stopPromise=runtime.stop();equal(runtime.getState().lifecycleState,"stopping","stop marks an active step as stopping");await stopPromise;equal(runtime.getState().lifecycleState,"off","runtime stops after an active cognitive step");equal(runtime.getState().recentThoughts.length,0,"aborted active step cannot publish a thought");}
+  finally{await runtime.stop();}
 }
 
 async function restartAfterStopTest(){
-  const step=new DeterministicCognitiveStep();
-  const runtime=new MindRuntime({cognitiveStep:step,stepIntervalMs:1});
-  runtime.setActiveCharacter("character.a");
-  await runtime.start();await waitFor(()=>runtime.getState().recentThoughts.length>=2);await runtime.stop();
-  const firstStopCount=runtime.getState().recentThoughts.length;
-  try{await runtime.start();await waitFor(()=>runtime.getState().recentThoughts.length>=3);}finally{await runtime.stop();}
-  equal(firstStopCount>=2,true,"first stop completes after multiple thoughts");
-  const lastId=runtime.getState().lastThought?.id??"";
-  equal(lastId.startsWith("thought:deterministic:"),true,"restart continues the deterministic cognitive sequence");
+  const step=new DeterministicCognitiveStep();const runtime=new MindRuntime({cognitiveStep:step,stepIntervalMs:1});runtime.setActiveCharacter("character.a");let firstStopCount=0;
+  try{await runtime.start();await waitFor(()=>runtime.getState().recentThoughts.length>=2);await runtime.stop();firstStopCount=runtime.getState().recentThoughts.length;await runtime.start();await waitFor(()=>runtime.getState().recentThoughts.length>=firstStopCount+1);}
+  finally{await runtime.stop();}
+  equal(firstStopCount>=2,true,"first stop completes after multiple thoughts");const lastId=runtime.getState().lastThought?.id??"";equal(lastId.startsWith("thought:deterministic:"),true,"restart continues the deterministic cognitive sequence");
 }
 
 async function errorDoesNotStopLifeTest(){
   let count=0;
-  const step:CognitiveStep={
-    async run(context){
-      count+=1;
-      if(count===1)throw new Error("cognitive failure");
-      return {characterId:context.characterId,id:"thought:"+count,timestamp:new Date().toISOString(),content:"recovered",expression:"internal" as const};
-    }
-  };
-  const errors:number[]=[];
-  const runtime=new MindRuntime({cognitiveStep:step,stepIntervalMs:2,onError:()=>errors.push(count)});
-  runtime.setActiveCharacter("character.a");
-  await runtime.start();
-  await waitFor(()=>runtime.getState().lastThought?.content==="recovered");
-  equal(errors.length,1,"cognitive error is reported");
-  equal(count>=2,true,"runtime retries after error");
-  equal(runtime.getState().lifecycleState,"thinking","life remains active after error");
-  await runtime.stop();
+  const step:CognitiveStep={async run(context){count+=1;if(count===1)throw new Error("cognitive failure");return {characterId:context.characterId,id:"thought:"+count,timestamp:new Date().toISOString(),content:"recovered",expression:"internal" as const};}};
+  const errors:number[]=[];const runtime=new MindRuntime({cognitiveStep:step,stepIntervalMs:2,onError:()=>errors.push(count)});runtime.setActiveCharacter("character.a");
+  try{await runtime.start();await waitFor(()=>runtime.getState().lastThought?.content==="recovered"&&runtime.getState().lifecycleState==="waiting");equal(errors.length,1,"cognitive error is reported");equal(count>=2,true,"runtime retries after error");equal(runtime.getState().lifecycleState,"waiting","life remains active and waits after error");}
+  finally{await runtime.stop();}
 }
 
 async function thoughtSubscriptionTest(){
-  const runtime=new MindRuntime({cognitiveStep:new DeterministicCognitiveStep(),stepIntervalMs:2});
-  runtime.setActiveCharacter("character.a");
-  const thoughts:string[]=[];
-  const unsubscribe=runtime.subscribeThoughts(thought=>thoughts.push(thought.content));
-  await runtime.start();await waitFor(()=>thoughts.length>=2);unsubscribe();
-  const before=thoughts.length;await new Promise(resolve=>setTimeout(resolve,10));
-  equal(thoughts.length,before,"unsubscribed observer stops receiving thoughts");
-  await runtime.stop();
+  const runtime=new MindRuntime({cognitiveStep:new DeterministicCognitiveStep(),stepIntervalMs:2});runtime.setActiveCharacter("character.a");const thoughts:string[]=[];const unsubscribe=runtime.subscribeThoughts(thought=>thoughts.push(thought.content));
+  try{await runtime.start();await waitFor(()=>thoughts.length>=2);unsubscribe();const before=thoughts.length;await new Promise(resolve=>setTimeout(resolve,10));equal(thoughts.length,before,"unsubscribed observer stops receiving thoughts");}
+  finally{unsubscribe();await runtime.stop();}
 }
 
 async function characterScopedThoughtHistoryTest(){
@@ -131,6 +86,7 @@ async function characterScopedThoughtHistoryTest(){
   };
   const runtime=new MindRuntime({cognitiveStep:step,stepIntervalMs:10000});
   runtime.setActiveCharacter("character.a");
+  try{
   await runtime.start();await waitFor(()=>runtime.getState().recentThoughts.length===1);await runtime.stop();
   const a1=runtime.getState().recentThoughts[0]!;
   equal(a1.characterId,"character.a","A thought owns character A");
@@ -171,6 +127,7 @@ async function characterScopedThoughtHistoryTest(){
   equal(runtime.getState().recentThoughts.length,0,"clear all empties current history");
   runtime.setActiveCharacter("character.a");
   equal(runtime.getState().recentThoughts.length,0,"clear all also empties previously active character");
+  }finally{await runtime.stop();}
 }
 
 async function llmCognitiveStepTest(){
@@ -196,7 +153,7 @@ async function llmCognitiveStepTest(){
       conversationId:"conv-1",
       providerId:"fake.chat",
       model:request.model,
-      message:{id:request.requestId+":assistant",role:"assistant" as const,content:JSON.stringify({thought})},
+      message:{id:request.requestId+":assistant",role:"assistant" as const,content:JSON.stringify({thought,nextWakeInMs:45000})},
       finishReason:"stop" as const
     };
   }};
@@ -240,10 +197,11 @@ async function llmCognitiveStepTest(){
     [{id:"u3a",role:"user" as const,content:"First"},{id:"a3",role:"assistant" as const,content:"Reply"},{id:"u3b",role:"user" as const,content:"Follow-up"}],
     [{id:"u4a",role:"user" as const,content:"First"},{id:"a4a",role:"assistant" as const,content:"Reply"},{id:"u4b",role:"user" as const,content:"Second"},{id:"a4b",role:"assistant" as const,content:"Second reply"}]
   ];
+  let cognitiveResult:Awaited<ReturnType<typeof step.run>>|undefined;
   for(let index=0;index<cases.length;index+=1){
     conversation.messages=conversations[index]!;
     const before=JSON.stringify(conversation.messages);
-    await step.run({characterId:"char-1",state,signal:new AbortController().signal});
+    cognitiveResult=await step.run({characterId:"char-1",state,signal:new AbortController().signal});
     const request=calls[index]!;
     const roles=request.context.messages.map(message=>message.role);
     equal(roles.slice(-1)[0],"user","cognition request always ends with a synthetic user cue");
@@ -263,7 +221,8 @@ async function llmCognitiveStepTest(){
   equal(firstCall.context.messages.some(message=>message.content.includes("INTERNAL THOUGHT HISTORY")),true,"mind context includes thought history section");
   equal(firstCall.context.messages.some(message=>message.content==="Core book context"),false,"no unrelated synthetic context is injected by the unit fixture");
   equal(JSON.stringify(conversation.messages),JSON.stringify(conversations[3]),"final Conversation remains unchanged after cognition requests");
-  equal(thought,"A useful internal thought","LLM response remains the Thought content");
+  equal(cognitiveResult?.thought.content,"A useful internal thought","LLM response remains the Thought content");
+  equal(cognitiveResult?.nextWakeInMs,45000,"LLM response exposes the parsed adaptive wake interval");
 }
 async function cognitiveProviderBadRequestRegressionTest(){
   const calls:ChatRequest[]=[];
@@ -291,7 +250,178 @@ async function cognitiveProviderBadRequestRegressionTest(){
   const thought=await step.run({characterId:"char-regression",state:{focus:null,lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"thinking"},signal:new AbortController().signal});
   equal(calls.length,1,"text cognitive request does not trigger structured-output retry path");
   equal(calls[0]?.generation?.responseFormat?.type,"text","regression request bypasses json-schema");
-  equal(thought.content,"plain cognitive text","plain provider response is parsed as Thought content");
+  equal(thought.thought.content,"plain cognitive text","plain provider response is parsed as Thought content");
+  equal(thought.nextWakeInMs,undefined,"plain-text response leaves interval unset so Runtime uses the configured default");
+}
+
+function makeThought(characterId:string,id:string,content=id){return {characterId,id,timestamp:new Date().toISOString(),content,expression:"internal" as const};}
+
+async function adaptiveIntervalPolicyTest(){
+  const proposed:unknown[]=[650,40,9999,"invalid",undefined];
+  let calls=0;
+  const runtime=new MindRuntime({
+    cognitiveStep:{run:async({characterId})=>{
+      const nextWakeInMs=proposed[calls++];
+      return {thought:makeThought(characterId,"adaptive:"+calls),nextWakeInMs};
+    }},
+    schedule:{mode:"adaptive",defaultIntervalMs:400,minIntervalMs:200,maxIntervalMs:1000,maxRequestsPerHour:120}
+  });
+  runtime.setActiveCharacter("character.a");
+  try{
+    await runtime.start();
+    await waitFor(()=>runtime.getState().recentTrace?.some(entry=>entry.result==="success"));
+    let trace=runtime.getState().recentTrace??[];
+    equal(trace[trace.length-1]?.appliedIntervalMs,650,"adaptive mode applies an in-range model interval");
+    runtime.wake("user-message");
+    await waitFor(()=>runtime.getState().recentThoughts.length>=2);
+    trace=runtime.getState().recentTrace??[];
+    equal(trace[trace.length-1]?.requestedNextWakeInMs,40,"trace records a too-small numeric proposal");
+    equal(trace[trace.length-1]?.appliedIntervalMs,200,"too-small interval is clamped to configured minimum");
+    runtime.wake("user-message");
+    await waitFor(()=>runtime.getState().recentThoughts.length>=3);
+    trace=runtime.getState().recentTrace??[];
+    equal(trace[trace.length-1]?.appliedIntervalMs,1000,"too-large interval is clamped to configured maximum");
+    runtime.wake("user-message");
+    await waitFor(()=>runtime.getState().recentThoughts.length>=4);
+    trace=runtime.getState().recentTrace??[];
+    equal(trace[trace.length-1]?.appliedIntervalMs,400,"invalid interval uses configured default");
+    equal(trace[trace.length-1]?.intervalDecision,"invalid-interval-default","invalid interval decision is traceable");
+    runtime.wake("user-message");
+    await waitFor(()=>runtime.getState().recentThoughts.length>=5);
+    trace=runtime.getState().recentTrace??[];
+    equal(trace[trace.length-1]?.appliedIntervalMs,400,"missing interval uses configured default");
+  }finally{await runtime.stop();}
+}
+
+async function fixedIntervalIgnoresModelTest(){
+  const runtime=new MindRuntime({
+    cognitiveStep:{run:async({characterId})=>({thought:makeThought(characterId,"fixed"),nextWakeInMs:900})},
+    schedule:{mode:"fixed",defaultIntervalMs:300,minIntervalMs:200,maxIntervalMs:1000,maxRequestsPerHour:20}
+  });
+  runtime.setActiveCharacter("character.fixed");
+  try{
+    await runtime.start();
+    await waitFor(()=>runtime.getState().recentTrace?.some(entry=>entry.result==="success"));
+    const entry=(runtime.getState().recentTrace??[]).slice(-1)[0];
+    equal(entry?.appliedIntervalMs,300,"fixed mode always applies the configured interval");
+    equal(entry?.intervalDecision,"fixed-mode","trace identifies fixed scheduling");
+  }finally{await runtime.stop();}
+}
+
+async function wakeEventsCoalesceTest(){
+  let starts=0;
+  const runtime=new MindRuntime({
+    cognitiveStep:{run:({signal,characterId})=>{
+      starts+=1;
+      if(starts===1)return new Promise((_,reject)=>signal.addEventListener("abort",()=>reject(MindRuntime.createAbortError()),{once:true}));
+      return Promise.resolve(makeThought(characterId,"coalesced:"+starts));
+    }},
+    schedule:{mode:"adaptive",defaultIntervalMs:500,minIntervalMs:200,maxIntervalMs:1000,maxRequestsPerHour:20}
+  });
+  runtime.setActiveCharacter("character.a");
+  try{
+    await runtime.start();await waitFor(()=>starts===1);
+    runtime.wake("user-message");runtime.wake("user-message");runtime.wake("user-message");
+    await waitFor(()=>runtime.getState().recentThoughts.length===1&&starts===2);
+    equal(starts,2,"rapid wake events collapse into a single pending cognitive step");
+    ok((runtime.getState().recentTrace??[]).some(entry=>entry.result==="cancelled"),"superseded step is traced as cancelled");
+  }finally{await runtime.stop();}
+}
+
+async function characterSwitchCancelsOldContextTest(){
+  const seen:string[]=[];
+  const runtime=new MindRuntime({
+    cognitiveStep:{run:({signal,characterId})=>{
+      seen.push(characterId);
+      if(characterId==="character.a")return new Promise((_,reject)=>signal.addEventListener("abort",()=>reject(MindRuntime.createAbortError()),{once:true}));
+      return Promise.resolve(makeThought(characterId,"thought:"+characterId));
+    }},
+    schedule:{mode:"adaptive",defaultIntervalMs:500,minIntervalMs:200,maxIntervalMs:1000,maxRequestsPerHour:20}
+  });
+  runtime.setActiveCharacter("character.a");
+  try{
+    await runtime.start();await waitFor(()=>seen.length===1);
+    runtime.setActiveCharacter("character.b");
+    await waitFor(()=>runtime.getState().lastThought?.characterId==="character.b");
+    equal(runtime.getState().recentThoughts.map(thought=>thought.characterId),["character.b"],"old character result does not enter active history");
+    ok((runtime.getState().recentTrace??[]).some(entry=>entry.characterId==="character.a"&&entry.result==="cancelled"),"old character step is cancelled and traced");
+    equal(seen,["character.a","character.b"],"character switch triggers exactly one fresh step for the current character");
+  }finally{await runtime.stop();}
+}
+
+async function hourlyQuotaDefersBackgroundCallsTest(){
+  let calls=0;
+  const runtime=new MindRuntime({
+    cognitiveStep:{run:async({characterId})=>{calls+=1;return makeThought(characterId,"quota:"+calls)}},
+    schedule:{mode:"adaptive",defaultIntervalMs:150,minIntervalMs:100,maxIntervalMs:500,maxRequestsPerHour:1}
+  });
+  runtime.setActiveCharacter("character.quota");
+  try{
+    await runtime.start();
+    await waitFor(()=>runtime.getState().recentTrace?.some(entry=>entry.result==="deferred"),1200);
+    const state=runtime.getState();
+    equal(calls,1,"hourly quota prevents a second provider call");
+    ok((state.recentTrace??[]).some(entry=>entry.result==="deferred"&&entry.intervalDecision==="hourly-limit"),"quota deferral appears in trace");
+    ok(Boolean(state.nextWakeAt)&&new Date(state.nextWakeAt!).getTime()-Date.now()>3_500_000,"next wake is delayed until a quota slot opens");
+  }finally{await runtime.stop();}
+}
+
+async function errorBackoffIncreasesTest(){
+  let calls=0;
+  const runtime=new MindRuntime({
+    cognitiveStep:{run:async({characterId})=>{calls+=1;if(calls<=3)throw new Error("controlled failure");return makeThought(characterId,"recovered")}},
+    schedule:{mode:"adaptive",defaultIntervalMs:100,minIntervalMs:50,maxIntervalMs:400,maxRequestsPerHour:20}
+  });
+  runtime.setActiveCharacter("character.backoff");
+  try{
+    await runtime.start();await waitFor(()=>runtime.getState().recentTrace?.filter(entry=>entry.result==="error").length===1);
+    let errors=(runtime.getState().recentTrace??[]).filter(entry=>entry.result==="error");
+    equal(errors[0]?.appliedIntervalMs,100,"first error uses the default backoff without immediate retry");
+    equal(calls,1,"first failure does not trigger a same-turn retry");
+    await waitFor(()=>runtime.getState().recentTrace?.filter(entry=>entry.result==="error").length===2);
+    errors=(runtime.getState().recentTrace??[]).filter(entry=>entry.result==="error");
+    equal(errors[1]?.appliedIntervalMs,200,"consecutive failure doubles the delay");
+    await waitFor(()=>runtime.getState().recentTrace?.filter(entry=>entry.result==="error").length===3);
+    errors=(runtime.getState().recentTrace??[]).filter(entry=>entry.result==="error");
+    equal(errors[2]?.appliedIntervalMs,400,"error backoff is capped at the configured maximum");
+  }finally{await runtime.stop();}
+}
+
+async function timeoutUsesBackoffTest(){
+  let calls=0;
+  const runtime=new MindRuntime({
+    cognitiveStep:{run:()=>{calls+=1;return new Promise<ReturnType<typeof makeThought>>(()=>undefined)}},
+    stepTimeoutMs:15,
+    schedule:{mode:"adaptive",defaultIntervalMs:120,minIntervalMs:60,maxIntervalMs:400,maxRequestsPerHour:20}
+  });
+  runtime.setActiveCharacter("character.timeout");
+  try{
+    await runtime.start();
+    await waitFor(()=>runtime.getState().recentTrace?.some(entry=>entry.result==="error"),500);
+    const entry=(runtime.getState().recentTrace??[]).slice(-1)[0];
+    equal(entry?.errorCode,"STEP_TIMEOUT","finite step timeout is surfaced in trace");
+    equal(entry?.appliedIntervalMs,120,"timeout schedules a bounded retry backoff");
+    equal(calls,1,"timed out step is not immediately repeated");
+  }finally{await runtime.stop();}
+}
+
+async function stopRejectsLateThoughtTest(){
+  let release:((thought:ReturnType<typeof makeThought>)=>void)|undefined;
+  let started=0;
+  const runtime=new MindRuntime({
+    cognitiveStep:{run:({characterId})=>{started+=1;return new Promise<ReturnType<typeof makeThought>>(resolve=>{release=resolve;void characterId;})}},
+    schedule:{mode:"adaptive",defaultIntervalMs:500,minIntervalMs:200,maxIntervalMs:1000,maxRequestsPerHour:20}
+  });
+  runtime.setActiveCharacter("character.late");
+  try{
+    await runtime.start();await waitFor(()=>started===1);
+    await runtime.stop();
+    release?.(makeThought("character.late","late"));
+    await new Promise(resolve=>setTimeout(resolve,15));
+    equal(runtime.getState().lifecycleState,"off","stop leaves Life off");
+    equal(runtime.getState().recentThoughts.length,0,"late result after OFF cannot be saved");
+    equal(runtime.getState().nextWakeAt,null,"OFF has no pending wake timer");
+  }finally{if(runtime.getState().lifecycleState!=="off")await runtime.stop();release?.(makeThought("character.late","late-finally"));}
 }
 
 async function main(){
@@ -305,6 +435,14 @@ async function main(){
   await characterScopedThoughtHistoryTest();
   await llmCognitiveStepTest();
   await cognitiveProviderBadRequestRegressionTest();
+  await adaptiveIntervalPolicyTest();
+  await fixedIntervalIgnoresModelTest();
+  await wakeEventsCoalesceTest();
+  await characterSwitchCancelsOldContextTest();
+  await hourlyQuotaDefersBackgroundCallsTest();
+  await errorBackoffIncreasesTest();
+  await timeoutUsesBackoffTest();
+  await stopRejectsLateThoughtTest();
   console.log("PASS Mind Runtime + LLM cognitive tests");
 }
 void main().catch(error=>{console.error(error);process.exitCode=1;});

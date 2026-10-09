@@ -1,4 +1,4 @@
-import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatResponse,CredentialStore,ProviderConfiguration,ProviderPreset,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryArchiveReason,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,MemorySemanticIndexStore,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider} from "../../../contracts/src/index";
+import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatRequestOptions,ChatResponse,CredentialStore,ProviderConfiguration,ProviderPreset,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryArchiveReason,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,MemorySemanticIndexStore,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider} from "../../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore} from "../../../contracts/src/index";
 import type {Conversation,ConversationCreateInput,ConversationId,ConversationStore,ConversationUpdateInput} from "../../../contracts/src/index";
@@ -295,14 +295,14 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   };
   const aiRuntime=new AiRuntime(providers,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
   const extractionChatRuntime={
-    chat:async (request:ChatRequest,providerPresetId?:string):Promise<ChatResponse>=>{
+    chat:async (request:ChatRequest,providerPresetId?:string,chatOptions:ChatRequestOptions={}):Promise<ChatResponse>=>{
       if(providerPresetId){
         const pool=getPoolProvider(providerPresetId);
         if(pool){
           const scopedProviders=new ProviderRegistry();
           scopedProviders.register(pool,["chat"]);
           const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
-          return scopedRuntime.generate({...request,providerId:pool.id});
+          return scopedRuntime.generate({...request,providerId:pool.id},chatOptions);
         }
         const configuration=providerPresetConfigurations.get(providerPresetId);
         const effectiveConfiguration=configuration?{...configuration,model:request.model}:undefined;
@@ -312,9 +312,9 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
           if(configured)scopedProviders.register(configured,["chat"]);
         }
         const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
-        return scopedRuntime.generate({...request,providerId:effectiveConfiguration?.providerId??request.providerId});
+        return scopedRuntime.generate({...request,providerId:effectiveConfiguration?.providerId??request.providerId},chatOptions);
       }
-      return aiRuntime.generate(request.providerId?request:{...request,providerId:activeProviderId(providerConfiguration)});
+      return aiRuntime.generate(request.providerId?request:{...request,providerId:activeProviderId(providerConfiguration)},chatOptions);
     }
   };
   const resolveChatModelForPreset=async(providerPresetId:string):Promise<string>=>{
@@ -347,9 +347,10 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       getActiveProviderPresetId:()=>activeProviderPresetId,
       getChatModel:()=>activeProviderId(providerConfiguration)==="openai-compatible"&&providerConfiguration?providerConfiguration.model:"fake-chat",
       getChatModelForPreset,
+      getCognitiveSchedule:()=>settingsManager.get().cognitiveSchedule,
       clock:()=>new Date().toISOString()
     }),
-    stepIntervalMs:1000,
+    schedule:settingsManager.get().cognitiveSchedule,
     recentThoughtLimit:50,
     onError:error=>{
       const chatError=error&&typeof error==="object"&&"chatError" in error
@@ -569,14 +570,14 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
         throw error;
       }
     },
-    chat:async(request,providerPresetId)=>{
+    chat:async(request:ChatRequest,providerPresetId?:string,chatOptions:ChatRequestOptions={})=>{
       if(providerPresetId){
         const pool=getPoolProvider(providerPresetId);
         if(pool){
           const scopedProviders=new ProviderRegistry();
           scopedProviders.register(pool,["chat"]);
           const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
-          return scopedRuntime.generate({...request,providerId:pool.id});
+          return scopedRuntime.generate({...request,providerId:pool.id},chatOptions);
         }
         const configuration=providerPresetConfigurations.get(providerPresetId);
         const effectiveConfiguration=configuration?{...configuration,model:request.model}:undefined;
@@ -586,9 +587,9 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
           if(configured)scopedProviders.register(configured,["chat"]);
         }
         const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
-        return scopedRuntime.generate({...request,providerId:effectiveConfiguration?.providerId??request.providerId});
+        return scopedRuntime.generate({...request,providerId:effectiveConfiguration?.providerId??request.providerId},chatOptions);
       }
-      return aiRuntime.generate(request.providerId?request:{...request,providerId:activeProviderId(providerConfiguration)});
+      return aiRuntime.generate(request.providerId?request:{...request,providerId:activeProviderId(providerConfiguration)},chatOptions);
     },
     aiRuntimeHealth:()=>aiRuntime.health(),
     getProviderConfiguration:()=>providerConfiguration,
@@ -608,6 +609,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     startLife:()=>mindRuntime.start(),
     stopLife:()=>mindRuntime.stop(),
     getMindState:()=>mindRuntime.getState(),
+    wakeMind:()=>mindRuntime.wake("user-message"),
     subscribeMindState:listener=>mindRuntime.subscribe(listener),
     subscribeThoughts:listener=>mindRuntime.subscribeThoughts(listener),
     deleteThought:thoughtId=>mindRuntime.deleteThought(thoughtId),
@@ -643,6 +645,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     getSettings:()=>settingsManager.get(),
     updateSettings:async(settings)=>{
       const next=await settingsManager.set(settings);
+      mindRuntime.updateSchedule(next.cognitiveSchedule);
       diagnosticsStore.setMaxEntries(next.diagnostics.keepRecentEntries);
       traceStore.configure(next.diagnostics.logLevel,next.diagnostics.keepRecentEntries);
       // Record the values the already-running runtime will use after a Settings Save.
@@ -657,6 +660,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     },
     resetSettings:async()=>{
       const next=await settingsManager.reset();
+      mindRuntime.updateSchedule(next.cognitiveSchedule);
       diagnosticsStore.setMaxEntries(next.diagnostics.keepRecentEntries);
       traceStore.configure(next.diagnostics.logLevel,next.diagnostics.keepRecentEntries);
       return next;
@@ -686,13 +690,14 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     deleteCharacter:async id=>{
       await characterManager.deleteCharacter(id);
       const active=await characterManager.getActiveCharacter();
+      await conversationManager.getActiveConversation(active.id);
       mindRuntime.setActiveCharacter(active.id);
     },
     getActiveCharacter:()=>characterManager.getActiveCharacter(),
     setActiveCharacter:async id=>{
       const character=await characterManager.setActiveCharacter(id);
-      mindRuntime.setActiveCharacter(character.id);
       await conversationManager.getActiveConversation(character.id);
+      mindRuntime.setActiveCharacter(character.id);
       return character;
     },
     createConversation:(characterId,input)=>conversationManager.createConversation(characterId,input),

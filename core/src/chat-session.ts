@@ -142,6 +142,7 @@ export interface ChatSessionControllerOptions{
   memoryExtractor?:ChatCompletedTurnMemoryBoundary;
   memoryExtractionEnabled?:()=>boolean;
   traceStore?:ChatTraceStore;
+  beforeUserMessage?:(snapshot:ConversationSnapshot)=>Promise<void>;
 }
 const DEFAULT_CHAT_CONTEXT_BUDGET:ContextBudget={
   availableContextTokens:DEFAULT_APP_SETTINGS.context.availableContextTokens,
@@ -173,6 +174,7 @@ export class ChatSessionController{
   private readonly memoryExtractor?:ChatCompletedTurnMemoryBoundary;
   private readonly memoryExtractionEnabled?:()=>boolean;
   private readonly traceStore?:ChatTraceStore;
+  private readonly beforeUserMessage?:ChatSessionControllerOptions["beforeUserMessage"];
   private modelProfile?:ModelProfile;
   private sending=false;
   private status:ChatSessionStatus="idle";
@@ -194,6 +196,7 @@ export class ChatSessionController{
     this.memoryExtractor=options.memoryExtractor;
     this.memoryExtractionEnabled=options.memoryExtractionEnabled;
     this.traceStore=options.traceStore;
+    this.beforeUserMessage=options.beforeUserMessage;
     const messages=session.getMessages();
     const lastAssistant=[...messages].reverse().find(message=>message.role==="assistant");
     this.status=lastAssistant
@@ -354,12 +357,12 @@ export class ChatSessionController{
     userMessage:ChatMessage,
     assistantMessage?:ChatMessage
   ):Promise<ChatActionResult>{
-    let contextMessages=this.session.getMessages();
-    if(assistantMessage?.id&&active.mode!=="continue"){
-      contextMessages=contextMessages.filter(message=>message.id!==assistantMessage.id);
-    }
-
     try{
+      if(active.mode==="submit")await this.beforeUserMessage?.(this.getSnapshot());
+      let contextMessages=this.session.getMessages();
+      if(assistantMessage?.id&&active.mode!=="continue"){
+        contextMessages=contextMessages.filter(message=>message.id!==assistantMessage.id);
+      }
       if(this.contextBuilder){
         const budget=this.contextBudgetProvider?.()??this.contextBudget;
         const assembled=await this.contextBuilder.buildContext({

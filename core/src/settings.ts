@@ -4,6 +4,7 @@ import {APP_SETTINGS_API_VERSION,APP_SETTINGS_SCHEMA_VERSION,DEFAULT_APP_SETTING
 function cloneSettings(settings:AppSettings):AppSettings{
   return {
     ...settings,
+    cognitiveSchedule:{...settings.cognitiveSchedule},
     chat:{...settings.chat},
     context:{...settings.context},
     memory:{...settings.memory},

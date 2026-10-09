@@ -1,6 +1,6 @@
 import {AiRuntime,AiRuntimeError,InMemoryDiagnosticsStore,InMemoryEventBus,ProviderRegistry,createChatContext} from "../../core/src";
 import {FakeChatProvider,FakeStreamingChatProvider} from "../../providers/mock/src";
-import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,ChatRequest,STANDARD_SCHEMAS} from "../../contracts/src";
+import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,ChatRequest,ChatRequestOptions,ChatResponse,STANDARD_SCHEMAS} from "../../contracts/src";
 
 function ok(value:unknown,label:string){if(!value)throw new Error(label);}
 function equal(actual:unknown,expected:unknown,label:string){if(actual!==expected)throw new Error(label+" expected "+String(expected)+" got "+String(actual));}
@@ -68,8 +68,36 @@ async function jsonSchemaResponseFormatRuntimeTest(){
   );
 }
 
+async function generateCancellationTest(){
+  class HangingProvider extends FakeChatProvider{
+    started=false;
+    override async chat(_request:ChatRequest,options?:ChatRequestOptions):Promise<ChatResponse>{
+      this.started=true;
+      return new Promise<ChatResponse>((_,reject)=>{
+        const fail=()=>{const error=new Error("aborted");error.name="AbortError";reject(error);};
+        if(options?.signal?.aborted)fail();
+        else options?.signal?.addEventListener("abort",fail,{once:true});
+      });
+    }
+  }
+  const provider=new HangingProvider();
+  const providers=new ProviderRegistry();providers.register(provider,["chat"]);
+  const diagnostics=new InMemoryDiagnosticsStore();
+  const runtime=new AiRuntime(providers,{diagnostics});
+  const controller=new AbortController();
+  const pending=runtime.generate(makeRequest(),{signal:controller.signal});
+  for(let i=0;i<10&&!provider.started;i+=1)await Promise.resolve();
+  ok(provider.started,"provider request starts before cancellation");
+  controller.abort();
+  let abortName:string|undefined;
+  try{await pending;}catch(error){abortName=error instanceof Error?error.name:undefined;}
+  equal(abortName,"AbortError","caller cancellation propagates through AiRuntime without provider error normalization");
+  equal(diagnostics.recentErrors().some(entry=>entry.code==="PROVIDER_ERROR"||entry.code==="PROVIDER_UNAVAILABLE"),false,"cancellation is not recorded as a provider failure");
+}
+
 async function main(){
   await jsonSchemaResponseFormatRuntimeTest();
+  await generateCancellationTest();
   const diagnostics=new InMemoryDiagnosticsStore(),events=new InMemoryEventBus(diagnostics),providers=new ProviderRegistry();
   providers.register(new FakeChatProvider(),["chat"]);
   const seen:string[]=[];

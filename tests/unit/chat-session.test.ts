@@ -12,6 +12,25 @@ function responseFor(request:ChatRequest,content="assistant response"):ChatRespo
 }
 
 async function main(){
+  let preSubmitPersisted=false;
+  let userSeenByRuntime="";
+  const preSubmitController=new ChatSessionController(
+    new ConversationSession("pre-submit-conversation","character.pre-submit"),
+    {async chat(request:ChatRequest):Promise<ChatResponse>{
+      ok(preSubmitPersisted,"pre-submit persistence finishes before Chat generation starts");
+      userSeenByRuntime=request.context.messages.find(message=>message.role==="user")?.content??"";
+      return responseFor(request,"pre-submit response");
+    }},
+    {beforeUserMessage:async snapshot=>{
+      equal(snapshot.characterId,"character.pre-submit","pre-submit callback has current character");
+      equal(snapshot.messages.map(message=>message.role+":"+message.content).join("|"),"user:latest message","pre-submit callback includes the just-added user message");
+      preSubmitPersisted=true;
+    }}
+  );
+  equal((await preSubmitController.submit("latest message","fake-chat")).status,"sent","pre-submit persistence does not block normal Chat");
+  equal(userSeenByRuntime,"latest message","normal Chat receives the same latest user message after the hook");
+
+
   const session=new ConversationSession("unit-conversation","character.unit");
   equal(session.getMessages().length,0,"initial conversation empty");
   equal(session.characterId,"character.unit","conversation character scope");
