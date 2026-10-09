@@ -122,7 +122,6 @@ const SECURITY_MAX={
   retrievalCandidateLimit:100,
   semanticCandidateLimit:100,
   diagnosticsEntries:500,
-  proactiveMessageIntervalMs:3_600_000
 } as const;
 
 export function validateAppSettings(settings:AppSettings):string[]{
@@ -194,6 +193,12 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const cognitiveSchedule=root.cognitiveSchedule&&typeof root.cognitiveSchedule==="object"?root.cognitiveSchedule:{};
   const semanticDedup=root.semanticDedup&&typeof root.semanticDedup==="object"?root.semanticDedup:{};
   const semanticJudge=semanticDedup.judge&&typeof semanticDedup.judge==="object"?semanticDedup.judge:{};
+  const migratedMinimumInterval=String(input.schemaVersion)!=="9"&&cognitiveSchedule.minIntervalMs===10_000
+    ?defaults.cognitiveSchedule.minIntervalMs
+    :(typeof cognitiveSchedule.minIntervalMs==="number"?cognitiveSchedule.minIntervalMs:defaults.cognitiveSchedule.minIntervalMs);
+  const migratedMaximumInterval=String(input.schemaVersion)!=="9"&&cognitiveSchedule.maxIntervalMs===900_000
+    ?defaults.cognitiveSchedule.maxIntervalMs
+    :(typeof cognitiveSchedule.maxIntervalMs==="number"?cognitiveSchedule.maxIntervalMs:defaults.cognitiveSchedule.maxIntervalMs);
   const legacyContextBudget=typeof root.contextBudget==="number"?root.contextBudget:undefined;
   const legacyRecent=typeof root.recentMessages==="number"?root.recentMessages:undefined;
   const legacyMemory=typeof root.memoryCandidateLimit==="number"?root.memoryCandidateLimit:undefined;
@@ -232,8 +237,8 @@ export function migrateAppSettings(value:unknown):AppSettings{
     cognitiveSchedule:{
       mode:typeof cognitiveSchedule.mode==="string"?cognitiveSchedule.mode as CognitiveScheduleMode:defaults.cognitiveSchedule.mode,
       defaultIntervalMs:typeof cognitiveSchedule.defaultIntervalMs==="number"?cognitiveSchedule.defaultIntervalMs:defaults.cognitiveSchedule.defaultIntervalMs,
-      minIntervalMs:typeof cognitiveSchedule.minIntervalMs==="number"?cognitiveSchedule.minIntervalMs:defaults.cognitiveSchedule.minIntervalMs,
-      maxIntervalMs:typeof cognitiveSchedule.maxIntervalMs==="number"?cognitiveSchedule.maxIntervalMs:defaults.cognitiveSchedule.maxIntervalMs,
+      minIntervalMs:migratedMinimumInterval,
+      maxIntervalMs:migratedMaximumInterval,
       maxRequestsPerHour:typeof cognitiveSchedule.maxRequestsPerHour==="number"?(String(input.schemaVersion)!=="9"&&cognitiveSchedule.maxRequestsPerHour===120?null:cognitiveSchedule.maxRequestsPerHour):null
     },
     chat:{automaticLongTermMemory:legacyEnabled},

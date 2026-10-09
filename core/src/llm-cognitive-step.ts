@@ -37,6 +37,9 @@ const REACTIVE_CUE="Answer the latest persisted user message now. This is a resp
 const BACKGROUND_CUE="Continue Nova's cognition from the actual conversation context. Speaking is optional; if there is nothing useful to tell the user, leave SPEECH empty. Use the single NovaTurn format. Do not narrate internal processing.";
 function throwIfAborted(signal:AbortSignal):void { if(signal.aborted){const error=new Error("Mind Runtime cognitive step aborted.");error.name="AbortError";throw error;} }
 function cloneMessage(message:ChatMessage):ChatMessage { return {...message,...(message.metadata?{metadata:{...message.metadata}}:{})}; }
+function escapeUntrustedUserText(value:string):string {
+  return value.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
 function requestId():string { return "nova-turn-"+Date.now()+"-"+Math.random().toString(36).slice(2,10); }
 
 export class LLMCognitiveStep implements CognitiveStep {
@@ -78,8 +81,15 @@ export class LLMCognitiveStep implements CognitiveStep {
     const toolDefinitions=this.options.getAvailableTools?.()??[];
     const toolContext=["[REGISTERED TOOLS]",JSON.stringify(toolDefinitions),"Only these registered tools may be requested.","[/REGISTERED TOOLS]"].join("\n");
     const identity=["[IDENTITY / CHARACTER]","Name: "+character.name,"Description: "+character.description,"[/IDENTITY / CHARACTER]"].join("\n");
-    const messages=assembled.messages.map(cloneMessage);
-    if(reactiveUserMessage&&!messages.some(message=>message.id===reactiveUserMessage!.id))messages.push(reactiveUserMessage);
+    const messages=assembled.messages.map(message=>{
+      const copy=cloneMessage(message);
+      // Keep user-supplied tag-like text as content rather than allowing it to imitate protocol delimiters.
+      if(copy.role==="user")copy.content=escapeUntrustedUserText(copy.content);
+      return copy;
+    });
+    if(reactiveUserMessage&&!messages.some(message=>message.id===reactiveUserMessage!.id)){
+      const copy=cloneMessage(reactiveUserMessage);copy.content=escapeUntrustedUserText(copy.content);messages.push(copy);
+    }
     const cue=context.userTurn?REACTIVE_CUE:BACKGROUND_CUE;
     const contextMessages:ChatMessage[]=[
       {id:conversation.id+":nova-turn:system",role:"system",content:NOVA_TURN_SYSTEM_PROMPT},
