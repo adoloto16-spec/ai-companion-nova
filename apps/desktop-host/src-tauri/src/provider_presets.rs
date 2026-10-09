@@ -62,7 +62,7 @@ pub struct ProviderPreset{
     #[serde(rename="credentialReference")]
     pub credential_reference:Option<CredentialReference>,
     pub enabled:Option<bool>,
-    #[serde(rename="timeoutMs")]
+    #[serde(rename="timeoutMs",skip_serializing_if="Option::is_none")]
     pub timeout_ms:Option<f64>,
     #[serde(rename="createdAt")]
     pub created_at:String,
