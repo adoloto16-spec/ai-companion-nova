@@ -107,7 +107,7 @@ assert.ok(source.includes("countVisibleSpeechMessages(conversation.messages)")&&
 assert.ok(app.includes('const [chatDrafts,setChatDrafts]=React.useState<Record<string,string>>({});'),"App owns in-memory Chat drafts");
 assert.ok(app.includes('chatDraftKey(activeCharacter.id,activeConversation.id)'),"draft keys include both character and conversation identity");
 assert.ok(app.includes('<ChatView key={activeChatDraftKey}'),"Chat view identity changes with character/conversation without losing App draft state");
-assert.ok(app.includes('input={activeChatDraftKey?chatDrafts[activeChatDraftKey]??"":""}'),"Chat renders the current conversation draft");
+assert.ok(app.includes('input={activeChatDraftKey?readChatDraft(chatDrafts,activeChatDraftKey):""}'),"Chat renders the current conversation draft");
 assert.ok(app.includes('onClearSubmittedDraft={submitted=>{if(activeChatDraftKey)setChatDrafts(current=>clearSubmittedChatDraft(current,activeChatDraftKey,submitted));}}'),"successful submission clears only the unchanged draft from the submitting conversation");
 assert.equal(source.includes('const [input,setInput]=React.useState("");'),false,"ChatView must not own transient draft state");
 assert.ok(source.includes('if(result.status==="sent")onClearSubmittedDraft(submittedDraft);'),"ordinary Chat clears a draft only after a successful send");
