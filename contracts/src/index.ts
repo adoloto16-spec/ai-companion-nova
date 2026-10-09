@@ -69,7 +69,7 @@ export interface ProviderPreset{
   id:string;
   name:string;
   /** Missing only in pre-v3 persisted data; migration treats it as a pool. */
-  type?:ProviderPresetType;
+  type:ProviderPresetType;
   sources:readonly ProviderPresetSource[];
   activeSourceId:string|null;
   providerId?:string|null;
