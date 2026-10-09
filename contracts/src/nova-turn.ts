@@ -81,7 +81,7 @@ function unescapeXml(value: string): string {
 }
 
 type CanonicalField = "SITUATION" | "THOUGHTS" | "EMOTION" | "TOOLS" | "TOOL_RESULTS" | "SPEECH" | "NEXT_WAKE_MS";
-interface TagToken { closing:boolean; rawName:string; canonical:CanonicalField; attributes:string; start:number; end:number; }
+interface TagToken { closing:boolean; rawName:string; attributes:string; start:number; end:number; }
 interface ReadFieldResult { status:NovaTurnFieldStatus; value?:string; diagnostic?:string; }
 const FIELD_ALIASES:Record<CanonicalField,readonly string[]> = {
   SITUATION:["CURRENT_SITUATION"],
@@ -92,8 +92,10 @@ const FIELD_ALIASES:Record<CanonicalField,readonly string[]> = {
   SPEECH:["PUBLIC_SPEECH"],
   NEXT_WAKE_MS:["NEXT_WAKE_INTERVAL_MS"],
 };
-const FIELD_NAMES = Object.entries(FIELD_ALIASES).flatMap(([canonical,aliases])=>[canonical,...aliases].map(alias=>[alias,canonical] as const));
-const FIELD_NAME_MAP = new Map<string,CanonicalField>(FIELD_NAMES.map(([alias,canonical])=>[alias,canonical]));
+const FIELD_NAME_MAP = new Map<string,CanonicalField>();
+for(const canonical of Object.keys(FIELD_ALIASES) as CanonicalField[]){
+  for(const alias of [canonical,...FIELD_ALIASES[canonical]])FIELD_NAME_MAP.set(alias,canonical);
+}
 function scanTagTokens(source:string, canonical:CanonicalField):TagToken[] {
   const tokens:TagToken[]=[];
   const re=/<\s*(\/?)\s*([A-Za-z][A-Za-z0-9_.-]*)\b([^>]*)>/g;
@@ -101,7 +103,7 @@ function scanTagTokens(source:string, canonical:CanonicalField):TagToken[] {
     const rawName=match[2]!.toUpperCase();
     if(FIELD_NAME_MAP.get(rawName)!==canonical)continue;
     const start=match.index!;
-    tokens.push({closing:match[1]==="/",rawName,canonical,attributes:match[3]??"",start,end:start+match[0].length});
+    tokens.push({closing:match[1]==="/",rawName,attributes:match[3]??"",start,end:start+match[0].length});
   }
   return tokens;
 }
@@ -175,7 +177,6 @@ export function serializeNovaTurn(turn: NovaTurn): string {
 export function parseNovaTurn(content: string): NovaTurnParseResult {
   const diagnostics:string[]=[];
   const missing=(status:NovaTurnFieldStatus="missing"):NovaTurnParsedField<string>=>({status});
-  const emptyFieldResult=(status:NovaTurnFieldStatus="missing"):ReadFieldResult=>({status});
   const blankFields: NovaTurnParseFields = {
     situation:missing(),thoughts:missing(),emotion:missing(),
     tools:{status:"missing"},toolResults:{status:"missing"},speech:missing(),nextWakeMs:{status:"missing"},
