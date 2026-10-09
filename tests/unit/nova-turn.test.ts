@@ -28,7 +28,10 @@ assert.equal(parseNovaTurn("plain text only").turn, undefined);
 const unsupportedVersion=parseNovaTurn(serialized.replace('version="1"', 'version="2"'));
 assert.equal(unsupportedVersion.complete, false);
 assert.equal(unsupportedVersion.turn, undefined, "unsupported protocol versions cannot recover speech as a valid NovaTurn");
-assert.equal(parseNovaTurn(serialized.replace("<NEXT_WAKE_MS>30000</NEXT_WAKE_MS>", "<NEXT_WAKE_MS>3.5</NEXT_WAKE_MS>")).turn?.nextWakeMs, 30_000);
+const invalidInterval=parseNovaTurn(serialized.replace("<NEXT_WAKE_MS>30000</NEXT_WAKE_MS>", "<NEXT_WAKE_MS>3.5</NEXT_WAKE_MS>"));
+assert.equal(invalidInterval.turn?.nextWakeMs,30_000);
+assert.equal(invalidInterval.fields.nextWakeMs.status,"invalid");
+assert.ok(invalidInterval.diagnostics.includes("NEXT_WAKE_MS-invalid"));
 assert.equal(parseNovaTurn(serialized + serialized).turn?.speech, undefined);
 
 const emptyTurn:NovaTurn={...source,situation:"",thoughts:"",emotion:"",tools:[],toolResults:[],speech:"",nextWakeMs:1};
@@ -74,6 +77,9 @@ assert.equal(damagedSpeechTag.fields.speech.status,"invalid");
 const speechHiddenInsideThoughts=parseNovaTurn("<NOVA_TURN version=\"1\"><THOUGHTS>private <SPEECH>do not publish this</SPEECH></THOUGHTS><SPEECH>ordinary public reply</SPEECH></NOVA_TURN>");
 assert.equal(speechHiddenInsideThoughts.turn,undefined,"a speech-shaped block nested inside private thoughts makes the response ambiguous");
 assert.equal(speechHiddenInsideThoughts.fields.speech.status,"invalid");
+const onlyNestedSpeech=parseNovaTurn("<NOVA_TURN version=\"1\"><THOUGHTS>private <SPEECH>do not publish this</SPEECH></THOUGHTS></NOVA_TURN>");
+assert.equal(onlyNestedSpeech.turn,undefined,"a lone speech-shaped block inside thoughts is not recovered as public speech");
+assert.ok(onlyNestedSpeech.diagnostics.includes("SPEECH-nested-in-THOUGHTS"));
 
 const missingSpeech=parseNovaTurn(serialized.replace(/<SPEECH>[\s\S]*?<\/SPEECH>/,""));
 assert.equal(missingSpeech.turn,undefined,"missing speech is not inferred from other fields");
