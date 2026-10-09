@@ -2,7 +2,6 @@ import type {CognitiveScheduleSettings} from "../../contracts/src";
 import {DEFAULT_COGNITIVE_SCHEDULE} from "../../contracts/src";
 import type {MindReactiveTurn, MindState, MindTraceEntry, MindWakeReason, MindRuntimeLifecycleState, MindTurnSink, MindToolExecutor} from "../../contracts/src";
 import type {NovaToolResult, NovaTurn} from "../../contracts/src/nova-turn";
-import type {CognitiveStep, CognitiveStepContext, CognitiveStepResult} from "./llm-cognitive-step";
 import {MindScheduler} from "./mind-scheduler";
 
 const DEFAULT_STEP_TIMEOUT_MS = 60_000;
@@ -21,7 +20,7 @@ function normalizeSchedule(schedule?: CognitiveScheduleSettings): CognitiveSched
   const maxIntervalMs = Math.max(minIntervalMs, validInteger(schedule?.maxIntervalMs, 300_000));
   const defaultIntervalMs = Math.min(maxIntervalMs, Math.max(minIntervalMs, validInteger(schedule?.defaultIntervalMs, 30_000)));
   const quota = schedule?.maxRequestsPerHour;
-  const maxRequestsPerHour = quota === null ? null : validInteger(quota, DEFAULT_COGNITIVE_SCHEDULE.maxRequestsPerHour ?? 0, 1, 3_600);
+  const maxRequestsPerHour = quota === null || quota === undefined ? null : validInteger(quota, 120, 1, 3_600);
   return { mode: schedule?.mode === "fixed" ? "fixed" : "adaptive", defaultIntervalMs, minIntervalMs, maxIntervalMs, maxRequestsPerHour };
 }
 function chooseInterval(raw: unknown, settings: CognitiveScheduleSettings, diagnostics: readonly string[] = []): IntervalChoice {
@@ -237,7 +236,6 @@ export class MindRuntime {
     const reactiveTurn = reason === "user-message" && pending?.characterId === characterId ? {...pending} : undefined;
     const startedMs = this.now(), startedAt = this.clock(), runId = "nova-turn-" + startedMs + "-" + (++this.runSequence);
     this.lastRequestStartedAt = startedMs;
-    this.requestStarts.push(startedMs);
     let nextDelay: number | undefined;
     let nextReason: MindWakeReason = "scheduled";
     let requestId: string | undefined, providerId: string | undefined, requested: number | undefined, applied: number | undefined, decision: string | undefined;
@@ -270,11 +268,7 @@ export class MindRuntime {
       signal: this.stepController?.signal ?? life.signal,
     });
     try {
-      const quotaWait = this.quotaWaitMs();
-      if (!reactiveTurn && quotaWait > 0) {
-        decision = "hourly-limit"; applied = quotaWait; nextDelay = quotaWait; nextReason = "quota-available";
-        finishTrace("deferred"); return;
-      }
+      this.requestStarts.push(startedMs);
       const stepController = new AbortController();
       this.stepController = stepController;
       this.cancelActiveStep = kind => { if (cancellation === undefined) { cancellation = kind; stepController.abort(); } };

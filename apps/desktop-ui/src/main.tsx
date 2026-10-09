@@ -21,7 +21,7 @@ import {
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
   type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem, type ErrorDiagnostic,
   defaultAppSettings, validateAppSettings, StandardContractValidator,
-  type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo, type MindState, type MindExpressionPublisher, type MindReactiveTurn
+  type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo, type MindState, type MindTurnSink, type MindReactiveTurn
 } from "../../../contracts/src/index";
 import "./styles.css";
 
@@ -1284,34 +1284,17 @@ function AppSettingsView({
             onChange={event=>onChange({...settings,cognitiveSchedule:{...settings.cognitiveSchedule,maxIntervalMs:Number(event.target.value)}})} disabled={saving}/>
           <small>Default: {defaults.cognitiveSchedule.maxIntervalMs} ms</small>
         </label>
-        <label>Background requests per hour
+        <label className="checkbox">Limit cognitive requests per hour
+          <input type="checkbox" checked={settings.cognitiveSchedule.maxRequestsPerHour!==null}
+            onChange={event=>onChange({...settings,cognitiveSchedule:{...settings.cognitiveSchedule,maxRequestsPerHour:event.target.checked?120:null}})} disabled={saving}/>
+        </label>
+        {settings.cognitiveSchedule.maxRequestsPerHour!==null&&<label>Requests per hour
           <input type="number" min={1} max={3600} step={1} value={settings.cognitiveSchedule.maxRequestsPerHour}
             onChange={event=>onChange({...settings,cognitiveSchedule:{...settings.cognitiveSchedule,maxRequestsPerHour:Number(event.target.value)}})} disabled={saving}/>
-          <small>Default: {defaults.cognitiveSchedule.maxRequestsPerHour} requests/hour</small>
-        </label>
+        </label>}
+        <small>Default: no hourly quota. Minimum spacing still applies to every model request.</small>
       </div>
       <p className="hint">The hourly quota applies only to background cognitive steps. Regular Chat remains available while Life is on or off.</p>
-    </section>
-
-    <section>
-      <h3>Proactive Chat</h3>
-      <label className="checkbox">Allow Nova Life to publish proactive chat messages
-        <input type="checkbox" checked={settings.proactiveChat.enabled}
-          onChange={event=>onChange({...settings,proactiveChat:{...settings.proactiveChat,enabled:event.target.checked}})} disabled={saving}/>
-      </label>
-      <div className="core-book-grid">
-        <label>Minimum interval between messages (ms)
-          <input type="number" min={10000} max={3600000} step={1000} value={settings.proactiveChat.minMessageIntervalMs}
-            onChange={event=>onChange({...settings,proactiveChat:{...settings.proactiveChat,minMessageIntervalMs:Number(event.target.value)}})} disabled={saving}/>
-          <small>Default: {defaults.proactiveChat.minMessageIntervalMs} ms</small>
-        </label>
-        <label>Proactive messages per rolling hour
-          <input type="number" min={1} max={3600} step={1} value={settings.proactiveChat.maxMessagesPerHour}
-            onChange={event=>onChange({...settings,proactiveChat:{...settings.proactiveChat,maxMessagesPerHour:Number(event.target.value)}})} disabled={saving}/>
-          <small>Default: {defaults.proactiveChat.maxMessagesPerHour} messages/hour</small>
-        </label>
-      </div>
-      <p className="hint">When disabled, Nova Life suppresses unsolicited scheduled messages only; user-requested Life replies remain enabled. These limits apply only to proactive messages and are separate from the background cognition request quota.</p>
     </section>
 
     <section>

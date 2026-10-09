@@ -1,14 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.ai-companion-nova.dev/app-settings/v8",
-  "title": "AI Companion Nova App Settings v8",
+  "$id": "https://schemas.ai-companion-nova.dev/app-settings/v9",
+  "title": "AI Companion Nova App Settings v9",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "apiVersion",
     "schemaVersion",
     "cognitiveSchedule",
-    "proactiveChat",
     "chat",
     "context",
     "memory",
@@ -23,7 +22,7 @@
       "const": "1"
     },
     "schemaVersion": {
-      "const": "8"
+      "const": "9"
     },
     "chat": {
       "type": "object",
@@ -310,33 +309,16 @@
           "maximum": 3600000
         },
         "maxRequestsPerHour": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 3600
-        }
-      }
-    },
-    "proactiveChat": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "enabled",
-        "minMessageIntervalMs",
-        "maxMessagesPerHour"
-      ],
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "minMessageIntervalMs": {
-          "type": "integer",
-          "minimum": 10000,
-          "maximum": 3600000
-        },
-        "maxMessagesPerHour": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 3600
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3600
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     }
