@@ -1,4 +1,5 @@
 use serde::{Deserialize,Serialize};
+use serde_json::Value;
 use std::{collections::HashSet,fs,io::Write,path::{Path,PathBuf}};
 use tauri::Manager;
 
@@ -36,8 +37,14 @@ pub struct ProviderPresetSource{
     pub failure_count:u32,
     #[serde(rename="cooldownUntil")]
     pub cooldown_until:Option<String>,
-    #[serde(rename="timeoutMs",skip_serializing_if="Option::is_none")]
+    #[serde(rename="timeoutMs",default,skip_serializing_if="Option::is_none")]
     pub timeout_ms:Option<f64>,
+    #[serde(rename="numCtx",default,skip_serializing_if="Option::is_none")]
+    pub num_ctx:Option<u32>,
+    #[serde(rename="numPredict",default,skip_serializing_if="Option::is_none")]
+    pub num_predict:Option<u32>,
+    #[serde(rename="keepAlive",default,skip_serializing_if="Option::is_none")]
+    pub keep_alive:Option<Value>,
     #[serde(rename="createdAt")]
     pub created_at:String,
     #[serde(rename="updatedAt")]
@@ -62,8 +69,14 @@ pub struct ProviderPreset{
     #[serde(rename="credentialReference")]
     pub credential_reference:Option<CredentialReference>,
     pub enabled:Option<bool>,
-    #[serde(rename="timeoutMs",skip_serializing_if="Option::is_none")]
+    #[serde(rename="timeoutMs",default,skip_serializing_if="Option::is_none")]
     pub timeout_ms:Option<f64>,
+    #[serde(rename="numCtx",default,skip_serializing_if="Option::is_none")]
+    pub num_ctx:Option<u32>,
+    #[serde(rename="numPredict",default,skip_serializing_if="Option::is_none")]
+    pub num_predict:Option<u32>,
+    #[serde(rename="keepAlive",default,skip_serializing_if="Option::is_none")]
+    pub keep_alive:Option<Value>,
     #[serde(rename="createdAt")]
     pub created_at:String,
     #[serde(rename="updatedAt")]
@@ -131,6 +144,24 @@ fn validate_reference(reference:&CredentialReference,provider_id:&str)->Result<(
     Ok(())
 }
 
+fn validate_ollama_options(provider_id:&str,num_ctx:Option<u32>,num_predict:Option<u32>,keep_alive:&Option<Value>)->Result<(),String>{
+    if provider_id!="ollama"&&(num_ctx.is_some()||num_predict.is_some()||keep_alive.is_some()){
+        return Err("Ollama generation settings may only be used with the Ollama provider".to_string());
+    }
+    if num_ctx==Some(0)||num_predict==Some(0){
+        return Err("Ollama numCtx and numPredict must be positive integers".to_string());
+    }
+    if let Some(value)=keep_alive{
+        let valid=match value{
+            Value::String(duration)=>!duration.trim().is_empty(),
+            Value::Number(number)=>number.as_f64().map(|number|number.is_finite()&&number>=0.0).unwrap_or(false),
+            _=>false
+        };
+        if !valid{return Err("Ollama keepAlive must be a non-empty duration string or a non-negative number".to_string());}
+    }
+    Ok(())
+}
+
 fn validate_source(source:&ProviderPresetSource)->Result<(),String>{
     if source.id.trim().is_empty()||source.id.len()>200{return Err("provider preset source id is invalid".to_string());}
     if source.name.trim().is_empty()||source.name.len()>200{return Err("provider preset source name is invalid".to_string());}
@@ -144,6 +175,7 @@ fn validate_source(source:&ProviderPresetSource)->Result<(),String>{
     if let Some(reference)=&source.credential_reference{validate_reference(reference,&source.provider_id)?;}
     if !matches!(source.health.as_str(),"healthy"|"cooldown"|"unavailable"){return Err("unsupported provider preset source health state".to_string());}
     if let Some(timeout)=source.timeout_ms{if !timeout.is_finite()||timeout<=0.0{return Err("provider preset source timeout must be finite and positive".to_string());}}
+    validate_ollama_options(&source.provider_id,source.num_ctx,source.num_predict,&source.keep_alive)?;
     if source.created_at.trim().is_empty()||source.updated_at.trim().is_empty(){return Err("provider preset source timestamps must not be empty".to_string());}
     Ok(())
 }
@@ -160,7 +192,7 @@ fn validate_preset(preset:&ProviderPreset)->Result<(),String>{
     match preset.preset_type.as_str(){
         "pool"=>{
             if preset.sources.is_empty(){return Err("pool preset must contain at least one source".to_string());}
-            if preset.provider_id.is_some()||preset.base_url.is_some()||preset.model.is_some()||preset.credential_reference.is_some()||preset.enabled.is_some()||preset.timeout_ms.is_some(){
+            if preset.provider_id.is_some()||preset.base_url.is_some()||preset.model.is_some()||preset.credential_reference.is_some()||preset.enabled.is_some()||preset.timeout_ms.is_some()||preset.num_ctx.is_some()||preset.num_predict.is_some()||preset.keep_alive.is_some(){
                 return Err("pool preset must not contain direct single-provider configuration fields".to_string());
             }
             if let Some(active)=&preset.active_source_id{
@@ -171,7 +203,7 @@ fn validate_preset(preset:&ProviderPreset)->Result<(),String>{
             if !preset.sources.is_empty(){return Err("single preset must not contain pool sources".to_string());}
             if preset.active_source_id.is_some(){return Err("single preset activeSourceId must be null".to_string());}
             let provider=preset.provider_id.as_deref().ok_or_else(||"single preset providerId is required".to_string())?;
-            if provider!="openai-compatible"&&provider!="gemini"{return Err("single preset providerId is unsupported".to_string());}
+            if provider!="openai-compatible"&&provider!="gemini"&&provider!="ollama"{return Err("single preset providerId is unsupported".to_string());}
             let base=preset.base_url.as_deref().ok_or_else(||"single preset baseUrl is required".to_string())?;
             if base.trim()!=base{return Err("single preset base URL must not have surrounding whitespace".to_string());}
             let url=url::Url::parse(base).map_err(|_|"single preset base URL is invalid".to_string())?;
@@ -180,9 +212,14 @@ fn validate_preset(preset:&ProviderPreset)->Result<(),String>{
             if url.query().is_some()||url.fragment().is_some(){return Err("single preset base URL must not contain query or fragment".to_string());}
             let model=preset.model.as_deref().ok_or_else(||"single preset model is required".to_string())?;
             if model.trim().is_empty()||model.len()>200{return Err("single preset model is invalid".to_string());}
-            let reference=preset.credential_reference.as_ref().ok_or_else(||"single preset credentialReference is required".to_string())?;
-            if reference.provider.as_deref()!=Some(provider){return Err("single preset credentialReference provider must match providerId".to_string());}
-            validate_reference(reference,provider)?;
+            validate_ollama_options(provider,preset.num_ctx,preset.num_predict,&preset.keep_alive)?;
+            if provider=="ollama" {
+                if preset.credential_reference.is_some(){return Err("Ollama provider preset must not store an API credential".to_string());}
+            }else{
+                let reference=preset.credential_reference.as_ref().ok_or_else(||"single preset credentialReference is required".to_string())?;
+                if reference.provider.as_deref()!=Some(provider){return Err("single preset credentialReference provider must match providerId".to_string());}
+                validate_reference(reference,provider)?;
+            }
             if preset.enabled.is_none(){return Err("single preset enabled state is required".to_string());}
             if let Some(timeout)=preset.timeout_ms{if !timeout.is_finite()||timeout<=0.0{return Err("single preset timeout must be finite and positive".to_string());}}
         },
