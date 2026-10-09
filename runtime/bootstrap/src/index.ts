@@ -360,7 +360,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       const activeConversation=await conversationManager.getActiveConversation(characterId);
       return activeConversation.characterId===characterId&&activeConversation.id===conversationId;
     },
-    onExpressionError:error=>diagnosticsStore.recordError("mind-expression","EXPRESSION_PUBLISH_FAILED",error instanceof Error?error.message.slice(0,200):"Proactive expression publication failed."),
+    onExpressionError:error=>diagnosticsStore.recordError("mind-expression","EXPRESSION_PUBLISH_FAILED",error instanceof Error?error.name:"PUBLISH_FAILED"),
     recentThoughtLimit:50,
     onError:error=>{
       const chatError=error&&typeof error==="object"&&"chatError" in error

@@ -248,20 +248,22 @@ export class ChatSessionController{
     this.publishingExpression=true;
     const messageId="nova-life:"+expression.expressionId;
     const operation=Promise.resolve().then(async():Promise<MindExpressionPublishResult>=>{
-      const collision=this.session.getMessages().find(message=>message.id===messageId);
-      if(collision)return {status:"suppressed",reason:"wrong-conversation"};
-      const message:ChatMessage={id:messageId,role:"assistant",content,metadata:{streamStatus:"complete",source:"nova-life",expressionId:expression.expressionId}};
-      this.session.addMessage(message);
-      this.status="completed";
-      this.error=undefined;this.errorCode=undefined;
-      this.notify();
       try{
-        await persist(this.getSnapshot());
-        return {status:"published",messageId,conversationId:this.session.conversationId};
-      }catch{
-        this.session.removeMessage(messageId);
-        this.recomputeStatus();
-        return {status:"failed",reason:"publication-failed",errorCode:"PERSIST_FAILED"};
+        const collision=this.session.getMessages().find(message=>message.id===messageId);
+        if(collision)return {status:"suppressed",reason:"wrong-conversation"};
+        const message:ChatMessage={id:messageId,role:"assistant",content,metadata:{streamStatus:"complete",source:"nova-life",expressionId:expression.expressionId}};
+        this.session.addMessage(message);
+        this.status="completed";
+        this.error=undefined;this.errorCode=undefined;
+        this.notify();
+        try{
+          await persist(this.getSnapshot());
+          return {status:"published",messageId,conversationId:this.session.conversationId};
+        }catch{
+          this.session.removeMessage(messageId);
+          this.recomputeStatus();
+          return {status:"failed",reason:"publication-failed",errorCode:"PERSIST_FAILED"};
+        }
       }finally{
         this.publishingExpression=false;
         this.notify();
