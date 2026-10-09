@@ -46,6 +46,18 @@ function cloneState(state:ProviderPresetStoreState):ProviderPresetStoreState{
   return {...state,presets:state.presets.map(clonePreset)};
 }
 
+export function migrateProviderPresetStoreState(state:ProviderPresetStoreState):ProviderPresetStoreState{
+  const legacy=state.schemaVersion!=="3";
+  return {
+    ...state,
+    schemaVersion:"3",
+    presets:state.presets.map(preset=>clonePreset({
+      ...preset,
+      type:legacy&&preset.type===undefined?"pool":preset.type??"pool"
+    }))
+  };
+}
+
 export function emptyProviderPresetState():ProviderPresetStoreState{
   return {apiVersion:"1",schemaVersion:"3",presets:[],activePresetId:null};
 }
@@ -55,7 +67,7 @@ export function credentialReferenceForProfile(profile:CredentialProfile|undefine
 }
 
 export function materializeSingleProviderConfiguration(preset:ProviderPreset):ProviderConfiguration|undefined{
-  if(preset.type!=="single"||!preset.providerId||!preset.baseUrl||!preset.model||preset.enabled===undefined)return undefined;
+  if(preset.type!=="single"||!preset.providerId||!preset.baseUrl||!preset.model||preset.enabled===undefined||preset.enabled===null||!preset.credentialReference)return undefined;
   return {
     apiVersion:"1",
     schemaVersion:"1",
@@ -64,7 +76,7 @@ export function materializeSingleProviderConfiguration(preset:ProviderPreset):Pr
     baseUrl:preset.baseUrl,
     model:preset.model,
     credentialReference:preset.credentialReference?{...preset.credentialReference}:null,
-    ...(preset.timeoutMs===undefined?{}:{timeoutMs:preset.timeoutMs})
+    ...(preset.timeoutMs==null?{}:{timeoutMs:preset.timeoutMs})
   };
 }
 
@@ -140,8 +152,8 @@ export function migrateProviderConfiguration(
 
 export class InMemoryProviderPresetStore implements ProviderPresetStore{
   private state:ProviderPresetStoreState|undefined;
-  async load(){return this.state?cloneState(this.state):undefined;}
-  async save(state:ProviderPresetStoreState){this.state=cloneState(state);}
+  async load(){return this.state?migrateProviderPresetStoreState(cloneState(this.state)):undefined;}
+  async save(state:ProviderPresetStoreState){this.state=migrateProviderPresetStoreState(cloneState(state));}
   async delete(id:string){
     if(!this.state)return;
     const activePresetId=this.state.activePresetId===id?null:this.state.activePresetId;
@@ -153,8 +165,8 @@ export class IpcProviderPresetStore implements ProviderPresetStore{
   constructor(private readonly invoke:ProviderPresetInvoke){}
   async load(){
     const value=await this.invoke(PROVIDER_PRESET_COMMANDS.get);
-    return value===null||value===undefined?undefined:value as ProviderPresetStoreState;
+    return value===null||value===undefined?undefined:migrateProviderPresetStoreState(value as ProviderPresetStoreState);
   }
-  async save(state:ProviderPresetStoreState){await this.invoke(PROVIDER_PRESET_COMMANDS.save,{state:cloneState(state)});}
+  async save(state:ProviderPresetStoreState){await this.invoke(PROVIDER_PRESET_COMMANDS.save,{state:migrateProviderPresetStoreState(cloneState(state))});}
   async delete(id:string){await this.invoke(PROVIDER_PRESET_COMMANDS.remove,{id});}
 }
