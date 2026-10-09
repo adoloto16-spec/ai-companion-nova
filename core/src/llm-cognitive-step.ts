@@ -1,5 +1,5 @@
-import type {AssembledContext,Character,ChatMessage,ChatRequest,ChatRequestOptions,ChatResponse,ContextBuildRequest,ContextBudget,Conversation,CognitiveScheduleSettings,MindExpressionCandidate,MindReactiveTurn,MindState,Thought} from "../../contracts/src";
-import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,CONTEXT_API_VERSION,CONTEXT_SCHEMA_VERSION} from "../../contracts/src";
+import type {AssembledContext,Character,ChatMessage,ChatRequest,ChatRequestOptions,ChatResponse,ContextBuildRequest,ContextBudget,Conversation,CognitiveScheduleSettings,MindExpressionCandidate,MindInitiativeUpdate,MindReactiveTurn,MindState,Thought} from "../../contracts/src";
+import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,CONTEXT_API_VERSION,CONTEXT_SCHEMA_VERSION,validateMindInitiativeUpdate} from "../../contracts/src";
 import type {CognitiveStep,CognitiveStepContext,CognitiveStepResult} from "./mind-runtime";
 
 export interface CognitiveChatRuntime{chat(request:ChatRequest,providerPresetId?:string,options?:ChatRequestOptions):Promise<ChatResponse>;getActiveProviderPresetId?():string|undefined;getChatModel?():string;getChatModelForPreset?(providerPresetId:string):Promise<string>;}
@@ -8,7 +8,9 @@ const COGNITIVE_SYSTEM_PROMPT=[
 "You are Nova, the character described in the supplied context, not an outside observer or technical agent.",
 "Each cognitive step always creates exactly one short private internal thought. That thought stays private and is never copied into Chat.",
 "For scheduled/background cognition, a public message is optional and private thought is the default. A correlated reactive user turn is different: its final cue requires a separate public chat reply.",
-"Return one JSON object with a non-empty string field thought, an optional expression object, and, when adaptive scheduling is enabled, an integer nextWakeInMs within the supplied bounds.",
+"Return one JSON object with a non-empty string field thought, an optional expression object and optional initiative update, and, when adaptive scheduling is enabled, an integer nextWakeInMs within the supplied bounds.",
+"An initiative update is {\"decision\":\"continue|switch|pause|finish\"} with optional direction and progress strings. Use switch with a distinct non-empty focus (max 160 characters) to choose a new topic; continue keeps the current focus. pause temporarily defers the topic; finish marks it completed.",
+"Direction (max 280 characters) should name a useful angle of inquiry. progress (max 1000 characters) must describe a real new insight from this step, not a plan or invented progress. Omit progress when nothing meaningful changed. If no focus exists, use switch to begin an initiative. Do not switch merely because another wake occurred. If an initiative is completed, do not continue it out of habit; begin a new topic only when there is a genuine new interest.",
 "Use expression {\"kind\":\"internal\"} when there is nothing to share, or {\"kind\":\"chat\",\"content\":\"a separate finished message for the user\"} when you choose to speak.",
 "The chat content must stand on its own as ordinary text for the user. Never put the private thought, raw internal reasoning, context dump, or technical JSON in that content.",
 "You may continue a genuinely interesting topic, share a grounded observation from existing context, or ask a relevant question. You do not need to speak on every wake and must not automatically ask a question or append a question to every message.",
@@ -23,7 +25,7 @@ const REACTIVE_USER_CUE="You are Nova answering the latest persisted user messag
 const LIFE_START_USER_CUE="This is a Life startup step. Produce one private Thought; do not send an unsolicited startup greeting by default. A public chat expression is not required.";
 const OTHER_WAKE_USER_CUE="Continue private Nova cognition using the actual conversation topic and recent Thought history. A public chat expression is optional only when genuinely useful. Do not turn this into a narration of internal steps.";
 function requestId():string{return "cognition-"+Date.now()+"-"+Math.random().toString(36).slice(2,10);}
-interface ParsedCognitiveResponse{thought:string;nextWakeInMs?:unknown;expression?:MindExpressionCandidate;expressionInvalid?:boolean;}
+interface ParsedCognitiveResponse{thought:string;nextWakeInMs?:unknown;expression?:MindExpressionCandidate;expressionInvalid?:boolean;initiative?:MindInitiativeUpdate;}
 function parseCognitiveResponse(content:string):ParsedCognitiveResponse{
   const trimmed=content.trim();if(!trimmed)throw new Error("Cognitive provider returned an empty thought.");
   const fenced=trimmed.match(/^\u0060\u0060\u0060(?:json)?\s*([\s\S]*?)\s*\u0060\u0060\u0060$/i);
@@ -35,7 +37,7 @@ function parseCognitiveResponse(content:string):ParsedCognitiveResponse{
     const record=parsed as Record<string,unknown>;
     if(typeof record.thought!=="string"||!record.thought.trim())throw new Error("Cognitive provider JSON contains an invalid thought.");
     if(record.thought.length>8000)throw new Error("Cognitive provider thought exceeds the allowed length.");
-    const allowedKeys=new Set(["thought","nextWakeInMs","expression"]);
+    const allowedKeys=new Set(["thought","nextWakeInMs","expression","initiative"]);
     let expression:MindExpressionCandidate|undefined;
     let expressionInvalid=Object.keys(record).some(key=>!allowedKeys.has(key));
     if(Object.prototype.hasOwnProperty.call(record,"expression")){
@@ -48,7 +50,8 @@ function parseCognitiveResponse(content:string):ParsedCognitiveResponse{
       }else expressionInvalid=true;
     }
     if(expressionInvalid)expression=undefined;
-    return {thought:record.thought.trim(),...(Object.prototype.hasOwnProperty.call(record,"nextWakeInMs")?{nextWakeInMs:record.nextWakeInMs}:{}),...(expression?{expression}:{}),...(expressionInvalid?{expressionInvalid:true}:{})};
+    const initiative=Object.prototype.hasOwnProperty.call(record,"initiative")?validateMindInitiativeUpdate(record.initiative):undefined;
+    return {thought:record.thought.trim(),...(Object.prototype.hasOwnProperty.call(record,"nextWakeInMs")?{nextWakeInMs:record.nextWakeInMs}:{}),...(expression?{expression}:{}),...(expressionInvalid?{expressionInvalid:true}:{}),...(initiative?{initiative}:{})};
   }
   const plain=fenced?candidate:trimmed;
   if(!plain||plain.length>8000)throw new Error("Cognitive provider thought is empty or exceeds the allowed length.");
@@ -104,7 +107,7 @@ export class LLMCognitiveStep implements CognitiveStep{
   }
   private buildMindContext(state:Readonly<MindState>):string{
     const history=state.recentThoughts.length===0?"No previous internal thoughts.":state.recentThoughts.map((thought,index)=>"Thought "+(index+1)+": "+thought.content).join("\n");
-    return ["[INTERNAL THOUGHT HISTORY]",history,"[/INTERNAL THOUGHT HISTORY]","[CURRENT MIND STATE]","Focus: "+(state.focus??"(none)"),"Lifecycle state: "+state.lifecycleState,"Last thought timestamp: "+(state.lastThoughtAt??"(none)"),"Last thought: "+(state.lastThought?.content??"(none)"),"[/CURRENT MIND STATE]","[COGNITION CONTEXT]","The internal thought history above is private cognition context. It is not a conversation message and must not be emitted as chat.","[/COGNITION CONTEXT]"].join("\n");
+    return ["[INTERNAL THOUGHT HISTORY]",history,"[/INTERNAL THOUGHT HISTORY]","[CURRENT MIND STATE]","Focus: "+(state.focus??"(none)"),"Initiative status: "+(state.initiative?.status??"(none)"),"Initiative direction: "+(state.initiative?.direction??"(none)"),"Last meaningful progress: "+(state.initiative?.lastProgress??"(none)"),"Lifecycle state: "+state.lifecycleState,"Last thought timestamp: "+(state.lastThoughtAt??"(none)"),"Last thought: "+(state.lastThought?.content??"(none)"),"[/CURRENT MIND STATE]","[COGNITION CONTEXT]","The internal thought history and initiative fields are private cognition context, not conversation messages. Do not output them as chat. Develop the actual topic with a substantive observation or revision rather than narrating plans or internal mechanisms.","[/COGNITION CONTEXT]"].join("\n");
   }
 }
 function MindRuntimeAbortError():Error{const error=new Error("Mind Runtime cognitive step aborted.");error.name="AbortError";return error;}
