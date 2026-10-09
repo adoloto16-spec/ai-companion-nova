@@ -81,7 +81,7 @@ function unescapeXml(value: string): string {
 }
 
 type CanonicalField = "SITUATION" | "THOUGHTS" | "EMOTION" | "TOOLS" | "TOOL_RESULTS" | "SPEECH" | "NEXT_WAKE_MS";
-interface TagToken { closing:boolean; rawName:string; attributes:string; start:number; end:number; }
+interface TagToken { closing:boolean; rawName:string; canonical:CanonicalField; attributes:string; start:number; end:number; }
 interface ReadFieldResult { status:NovaTurnFieldStatus; value?:string; diagnostic?:string; }
 const FIELD_ALIASES:Record<CanonicalField,readonly string[]> = {
   SITUATION:["CURRENT_SITUATION"],
@@ -96,16 +96,31 @@ const FIELD_NAME_MAP = new Map<string,CanonicalField>();
 for(const canonical of Object.keys(FIELD_ALIASES) as CanonicalField[]){
   for(const alias of [canonical,...FIELD_ALIASES[canonical]])FIELD_NAME_MAP.set(alias,canonical);
 }
-function scanTagTokens(source:string, canonical:CanonicalField):TagToken[] {
+function scanAllFieldTokens(source:string):TagToken[] {
   const tokens:TagToken[]=[];
   const re=/<\s*(\/?)\s*([A-Za-z][A-Za-z0-9_.-]*)\b([^>]*)>/g;
   for(const match of source.matchAll(re)){
     const rawName=match[2]!.toUpperCase();
-    if(FIELD_NAME_MAP.get(rawName)!==canonical)continue;
+    const canonical=FIELD_NAME_MAP.get(rawName);
+    if(!canonical)continue;
     const start=match.index!;
-    tokens.push({closing:match[1]==="/",rawName,attributes:match[3]??"",start,end:start+match[0].length});
+    tokens.push({closing:match[1]==="/",rawName,canonical,attributes:match[3]??"",start,end:start+match[0].length});
   }
   return tokens;
+}
+function scanTagTokens(source:string, canonical:CanonicalField):TagToken[]{
+  return scanAllFieldTokens(source).filter(token=>token.canonical===canonical);
+}
+function enclosingFieldNames(source:string, before:number):CanonicalField[]{
+  const stack:TagToken[]=[];
+  for(const token of scanAllFieldTokens(source)){
+    if(token.start>=before)break;
+    if(!token.closing){stack.push(token);continue;}
+    for(let index=stack.length-1;index>=0;index--){
+      if(stack[index]!.rawName===token.rawName){stack.splice(index,1);break;}
+    }
+  }
+  return stack.map(token=>token.canonical);
 }
 function readField(source:string, canonical:CanonicalField, wrapperRecovered:boolean):ReadFieldResult {
   const tokens=scanTagTokens(source,canonical);
@@ -123,6 +138,10 @@ function readField(source:string, canonical:CanonicalField, wrapperRecovered:boo
     return {status:"invalid",diagnostic:canonical+"-tag-malformed"};
   }
   if(open.rawName!==close.rawName)return {status:"invalid",diagnostic:canonical+"-tag-mismatch"};
+  if(canonical==="SPEECH"){
+    const owner=enclosingFieldNames(source,open.start).at(-1);
+    if(owner)return {status:"invalid",diagnostic:"SPEECH-nested-in-"+owner};
+  }
   const raw=source.slice(open.end,close.start);
   if(canonical==="SPEECH"&&/<\s*\/?\s*[A-Za-z][A-Za-z0-9_.-]*\b[^>]*>/.test(raw)){
     return {status:"invalid",diagnostic:"SPEECH-contains-unescaped-tags"};
