@@ -107,6 +107,7 @@ fn validated_url(base_url: &str, route: &str, method: &str) -> Result<Url, Strin
         return Err("Ollama base URL must not contain a path, query, or fragment.".to_string());
     }
     let host = url.host_str().ok_or_else(|| "Ollama base URL has no host.".to_string())?;
+    let host = host.strip_prefix('[').and_then(|value| value.strip_suffix(']')).unwrap_or(host);
     let loopback = if host.eq_ignore_ascii_case("localhost") {
         true
     } else {
@@ -114,6 +115,9 @@ fn validated_url(base_url: &str, route: &str, method: &str) -> Result<Url, Strin
     };
     if !loopback {
         return Err("Ollama HTTP transport is restricted to loopback hosts (127.0.0.1, localhost, or ::1).".to_string());
+    }
+    if url.port().is_none() {
+        url.set_port(Some(11434)).map_err(|_| "Ollama port is invalid.".to_string())?;
     }
     let port = url.port_or_known_default().ok_or_else(|| "Ollama port is invalid.".to_string())?;
     if port == 0 {
