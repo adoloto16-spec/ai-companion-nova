@@ -86,6 +86,7 @@ async function main(){
 
   const cognitiveState={
     focus:null,
+    initiative:null,
     lastThought:null,
     lastThoughtAt:null,
     recentThoughts:[],
