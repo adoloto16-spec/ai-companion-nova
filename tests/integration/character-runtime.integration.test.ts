@@ -119,6 +119,8 @@ async function main(){
     const replacementCharacter=await runtime.getActiveCharacter();
     equal(replacementCharacter.id===transient.id,false,"deleting active character selects a remaining character");
     equal(runtime.getMindState().recentThoughts.length,0,"deleting active character resyncs Mind Runtime state");
+    await runtime.setActiveCharacter(gm.id);
+    equal((await runtime.getActiveCharacter()).id,gm.id,"restart fixture explicitly selects the character it expects to persist");
 
     const novaSession=new ConversationSession("conversation-nova",nova.id);
     const gmSession=new ConversationSession("conversation-gm",gm.id);
