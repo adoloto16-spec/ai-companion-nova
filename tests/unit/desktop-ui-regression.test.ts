@@ -102,7 +102,7 @@ assert.ok(source.includes("parseResult?.fields.thoughts")&&source.includes("isNo
 assert.ok(source.includes("shouldRenderNovaTurn(parseResult,showTechnicalData)"),"a persisted NovaTurn is hidden only when technical mode is off and no safe speech exists");
 assert.ok(source.includes("Unrecognized / raw output (bounded)")&&source.includes("slice(0,4000)"),"technical mode shows bounded raw output for malformed turns");
 for(const heading of ["Situation","Thoughts (private)","Emotion","Tool calls","Tool results","Speech","Next wake","Protocol diagnostics"]){assert.ok(source.includes("<strong>"+heading+"</strong>"),"technical mode always supplies the "+heading+" section");}
-assert.ok(source.includes("countVisibleSpeechMessages(conversation.messages)")&&source.includes("stored records"),"conversation counter distinguishes stored records from visible speech messages");
+assert.ok(source.includes("countVisibleSpeechMessages(conversation.messages)")&&source.includes("stored messages"),"conversation counter distinguishes stored records from visible speech messages");
 assert.ok(source.includes("commitNovaTurn"),"Chat persists the canonical NovaTurn record");
 assert.ok(source.includes("setNovaTurnSink"),"UI registers the single canonical turn sink");
 assert.ok(source.includes("subscribeMindState"),"UI must subscribe to runtime mind state rather than own the runtime");
