@@ -1,4 +1,4 @@
-import type {ChatContext,ChatError,ChatRequest,ChatResponse,ChatProvider,ChatStreamDone,ChatStreamError,ChatStreamEvent,ChatStreamHandlers,ChatStreamOptions,DiagnosticsStore,EventBus,HealthStatus,SchemaValidator,ChatUsage} from "../../contracts/src/index";
+import type {ChatContext,ChatError,ChatRequest,ChatResponse,ChatProvider,ChatRequestOptions,ChatStreamDone,ChatStreamError,ChatStreamEvent,ChatStreamHandlers,ChatStreamOptions,DiagnosticsStore,EventBus,HealthStatus,SchemaValidator,ChatUsage} from "../../contracts/src/index";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,CHAT_STREAM_API_VERSION,CHAT_STREAM_SCHEMA_VERSION,STANDARD_SCHEMAS,createEvent,StandardContractValidator} from "../../contracts/src/index";
 import {ProviderRegistry} from "./providers";
 
@@ -11,6 +11,18 @@ export class AiRuntimeError extends Error{
 }
 
 export interface AiRuntimeOptions{validator?:SchemaValidator;diagnostics?:DiagnosticsStore;events?:EventBus;clock?:()=>string}
+function createAbortError():Error{const error=new Error("The operation was aborted.");error.name="AbortError";return error;}
+function isAbortError(error:unknown):boolean{return Boolean(error&&typeof error==="object"&&"name" in error&&(error as {name?:unknown}).name==="AbortError");}
+function withAbortSignal<T>(promise:Promise<T>,signal?:AbortSignal):Promise<T>{
+  if(!signal)return promise;
+  if(signal.aborted)return Promise.reject(createAbortError());
+  return new Promise<T>((resolve,reject)=>{
+    const cleanup=()=>signal.removeEventListener("abort",onAbort);
+    const onAbort=()=>{cleanup();reject(createAbortError());};
+    signal.addEventListener("abort",onAbort,{once:true});
+    promise.then(value=>{cleanup();resolve(value);},error=>{cleanup();reject(error);});
+  });
+}
 export interface ChatContextInput{conversationId:string;messages:readonly ChatContext["messages"][number][];metadata?:Record<string,unknown>}
 export const createChatContext=(input:ChatContextInput):ChatContext=>({conversationId:input.conversationId,messages:[...input.messages],...(input.metadata===undefined?{}:{metadata:{...input.metadata}})});
 
@@ -27,7 +39,8 @@ export class AiRuntime{
   private readonly clock:()=>string;
   constructor(private readonly providers:ProviderRegistry,private readonly options:AiRuntimeOptions={}){this.validator=options.validator??new StandardContractValidator();this.clock=options.clock??(()=>new Date().toISOString());}
   async health():Promise<HealthStatus>{const providers=this.providers.list("chat");if(providers.length===0)return {status:"unavailable",message:"No chat providers registered.",capabilities:["chat-runtime"]};return {status:"healthy",capabilities:["chat-runtime"]};}
-  async generate(request:ChatRequest):Promise<ChatResponse>{
+  async generate(request:ChatRequest,options:ChatRequestOptions={}):Promise<ChatResponse>{
+    if(options.signal?.aborted)throw createAbortError();
     const requestResult=this.validator.validate(request,STANDARD_SCHEMAS["chat-request"]!);
     if(!requestResult.valid)return this.fail({apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION,code:"INVALID_REQUEST",message:"Chat request failed contract validation.",requestId:request.requestId,providerId:request.providerId,details:{errors:[...requestResult.errors]}},request.context?.conversationId);
     const provider=this.resolveProvider(request.providerId);
@@ -35,13 +48,16 @@ export class AiRuntime{
     const providerId=provider.id;
     await this.options.events?.publish(createEvent("ChatRequestStarted",{requestId:request.requestId,conversationId:request.context.conversationId,providerId,model:request.model},"ai-runtime",this.clock,request.requestId+":started"));
     try{
-      const response=await provider.chat(request);
+      if(options.signal?.aborted)throw createAbortError();
+      const response=await withAbortSignal(provider.chat(request,options),options.signal);
+      if(options.signal?.aborted)throw createAbortError();
       const normalized:ChatResponse={...response,apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION,requestId:request.requestId,conversationId:request.context.conversationId,providerId,model:request.model};
       const responseResult=this.validator.validate(normalized,STANDARD_SCHEMAS["chat-response"]!);
       if(!responseResult.valid)return this.fail({apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION,code:"INVALID_RESPONSE",message:"Chat provider returned an invalid canonical response.",requestId:request.requestId,providerId,details:{errors:[...responseResult.errors]}},request.context.conversationId);
       await this.options.events?.publish(createEvent("ChatResponseReceived",{requestId:request.requestId,conversationId:request.context.conversationId,providerId,model:request.model,finishReason:normalized.finishReason},"ai-runtime",this.clock,request.requestId+":received"));
       return normalized;
     }catch(error){
+      if(options.signal?.aborted||isAbortError(error))throw error;
       const providerError=readProviderChatError(error,this.validator);
       if(providerError){
         return this.fail({

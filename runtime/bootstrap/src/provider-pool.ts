@@ -3,6 +3,7 @@ import type {
   ChatFinishReason,
   ChatProvider,
   ChatRequest,
+  ChatRequestOptions,
   ChatResponse,
   ChatStreamHandlers,
   ChatStreamOptions,
@@ -170,7 +171,8 @@ export class ProviderPoolChatProvider implements ChatProvider{
     throw this.aggregateError(undefined,lastError,attempted);
   }
 
-  async chat(request:ChatRequest):Promise<ChatResponse>{
+  async chat(request:ChatRequest,options:ChatRequestOptions={}):Promise<ChatResponse>{
+    if(options.signal?.aborted)throw new DOMException("The operation was aborted.","AbortError");
     const attempted=new Set<string>();
     let lastError:unknown;
     while(true){
@@ -181,10 +183,12 @@ export class ProviderPoolChatProvider implements ChatProvider{
       if(!provider)throw this.configurationError(request,source);
       const sourceRequest={...request,providerId:source.providerId,model:source.model};
       try{
-        const response=await provider.chat(sourceRequest);
+        const response=await provider.chat(sourceRequest,options);
+        if(options.signal?.aborted)throw new DOMException("The operation was aborted.","AbortError");
         await this.markSuccess(source);
         return response;
       }catch(error){
+        if(options.signal?.aborted||isAbortError(error))throw error;
         lastError=error;
         if(!isFailoverEligible(error))throw error;
         await this.markFailure(source,failureCategory(error));

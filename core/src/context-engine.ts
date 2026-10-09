@@ -389,10 +389,43 @@ export class DeterministicContextEngine implements ContextEngineContract {
       include(item.candidate);
     }
 
-    // Preserve a contiguous recent suffix as long as it fits.
-    const recent=candidates.filter(item=>item.candidate.zone==="recent_conversation").sort((a,b)=>b.index-a.index);
-    for(const item of recent){
-      if(!include(item.candidate))break;
+    // Preserve recent user/assistant turns without creating an orphan assistant message under pressure.
+    // The recent-message setting controls the candidate window; this selection keeps valid adjacent
+    // user/assistant pairs together, regardless of which role is newest.
+    const recent=candidates.filter(item=>item.candidate.zone==="recent_conversation").sort((a,b)=>a.index-b.index);
+    for(let index=recent.length-1;index>=0;index-=1){
+      const current=recent[index]!;
+      if(included.has(current.candidate.id))continue;
+
+      const previous=recent[index-1];
+      if(current.candidate.role==="assistant"&&previous?.candidate.role==="user"){
+        const pairFits=previous.candidate.estimatedTokens+current.candidate.estimatedTokens<=remaining;
+        if(pairFits){
+          include(previous.candidate);
+          include(current.candidate);
+        }else{
+          include(previous.candidate);
+        }
+        index-=1;
+        continue;
+      }
+
+      if(current.candidate.role==="user"&&previous?.candidate.role==="assistant"){
+        const pairFits=previous.candidate.estimatedTokens+current.candidate.estimatedTokens<=remaining;
+        if(pairFits){
+          include(previous.candidate);
+          include(current.candidate);
+          index-=1;
+        }else{
+          include(current.candidate);
+        }
+        continue;
+      }
+
+      if(current.candidate.role==="user"){
+        include(current.candidate);
+      }
+      // An assistant without an adjacent user turn is not retained by itself.
     }
 
     // Remaining budget is shared by Core Book and older conversation. The deterministic
@@ -400,7 +433,14 @@ export class DeterministicContextEngine implements ContextEngineContract {
     const pressurePool=candidates
       .filter(item=>item.candidate.eligible && !included.has(item.candidate.id) && item.candidate.zone!=="system" && item.candidate.zone!=="recent_conversation")
       .sort(stableCompare);
-    for(const item of pressurePool)include(item.candidate);
+    for(const item of pressurePool){
+      if(item.candidate.source==="conversation"&&item.candidate.role==="assistant"){
+        const previous=[...candidates].reverse().find(candidate=>candidate.index<item.index&&candidate.candidate.source==="conversation")?.candidate;
+        if(previous&&previous.role!=="user")continue;
+        if(previous?.role==="user"&&!included.has(previous.id))continue;
+      }
+      include(item.candidate);
+    }
 
     const includedCandidates=candidates.filter(item=>included.has(item.candidate.id)).map(item=>item.candidate);
     const omittedCandidates=candidates

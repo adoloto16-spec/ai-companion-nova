@@ -4,6 +4,7 @@ import type {
   ChatMessage,
   ChatProvider,
   ChatRequest,
+  ChatRequestOptions,
   ChatResponse,
   ChatStreamDone,
   ChatStreamHandlers,
@@ -578,7 +579,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     }
   }
 
-  async chat(request:ChatRequest):Promise<ChatResponse>{
+  async chat(request:ChatRequest,options:ChatRequestOptions={}):Promise<ChatResponse>{
     this.ensureConfig(request);
     if(!request.model.trim()){
       throw this.failure({code:"INVALID_REQUEST",message:"Requested model is not configured for this provider.",request,retryable:false,details:{category:"configuration"}});
@@ -600,8 +601,9 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
           ...(secret?{Authorization:"Bearer "+secret}:{}),
         },
         body
-      },this.timeoutMs(),request);
+      },this.timeoutMs(),request,options.signal);
     }catch(error){
+      if(options.signal?.aborted)throw createAbortError();
       if(error instanceof OpenAICompatibleProviderError)throw error;
       const durationMs=Date.now()-started;
       throw this.failure({
@@ -794,9 +796,15 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
   private async requestWithTimeout(
     request:HttpClientRequest,
     timeoutMs:number,
-    chatRequest:ChatRequest
+    chatRequest:ChatRequest,
+    callerSignal?:AbortSignal
   ):Promise<HttpClientResponse>{
+    if(callerSignal?.aborted)throw createAbortError();
     const controller=new AbortController();
+    let rejectCallerAbort:((reason?:unknown)=>void)|undefined;
+    const callerAbortPromise=callerSignal?new Promise<never>((_,reject)=>{rejectCallerAbort=reject;}):undefined;
+    const onCallerAbort=()=>{controller.abort();rejectCallerAbort?.(createAbortError());};
+    callerSignal?.addEventListener("abort",onCallerAbort,{once:true});
     let timer:ReturnType<typeof setTimeout>|undefined;
     let timedOut=false;
     const timeoutPromise=new Promise<never>((_,reject)=>{
@@ -813,11 +821,10 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       },timeoutMs);
     });
     try{
-      return await Promise.race([
-        this.httpClient.request({...request,signal:controller.signal}),
-        timeoutPromise
-      ]);
+      const pending:[Promise<HttpClientResponse>,Promise<never>,...(Promise<never>[])] = [this.httpClient.request({...request,signal:controller.signal}),timeoutPromise,...(callerAbortPromise?[callerAbortPromise]:[])];
+      return await Promise.race(pending);
     }catch(error){
+      if(callerSignal?.aborted)throw createAbortError();
       if(error instanceof OpenAICompatibleProviderError)throw error;
       if(timedOut)throw error;
       const abortName=error&&typeof error==="object"&&"name" in error?(error as {name?:unknown}).name:undefined;
@@ -833,6 +840,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       throw error;
     }finally{
       if(timer)clearTimeout(timer);
+      callerSignal?.removeEventListener("abort",onCallerAbort);
       controller.abort();
     }
   }

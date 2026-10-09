@@ -78,3 +78,16 @@ input,select{padding:9px;border:1px solid #394655;border-radius:7px;background:#
 .diagnostic-candidate-meta{margin-top:6px;font-size:12px;opacity:.62}
 .diagnostic-reason{margin-top:5px;font-size:12px;opacity:.8}
 .diagnostic-json{max-height:360px;overflow:auto;padding:12px;border:1px solid #2a3441;border-radius:8px;background:#0d1319;white-space:pre-wrap;overflow-wrap:anywhere}
+
+
+.life-control{display:flex;align-items:center;gap:8px;margin-left:auto;padding-left:12px}
+.life-label{font-size:13px;white-space:nowrap}
+.life-control button{min-width:48px}
+.thoughts-view{display:flex;flex-direction:column;gap:16px}
+.mind-status-badge{font-size:12px;font-weight:700;letter-spacing:.08em}
+.thought-list{display:flex;flex-direction:column;gap:10px;max-height:calc(100vh - 190px);overflow:auto}
+.thought-entry{padding:12px 14px;border:1px solid var(--border-color);border-radius:8px;background:var(--panel-background)}
+.thought-meta{display:flex;gap:12px;margin-bottom:6px;font-size:11px;opacity:.7}
+.thought-meta span{font-family:monospace}
+.thought-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.thought-actions .mind-status-badge{margin-right:4px}

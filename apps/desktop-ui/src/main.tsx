@@ -21,7 +21,7 @@ import {
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
   type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem, type ErrorDiagnostic,
   defaultAppSettings, validateAppSettings, StandardContractValidator,
-  type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo
+  type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo, type MindState
 } from "../../../contracts/src/index";
 import "./styles.css";
 
@@ -1216,6 +1216,41 @@ function AppSettingsView({
     </section>
 
     <section>
+      <h3>Cognitive Schedule</h3>
+      <label>Scheduling mode
+        <select value={settings.cognitiveSchedule.mode}
+          onChange={event=>onChange({...settings,cognitiveSchedule:{...settings.cognitiveSchedule,mode:event.target.value as AppSettings["cognitiveSchedule"]["mode"]}})} disabled={saving}>
+          <option value="adaptive">Adaptive (model proposes the next wake)</option>
+          <option value="fixed">Fixed interval</option>
+        </select>
+        <small>Default: {defaults.cognitiveSchedule.mode}. Fixed mode ignores the model's interval proposal.</small>
+      </label>
+      <div className="core-book-grid">
+        <label>Default interval (ms)
+          <input type="number" min={1000} max={3600000} step={1000} value={settings.cognitiveSchedule.defaultIntervalMs}
+            onChange={event=>onChange({...settings,cognitiveSchedule:{...settings.cognitiveSchedule,defaultIntervalMs:Number(event.target.value)}})} disabled={saving}/>
+          <small>Default: {defaults.cognitiveSchedule.defaultIntervalMs} ms</small>
+        </label>
+        <label>Minimum interval (ms)
+          <input type="number" min={1000} max={3600000} step={1000} value={settings.cognitiveSchedule.minIntervalMs}
+            onChange={event=>onChange({...settings,cognitiveSchedule:{...settings.cognitiveSchedule,minIntervalMs:Number(event.target.value)}})} disabled={saving}/>
+          <small>Default: {defaults.cognitiveSchedule.minIntervalMs} ms</small>
+        </label>
+        <label>Maximum interval (ms)
+          <input type="number" min={1000} max={3600000} step={1000} value={settings.cognitiveSchedule.maxIntervalMs}
+            onChange={event=>onChange({...settings,cognitiveSchedule:{...settings.cognitiveSchedule,maxIntervalMs:Number(event.target.value)}})} disabled={saving}/>
+          <small>Default: {defaults.cognitiveSchedule.maxIntervalMs} ms</small>
+        </label>
+        <label>Background requests per hour
+          <input type="number" min={1} max={3600} step={1} value={settings.cognitiveSchedule.maxRequestsPerHour}
+            onChange={event=>onChange({...settings,cognitiveSchedule:{...settings.cognitiveSchedule,maxRequestsPerHour:Number(event.target.value)}})} disabled={saving}/>
+          <small>Default: {defaults.cognitiveSchedule.maxRequestsPerHour} requests/hour</small>
+        </label>
+      </div>
+      <p className="hint">The hourly quota applies only to background cognitive steps. Regular Chat remains available while Life is on or off.</p>
+    </section>
+
+    <section>
       <h3>Memory</h3>
       <label className="checkbox">Automatic long-term memory extraction
         <input type="checkbox" checked={settings.chat.automaticLongTermMemory}
@@ -1413,6 +1448,7 @@ function TraceCandidate({candidate}:{candidate:any}){
 function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:AppSettings}){
   const [traces,setTraces]=React.useState<readonly ChatTurnTrace[]>([]);
   const [semanticDiagnostics,setSemanticDiagnostics]=React.useState<readonly ErrorDiagnostic[]>([]);
+  const [runtimeDiagnostics,setRuntimeDiagnostics]=React.useState<readonly ErrorDiagnostic[]>([]);
   const [selectedId,setSelectedId]=React.useState<string|undefined>();
   const [message,setMessage]=React.useState("");
   const [showRaw,setShowRaw]=React.useState(false);
@@ -1426,6 +1462,7 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
       setMessage("");
     }catch(error){setMessage(error instanceof Error?error.message:"Diagnostics could not be loaded.");}
     void runtime.diagnostics().then(snapshot=>{
+      setRuntimeDiagnostics(snapshot.recentErrors);
       setSemanticDiagnostics(snapshot.recentErrors.filter(entry=>entry.source==="memory-semantic-deduplication"));
     }).catch(error=>{
       setMessage(error instanceof Error?error.message:"Semantic diagnostics could not be loaded.");
@@ -1458,6 +1495,31 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
           </button>
         )}
       {message&&<div className="error">{message}</div>}
+    </section>
+
+    <section>
+      <div className="section-header">
+        <div><h2>Runtime diagnostics</h2><p className="chat-subtitle">Recent runtime errors and provider diagnostics. Recorded metadata is sanitized before it reaches this UI.</p></div>
+      </div>
+      {runtimeDiagnostics.length===0
+        ?<div>No runtime diagnostics recorded.</div>
+        :runtimeDiagnostics.slice(-20).reverse().map((entry,index)=>{
+          const metadata=entry.metadata??{};
+          return <article className="diagnostic-json" key={entry.timestamp+":"+entry.source+":"+entry.code+":"+index}>
+            <div><strong>{new Date(entry.timestamp).toLocaleString()}</strong> · {entry.source} · {entry.code}</div>
+            <div>{entry.message}</div>
+            <div>requestId: {String(metadata.requestId??"—")}</div>
+            <div>providerPresetId: {String(metadata.providerPresetId??"—")}</div>
+            <div>sourceId: {String(metadata.sourceId??"—")}</div>
+            <div>providerId: {String(metadata.providerId??"—")}</div>
+            <div>model: {String(metadata.model??"—")}</div>
+            <div>category: {String(metadata.category??"—")}</div>
+            <div>httpStatus: {String(metadata.httpStatus??"—")}</div>
+            <div>durationMs: {String(metadata.durationMs??"—")}</div>
+            <div>baseUrlHost: {String(metadata.baseUrlHost??"—")}</div>
+            {entry.metadata!==undefined&&<pre>{JSON.stringify(entry.metadata,null,2)}</pre>}
+          </article>;
+        })}
     </section>
 
     <section>
@@ -1736,8 +1798,72 @@ function credentialSavedEntries(
   },{});
 }
 
+function ThoughtsView({mindState,character,runtime}:{mindState:MindState;character:Character;runtime:FoundationRuntime}){
+  const [message,setMessage]=React.useState("");
+  const deleteThought=React.useCallback((id:string)=>{
+    setMessage("");
+    if(!runtime.deleteThought(id))setMessage("Thought could not be deleted because it is no longer present.");
+  },[runtime]);
+  const clearCurrent=React.useCallback(()=>{
+    if(!window.confirm("Clear all Thoughts for the current character?"))return;
+    setMessage("");
+    runtime.clearCurrentThoughts();
+  },[runtime]);
+  const clearAll=React.useCallback(()=>{
+    if(!window.confirm("Clear all Thoughts for all characters?"))return;
+    setMessage("");
+    runtime.clearAllThoughts();
+  },[runtime]);
+  return <section className="thoughts-view">
+    <div className="section-header">
+      <div><h2>Thoughts · {character.name}</h2><p className="chat-subtitle">Technical observer of Nova's internal cognition. Thoughts are not Conversation messages.</p></div>
+      <div className="thought-actions">
+        <span className="mind-status-badge">{mindState.lifecycleState.toUpperCase()}</span>
+        <button type="button" onClick={clearCurrent} disabled={mindState.recentThoughts.length===0}>Clear character</button>
+        <button type="button" onClick={clearAll}>Clear all</button>
+      </div>
+    </div>
+    {message&&<div className="error">{message}</div>}
+    <p className="chat-subtitle">{mindState.lifecycleState==="waiting"&&mindState.nextWakeAt
+      ? "Next cognitive wake: "+new Date(mindState.nextWakeAt).toLocaleTimeString()
+      : mindState.lifecycleState==="thinking" ? "Nova is thinking…" : "Next cognitive wake: —"}</p>
+    <div className="thought-list">
+      {mindState.recentThoughts.length===0
+        ?<div className="empty-state">No internal thoughts for {character.name}.</div>
+        :mindState.recentThoughts.map(thought=>
+          <article className="thought-entry" key={thought.id}>
+            <div className="thought-meta">
+              <time dateTime={thought.timestamp}>{new Date(thought.timestamp).toLocaleTimeString()}</time>
+              <span>{thought.id}</span>
+              <button type="button" onClick={()=>deleteThought(thought.id)}>Delete</button>
+            </div>
+            <div>{thought.content}</div>
+          </article>
+        )}
+    </div>
+    <section className="diagnostic-block">
+      <h3>Recent cognitive trace</h3>
+      {(mindState.recentTrace??[]).length===0
+        ?<div className="empty-state">No cognitive runs recorded yet.</div>
+        :[...(mindState.recentTrace??[])].reverse().map(entry=>
+          <article className="diagnostic-candidate" key={entry.runId}>
+            <div className="diagnostic-candidate-header">
+              <strong>{entry.result.toUpperCase()}</strong>
+              <span>{entry.wakeReason}</span>
+              <time>{new Date(entry.startedAt).toLocaleTimeString()}</time>
+            </div>
+            <div className="diagnostic-candidate-meta">Character {entry.characterId} · {entry.durationMs} ms{entry.appliedIntervalMs===undefined?"":" · next "+entry.appliedIntervalMs+" ms"}</div>
+            {entry.requestedNextWakeInMs!==undefined&&<div className="diagnostic-reason">Model interval: {entry.requestedNextWakeInMs} ms</div>}
+            {entry.intervalDecision&&<div className="diagnostic-reason">Interval decision: {entry.intervalDecision}</div>}
+            {(entry.requestId||entry.providerId||entry.errorCode)&&<div className="diagnostic-candidate-meta">{entry.requestId? "Request "+entry.requestId+" · ":""}{entry.providerId?"Provider "+entry.providerId+" · ":""}{entry.errorCode?"Code "+entry.errorCode:""}</div>}
+          </article>
+        )}
+    </section>
+  </section>;
+}
+
 function App(){
-  const [view,setView]=React.useState<"chat"|"characters"|"memory"|"core-book"|"model-profile"|"settings"|"diagnostics">("chat");
+  const [view,setView]=React.useState<"chat"|"characters"|"memory"|"core-book"|"model-profile"|"settings"|"diagnostics"|"thoughts">("chat");
   const [runtime,setRuntime]=React.useState<RuntimeDiagnostics>(preview);
   const [saving,setSaving]=React.useState(false);
   const [startupStatus,setStartupStatus]=React.useState<"initializing"|"ready"|"error">("initializing");
@@ -1748,6 +1874,9 @@ function App(){
   const [chatController,setChatController]=React.useState<ChatSessionController|null>(null);
   const [conversations,setConversations]=React.useState<readonly Conversation[]>([]);
   const [activeConversation,setActiveConversation]=React.useState<Conversation|undefined>();
+  const [mindState,setMindState]=React.useState<MindState>({focus:null,lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"off"});
+  const mindUnsubscribeRef=React.useRef<(()=>void)|undefined>(undefined);
+  const [lifeBusy,setLifeBusy]=React.useState(false);
   const foundationRef=React.useRef<FoundationRuntime|undefined>(undefined);
   const providerConfigurationErrorRef=React.useRef<string|undefined>(undefined);
   const conversationLoadErrorRef=React.useRef<string|undefined>(undefined);
@@ -1838,7 +1967,17 @@ function App(){
       memoryExtractionEnabled:()=>{
         return foundationRef.current?.getSettings().chat.automaticLongTermMemory??true;
       },
-      traceStore:foundationRef.current?.getChatTraceStore()
+      traceStore:foundationRef.current?.getChatTraceStore(),
+      beforeUserMessage:async snapshot=>{
+        const foundation=foundationRef.current;
+        if(!foundation)return;
+        try{
+          await foundation.updateConversation(snapshot.characterId,snapshot.conversationId,{messages:snapshot.messages});
+          foundation.wakeMind();
+        }catch(error){
+          foundation.recordDiagnosticError("conversation-storage","PRE_SEND_PERSIST_FAILED",safeErrorMessage(error,"User message could not be persisted before the cognitive wake"));
+        }
+      }
     }
   ),[]);
 
@@ -1991,6 +2130,9 @@ function App(){
       activeProviderPresetId:presetState.activePresetId??undefined
     });
     foundationRef.current=next;
+    mindUnsubscribeRef.current?.();
+    setMindState(next.getMindState());
+    mindUnsubscribeRef.current=next.subscribeMindState(setMindState);
     setRuntime(await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(await next.diagnostics())));
     await syncCharacters(next);
     setRuntime(await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(await next.diagnostics())));
@@ -2313,11 +2455,23 @@ function App(){
         <button className={view==="core-book"?"nav-button active":"nav-button"} onClick={()=>setView("core-book")}>Core Book</button>
         <button className={view==="model-profile"?"nav-button active":"nav-button"} onClick={()=>setView("model-profile")}>Model Profile</button>
         <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Settings</button>
+        <button className={view==="thoughts"?"nav-button active":"nav-button"} onClick={()=>setView("thoughts")}>Thoughts</button>
         {appSettings.ui.showDiagnosticsInChat&&<button className={view==="diagnostics"?"nav-button active":"nav-button"} onClick={()=>setView("diagnostics")}>Diagnostics</button>}
       </nav>
+      <div className="life-control">
+        <span className="life-label">Nova Life: <strong>{mindState.lifecycleState.toUpperCase()}</strong>{mindState.lifecycleState==="waiting"&&mindState.nextWakeAt&&<small> · next wake {new Date(mindState.nextWakeAt).toLocaleTimeString()}</small>}</span>
+        <button type="button" onClick={async()=>{
+          const foundation=foundationRef.current;if(!foundation||lifeBusy)return;setLifeBusy(true);
+          try{if(mindState.lifecycleState==="off")await foundation.startLife();else await foundation.stopLife();}
+          catch(error){foundation.recordDiagnosticError("mind-runtime","LIFE_CONTROL_FAILED",safeErrorMessage(error));}
+          finally{setMindState(foundation.getMindState());setLifeBusy(false);}
+        }} disabled={lifeBusy||startupStatus!=="ready"}>{mindState.lifecycleState==="off"?"ON":"OFF"}</button>
+      </div>
     </header>
     <ViewErrorBoundary key={view} view={view} onError={reportViewError}>
-    {view==="model-profile"&&activeCharacter&&activeModelProfile
+    {view==="thoughts"&&activeCharacter&&foundationRef.current
+      ?<ThoughtsView mindState={mindState} character={activeCharacter} runtime={foundationRef.current}/>
+      :view==="model-profile"&&activeCharacter&&activeModelProfile
       ?<ModelProfileView profile={activeModelProfile} runtime={runtime} presets={providerPresets} activePresetId={activePresetId} onSave={saveModelProfile}/>
       :view==="settings"
       ?<SettingsContainerView

@@ -40,6 +40,21 @@ function request(overrides:Partial<ContextBuildRequest>):ContextBuildRequest{
   };
 }
 
+
+async function assistantOnlyUnderPressureRegressionTest(){
+  const engine=new DeterministicContextEngine([
+    new ConversationCandidateSource(({estimate(text:string){return text.length;}} as TokenEstimator))
+  ]);
+  const built=await engine.build(request({
+    messages:[
+      {id:"user-1",role:"user",content:"user"},
+      {id:"assistant-1",role:"assistant",content:"a"}
+    ],
+    budget:{availableContextTokens:4,reservedOutputTokens:0,systemOverheadTokens:0,safetyMarginTokens:0}
+  }));
+  equal(built.messages.map(message=>message.role),["user"],"context pressure must not leave an orphan assistant message");
+  equal(built.messages.map(message=>message.id),["user-1"],"the user turn must survive when assistant-only context would result");
+}
 async function main(){
   const budget=calculateContextBudget(100,10,5,5);
   equal(budget.availableContextTokens,80,"budget calculation");
@@ -198,7 +213,8 @@ async function main(){
     messages:manyMessages,
     budget:{availableContextTokens:5,reservedOutputTokens:0,systemOverheadTokens:0,safetyMarginTokens:0}
   }));
-  ok(pressured.includedCandidates.some(candidate=>candidate.referenceId==="m9"),"latest conversation turn preserved");
+  ok(pressured.includedCandidates.some(candidate=>candidate.referenceId==="m8"),"latest user turn survives when its assistant reply cannot fit as a pair");
+  ok(!pressured.includedCandidates.some(candidate=>candidate.referenceId==="m9"),"context pressure must not retain an orphan assistant reply");
   ok(!pressured.includedCandidates.some(candidate=>candidate.referenceId==="m0"),"older conversation may be removed");
   equal(pressured.estimatedTokens<=5,true,"assembly stays within budget");
   ok(pressured.omittedCandidates.some(candidate=>candidate.referenceId==="core-heavy"),"context pressure explains omitted Core Book");
@@ -210,6 +226,7 @@ async function main(){
   equal(noBudget.includedCandidates.length,0,"insufficient budget omits candidates");
   ok(noBudget.omittedCandidates.length>0,"insufficient budget is explainable");
 
+  await assistantOnlyUnderPressureRegressionTest();
   console.log("PASS Context Engine unit tests");
 }
 void main().catch(error=>{console.error(error);process.exitCode=1;});

@@ -4,6 +4,8 @@ import path from "node:path";
 
 const sourcePath=path.resolve(process.cwd(),"apps/desktop-ui/src/main.tsx");
 const source=fs.readFileSync(sourcePath,"utf8");
+const foundationPath=path.resolve(process.cwd(),"runtime/bootstrap/src/index.ts");
+const foundationSource=fs.readFileSync(foundationPath,"utf8");
 
 function blockBetween(startMarker:string,endMarker:string):string{
   const start=source.indexOf(startMarker);
@@ -27,7 +29,7 @@ assert.equal(app.includes('view==="provider-settings"'),false,"Provider Settings
 assert.equal(app.includes('view==="provider-presets"'),false,"Provider Presets must not remain a top-level route");
 
 const navigation=app.slice(app.indexOf("<nav className=\"app-nav\""),app.indexOf("</nav>",app.indexOf("<nav className=\"app-nav\"")));
-for(const label of ["Chat","Characters","Core Book","Model Profile","Settings","Diagnostics"]){
+for(const label of ["Chat","Characters","Core Book","Model Profile","Settings","Thoughts","Diagnostics"]){
   assert.ok(navigation.includes(">"+label+"</button>"),"Primary navigation must expose "+label);
 }
 for(const removed of ["Provider Presets","Provider Settings"]){
@@ -41,6 +43,11 @@ assert.ok(settingsContainer.includes('tab==="general"'),"Settings must have a Ge
 assert.ok(settingsContainer.includes('tab==="provider-presets"'),"Settings must have a Provider Presets tab");
 assert.ok(settingsContainer.includes("<AppSettingsView "), "General tab must render AppSettingsView");
 assert.ok(diagnosticsView.includes("runtime.diagnostics()"),"DiagnosticsView must bridge runtime DiagnosticsStore");
+assert.ok(diagnosticsView.includes("setRuntimeDiagnostics(snapshot.recentErrors)"),"DiagnosticsView must expose all recent runtime diagnostics separately");
+assert.ok(diagnosticsView.includes("Runtime diagnostics"),"DiagnosticsView must label general runtime diagnostics");
+for(const field of ["timestamp","source","code","message","requestId","providerPresetId","sourceId","providerId","model","category","httpStatus","durationMs","baseUrlHost"]){
+  assert.ok(diagnosticsView.includes(field), "DiagnosticsView must expose "+field);
+}
 assert.ok(diagnosticsView.includes('entry.source==="memory-semantic-deduplication"'),"DiagnosticsView must display semantic-memory diagnostics");
 assert.ok(diagnosticsView.includes("Memory Deduplication"),"DiagnosticsView must expose the Memory Deduplication section");
 assert.ok(diagnosticsView.includes("candidateDiagnostics")&&diagnosticsView.includes("archiveMapping")&&diagnosticsView.includes("mutationResult"),"DiagnosticsView must display dedup candidate/mutation diagnostics");
@@ -76,6 +83,16 @@ assert.ok(syncCharacters.includes("setChatController(loaded.controller);"),"sync
 assert.ok(refreshRuntime.includes("setChatController(null);"),"refreshRuntime must clear the stale controller before runtime replacement");
 assert.ok(refreshRuntime.indexOf("setChatController(null);")<refreshRuntime.indexOf("await foundationRef.current?.stop();"),"stale controller must be cleared before stopping the old runtime");
 assert.ok(refreshRuntime.includes("await syncCharacters(next);"),"new runtime must synchronize a freshly created controller");
+assert.ok(app.includes("foundation.startLife()"),"global Life control must start the Foundation Mind Runtime");
+assert.ok(app.includes("foundation.stopLife()"),"global Life control must stop the Foundation Mind Runtime");
+assert.ok(app.includes("Nova Life:"),"App must expose the global Nova Life control");
+assert.ok(app.includes("<ThoughtsView mindState={mindState} character={activeCharacter} runtime={foundationRef.current}/>"),"Thoughts must remain a character-scoped runtime observer");
+assert.ok(foundationSource.includes("deleteThought(thoughtId:string):boolean;"),"Foundation runtime must expose point Thought deletion");
+assert.ok(foundationSource.includes("clearCurrentThoughts():void;"),"Foundation runtime must expose current-character Thought clearing");
+assert.ok(foundationSource.includes("clearAllThoughts():void;"),"Foundation runtime must expose all-character Thought clearing");
+assert.ok(source.includes("window.confirm(\"Clear all Thoughts for all characters?\""),"Mass Thought clearing must use ordinary confirmation");
+assert.ok(source.includes("onClick={()=>deleteThought(thought.id)}"),"Thoughts UI must expose point delete");
+assert.ok(source.includes("subscribeMindState"),"UI must subscribe to runtime mind state rather than own the runtime");
 
 assert.match(source,/class ViewErrorBoundary extends React\.Component/);
 assert.match(source,/componentDidCatch\(error:Error,info:React\.ErrorInfo\)/);

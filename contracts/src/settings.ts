@@ -1,7 +1,22 @@
 export type DiagnosticsLogLevel="off"|"errors"|"normal"|"verbose"|"debug";
+export type CognitiveScheduleMode="adaptive"|"fixed";
+export interface CognitiveScheduleSettings{
+  mode:CognitiveScheduleMode;
+  defaultIntervalMs:number;
+  minIntervalMs:number;
+  maxIntervalMs:number;
+  maxRequestsPerHour:number;
+}
+export const DEFAULT_COGNITIVE_SCHEDULE:CognitiveScheduleSettings={
+  mode:"adaptive",
+  defaultIntervalMs:30_000,
+  minIntervalMs:10_000,
+  maxIntervalMs:900_000,
+  maxRequestsPerHour:120
+};
 
 export const APP_SETTINGS_API_VERSION:"1"="1";
-export const APP_SETTINGS_SCHEMA_VERSION:"5"="5";
+export const APP_SETTINGS_SCHEMA_VERSION:"6"="6";
 export const DEFAULT_MEMORY_AGENT_PROMPT_VERSION="1";
 export const DEFAULT_AUTOMATIC_MEMORY_PROMPT="You are a long-term memory agent.\nDecide whether the exchange contains durable information worth remembering after this conversation ends.\nReturn only the requested output.\nGood memories are brief, self-contained, durable, and understandable without the original conversation.\nDo not invent ids or metadata; the application supplies all internal state.";
 export const DEFAULT_MEMORY_JUDGE_PROMPT_VERSION="2";
@@ -11,7 +26,8 @@ const LEGACY_MEMORY_JUDGE_PROMPT="You are a memory deduplication judge.\n\nCompa
 
 export interface AppSettings{
   apiVersion:"1";
-  schemaVersion:"5";
+  schemaVersion:"6";
+  cognitiveSchedule:CognitiveScheduleSettings;
   chat:{
     automaticLongTermMemory:boolean;
   };
@@ -64,6 +80,7 @@ export interface AppSettings{
 export const DEFAULT_APP_SETTINGS:AppSettings={
   apiVersion:APP_SETTINGS_API_VERSION,
   schemaVersion:APP_SETTINGS_SCHEMA_VERSION,
+  cognitiveSchedule:{...DEFAULT_COGNITIVE_SCHEDULE},
   chat:{automaticLongTermMemory:true},
   memoryAgent:{enabled:true,providerPresetId:null,model:"",outputMode:"auto",prompt:DEFAULT_AUTOMATIC_MEMORY_PROMPT,promptBackup:null,defaultPromptVersion:DEFAULT_MEMORY_AGENT_PROMPT_VERSION},
   semanticDedup:{enabled:false,embeddingProviderPresetId:null,embeddingModel:"",candidateSimilarityThreshold:0.88,candidateLimit:5,judge:{enabled:true,providerPresetId:null,model:"",outputMode:"auto",prompt:DEFAULT_MEMORY_JUDGE_PROMPT,promptBackup:null,defaultPromptVersion:DEFAULT_MEMORY_JUDGE_PROMPT_VERSION}},
@@ -83,6 +100,7 @@ export function defaultAppSettings():AppSettings{
   return {
     apiVersion:DEFAULT_APP_SETTINGS.apiVersion,
     schemaVersion:DEFAULT_APP_SETTINGS.schemaVersion,
+    cognitiveSchedule:{...DEFAULT_APP_SETTINGS.cognitiveSchedule},
     chat:{...DEFAULT_APP_SETTINGS.chat},
     memoryAgent:{...DEFAULT_APP_SETTINGS.memoryAgent},
     semanticDedup:{...DEFAULT_APP_SETTINGS.semanticDedup,judge:{...DEFAULT_APP_SETTINGS.semanticDedup.judge}},
@@ -95,6 +113,8 @@ export function defaultAppSettings():AppSettings{
 }
 
 const SECURITY_MAX={
+  cognitiveIntervalMs:3_600_000,
+  cognitiveRequestsPerHour:3_600,
   availableContextTokens:32768,
   reservedOutputTokens:16384,
   safetyMarginTokens:4096,
@@ -112,6 +132,19 @@ export function validateAppSettings(settings:AppSettings):string[]{
   };
   if(settings.apiVersion!==APP_SETTINGS_API_VERSION)errors.push("Unsupported AppSettings apiVersion.");
   if(settings.schemaVersion!==APP_SETTINGS_SCHEMA_VERSION)errors.push("Unsupported AppSettings schemaVersion.");
+  const schedule=settings.cognitiveSchedule;
+  if(!schedule||typeof schedule!=="object"){
+    errors.push("Cognitive schedule settings must be an object.");
+  }else{
+    if(!["adaptive","fixed"].includes(schedule.mode))errors.push("Unsupported cognitive schedule mode.");
+    integer(schedule.defaultIntervalMs,"Cognitive default interval",1_000,SECURITY_MAX.cognitiveIntervalMs);
+    integer(schedule.minIntervalMs,"Cognitive minimum interval",1_000,SECURITY_MAX.cognitiveIntervalMs);
+    integer(schedule.maxIntervalMs,"Cognitive maximum interval",1_000,SECURITY_MAX.cognitiveIntervalMs);
+    integer(schedule.maxRequestsPerHour,"Cognitive requests per hour",1,SECURITY_MAX.cognitiveRequestsPerHour);
+    if(Number.isInteger(schedule.minIntervalMs)&&Number.isInteger(schedule.defaultIntervalMs)&&schedule.defaultIntervalMs<schedule.minIntervalMs)errors.push("Cognitive default interval must not be below the minimum interval.");
+    if(Number.isInteger(schedule.minIntervalMs)&&Number.isInteger(schedule.maxIntervalMs)&&schedule.minIntervalMs>schedule.maxIntervalMs)errors.push("Cognitive minimum interval must not exceed the maximum interval.");
+    if(Number.isInteger(schedule.defaultIntervalMs)&&Number.isInteger(schedule.maxIntervalMs)&&schedule.defaultIntervalMs>schedule.maxIntervalMs)errors.push("Cognitive default interval must not exceed the maximum interval.");
+  }
   if(typeof settings.memoryAgent.enabled!=="boolean")errors.push("Automatic Memory Agent enabled must be boolean.");
   if(settings.memoryAgent.providerPresetId!==null&&(typeof settings.memoryAgent.providerPresetId!=="string"||settings.memoryAgent.providerPresetId.trim().length===0))errors.push("Automatic Memory Agent provider preset must be empty or a non-empty string.");
   if(typeof settings.memoryAgent.model!=="string")errors.push("Automatic Memory Agent model must be a string.");
@@ -150,7 +183,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const input=value as Record<string,unknown>;
   const legacy=input.schemaVersion==="0"||input.schemaVersion===undefined||input.schemaVersion==="1";
   if(input.apiVersion!==undefined&&input.apiVersion!=="1"&&!legacy)throw new Error("Unsupported AppSettings apiVersion.");
-  if(input.schemaVersion!==undefined&&!["0","1","2","3","4","5"].includes(String(input.schemaVersion)))throw new Error("Unsupported AppSettings schemaVersion.");
+  if(input.schemaVersion!==undefined&&!["0","1","2","3","4","5","6"].includes(String(input.schemaVersion)))throw new Error("Unsupported AppSettings schemaVersion.");
   const root=value as Record<string,any>;
   const context=root.context&&typeof root.context==="object"?root.context:{};
   const memory=root.memory&&typeof root.memory==="object"?root.memory:{};
@@ -158,6 +191,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const chat=root.chat&&typeof root.chat==="object"?root.chat:{};
   const memoryAgent=root.memoryAgent&&typeof root.memoryAgent==="object"?root.memoryAgent:{};
   const ui=root.ui&&typeof root.ui==="object"?root.ui:{};
+  const cognitiveSchedule=root.cognitiveSchedule&&typeof root.cognitiveSchedule==="object"?root.cognitiveSchedule:{};
   const semanticDedup=root.semanticDedup&&typeof root.semanticDedup==="object"?root.semanticDedup:{};
   const semanticJudge=semanticDedup.judge&&typeof semanticDedup.judge==="object"?semanticDedup.judge:{};
   const legacyContextBudget=typeof root.contextBudget==="number"?root.contextBudget:undefined;
@@ -168,7 +202,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
   if(!["off","errors","normal","verbose","debug"].includes(logLevelValue))throw new Error("Unsupported diagnostics log level.");
   const legacyEnabled=typeof chat.automaticLongTermMemory==="boolean"?chat.automaticLongTermMemory:defaults.chat.automaticLongTermMemory;
   // Schema v5 is canonical, so Memory Agent persistence fields must survive migration unchanged; legacy schemas keep their historical gates.
-  const preservesMemoryAgentBinding=["2","3","4","5"].includes(String(input.schemaVersion));
+  const preservesMemoryAgentBinding=["2","3","4","5","6"].includes(String(input.schemaVersion));
   const previousSchema=input.schemaVersion==="2";
   const memoryAgentEnabled=preservesMemoryAgentBinding&&typeof memoryAgent.enabled==="boolean"?memoryAgent.enabled:legacyEnabled;
   const memoryAgentPreset=preservesMemoryAgentBinding&&typeof memoryAgent.providerPresetId==="string"&&memoryAgent.providerPresetId.trim()?memoryAgent.providerPresetId.trim():null;
@@ -194,7 +228,14 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const semanticJudgeBackup=typeof semanticJudge.promptBackup==="string"&&semanticJudge.promptBackup.length>0?semanticJudge.promptBackup:null;
   const semanticJudgeVersion=semanticJudgePromptIsLegacyDefault?DEFAULT_MEMORY_JUDGE_PROMPT_VERSION:(typeof semanticJudge.defaultPromptVersion==="string"&&semanticJudge.defaultPromptVersion.trim()?semanticJudge.defaultPromptVersion.trim():DEFAULT_MEMORY_JUDGE_PROMPT_VERSION);
   const next:AppSettings={
-    apiVersion:"1",schemaVersion:"5",
+    apiVersion:"1",schemaVersion:"6",
+    cognitiveSchedule:{
+      mode:typeof cognitiveSchedule.mode==="string"?cognitiveSchedule.mode as CognitiveScheduleMode:defaults.cognitiveSchedule.mode,
+      defaultIntervalMs:typeof cognitiveSchedule.defaultIntervalMs==="number"?cognitiveSchedule.defaultIntervalMs:defaults.cognitiveSchedule.defaultIntervalMs,
+      minIntervalMs:typeof cognitiveSchedule.minIntervalMs==="number"?cognitiveSchedule.minIntervalMs:defaults.cognitiveSchedule.minIntervalMs,
+      maxIntervalMs:typeof cognitiveSchedule.maxIntervalMs==="number"?cognitiveSchedule.maxIntervalMs:defaults.cognitiveSchedule.maxIntervalMs,
+      maxRequestsPerHour:typeof cognitiveSchedule.maxRequestsPerHour==="number"?cognitiveSchedule.maxRequestsPerHour:defaults.cognitiveSchedule.maxRequestsPerHour
+    },
     chat:{automaticLongTermMemory:legacyEnabled},
     memoryAgent:{enabled:memoryAgentEnabled,providerPresetId:memoryAgentPreset,model:memoryAgentModel,outputMode,prompt:currentPrompt,promptBackup:currentBackup,defaultPromptVersion},
     semanticDedup:{
