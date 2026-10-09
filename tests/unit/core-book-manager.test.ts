@@ -70,6 +70,7 @@ async function main(){
   equal(migrated.tags,legacyEntries[0]!.tags,"Core Book migration preserves tags");
   equal(migrated.content,legacyEntries[0]!.content,"Core Book migration preserves content");
   const semantic=await reloaded.createCoreBookEntry("character.a",{title:"Reserved semantic",content:"future",activation:{kind:"semantic"},source:"system"});
+  equal(semantic.role,"user","new entries default to user even when source is system");
   const modelSearch=await reloaded.createCoreBookEntry("character.a",{title:"Reserved model search",content:"future",activation:{kind:"model_search"},source:"system"});
   ok(semantic.activation.kind==="semantic"&&modelSearch.activation.kind==="model_search","reserved activation modes are stored without retrieval");
 
