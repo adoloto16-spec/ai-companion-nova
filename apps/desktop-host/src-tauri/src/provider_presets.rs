@@ -181,6 +181,7 @@ fn validate_preset(preset:&ProviderPreset)->Result<(),String>{
             let model=preset.model.as_deref().ok_or_else(||"single preset model is required".to_string())?;
             if model.trim().is_empty()||model.len()>200{return Err("single preset model is invalid".to_string());}
             let reference=preset.credential_reference.as_ref().ok_or_else(||"single preset credentialReference is required".to_string())?;
+            if reference.provider.as_deref()!=Some(provider){return Err("single preset credentialReference provider must match providerId".to_string());}
             validate_reference(reference,provider)?;
             if preset.enabled.is_none(){return Err("single preset enabled state is required".to_string());}
             if let Some(timeout)=preset.timeout_ms{if !timeout.is_finite()||timeout<=0.0{return Err("single preset timeout must be finite and positive".to_string());}}
