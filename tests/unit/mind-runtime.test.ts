@@ -415,7 +415,7 @@ async function reactiveTurnBypassesProactiveAndRequestLimitsTest(){
     await waitFor(()=>Boolean(runtime.getState().recentTrace?.length)&&runtime.getState().lifecycleState==="waiting");
     equal(steps,1,"startup cognition uses the only background request quota slot");
     equal(runtime.wakeForUserMessage({characterId:"character.reactive",conversationId:"conversation.reactive",userMessageId:"persisted-user-1",turnId:"turn-1"}),true,"correlated user message wakes Life");
-    await waitFor(()=>runtime.getState().recentTrace?.some(entry=>entry.expressionStatus==="published"&&entry.expressionRequired===true)&&runtime.getState().lifecycleState==="waiting");
+    await waitFor(()=>Boolean(runtime.getState().recentTrace?.some(entry=>entry.expressionStatus==="published"&&entry.expressionRequired===true))&&runtime.getState().lifecycleState==="waiting");
     equal(steps,2,"reactive answer bypasses exhausted background cognition quota");
     equal(publications.length,1,"reply publishes while proactiveChat is disabled");
     equal(publications[0]?.intent,"reactive","publication carries reactive intent");
