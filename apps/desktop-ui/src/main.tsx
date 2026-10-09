@@ -2090,9 +2090,11 @@ function App(){
       {messages:snapshot.messages}
     );
     if(snapshot.characterId===activeCharacter?.id&&snapshot.conversationId===activeConversation?.id){
-      const listed=await foundation.listConversations(snapshot.characterId);
-      setConversations(listed);
-      setActiveConversation(updated);
+      try{
+        const listed=await foundation.listConversations(snapshot.characterId);
+        setConversations(listed);
+      }catch{/* The canonical conversation save succeeded; a sidebar refresh is best effort. */}
+      if(snapshot.characterId===activeCharacter?.id&&snapshot.conversationId===activeConversation?.id)setActiveConversation(updated);
     }
     conversationLoadErrorRef.current=undefined;
   },[activeCharacter,activeConversation]);
