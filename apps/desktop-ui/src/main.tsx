@@ -613,12 +613,13 @@ type CoreBookDraft={
   mutationPolicy:"locked"|"suggest"|"auto";
   enabled:boolean;
   source:"user"|"import"|"system"|"other";
+  role:"system"|"user"|"assistant";
 };
 
 const emptyCoreBookDraft=():CoreBookDraft=>({
   title:"",content:"",tags:"",activationKind:"always",keywords:"",matchMode:"any",
   caseSensitive:false,pattern:"",flags:"",retentionPriority:50,placementWeight:50,
-  mutationPolicy:"locked",enabled:true,source:"user"
+  mutationPolicy:"locked",enabled:true,source:"user",role:"user"
 });
 
 function coreBookDraftFromEntry(entry:CoreBookEntry):CoreBookDraft{
@@ -637,7 +638,8 @@ function coreBookDraftFromEntry(entry:CoreBookEntry):CoreBookDraft{
     placementWeight:entry.placementWeight,
     mutationPolicy:entry.mutationPolicy,
     enabled:entry.enabled,
-    source:entry.source
+    source:entry.source,
+    role:entry.role
   };
 }
 
@@ -695,7 +697,7 @@ function CoreBookView({runtime,character}:{runtime:FoundationRuntime;character:C
       const payload={
         title:draft.title,content:draft.content,tags:draft.tags.split(",").map(value=>value.trim()).filter(Boolean),
         activation,retentionPriority:draft.retentionPriority,placementWeight:draft.placementWeight,
-        mutationPolicy:draft.mutationPolicy,enabled:draft.enabled,source:draft.source
+        mutationPolicy:draft.mutationPolicy,enabled:draft.enabled,source:draft.source,role:draft.role
       };
       if(selectedId)await runtime.updateCoreBookEntry(character.id,selectedId,payload);
       else{
@@ -805,6 +807,11 @@ function CoreBookView({runtime,character}:{runtime:FoundationRuntime;character:C
           <label>Source
             <select value={draft.source} onChange={event=>updateDraft("source",event.target.value as CoreBookDraft["source"])} disabled={busy}>
               <option value="user">User</option><option value="import">Import</option><option value="system">System</option><option value="other">Other</option>
+            </select>
+          </label>
+          <label>Role
+            <select value={draft.role} onChange={event=>updateDraft("role",event.target.value as CoreBookDraft["role"])} disabled={busy}>
+              <option value="system">System</option><option value="user">User</option><option value="assistant">Assistant</option>
             </select>
           </label>
           <label className="checkbox"><input type="checkbox" checked={draft.enabled} onChange={event=>updateDraft("enabled",event.target.checked)} disabled={busy}/> Enabled</label>
