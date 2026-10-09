@@ -26,7 +26,7 @@ export function validateProviderPresetCredentialReferences(
   preset:ProviderPreset,
   profiles:readonly CredentialProfile[]
 ):void{
-  if(preset.type==="single"&&!preset.credentialReference)throw new Error("Single provider preset requires a saved credential reference.");
+  if(preset.type==="single"&&preset.providerId!=="ollama"&&!preset.credentialReference)throw new Error("Single provider preset requires a saved credential reference.");
   const configurations=preset.type==="single"
     ?[{name:preset.name,providerId:preset.providerId??"",credentialReference:preset.credentialReference??null}]
     :preset.sources.map(source=>({name:source.name,providerId:source.providerId,credentialReference:source.credentialReference}));
@@ -78,7 +78,9 @@ export function credentialReferenceForProfile(profile:CredentialProfile|undefine
 }
 
 export function materializeSingleProviderConfiguration(preset:ProviderPreset):ProviderConfiguration|undefined{
-  if(preset.type!=="single"||!preset.providerId||!preset.baseUrl||preset.enabled===undefined||preset.enabled===null||!preset.credentialReference)return undefined;
+  if(preset.type!=="single"||!preset.providerId||!preset.baseUrl||preset.enabled===undefined||preset.enabled===null)return undefined;
+  if(preset.providerId!=="ollama"&&!preset.credentialReference)return undefined;
+  if(preset.providerId==="ollama"&&preset.credentialReference)return undefined;
   return {
     apiVersion:"1",
     schemaVersion:"1",
@@ -87,7 +89,10 @@ export function materializeSingleProviderConfiguration(preset:ProviderPreset):Pr
     baseUrl:preset.baseUrl,
     model:preset.model??"",
     credentialReference:preset.credentialReference?{...preset.credentialReference}:null,
-    ...(preset.timeoutMs==null?{}:{timeoutMs:preset.timeoutMs})
+    ...(preset.timeoutMs==null?{}:{timeoutMs:preset.timeoutMs}),
+    ...(preset.numCtx==null?{}:{numCtx:preset.numCtx}),
+    ...(preset.numPredict==null?{}:{numPredict:preset.numPredict}),
+    ...(preset.keepAlive==null?{}:{keepAlive:preset.keepAlive})
   };
 }
 
@@ -100,7 +105,10 @@ export function materializeProviderConfiguration(source:ProviderPresetSource):Pr
     baseUrl:source.baseUrl,
     model:source.model,
     credentialReference:source.credentialReference?{...source.credentialReference}:null,
-    ...(source.timeoutMs===undefined?{}:{timeoutMs:source.timeoutMs})
+    ...(source.timeoutMs===undefined?{}:{timeoutMs:source.timeoutMs}),
+    ...(source.numCtx===undefined?{}:{numCtx:source.numCtx}),
+    ...(source.numPredict===undefined?{}:{numPredict:source.numPredict}),
+    ...(source.keepAlive===undefined?{}:{keepAlive:source.keepAlive})
   };
 }
 
@@ -126,6 +134,9 @@ export function sourceFromProviderConfiguration(
     failureCount:0,
     cooldownUntil:null,
     ...(configuration.timeoutMs===undefined?{}:{timeoutMs:configuration.timeoutMs}),
+    ...(configuration.numCtx===undefined?{}:{numCtx:configuration.numCtx}),
+    ...(configuration.numPredict===undefined?{}:{numPredict:configuration.numPredict}),
+    ...(configuration.keepAlive===undefined?{}:{keepAlive:configuration.keepAlive}),
     createdAt:now,
     updatedAt:now
   };
