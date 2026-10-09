@@ -103,6 +103,14 @@ assert.ok(source.includes("shouldRenderNovaTurn(parseResult,showTechnicalData)")
 assert.ok(source.includes("Unrecognized / raw output (bounded)")&&source.includes("slice(0,4000)"),"technical mode shows bounded raw output for malformed turns");
 for(const heading of ["Situation","Thoughts (private)","Emotion","Tool calls","Tool results","Speech","Next wake","Protocol diagnostics"]){assert.ok(source.includes("<strong>"+heading+"</strong>"),"technical mode always supplies the "+heading+" section");}
 assert.ok(source.includes("countVisibleSpeechMessages(conversation.messages)")&&source.includes("stored messages"),"conversation counter distinguishes stored records from visible speech messages");
+assert.ok(app.includes('const [chatDrafts,setChatDrafts]=React.useState<Record<string,string>>({});'),"App owns in-memory Chat drafts");
+assert.ok(app.includes('JSON.stringify([activeCharacter.id,activeConversation.id])'),"draft keys include both character and conversation identity");
+assert.ok(app.includes('<ChatView key={activeChatDraftKey}'),"Chat view identity changes with character/conversation without losing App draft state");
+assert.ok(app.includes('input={activeChatDraftKey?chatDrafts[activeChatDraftKey]??"":""}'),"Chat renders the current conversation draft");
+assert.ok(app.includes('onClearSubmittedDraft={submitted=>{if(activeChatDraftKey)setChatDrafts(current=>current[activeChatDraftKey]===submitted?({...current,[activeChatDraftKey]:""}):current);}}'),"successful submission clears only the unchanged draft from the submitting conversation");
+assert.equal(source.includes('const [input,setInput]=React.useState("");'),false,"ChatView must not own transient draft state");
+assert.ok(source.includes('if(result.status==="sent")onClearSubmittedDraft(submittedDraft);'),"ordinary Chat clears a draft only after a successful send");
+assert.ok(source.includes('if(result.status==="awaiting-life")onClearSubmittedDraft(submittedDraft);'),"Nova Life clears a draft only after persistence and wake acceptance");
 assert.ok(source.includes("commitNovaTurn"),"Chat persists the canonical NovaTurn record");
 assert.ok(source.includes("setNovaTurnSink"),"UI registers the single canonical turn sink");
 assert.ok(source.includes("subscribeMindState"),"UI must subscribe to runtime mind state rather than own the runtime");
