@@ -269,7 +269,7 @@ async function adaptiveIntervalPolicyTest(){
   runtime.setActiveCharacter("character.a");
   try{
     await runtime.start();
-    await waitFor(()=>runtime.getState().recentTrace?.some(entry=>entry.result==="success"));
+    await waitFor(()=>Boolean(runtime.getState().recentTrace?.some(entry=>entry.result==="success")));
     let trace=runtime.getState().recentTrace??[];
     equal(trace[trace.length-1]?.appliedIntervalMs,650,"adaptive mode applies an in-range model interval");
     runtime.wake("user-message");
@@ -301,7 +301,7 @@ async function fixedIntervalIgnoresModelTest(){
   runtime.setActiveCharacter("character.fixed");
   try{
     await runtime.start();
-    await waitFor(()=>runtime.getState().recentTrace?.some(entry=>entry.result==="success"));
+    await waitFor(()=>Boolean(runtime.getState().recentTrace?.some(entry=>entry.result==="success")));
     const entry=(runtime.getState().recentTrace??[]).slice(-1)[0];
     equal(entry?.appliedIntervalMs,300,"fixed mode always applies the configured interval");
     equal(entry?.intervalDecision,"fixed-mode","trace identifies fixed scheduling");
@@ -358,7 +358,7 @@ async function hourlyQuotaDefersBackgroundCallsTest(){
   runtime.setActiveCharacter("character.quota");
   try{
     await runtime.start();
-    await waitFor(()=>runtime.getState().recentTrace?.some(entry=>entry.result==="deferred"),1200);
+    await waitFor(()=>Boolean(runtime.getState().recentTrace?.some(entry=>entry.result==="deferred")),1200);
     const state=runtime.getState();
     equal(calls,1,"hourly quota prevents a second provider call");
     ok((state.recentTrace??[]).some(entry=>entry.result==="deferred"&&entry.intervalDecision==="hourly-limit"),"quota deferral appears in trace");
@@ -397,7 +397,7 @@ async function timeoutUsesBackoffTest(){
   runtime.setActiveCharacter("character.timeout");
   try{
     await runtime.start();
-    await waitFor(()=>runtime.getState().recentTrace?.some(entry=>entry.result==="error"),500);
+    await waitFor(()=>Boolean(runtime.getState().recentTrace?.some(entry=>entry.result==="error")),500);
     const entry=(runtime.getState().recentTrace??[]).slice(-1)[0];
     equal(entry?.errorCode,"STEP_TIMEOUT","finite step timeout is surfaced in trace");
     equal(entry?.appliedIntervalMs,120,"timeout schedules a bounded retry backoff");

@@ -72,6 +72,7 @@ export interface FoundationRuntime{
   startLife():Promise<void>;
   stopLife():Promise<void>;
   getMindState():import("../../../contracts/src/index").MindState;
+  wakeMind():void;
   subscribeMindState(listener:(state:import("../../../contracts/src/index").MindState)=>void):import("../../../contracts/src/index").Unsubscribe;
   subscribeThoughts(listener:(thought:import("../../../contracts/src/index").Thought)=>void):import("../../../contracts/src/index").Unsubscribe;
   deleteThought(thoughtId:string):boolean;
