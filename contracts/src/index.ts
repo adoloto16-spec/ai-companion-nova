@@ -72,12 +72,12 @@ export interface ProviderPreset{
   type?:ProviderPresetType;
   sources:readonly ProviderPresetSource[];
   activeSourceId:string|null;
-  providerId?:string;
-  baseUrl?:string;
-  model?:string;
+  providerId?:string|null;
+  baseUrl?:string|null;
+  model?:string|null;
   credentialReference?:CredentialReference|null;
-  enabled?:boolean;
-  timeoutMs?:number;
+  enabled?:boolean|null;
+  timeoutMs?:number|null;
   createdAt:string;
   updatedAt:string;
 }
