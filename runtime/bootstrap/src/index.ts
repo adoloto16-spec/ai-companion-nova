@@ -206,7 +206,10 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     providerPresetConfigurations.set(preset.id,{
       apiVersion:"1",schemaVersion:"1",providerId:preset.providerId,baseUrl:preset.baseUrl,model:preset.model,
       enabled:preset.enabled,credentialReference:preset.credentialReference?{...preset.credentialReference}:null,
-      ...(preset.timeoutMs==null?{}:{timeoutMs:preset.timeoutMs})
+      ...(preset.timeoutMs==null?{}:{timeoutMs:preset.timeoutMs}),
+      ...(preset.numCtx==null?{}:{numCtx:preset.numCtx}),
+      ...(preset.numPredict==null?{}:{numPredict:preset.numPredict}),
+      ...(preset.keepAlive==null?{}:{keepAlive:preset.keepAlive})
     });
   }
   let providerPresetPools=new Map(initialPresets.filter(preset=>preset.type!=="single").map(preset=>[preset.id,preset]));
@@ -255,6 +258,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     providerConfiguration=configuration;
     providers.unregister("openai-compatible");
     providers.unregister("gemini");
+    providers.unregister("ollama");
     const configured=configuration?buildConfiguredProvider(configuration,credentialStore,options.httpClient,diagnosticsStore,activeProviderPresetId):undefined;
     if(configured)providers.register(configured,["chat"]);
   };
