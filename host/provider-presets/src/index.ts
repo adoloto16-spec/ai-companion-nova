@@ -26,6 +26,7 @@ export function validateProviderPresetCredentialReferences(
   preset:ProviderPreset,
   profiles:readonly CredentialProfile[]
 ):void{
+  if(preset.type==="single"&&!preset.credentialReference)throw new Error("Single provider preset requires a saved credential reference.");
   const configurations=preset.type==="single"
     ?[{name:preset.name,providerId:preset.providerId??"",credentialReference:preset.credentialReference??null}]
     :preset.sources.map(source=>({name:source.name,providerId:source.providerId,credentialReference:source.credentialReference}));
