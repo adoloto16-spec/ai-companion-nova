@@ -39,7 +39,7 @@ assert.equal(emptyParsed.fields.speech.status,"empty");
 assert.equal(emptyParsed.fields.thoughts.status,"empty");
 
 const whitespaceAndCase=parseNovaTurn(
-  "<nova_turn version = \"1\" >\n< situation >Context</ SITUATION >\n<THOUGHTS>Private</THOUGHTS >\n<EMOTION>Calm</EMOTION>\n<TOOLS ></TOOLS >\n<SPEECH >Hello</ SPEECH >\n<NEXT_WAKE_MS>45000</NEXT_WAKE_MS>\n</ nova_turn >"
+  "<nova_turn version = \"1\" >\n< situation >Context</ SITUATION >\n<THOUGHTS>Private</THOUGHTS >\n<EMOTION>Calm</EMOTION>\n<TOOLS ></TOOLS >\n<TOOL_RESULTS></TOOL_RESULTS>\n<SPEECH >Hello</ SPEECH >\n<NEXT_WAKE_MS>45000</NEXT_WAKE_MS>\n</ nova_turn >"
 );
 assert.equal(whitespaceAndCase.turn?.speech,"Hello","tag names are case-insensitive and harmless tag whitespace is accepted");
 assert.equal(whitespaceAndCase.complete,true);
