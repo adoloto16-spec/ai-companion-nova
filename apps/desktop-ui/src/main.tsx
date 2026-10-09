@@ -2649,7 +2649,7 @@ function App(){
       ?materializeSingleProviderConfiguration(preset)
       :(()=>{const source=preset.sources.find(item=>item.id===sourceId);return source?materializeProviderConfiguration(source):undefined;})();
     if(!config)throw new Error(preset.type==="single"?"Single provider preset configuration is incomplete.":"Provider source was not found.");
-    return listProviderModels(config,credentialStore);
+    return listProviderModels(preset.type==="single"?{...config,enabled:true}:config,credentialStore);
   },[credentialStore]);
 
   const testPreset=React.useCallback(async(preset:ProviderPreset,sourceId:string):Promise<ProviderConnectionTestResult>=>{
@@ -2658,6 +2658,7 @@ function App(){
       ?materializeSingleProviderConfiguration(preset)
       :source?materializeProviderConfiguration(source):undefined;
     if(!config)throw new Error(preset.type==="single"?"Single provider preset configuration is incomplete.":"Provider source was not found.");
+    if(preset.type==="single")config={...config,enabled:true};
     if(!config.model){
       const models=await listProviderModels(config,credentialStore);
       const first=models[0]?.id;
