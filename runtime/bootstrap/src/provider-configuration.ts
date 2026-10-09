@@ -184,7 +184,10 @@ export function buildChatProviderForSource(
     baseUrl:source.baseUrl,
     model:source.model,
     credentialReference:source.credentialReference?{...source.credentialReference}:null,
-    ...(source.timeoutMs===undefined?{}:{timeoutMs:source.timeoutMs})
+    ...(source.timeoutMs===undefined?{}:{timeoutMs:source.timeoutMs}),
+    ...(source.numCtx===undefined?{}:{numCtx:source.numCtx}),
+    ...(source.numPredict===undefined?{}:{numPredict:source.numPredict}),
+    ...(source.keepAlive===undefined?{}:{keepAlive:source.keepAlive})
   };
   if(!isSupportedChatProvider(configuration.providerId))return undefined;
   const validation=validateProviderPresetConfiguration(configuration,{allowMissingCredentialReference:true});
@@ -283,6 +286,7 @@ export function buildProviderForDiscovery(configuration:ProviderConfiguration,cr
     timeoutMs:configuration.timeoutMs
   };
   if(configuration.providerId===OLLAMA_PROVIDER_ID){
+    if(configuration.credentialReference!==null)return undefined;
     if(validateOllamaProviderConfig({
       baseUrl:configuration.baseUrl,
       model:configuration.model,
