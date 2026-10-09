@@ -1891,6 +1891,15 @@ function ThoughtsView({mindState,character,runtime}:{mindState:MindState;charact
     <p className="chat-subtitle">{mindState.lifecycleState==="waiting"&&mindState.nextWakeAt
       ? "Next cognitive wake: "+new Date(mindState.nextWakeAt).toLocaleTimeString()
       : mindState.lifecycleState==="thinking" ? "Nova is thinking…" : "Next cognitive wake: —"}</p>
+    <section className="diagnostic-block">
+      <h3>Current initiative</h3>
+      <div className="diagnostic-candidate">
+        <strong>{mindState.focus??"No focus selected"}</strong>
+        <div className="diagnostic-candidate-meta">Status: {mindState.initiative?.status??"not initialized"}</div>
+        {mindState.initiative?.direction&&<div className="diagnostic-reason">Direction: {mindState.initiative.direction}</div>}
+        {mindState.initiative?.lastProgress&&<div className="diagnostic-reason">Last meaningful progress: {mindState.initiative.lastProgress}</div>}
+      </div>
+    </section>
     <div className="thought-list">
       {mindState.recentThoughts.length===0
         ?<div className="empty-state">No internal thoughts for {character.name}.</div>
@@ -1940,7 +1949,7 @@ function App(){
   const [chatController,setChatController]=React.useState<ChatSessionController|null>(null);
   const [conversations,setConversations]=React.useState<readonly Conversation[]>([]);
   const [activeConversation,setActiveConversation]=React.useState<Conversation|undefined>();
-  const [mindState,setMindState]=React.useState<MindState>({focus:null,lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"off"});
+  const [mindState,setMindState]=React.useState<MindState>({focus:null,initiative:null,lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"off"});
   const mindUnsubscribeRef=React.useRef<(()=>void)|undefined>(undefined);
   const [lifeBusy,setLifeBusy]=React.useState(false);
   const foundationRef=React.useRef<FoundationRuntime|undefined>(undefined);
