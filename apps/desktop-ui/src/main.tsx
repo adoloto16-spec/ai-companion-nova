@@ -2588,8 +2588,7 @@ function App(){
     providerPresetStateRef.current=nextState;
     setProviderPresets(nextState.presets);
     setActivePresetId(id);
-    const source=activeSourceForPreset(preset);
-    await refreshRuntime(source?materializeProviderConfiguration(source):undefined,undefined,nextState,credentialProfileStateRef.current);
+    await refreshRuntime(configurationForPreset(preset),undefined,nextState,credentialProfileStateRef.current);
   },[providerPresetStore,refreshRuntime]);
 
   const deleteProviderPreset=React.useCallback(async(id:string)=>{
