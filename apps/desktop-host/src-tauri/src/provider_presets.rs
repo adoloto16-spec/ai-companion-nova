@@ -191,6 +191,34 @@ fn validate_preset(preset:&ProviderPreset)->Result<(),String>{
     Ok(())
 }
 
+fn validate_credential_links(
+    state:&ProviderPresetStoreState,
+    credential_state:Option<&super::credential_profiles::CredentialProfileStoreState>
+)->Result<(),String>{
+    for preset in &state.presets{
+        let references:Vec<(&CredentialReference,&str)>=if preset.preset_type=="single"{
+            match (&preset.credential_reference,preset.provider_id.as_deref()){
+                (Some(reference),Some(provider))=>vec![(reference,provider)],
+                _=>return Err("single preset credential reference is missing".to_string())
+            }
+        }else{
+            preset.sources.iter().filter_map(|source|source.credential_reference.as_ref().map(|reference|(reference,source.provider_id.as_str()))).collect()
+        };
+        for (reference,provider) in references{
+            let profiles=credential_state.ok_or_else(||"provider preset credential profile store is unavailable".to_string())?;
+            let profile=profiles.profiles.iter().find(|profile|profile.credential_reference.id==reference.id)
+                .ok_or_else(||format!("provider preset credential reference \"{}\" does not exist in CredentialStore metadata",reference.id))?;
+            if profile.provider_id!=provider
+                || profile.credential_reference.provider.as_deref()!=Some(provider)
+                || reference.provider.as_deref()!=Some(provider)
+            {
+                return Err("provider preset credential reference does not match its provider".to_string());
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_state(state:&ProviderPresetStoreState)->Result<(),String>{
     if state.api_version!=API_VERSION||state.schema_version!=SCHEMA_VERSION{return Err("unsupported provider preset storage version".to_string());}
     let mut ids=HashSet::new();
@@ -349,7 +377,12 @@ pub fn load(app:&tauri::AppHandle)->Result<Option<ProviderPresetStoreState>,Stri
     let credential_state=super::credential_profiles::load(app)?;
     load_from_path(&config_path(app)?,credential_state.as_ref())
 }
-pub fn save(app:&tauri::AppHandle,state:&ProviderPresetStoreState)->Result<(),String>{save_to_path(&config_path(app)?,state)}
+pub fn save(app:&tauri::AppHandle,state:&ProviderPresetStoreState)->Result<(),String>{
+    validate_state(state)?;
+    let credential_state=super::credential_profiles::load(app)?;
+    validate_credential_links(state,credential_state.as_ref())?;
+    save_to_path(&config_path(app)?,state)
+}
 pub fn delete(app:&tauri::AppHandle,id:&str)->Result<(),String>{
     if id.trim().is_empty(){return Err("provider preset id must not be empty".to_string());}
     let path=config_path(app)?;
