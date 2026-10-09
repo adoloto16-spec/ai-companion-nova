@@ -458,7 +458,7 @@ async function main(){
   equal(memoryRequests[0]?.assistantMessage.content,"A separate public reply","Automatic Memory receives only the public speech projection");
   equal(memoryRequests[0]?.model,"cognitive-model","memory receives actual cognitive model provenance");
   ok(!JSON.stringify(memoryRequests[0]).includes("private thoughts live only"),"Automatic Memory never receives private NovaTurn thoughts");
-  ok(Boolean(priorProjected),"prior NovaTurn is present in the bounded memory context projection");
+  ok(Boolean(memoryRequests[0]),"Automatic Memory received a request for the completed exchange");
   const priorProjected=memoryRequests[0]?.contextMessages.find(message=>message.id==="nova-turn:background-turn");
   equal(priorProjected?.content,"Earlier public statement","prior NovaTurn context is projected to speech before Automatic Memory");
   ok(!JSON.stringify(priorProjected).includes("private internal detail"),"prior private thoughts are filtered from Automatic Memory");

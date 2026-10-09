@@ -108,7 +108,7 @@ async function llmUsesTaggedProtocolAndPreservesContextTest(){
   {id:"previous-turn",role:"assistant",content:rawPrevious,metadata:{novaTurnVersion:1,novaTurnId:"previous-turn"}},
   {id:"latest-user",role:"user",content:"What do you remember about my preference?",metadata:{source:"conversation"}}
  ];
- const conversation={id:"conversation.llm",characterId:"character.llm",messages} as Conversation;
+ const conversation={id:"conversation.llm",characterId:"character.llm",messages} as unknown as Conversation;
  const character={id:"character.llm",name:"Nova",description:"A careful companion"} as Character;
  const calls:ChatRequest[]=[];let responseContent='<NOVA_TURN version="1"><SITUATION>Use real memory results before concluding.</SITUATION><THOUGHTS>Keep private notes private.</THOUGHTS><EMOTION>Focused.</EMOTION><TOOLS><read_memory>{"query":"user preference"}</read_memory><browser.navigate>{"url":"https://wikipedia.org/"}</browser.navigate></TOOLS><SPEECH>I’ll check what was saved before answering.</SPEECH><NEXT_WAKE_MS>45000</NEXT_WAKE_MS></NOVA_TURN>';
  const runtime={async chat(request:ChatRequest){calls.push(request);return responseFor(request,responseContent);},getActiveProviderPresetId:()=>undefined,getChatModel:()=>"fake-model",async getChatModelForPreset(){return "unused";}};
