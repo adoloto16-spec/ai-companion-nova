@@ -21,7 +21,7 @@ import {
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
   type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem, type ErrorDiagnostic,
   defaultAppSettings, validateAppSettings, StandardContractValidator,
-  type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo, type MindState
+  type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo, type MindState, type MindExpressionPublisher
 } from "../../../contracts/src/index";
 import "./styles.css";
 
@@ -1251,6 +1251,27 @@ function AppSettingsView({
     </section>
 
     <section>
+      <h3>Proactive Chat</h3>
+      <label className="checkbox">Allow Nova Life to publish proactive chat messages
+        <input type="checkbox" checked={settings.proactiveChat.enabled}
+          onChange={event=>onChange({...settings,proactiveChat:{...settings.proactiveChat,enabled:event.target.checked}})} disabled={saving}/>
+      </label>
+      <div className="core-book-grid">
+        <label>Minimum interval between messages (ms)
+          <input type="number" min={10000} max={3600000} step={1000} value={settings.proactiveChat.minMessageIntervalMs}
+            onChange={event=>onChange({...settings,proactiveChat:{...settings.proactiveChat,minMessageIntervalMs:Number(event.target.value)}})} disabled={saving}/>
+          <small>Default: {defaults.proactiveChat.minMessageIntervalMs} ms</small>
+        </label>
+        <label>Proactive messages per rolling hour
+          <input type="number" min={1} max={60} step={1} value={settings.proactiveChat.maxMessagesPerHour}
+            onChange={event=>onChange({...settings,proactiveChat:{...settings.proactiveChat,maxMessagesPerHour:Number(event.target.value)}})} disabled={saving}/>
+          <small>Default: {defaults.proactiveChat.maxMessagesPerHour} messages/hour</small>
+        </label>
+      </div>
+      <p className="hint">When disabled, Nova Life continues internal thinking and scheduling but publishes no proactive messages. These limits are separate from the background LLM request quota.</p>
+    </section>
+
+    <section>
       <h3>Memory</h3>
       <label className="checkbox">Automatic long-term memory extraction
         <input type="checkbox" checked={settings.chat.automaticLongTermMemory}
@@ -1855,7 +1876,9 @@ function ThoughtsView({mindState,character,runtime}:{mindState:MindState;charact
             <div className="diagnostic-candidate-meta">Character {entry.characterId} · {entry.durationMs} ms{entry.appliedIntervalMs===undefined?"":" · next "+entry.appliedIntervalMs+" ms"}</div>
             {entry.requestedNextWakeInMs!==undefined&&<div className="diagnostic-reason">Model interval: {entry.requestedNextWakeInMs} ms</div>}
             {entry.intervalDecision&&<div className="diagnostic-reason">Interval decision: {entry.intervalDecision}</div>}
-            {(entry.requestId||entry.providerId||entry.errorCode)&&<div className="diagnostic-candidate-meta">{entry.requestId? "Request "+entry.requestId+" · ":""}{entry.providerId?"Provider "+entry.providerId+" · ":""}{entry.errorCode?"Code "+entry.errorCode:""}</div>}
+            {entry.expressionKind&&<div className="diagnostic-reason">Expression: {entry.expressionKind} · {entry.expressionStatus??"unknown"}{entry.expressionSuppressionReason?" · "+entry.expressionSuppressionReason:""}</div>}
+            {(entry.expressionId||entry.expressionMessageId||entry.expressionConversationId)&&<div className="diagnostic-candidate-meta">{entry.expressionId?"Expression "+entry.expressionId+" · ":""}{entry.expressionMessageId?"Message "+entry.expressionMessageId+" · ":""}{entry.expressionConversationId?"Conversation "+entry.expressionConversationId:""}</div>}
+            {(entry.requestId||entry.providerId||entry.errorCode||entry.expressionErrorCode)&&<div className="diagnostic-candidate-meta">{entry.requestId? "Request "+entry.requestId+" · ":""}{entry.providerId?"Provider "+entry.providerId+" · ":""}{entry.errorCode?"Code "+entry.errorCode:""}{entry.expressionErrorCode?" · Expression error "+entry.expressionErrorCode:""}</div>}
           </article>
         )}
     </section>
@@ -2024,13 +2047,62 @@ function App(){
       snapshot.conversationId,
       {messages:snapshot.messages}
     );
-    if(snapshot.characterId===activeCharacter?.id){
+    if(snapshot.characterId===activeCharacter?.id&&snapshot.conversationId===activeConversation?.id){
       const listed=await foundation.listConversations(snapshot.characterId);
       setConversations(listed);
       setActiveConversation(updated);
     }
     conversationLoadErrorRef.current=undefined;
-  },[activeCharacter]);
+  },[activeCharacter,activeConversation]);
+
+  React.useEffect(()=>{
+    const foundation=foundationRef.current;
+    if(!foundation)return;
+    const snapshot=chatController?.getSnapshot();
+    if(!chatController||!activeCharacter||!activeConversation||
+      snapshot?.characterId!==activeCharacter.id||snapshot.conversationId!==activeConversation.id){
+      foundation.setMindExpressionPublisher(undefined);
+      return;
+    }
+    let attached=true;
+    const publisher:MindExpressionPublisher={
+      publish:async expression=>{
+        if(!attached)return {status:"suppressed",reason:"publisher-unavailable"};
+        const controllerSnapshot=chatController.getSnapshot();
+        if(expression.characterId!==activeCharacter.id||expression.conversationId!==activeConversation.id||
+          controllerSnapshot.characterId!==expression.characterId||controllerSnapshot.conversationId!==expression.conversationId){
+          return {status:"suppressed",reason:"wrong-conversation"};
+        }
+        try{
+          const [currentCharacter,currentConversation]=await Promise.all([
+            foundation.getActiveCharacter(),
+            foundation.getActiveConversation(expression.characterId)
+          ]);
+          if(!attached||currentCharacter.id!==expression.characterId||currentConversation.characterId!==expression.characterId||
+            currentConversation.id!==expression.conversationId)return {status:"suppressed",reason:"wrong-conversation"};
+        }catch{return {status:"suppressed",reason:"publisher-unavailable"};}
+        const result=await chatController.publishExpression(expression,async current=>{
+          if(!attached||current.characterId!==expression.characterId||current.conversationId!==expression.conversationId){
+            throw new Error("Expression publisher detached or conversation scope changed before persistence.");
+          }
+          const updated=await foundation.updateConversation(current.characterId,current.conversationId,{messages:current.messages});
+          if(attached&&activeCharacter.id===current.characterId&&activeConversation.id===current.conversationId){
+            try{
+              const listed=await foundation.listConversations(current.characterId);
+              if(attached)setConversations(listed);
+            }catch{/* Conversation persistence succeeded; sidebar refresh is best effort. */}
+            if(attached)setActiveConversation(updated);
+          }
+        });
+        return result;
+      }
+    };
+    foundation.setMindExpressionPublisher(publisher);
+    return ()=>{
+      attached=false;
+      foundation.setMindExpressionPublisher(undefined);
+    };
+  },[chatController,activeCharacter,activeConversation]);
 
   const clearConversation=React.useCallback(async(controller:ChatSessionController)=>{
     const foundation=foundationRef.current;
@@ -2119,6 +2191,7 @@ function App(){
     providerConfigurationErrorRef.current=configurationLoadError;
     providerPresetStateRef.current=presetState;
     credentialProfileStateRef.current=credentialState;
+    foundationRef.current?.setMindExpressionPublisher(undefined);
     setChatController(null);
     await foundationRef.current?.stop();
     const next=await startFoundationRuntime({
@@ -2197,7 +2270,8 @@ function App(){
 
   const selectCharacter=React.useCallback(async(id:string)=>{
     const foundation=foundationRef.current;
-    if(!foundation||chatController?.getSnapshot().sending)return;
+    if(!foundation||chatController?.isBusy())return;
+    foundation.setMindExpressionPublisher(undefined);
     const selected=await foundation.setActiveCharacter(id);
     const loaded=await loadActiveConversation(selected.id);
     setActiveCharacter(selected);
@@ -2211,7 +2285,8 @@ function App(){
   const selectConversation=React.useCallback(async(id:string)=>{
     const foundation=foundationRef.current;
     const character=activeCharacter;
-    if(!foundation||!character||chatController?.getSnapshot().sending)return;
+    if(!foundation||!character||chatController?.isBusy())return;
+    foundation.setMindExpressionPublisher(undefined);
     const previousConversation=activeConversation;
     const local=conversations.find(item=>item.id===id);
     const profile=activeModelProfile??await loadModelProfile(character.id);
@@ -2237,7 +2312,8 @@ function App(){
   const createConversation=React.useCallback(async()=>{
     const foundation=foundationRef.current;
     const character=activeCharacter;
-    if(!foundation||!character||chatController?.getSnapshot().sending)return;
+    if(!foundation||!character||chatController?.isBusy())return;
+    foundation.setMindExpressionPublisher(undefined);
     const conversation=await foundation.createConversation(character.id);
     const profile=activeModelProfile??await loadModelProfile(character.id);
     const controller=controllerForConversation(conversation,profile);
@@ -2250,7 +2326,7 @@ function App(){
   const renameConversation=React.useCallback(async(conversation:Conversation)=>{
     const foundation=foundationRef.current;
     const character=activeCharacter;
-    if(!foundation||!character||chatController?.getSnapshot().sending)return;
+    if(!foundation||!character||chatController?.isBusy())return;
     const value=window.prompt("Conversation name",conversation.title);
     if(value===null||!value.trim()||value.trim()===conversation.title)return;
     const updated=await foundation.updateConversation(character.id,conversation.id,{title:value});
@@ -2261,7 +2337,8 @@ function App(){
   const deleteConversation=React.useCallback(async(conversation:Conversation)=>{
     const foundation=foundationRef.current;
     const character=activeCharacter;
-    if(!foundation||!character||chatController?.getSnapshot().sending)return;
+    if(!foundation||!character||chatController?.isBusy())return;
+    if(activeConversation?.id===conversation.id)foundation.setMindExpressionPublisher(undefined);
     const replacement=await foundation.deleteConversation(character.id,conversation.id);
     const profile=activeModelProfile??await loadModelProfile(character.id);
     const controller=controllerForConversation(replacement,profile);
@@ -2289,7 +2366,8 @@ function App(){
   const deleteCharacter=React.useCallback(async(id:string)=>{
     const foundation=foundationRef.current;
     if(!foundation)return;
-    if(chatController?.getSnapshot().sending)throw new Error("Stop the current response before changing Character.");
+    if(chatController?.isBusy())throw new Error("Wait for the current Chat operation to finish before changing Character.");
+    foundation.setMindExpressionPublisher(undefined);
     const before=activeCharacter;
     await foundation.deleteCharacter(id);
     try{await modelProfileStore.delete(id)}catch(error){modelProfileLoadErrorRef.current=safeStartupError(error)}
