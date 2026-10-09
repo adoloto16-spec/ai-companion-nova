@@ -201,48 +201,58 @@ async function main(){
   equal(stoppedRestartedController.getSnapshot().messages.at(-1)?.content,"partial persisted","stopped partial survives restart");
   equal(stoppedRestartedController.getSnapshot().status,"interrupted","stopped state survives restart");
 
-  const proactiveCharacterStore=new InMemoryCharacterStore();
-  const proactiveConversationStore=new InMemoryConversationStore();
-  const proactiveRuntime=await createFoundationRuntime({characterStore:proactiveCharacterStore,conversationStore:proactiveConversationStore});
-  let proactiveCharacterId="";
-  let proactiveConversationId="";
+  const novaTurnCharacterStore=new InMemoryCharacterStore();
+  const novaTurnConversationStore=new InMemoryConversationStore();
+  const novaTurnRuntime=await createFoundationRuntime({characterStore:novaTurnCharacterStore,conversationStore:novaTurnConversationStore});
+  let novaTurnCharacterId="";
+  let novaTurnConversationId="";
+  let novaTurnId="";
   try{
-    await proactiveRuntime.start();
-    const character=await proactiveRuntime.getActiveCharacter();
-    const conversation=await proactiveRuntime.getActiveConversation(character.id);
-    proactiveCharacterId=character.id;
-    proactiveConversationId=conversation.id;
+    await novaTurnRuntime.start();
+    const character=await novaTurnRuntime.getActiveCharacter();
+    const conversation=await novaTurnRuntime.getActiveConversation(character.id);
+    novaTurnCharacterId=character.id;
+    novaTurnConversationId=conversation.id;
     const session=new ConversationSession(conversation.id,character.id);
     for(const message of conversation.messages)session.addMessage(message);
     let chatLlmCalls=0;
-    const proactiveController=new ChatSessionController(session,{
+    const controller=new ChatSessionController(session,{
       async chat(request:import("../../contracts/src").ChatRequest):Promise<import("../../contracts/src").ChatResponse>{
         chatLlmCalls++;
-        return {...(await proactiveRuntime.chat(request)),providerId:"fake.chat"};
+        return {...(await novaTurnRuntime.chat(request)),providerId:"fake.chat"};
       }
     });
-    const publication=await proactiveController.publishExpression({
-      characterId:character.id,conversationId:conversation.id,expressionId:"integration-proactive-expression",content:"A standalone proactive message"
-    },async snapshot=>{
-      await proactiveRuntime.updateConversation(snapshot.characterId,snapshot.conversationId,{messages:snapshot.messages});
+    const submit=await controller.submitToLife("Reply via the unified turn",async snapshot=>{
+      await novaTurnRuntime.updateConversation(snapshot.characterId,snapshot.conversationId,{messages:snapshot.messages});
+    },()=>true);
+    equal(submit.status,"awaiting-life","reactive user message persists and attaches to a stable Life turn");
+    if(submit.status!=="awaiting-life")throw new Error("Reactive test turn was not queued.");
+    novaTurnId=submit.turn.turnId;
+    const turn={version:1 as const,situation:"Answer the latest user",thoughts:"private notes stay in protocol",emotion:"focused",tools:[],toolResults:[],speech:"A canonical NovaTurn reply",nextWakeMs:30000};
+    const context:import("../../contracts/src").MindTurnExecutionContext={
+      characterId:character.id,conversationId:conversation.id,userMessageId:submit.turn.userMessageId,turnId:submit.turn.turnId,signal:new AbortController().signal
+    };
+    await controller.commitNovaTurn(turn,context,async snapshot=>{
+      await novaTurnRuntime.updateConversation(snapshot.characterId,snapshot.conversationId,{messages:snapshot.messages});
     });
-    equal(publication.status,"published","proactive message uses canonical Conversation persistence");
-    equal(chatLlmCalls,0,"persisting proactive expression makes no new Chat LLM request");
-    const persisted=await proactiveRuntime.getConversation(character.id,conversation.id);
-    const persistedExpression=persisted?.messages.find(message=>message.metadata?.expressionId==="integration-proactive-expression");
-    equal(persistedExpression?.content,"A standalone proactive message","canonical Conversation includes the exact public expression");
-    equal(persistedExpression?.metadata?.source,"nova-life","canonical Conversation preserves message provenance");
-    equal(persistedExpression?.metadata?.streamStatus,"complete","canonical Conversation persists a complete assistant message");
-  }finally{await proactiveRuntime.stop();}
+    equal(chatLlmCalls,0,"committing a NovaTurn does not start a second ordinary Chat generation");
+    const stored=await novaTurnRuntime.getConversation(character.id,conversation.id);
+    const storedTurn=stored?.messages.find(message=>message.metadata?.novaTurnId===novaTurnId);
+    equal(storedTurn?.metadata?.novaTurnVersion,1,"Conversation persists a versioned NovaTurn");
+    equal(storedTurn?.role,"assistant","NovaTurn is one canonical assistant message");
+    equal(storedTurn?.content?.includes("<THOUGHTS>private notes stay in protocol</THOUGHTS>"),true,"canonical history contains full technical fields, not a metadata copy");
+    equal(stored?.messages.filter(message=>message.metadata?.novaTurnId===novaTurnId).length,1,"Conversation has exactly one record for the reactive turn");
+  }finally{await novaTurnRuntime.stop();}
 
-  const restartedProactiveRuntime=await createFoundationRuntime({characterStore:proactiveCharacterStore,conversationStore:proactiveConversationStore});
+  const restartedNovaTurnRuntime=await createFoundationRuntime({characterStore:novaTurnCharacterStore,conversationStore:novaTurnConversationStore});
   try{
-    await restartedProactiveRuntime.start();
-    const restored=await restartedProactiveRuntime.getConversation(proactiveCharacterId,proactiveConversationId);
-    const restoredExpression=restored?.messages.find(message=>message.metadata?.expressionId==="integration-proactive-expression");
-    equal(restoredExpression?.content,"A standalone proactive message","proactive expression survives runtime restart and Conversation reload");
-    equal(restored?.messages.filter(message=>message.metadata?.expressionId==="integration-proactive-expression").length,1,"reloading preserves exactly one copy of the expression");
-  }finally{await restartedProactiveRuntime.stop();}
+    await restartedNovaTurnRuntime.start();
+    const restored=await restartedNovaTurnRuntime.getConversation(novaTurnCharacterId,novaTurnConversationId);
+    const restoredTurn=restored?.messages.find(message=>message.metadata?.novaTurnId===novaTurnId);
+    equal(restoredTurn?.metadata?.novaTurnVersion,1,"the complete protocol record survives runtime restart");
+    equal(restoredTurn?.content?.includes("<SPEECH>A canonical NovaTurn reply</SPEECH>"),true,"reloaded Conversation retains exact speech inside the protocol record");
+    equal(restored?.messages.filter(message=>message.metadata?.novaTurnId===novaTurnId).length,1,"reloading preserves exactly one NovaTurn record");
+  }finally{await restartedNovaTurnRuntime.stop();}
 
   console.log("PASS conversation persistence/runtime integration tests");
 }

@@ -20,9 +20,10 @@ import {
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
   type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem, type ErrorDiagnostic,
-  defaultAppSettings, validateAppSettings, StandardContractValidator,
-  type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo, type MindState, type MindExpressionPublisher, type MindReactiveTurn
+  defaultAppSettings, validateAppSettings, StandardContractValidator, parseNovaTurn,
+  type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo, type MindState, type MindTurnSink, type MindReactiveTurn
 } from "../../../contracts/src/index";
+import {countVisibleSpeechMessages,shouldRenderNovaTurn} from "./nova-turn-visibility";
 import "./styles.css";
 
 const preview:RuntimeDiagnostics={schemaVersion:"1",timestamp:new Date().toISOString(),runtimeStatus:"stopped",coreStatus:"stopped",modules:[],providers:[],recentErrors:[],capabilities:[]};
@@ -118,7 +119,7 @@ function ConversationSwitcher({conversations,activeConversationId,sending,onSele
           disabled={sending}
         >
           <span className="conversation-title">{conversation.title}</span>
-          <span className="conversation-meta">{conversation.messages.length} messages</span>
+          <span className="conversation-meta">{conversation.messages.length} stored messages · {countVisibleSpeechMessages(conversation.messages)} visible assistant replies</span>
         </button>
       )}
     </div>
@@ -151,6 +152,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
   const [input,setInput]=React.useState("");
   const [editingId,setEditingId]=React.useState<string|undefined>();
   const [editingText,setEditingText]=React.useState("");
+  const [showTechnicalData,setShowTechnicalData]=React.useState(false);
   const [persistenceError,setPersistenceError]=React.useState("");
   const bottomRef=React.useRef<HTMLDivElement|null>(null);
 
@@ -161,7 +163,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
 
   const lifeState=runtime.getMindState().lifecycleState;
   const lifeActive=lifeState!=="off";
-  const lifeTurnBusy=snapshot.lifeTurn?.status==="persisting"||snapshot.lifeTurn?.status==="awaiting"||
+  const lifeTurnBusy=snapshot.committingNovaTurn===true||snapshot.lifeTurn?.status==="persisting"||snapshot.lifeTurn?.status==="awaiting"||
     (lifeActive&&(snapshot.lifeTurn?.status==="failed"||snapshot.lifeTurn?.status==="cancelled"));
   const chatBusy=snapshot.sending||lifeTurnBusy;
   const persistAfterAction=React.useCallback(async(result:{status:string})=>{
@@ -265,7 +267,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     }
   };
 
-  const lastAssistant=[...snapshot.messages].reverse().find(message=>message.role==="assistant");
+  const lastAssistant=[...snapshot.messages].reverse().find(message=>message.role==="assistant"&&(message.metadata?.novaTurnVersion!==1||Boolean(parseNovaTurn(message.content).turn?.speech.trim())));
   const lastAssistantStatus=lastAssistant?messageStreamStatus(lastAssistant):undefined;
   const showContinue=snapshot.status==="interrupted"&&lastAssistantStatus==="interrupted"&&!snapshot.sending;
   const showRegenerate=(snapshot.status==="completed"||snapshot.status==="interrupted")&&(lastAssistantStatus==="complete"||lastAssistantStatus==="interrupted")&&!snapshot.sending;
@@ -278,6 +280,8 @@ function ChatView({controller,runtime,character,conversations,activeConversation
         <p className="chat-subtitle">{activeConversation.title} · persistent and scoped to {character.name}.</p>
       </div>
       <div className="chat-toolbar-actions">
+        <label className="checkbox technical-toggle"><input type="checkbox" checked={showTechnicalData}
+          onChange={event=>setShowTechnicalData(event.target.checked)}/>Show technical data</label>
         {snapshot.status==="streaming"&&<button type="button" onClick={()=>void stop()}>Stop</button>}
         {showContinue&&!chatBusy&&lifeState==="off"&&<button type="button" onClick={()=>void continueGeneration()}>Continue</button>}
         {showRegenerate&&!chatBusy&&lifeState==="off"&&<button type="button" onClick={()=>void regenerate()}>Regenerate</button>}
@@ -302,9 +306,27 @@ function ChatView({controller,runtime,character,conversations,activeConversation
       {snapshot.messages.length===0&&<div className="empty-chat">Write a message to start the conversation.</div>}
       {snapshot.messages.map((message,index)=>{
         const state=messageStreamStatus(message);
-        const editable=message.role==="user"||message.role==="assistant";
+        const isNovaTurn=message.metadata?.novaTurnVersion===1;
+        const editable=message.role==="user"||(message.role==="assistant"&&!isNovaTurn);
         const isEditing=editingId===message.id;
-        return <article className={"chat-message "+message.role} key={message.id??"message-"+index}>
+        const parseResult=isNovaTurn?parseNovaTurn(message.content):undefined;
+        const parsedTurn=parseResult?.turn;
+        if(isNovaTurn&&parseResult&&!shouldRenderNovaTurn(parseResult,showTechnicalData))return null;
+        const messageKey=message.id??"message-"+index;
+        const statusText=(field:{status:string;value?:unknown}|undefined):string=>{
+          if(!field)return "missing";
+          if(field.status==="empty")return "empty";
+          if(field.value===undefined)return field.status;
+          return field.status;
+        };
+        const textField=(field:{status:string;value?:string}|undefined):string=>{
+          if(!field||field.status==="missing")return "Missing";
+          if(field.status==="invalid")return "Invalid";
+          if(field.value===undefined)return "Not available";
+          if(field.status==="empty"||!field.value.trim())return "Empty";
+          return field.value;
+        };
+        return <article className={"chat-message "+message.role} key={messageKey}>
           <div className="message-author">{message.role==="user"?"You":character.name}</div>
           {isEditing
             ?<div className="message-edit">
@@ -314,7 +336,26 @@ function ChatView({controller,runtime,character,conversations,activeConversation
                 <button type="button" onClick={()=>{setEditingId(undefined);setEditingText("")}}>Cancel</button>
               </div>
             </div>
-            :<div className="message-content">{message.content}</div>}
+            :<div className="message-content">{isNovaTurn
+              ?(parsedTurn?.speech.trim()?parsedTurn.speech:"The model returned no valid speech.")
+              :message.content}</div>}
+          {isNovaTurn&&showTechnicalData&&<section className="nova-turn-technical" aria-label="NovaTurn technical data">
+            <div><strong>Situation</strong><p>{textField(parseResult?.fields.situation)} <em>({statusText(parseResult?.fields.situation)})</em></p></div>
+            <div><strong>Thoughts (private)</strong><p>{textField(parseResult?.fields.thoughts)} <em>({statusText(parseResult?.fields.thoughts)})</em></p></div>
+            <div><strong>Emotion</strong><p>{textField(parseResult?.fields.emotion)} <em>({statusText(parseResult?.fields.emotion)})</em></p></div>
+            <div><strong>Tool calls</strong>{parseResult?.fields.tools.value?.length
+              ?parseResult.fields.tools.value.map((tool,i)=><pre key={tool.name+"-"+i}>{tool.name+"\n"+JSON.stringify(tool.arguments,null,2)}</pre>)
+              :<p>{parseResult?.fields.tools.status==="empty"?"Empty":parseResult?.fields.tools.status==="invalid"?"Invalid":parseResult?.fields.tools.status==="recovered"?"Recovered (no calls)": "Missing or no calls"} <em>({parseResult?.fields.tools.status??"missing"})</em></p>}</div>
+            <div><strong>Tool results</strong>{parseResult?.fields.toolResults.value?.length
+              ?parseResult.fields.toolResults.value.map(result=><pre key={result.callId}>{result.name+" · "+result.status+"\n"+(result.error??JSON.stringify(result.output??null,null,2))}</pre>)
+              :<p>{parseResult?.fields.toolResults.status==="empty"?"Empty":parseResult?.fields.toolResults.status==="invalid"?"Invalid":parseResult?.fields.toolResults.status==="recovered"?"Recovered (no results)":"Missing or no results"} <em>({parseResult?.fields.toolResults.status??"missing"})</em></p>}</div>
+            <div><strong>Speech</strong><p>{textField(parseResult?.fields.speech)} <em>({statusText(parseResult?.fields.speech)})</em></p></div>
+            <div><strong>Next wake</strong><p>{parseResult?.fields.nextWakeMs.value===undefined?"Not available":parseResult.fields.nextWakeMs.value+" ms"} <em>({parseResult?.fields.nextWakeMs.status??"missing"})</em></p></div>
+            <div><strong>Protocol diagnostics</strong><p>{parseResult?.diagnostics.length?parseResult.diagnostics.join(", "):"None"}</p></div>
+            <div><strong>Unrecognized / raw output (bounded)</strong>
+              <pre>{message.content.length>4000?message.content.slice(0,4000)+"\n[truncated at 4000 characters]":message.content||"(empty provider response)"}</pre>
+            </div>
+          </section>}
           {state==="interrupted"&&<div className="message-status">Interrupted</div>}
           {editable&&!chatBusy&&!isEditing&&message.id&&
             <div className="message-actions">
@@ -327,6 +368,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     </div>
     {snapshot.lifeTurn?.status==="persisting"&&<p className="chat-hint" role="status">Saving your message for Nova Life…</p>}
     {snapshot.lifeTurn?.status==="awaiting"&&<p className="chat-hint" role="status">Nova is thinking…</p>}
+    {snapshot.lifeTurn?.status==="failed"&&<p className="chat-error" role="alert">Nova Life failed to produce a valid reply. The turn remains failed and can be retried with Retry Nova Life.</p>}
     <form className="chat-composer" onSubmit={event=>{event.preventDefault();if(!chatBusy)void send()}}>
       <textarea value={input} onChange={event=>setInput(event.target.value)} onKeyDown={onKeyDown} placeholder="Write a message…" aria-label="Chat message" disabled={chatBusy} rows={2}/>
       <button type="submit" disabled={chatBusy||input.trim().length===0}>{snapshot.sending?"Streaming…":lifeTurnBusy?"Nova is thinking…":"Send"}</button>
@@ -1284,34 +1326,17 @@ function AppSettingsView({
             onChange={event=>onChange({...settings,cognitiveSchedule:{...settings.cognitiveSchedule,maxIntervalMs:Number(event.target.value)}})} disabled={saving}/>
           <small>Default: {defaults.cognitiveSchedule.maxIntervalMs} ms</small>
         </label>
-        <label>Background requests per hour
+        <label className="checkbox">Limit cognitive requests per hour
+          <input type="checkbox" checked={settings.cognitiveSchedule.maxRequestsPerHour!==null}
+            onChange={event=>onChange({...settings,cognitiveSchedule:{...settings.cognitiveSchedule,maxRequestsPerHour:event.target.checked?120:null}})} disabled={saving}/>
+        </label>
+        {settings.cognitiveSchedule.maxRequestsPerHour!==null&&<label>Requests per hour
           <input type="number" min={1} max={3600} step={1} value={settings.cognitiveSchedule.maxRequestsPerHour}
             onChange={event=>onChange({...settings,cognitiveSchedule:{...settings.cognitiveSchedule,maxRequestsPerHour:Number(event.target.value)}})} disabled={saving}/>
-          <small>Default: {defaults.cognitiveSchedule.maxRequestsPerHour} requests/hour</small>
-        </label>
+        </label>}
+        <small>Default: no hourly quota. Minimum spacing still applies to every model request.</small>
       </div>
       <p className="hint">The hourly quota applies only to background cognitive steps. Regular Chat remains available while Life is on or off.</p>
-    </section>
-
-    <section>
-      <h3>Proactive Chat</h3>
-      <label className="checkbox">Allow Nova Life to publish proactive chat messages
-        <input type="checkbox" checked={settings.proactiveChat.enabled}
-          onChange={event=>onChange({...settings,proactiveChat:{...settings.proactiveChat,enabled:event.target.checked}})} disabled={saving}/>
-      </label>
-      <div className="core-book-grid">
-        <label>Minimum interval between messages (ms)
-          <input type="number" min={10000} max={3600000} step={1000} value={settings.proactiveChat.minMessageIntervalMs}
-            onChange={event=>onChange({...settings,proactiveChat:{...settings.proactiveChat,minMessageIntervalMs:Number(event.target.value)}})} disabled={saving}/>
-          <small>Default: {defaults.proactiveChat.minMessageIntervalMs} ms</small>
-        </label>
-        <label>Proactive messages per rolling hour
-          <input type="number" min={1} max={3600} step={1} value={settings.proactiveChat.maxMessagesPerHour}
-            onChange={event=>onChange({...settings,proactiveChat:{...settings.proactiveChat,maxMessagesPerHour:Number(event.target.value)}})} disabled={saving}/>
-          <small>Default: {defaults.proactiveChat.maxMessagesPerHour} messages/hour</small>
-        </label>
-      </div>
-      <p className="hint">When disabled, Nova Life suppresses unsolicited scheduled messages only; user-requested Life replies remain enabled. These limits apply only to proactive messages and are separate from the background cognition request quota.</p>
     </section>
 
     <section>
@@ -1486,6 +1511,41 @@ function AppSettingsView({
           onChange={event=>onChange({...settings,ui:{...settings.ui,showDiagnosticsInChat:event.target.checked}})} disabled={saving}/>
       </label>
       <p className="hint">Model, temperature, topP, and maxTokens remain in Model Profile and are intentionally not duplicated here.</p>
+      <div className="actions">
+        <button type="button" onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save Settings"}</button>
+      </div>
+      {message&&<div className="notice" role="status">{message}</div>}
+    </section>
+  </div>;
+}
+
+function ChatSettingsView({settings,onChange,onSave,onReset,saving,message}:{
+  settings:AppSettings;
+  onChange:(settings:AppSettings)=>void;
+  onSave:()=>Promise<void>;
+  onReset:()=>Promise<void>;
+  saving:boolean;
+  message:string;
+}){
+  const defaults=defaultAppSettings();
+  return <div className="settings-grid">
+    <section>
+      <div className="section-header">
+        <div><h2>Chat</h2><p className="chat-subtitle">Choose the output format used for the next Nova Life cognitive request.</p></div>
+        <button type="button" onClick={()=>void onReset()} disabled={saving}>Reset to Defaults</button>
+      </div>
+      <label>Chat response mode
+        <select value={settings.chat.responseMode}
+          onChange={event=>onChange({...settings,chat:{...settings.chat,responseMode:event.target.value as AppSettings["chat"]["responseMode"]}})} disabled={saving}>
+          <option value="structured">Structured protocol (recommended)</option>
+          <option value="plain">Plain text (fallback)</option>
+        </select>
+      </label>
+      {settings.chat.responseMode==="structured"
+        ?<p className="hint">Uses the versioned NOVA_TURN v1 protocol with validated tool calls, separate user-facing speech, and a model-proposed next wake interval.</p>
+        :<p className="hint">Uses a separate plain-text prompt. The entire response is user-facing speech; model-requested tools and protocol interpretation are disabled. Background replies may be suppressed only by the exact [[NOVA_SILENT]] sentinel. A silent reactive reply fails and can be retried.</p>}
+      <p className="hint">This setting is saved independently of technical-data visibility. It applies on the next cognitive request and does not change previously saved Conversation messages.</p>
+      <p className="hint">Default: {defaults.chat.responseMode==="structured"?"Structured protocol (recommended)":"Plain text (fallback)"}.</p>
       <div className="actions">
         <button type="button" onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save Settings"}</button>
       </div>
@@ -1823,21 +1883,26 @@ function SettingsContainerView({
   onTestPreset:(preset:ProviderPreset,sourceId:string)=>Promise<ProviderConnectionTestResult>;
   onError:(error:Error,info:React.ErrorInfo)=>void;
 }){
-  const [tab,setTab]=React.useState<"general"|"provider-presets">("general");
+  const [tab,setTab]=React.useState<"general"|"chat"|"provider-presets">("general");
   return <section className="settings-container" aria-label="Settings">
     <div className="settings-subnav" role="tablist" aria-label="Settings sections">
       <button type="button" role="tab" aria-selected={tab==="general"} className={tab==="general"?"nav-button active":"nav-button"} onClick={()=>setTab("general")}>General</button>
+      <button type="button" role="tab" aria-selected={tab==="chat"} className={tab==="chat"?"nav-button active":"nav-button"} onClick={()=>setTab("chat")}>Chat</button>
       <button type="button" role="tab" aria-selected={tab==="provider-presets"} className={tab==="provider-presets"?"nav-button active":"nav-button"} onClick={()=>setTab("provider-presets")}>Provider Presets</button>
     </div>
     {tab==="general"
       ?<ViewErrorBoundary key="settings-general" view="settings-general" onError={onError}>
         <AppSettingsView settings={appSettings} onChange={onAppSettingsChange} onSave={onSaveSettings} onReset={onResetSettings} saving={settingsSaving} message={settingsLoadMessage} providerPresets={providerPresets} activePresetId={activePresetId}/>
       </ViewErrorBoundary>
-      :<ViewErrorBoundary key="settings-provider-presets" view="settings-provider-presets" onError={onError}>
-        <ProviderPresetsView presets={providerPresets} activePresetId={activePresetId} credentialProfiles={credentialProfiles} credentialSaved={credentialSavedMap}
-          runtime={runtime} onSavePreset={onSavePreset} onActivatePreset={onActivatePreset} onDeletePreset={onDeletePreset}
-          onCreateCredential={onCreateCredential} onDeleteCredential={onDeleteCredential} onRefreshModels={onRefreshModels} onTestPreset={onTestPreset}/>
-      </ViewErrorBoundary>}
+      :tab==="chat"
+        ?<ViewErrorBoundary key="settings-chat" view="settings-chat" onError={onError}>
+          <ChatSettingsView settings={appSettings} onChange={onAppSettingsChange} onSave={onSaveSettings} onReset={onResetSettings} saving={settingsSaving} message={settingsLoadMessage}/>
+        </ViewErrorBoundary>
+        :<ViewErrorBoundary key="settings-provider-presets" view="settings-provider-presets" onError={onError}>
+          <ProviderPresetsView presets={providerPresets} activePresetId={activePresetId} credentialProfiles={credentialProfiles} credentialSaved={credentialSavedMap}
+            runtime={runtime} onSavePreset={onSavePreset} onActivatePreset={onActivatePreset} onDeletePreset={onDeletePreset}
+            onCreateCredential={onCreateCredential} onDeleteCredential={onDeleteCredential} onRefreshModels={onRefreshModels} onTestPreset={onTestPreset}/>
+        </ViewErrorBoundary>}
   </section>;
 }
 function isTauriRuntime():boolean{
@@ -1862,83 +1927,8 @@ function credentialSavedEntries(
   },{});
 }
 
-function ThoughtsView({mindState,character,runtime}:{mindState:MindState;character:Character;runtime:FoundationRuntime}){
-  const [message,setMessage]=React.useState("");
-  const deleteThought=React.useCallback((id:string)=>{
-    setMessage("");
-    if(!runtime.deleteThought(id))setMessage("Thought could not be deleted because it is no longer present.");
-  },[runtime]);
-  const clearCurrent=React.useCallback(()=>{
-    if(!window.confirm("Clear all Thoughts for the current character?"))return;
-    setMessage("");
-    runtime.clearCurrentThoughts();
-  },[runtime]);
-  const clearAll=React.useCallback(()=>{
-    if(!window.confirm("Clear all Thoughts for all characters?"))return;
-    setMessage("");
-    runtime.clearAllThoughts();
-  },[runtime]);
-  return <section className="thoughts-view">
-    <div className="section-header">
-      <div><h2>Thoughts · {character.name}</h2><p className="chat-subtitle">Technical observer of Nova's internal cognition. Thoughts are not Conversation messages.</p></div>
-      <div className="thought-actions">
-        <span className="mind-status-badge">{mindState.lifecycleState.toUpperCase()}</span>
-        <button type="button" onClick={clearCurrent} disabled={mindState.recentThoughts.length===0}>Clear character</button>
-        <button type="button" onClick={clearAll}>Clear all</button>
-      </div>
-    </div>
-    {message&&<div className="error">{message}</div>}
-    <p className="chat-subtitle">{mindState.lifecycleState==="waiting"&&mindState.nextWakeAt
-      ? "Next cognitive wake: "+new Date(mindState.nextWakeAt).toLocaleTimeString()
-      : mindState.lifecycleState==="thinking" ? "Nova is thinking…" : "Next cognitive wake: —"}</p>
-    <section className="diagnostic-block">
-      <h3>Current initiative</h3>
-      <div className="diagnostic-candidate">
-        <strong>{mindState.focus??"No focus selected"}</strong>
-        <div className="diagnostic-candidate-meta">Status: {mindState.initiative?.status??"not initialized"}</div>
-        {mindState.initiative?.direction&&<div className="diagnostic-reason">Direction: {mindState.initiative.direction}</div>}
-        {mindState.initiative?.lastProgress&&<div className="diagnostic-reason">Last meaningful progress: {mindState.initiative.lastProgress}</div>}
-      </div>
-    </section>
-    <div className="thought-list">
-      {mindState.recentThoughts.length===0
-        ?<div className="empty-state">No internal thoughts for {character.name}.</div>
-        :mindState.recentThoughts.map(thought=>
-          <article className="thought-entry" key={thought.id}>
-            <div className="thought-meta">
-              <time dateTime={thought.timestamp}>{new Date(thought.timestamp).toLocaleTimeString()}</time>
-              <span>{thought.id}</span>
-              <button type="button" onClick={()=>deleteThought(thought.id)}>Delete</button>
-            </div>
-            <div>{thought.content}</div>
-          </article>
-        )}
-    </div>
-    <section className="diagnostic-block">
-      <h3>Recent cognitive trace</h3>
-      {(mindState.recentTrace??[]).length===0
-        ?<div className="empty-state">No cognitive runs recorded yet.</div>
-        :[...(mindState.recentTrace??[])].reverse().map(entry=>
-          <article className="diagnostic-candidate" key={entry.runId}>
-            <div className="diagnostic-candidate-header">
-              <strong>{entry.result.toUpperCase()}</strong>
-              <span>{entry.wakeReason}</span>
-              <time>{new Date(entry.startedAt).toLocaleTimeString()}</time>
-            </div>
-            <div className="diagnostic-candidate-meta">Character {entry.characterId} · {entry.durationMs} ms{entry.appliedIntervalMs===undefined?"":" · next "+entry.appliedIntervalMs+" ms"}</div>
-            {entry.requestedNextWakeInMs!==undefined&&<div className="diagnostic-reason">Model interval: {entry.requestedNextWakeInMs} ms</div>}
-            {entry.intervalDecision&&<div className="diagnostic-reason">Interval decision: {entry.intervalDecision}</div>}
-            {entry.expressionKind&&<div className="diagnostic-reason">Expression: {entry.expressionKind} · {entry.expressionStatus??"unknown"}{entry.expressionSuppressionReason?" · "+entry.expressionSuppressionReason:""}</div>}
-            {(entry.expressionId||entry.expressionMessageId||entry.expressionConversationId)&&<div className="diagnostic-candidate-meta">{entry.expressionId?"Expression "+entry.expressionId+" · ":""}{entry.expressionMessageId?"Message "+entry.expressionMessageId+" · ":""}{entry.expressionConversationId?"Conversation "+entry.expressionConversationId:""}</div>}
-            {(entry.requestId||entry.providerId||entry.errorCode||entry.expressionErrorCode)&&<div className="diagnostic-candidate-meta">{entry.requestId? "Request "+entry.requestId+" · ":""}{entry.providerId?"Provider "+entry.providerId+" · ":""}{entry.errorCode?"Code "+entry.errorCode:""}{entry.expressionErrorCode?" · Expression error "+entry.expressionErrorCode:""}</div>}
-          </article>
-        )}
-    </section>
-  </section>;
-}
-
 function App(){
-  const [view,setView]=React.useState<"chat"|"characters"|"memory"|"core-book"|"model-profile"|"settings"|"diagnostics"|"thoughts">("chat");
+  const [view,setView]=React.useState<"chat"|"characters"|"memory"|"core-book"|"model-profile"|"settings"|"diagnostics">("chat");
   const [runtime,setRuntime]=React.useState<RuntimeDiagnostics>(preview);
   const [saving,setSaving]=React.useState(false);
   const [startupStatus,setStartupStatus]=React.useState<"initializing"|"ready"|"error">("initializing");
@@ -1949,7 +1939,7 @@ function App(){
   const [chatController,setChatController]=React.useState<ChatSessionController|null>(null);
   const [conversations,setConversations]=React.useState<readonly Conversation[]>([]);
   const [activeConversation,setActiveConversation]=React.useState<Conversation|undefined>();
-  const [mindState,setMindState]=React.useState<MindState>({focus:null,initiative:null,lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"off"});
+  const [mindState,setMindState]=React.useState<MindState>({lifecycleState:"off",nextWakeAt:null,recentTrace:[]});
   const mindUnsubscribeRef=React.useRef<(()=>void)|undefined>(undefined);
   const [lifeBusy,setLifeBusy]=React.useState(false);
   const foundationRef=React.useRef<FoundationRuntime|undefined>(undefined);
@@ -2116,54 +2106,53 @@ function App(){
     const snapshot=chatController?.getSnapshot();
     if(!chatController||!activeCharacterId||!activeConversationId||
       snapshot?.characterId!==activeCharacterId||snapshot.conversationId!==activeConversationId){
-      foundation.setMindExpressionPublisher(undefined);
+      foundation.setNovaTurnSink(undefined);
       return;
     }
     let attached=true;
-    const publisher:MindExpressionPublisher={
-      publish:async expression=>{
-        if(expression.signal?.aborted)return {status:"suppressed",reason:"cancelled"};
-        if(!attached)return {status:"suppressed",reason:"publisher-unavailable"};
+    const sink:MindTurnSink={
+      commit:async(turn,context)=>{
+        if(context.signal.aborted||!attached)throw new Error("NovaTurn sink is detached or cancelled.");
         const controllerSnapshot=chatController.getSnapshot();
-        if(expression.characterId!==activeCharacterId||expression.conversationId!==activeConversationId||
-          controllerSnapshot.characterId!==expression.characterId||controllerSnapshot.conversationId!==expression.conversationId||
-          (expression.intent==="reactive"&&(!expression.userMessageId||!expression.turnId))){
-          return {status:"suppressed",reason:"wrong-conversation"};
+        if(context.characterId!==activeCharacterId||context.conversationId!==activeConversationId||
+          controllerSnapshot.characterId!==context.characterId||controllerSnapshot.conversationId!==context.conversationId){
+          throw new Error("NovaTurn belongs to a conversation that is no longer active.");
         }
-        try{
-          const [currentCharacter,currentConversation]=await Promise.all([
-            foundation.getActiveCharacter(),
-            foundation.getActiveConversation(expression.characterId)
-          ]);
-          if(!attached||currentCharacter.id!==expression.characterId||currentConversation.characterId!==expression.characterId||
-            currentConversation.id!==expression.conversationId)return {status:"suppressed",reason:"wrong-conversation"};
-        }catch{return {status:"suppressed",reason:"publisher-unavailable"};}
-        const result=await chatController.publishExpression(expression,async(current,rollback=false)=>{
-          if(current.characterId!==expression.characterId||current.conversationId!==expression.conversationId||
-            (!rollback&&(expression.signal?.aborted||!attached||activeCharacterId!==current.characterId||activeConversationId!==current.conversationId))){
-            throw new Error("Expression publisher cancelled, detached or conversation scope changed before persistence.");
+        const [currentCharacter,currentConversation]=await Promise.all([
+          foundation.getActiveCharacter(),
+          foundation.getActiveConversation(context.characterId)
+        ]);
+        if(!attached||context.signal.aborted||currentCharacter.id!==context.characterId||
+          currentConversation.characterId!==context.characterId||currentConversation.id!==context.conversationId){
+          throw new Error("NovaTurn conversation scope changed before commit.");
+        }
+        await chatController.commitNovaTurn(turn,context,async(current,rollback=false)=>{
+          if(current.characterId!==context.characterId||current.conversationId!==context.conversationId||
+            (!rollback&&(context.signal.aborted||!attached||activeCharacterId!==current.characterId||activeConversationId!==current.conversationId))){
+            throw new Error("NovaTurn commit cancelled, detached or changed scope before persistence.");
           }
           const updated=await foundation.updateConversation(current.characterId,current.conversationId,{messages:current.messages});
           if(attached&&activeCharacterId===current.characterId&&activeConversationId===current.conversationId){
             try{
               const listed=await foundation.listConversations(current.characterId);
               if(attached)setConversations(listed);
-            }catch{/* Conversation persistence succeeded; sidebar refresh is best effort. */}
+            }catch{/* Canonical Conversation save succeeded; sidebar refresh is best effort. */}
             if(attached)setActiveConversation(updated);
           }
         });
-        return result;
       },
-      failReactiveTurn:(turn,reason)=>{
+      fail:(turn,reason)=>{
         if(!attached||turn.characterId!==activeCharacterId||turn.conversationId!==activeConversationId)return;
         const current=chatController.getSnapshot();
-        if(current.characterId===turn.characterId&&current.conversationId===turn.conversationId)chatController.failLifeTurn(turn.userMessageId,reason);
+        if(current.characterId===turn.characterId&&current.conversationId===turn.conversationId){
+          chatController.failLifeTurn(turn.userMessageId,reason);
+        }
       }
     };
-    foundation.setMindExpressionPublisher(publisher);
+    foundation.setNovaTurnSink(sink);
     return ()=>{
       attached=false;
-      foundation.setMindExpressionPublisher(undefined);
+      foundation.setNovaTurnSink(undefined);
     };
   },[chatController,activeCharacterId,activeConversationId]);
 
@@ -2254,7 +2243,7 @@ function App(){
     providerConfigurationErrorRef.current=configurationLoadError;
     providerPresetStateRef.current=presetState;
     credentialProfileStateRef.current=credentialState;
-    foundationRef.current?.setMindExpressionPublisher(undefined);
+    foundationRef.current?.setNovaTurnSink(undefined);
     setChatController(null);
     await foundationRef.current?.stop();
     const next=await startFoundationRuntime({
@@ -2334,7 +2323,7 @@ function App(){
   const selectCharacter=React.useCallback(async(id:string)=>{
     const foundation=foundationRef.current;
     if(!foundation||chatController?.isBusy())return;
-    foundation.setMindExpressionPublisher(undefined);
+    foundation.setNovaTurnSink(undefined);
     const selected=await foundation.setActiveCharacter(id);
     const loaded=await loadActiveConversation(selected.id);
     setActiveCharacter(selected);
@@ -2349,7 +2338,7 @@ function App(){
     const foundation=foundationRef.current;
     const character=activeCharacter;
     if(!foundation||!character||chatController?.isBusy())return;
-    foundation.setMindExpressionPublisher(undefined);
+    foundation.setNovaTurnSink(undefined);
     const previousConversation=activeConversation;
     const local=conversations.find(item=>item.id===id);
     const profile=activeModelProfile??await loadModelProfile(character.id);
@@ -2376,7 +2365,7 @@ function App(){
     const foundation=foundationRef.current;
     const character=activeCharacter;
     if(!foundation||!character||chatController?.isBusy())return;
-    foundation.setMindExpressionPublisher(undefined);
+    foundation.setNovaTurnSink(undefined);
     const conversation=await foundation.createConversation(character.id);
     const profile=activeModelProfile??await loadModelProfile(character.id);
     const controller=controllerForConversation(conversation,profile);
@@ -2401,7 +2390,7 @@ function App(){
     const foundation=foundationRef.current;
     const character=activeCharacter;
     if(!foundation||!character||chatController?.isBusy())return;
-    if(activeConversation?.id===conversation.id)foundation.setMindExpressionPublisher(undefined);
+    if(activeConversation?.id===conversation.id)foundation.setNovaTurnSink(undefined);
     const replacement=await foundation.deleteConversation(character.id,conversation.id);
     const profile=activeModelProfile??await loadModelProfile(character.id);
     const controller=controllerForConversation(replacement,profile);
@@ -2430,7 +2419,7 @@ function App(){
     const foundation=foundationRef.current;
     if(!foundation)return;
     if(chatController?.isBusy())throw new Error("Wait for the current Chat operation to finish before changing Character.");
-    foundation.setMindExpressionPublisher(undefined);
+    foundation.setNovaTurnSink(undefined);
     const before=activeCharacter;
     await foundation.deleteCharacter(id);
     try{await modelProfileStore.delete(id)}catch(error){modelProfileLoadErrorRef.current=safeStartupError(error)}
@@ -2596,7 +2585,6 @@ function App(){
         <button className={view==="core-book"?"nav-button active":"nav-button"} onClick={()=>setView("core-book")}>Core Book</button>
         <button className={view==="model-profile"?"nav-button active":"nav-button"} onClick={()=>setView("model-profile")}>Model Profile</button>
         <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Settings</button>
-        <button className={view==="thoughts"?"nav-button active":"nav-button"} onClick={()=>setView("thoughts")}>Thoughts</button>
         {appSettings.ui.showDiagnosticsInChat&&<button className={view==="diagnostics"?"nav-button active":"nav-button"} onClick={()=>setView("diagnostics")}>Diagnostics</button>}
       </nav>
       <div className="life-control">
@@ -2610,9 +2598,7 @@ function App(){
       </div>
     </header>
     <ViewErrorBoundary key={view} view={view} onError={reportViewError}>
-    {view==="thoughts"&&activeCharacter&&foundationRef.current
-      ?<ThoughtsView mindState={mindState} character={activeCharacter} runtime={foundationRef.current}/>
-      :view==="model-profile"&&activeCharacter&&activeModelProfile
+    {view==="model-profile"&&activeCharacter&&activeModelProfile
       ?<ModelProfileView profile={activeModelProfile} runtime={runtime} presets={providerPresets} activePresetId={activePresetId} onSave={saveModelProfile}/>
       :view==="settings"
       ?<SettingsContainerView

@@ -29,17 +29,19 @@ assert.equal(app.includes('view==="provider-settings"'),false,"Provider Settings
 assert.equal(app.includes('view==="provider-presets"'),false,"Provider Presets must not remain a top-level route");
 
 const navigation=app.slice(app.indexOf("<nav className=\"app-nav\""),app.indexOf("</nav>",app.indexOf("<nav className=\"app-nav\"")));
-for(const label of ["Chat","Characters","Core Book","Model Profile","Settings","Thoughts","Diagnostics"]){
+for(const label of ["Chat","Characters","Core Book","Model Profile","Settings","Diagnostics"]){
   assert.ok(navigation.includes(">"+label+"</button>"),"Primary navigation must expose "+label);
 }
 for(const removed of ["Provider Presets","Provider Settings"]){
   assert.equal(navigation.includes(">"+removed+"</button>"),false,"Primary navigation must not expose "+removed);
 }
 
-for(const label of ["General","Provider Presets"]){
+for(const label of ["General","Chat","Provider Presets"]){
   assert.ok(settingsContainer.includes(">"+label+"</button>"),"Settings sub-navigation must expose "+label);
 }
 assert.ok(settingsContainer.includes('tab==="general"'),"Settings must have a General tab");
+assert.ok(settingsContainer.includes('tab==="chat"')&&settingsContainer.includes("<ChatSettingsView "),"Settings must expose the Chat response-mode settings tab");
+assert.ok(appSettingsView.includes('settings.chat.responseMode')&&appSettingsView.includes('value="structured"')&&appSettingsView.includes('value="plain"'),"Chat settings bind both response modes");
 assert.ok(settingsContainer.includes('tab==="provider-presets"'),"Settings must have a Provider Presets tab");
 assert.ok(settingsContainer.includes("<AppSettingsView "), "General tab must render AppSettingsView");
 assert.ok(diagnosticsView.includes("runtime.diagnostics()"),"DiagnosticsView must bridge runtime DiagnosticsStore");
@@ -86,13 +88,26 @@ assert.ok(refreshRuntime.includes("await syncCharacters(next);"),"new runtime mu
 assert.ok(app.includes("foundation.startLife()"),"global Life control must start the Foundation Mind Runtime");
 assert.ok(app.includes("foundation.stopLife()"),"global Life control must stop the Foundation Mind Runtime");
 assert.ok(app.includes("Nova Life:"),"App must expose the global Nova Life control");
-assert.ok(app.includes("<ThoughtsView mindState={mindState} character={activeCharacter} runtime={foundationRef.current}/>"),"Thoughts must remain a character-scoped runtime observer");
-assert.ok(foundationSource.includes("deleteThought(thoughtId:string):boolean;"),"Foundation runtime must expose point Thought deletion");
-assert.ok(foundationSource.includes("clearCurrentThoughts():void;"),"Foundation runtime must expose current-character Thought clearing");
-assert.ok(foundationSource.includes("clearAllThoughts():void;"),"Foundation runtime must expose all-character Thought clearing");
-assert.ok(source.includes("window.confirm(\"Clear all Thoughts for all characters?\""),"Mass Thought clearing must use ordinary confirmation");
-assert.ok(source.includes("onClick={()=>deleteThought(thought.id)}"),"Thoughts UI must expose point delete");
+assert.equal(navigation.includes(">Thoughts</button>"),false,"the standalone Thoughts tab is removed");
+assert.equal(source.includes("function ThoughtsView("),false,"the standalone Thoughts screen is removed, not hidden");
+assert.equal(foundationSource.includes("subscribeThoughts"),false,"Thought-only subscription API is removed");
+assert.equal(foundationSource.includes("deleteThought"),false,"Thought-only delete API is removed");
+assert.equal(foundationSource.includes("clearCurrentThoughts"),false,"Thought-only clear API is removed");
+assert.equal(foundationSource.includes("clearAllThoughts"),false,"Thought-only clear-all API is removed");
+assert.equal(source.includes("publishExpression"),false,"old expression publisher is removed from UI");
+assert.equal(foundationSource.includes("setMindExpressionPublisher"),false,"old expression publisher is removed from runtime API");
+assert.ok(source.includes("Show technical data"),"Chat exposes a technical data switch");
+assert.ok(source.includes("parsedTurn.speech"),"NovaTurn messages render only public speech");
+assert.ok(source.includes("parseResult?.fields.thoughts")&&source.includes("isNovaTurn&&showTechnicalData"),"private thoughts are only rendered in technical mode");
+assert.ok(source.includes("shouldRenderNovaTurn(parseResult,showTechnicalData)"),"a persisted NovaTurn is hidden only when technical mode is off and no safe speech exists");
+assert.ok(source.includes("Unrecognized / raw output (bounded)")&&source.includes("slice(0,4000)"),"technical mode shows bounded raw output for malformed turns");
+for(const heading of ["Situation","Thoughts (private)","Emotion","Tool calls","Tool results","Speech","Next wake","Protocol diagnostics"]){assert.ok(source.includes("<strong>"+heading+"</strong>"),"technical mode always supplies the "+heading+" section");}
+assert.ok(source.includes("countVisibleSpeechMessages(conversation.messages)")&&source.includes("stored messages"),"conversation counter distinguishes stored records from visible speech messages");
+assert.ok(source.includes("commitNovaTurn"),"Chat persists the canonical NovaTurn record");
+assert.ok(source.includes("setNovaTurnSink"),"UI registers the single canonical turn sink");
 assert.ok(source.includes("subscribeMindState"),"UI must subscribe to runtime mind state rather than own the runtime");
+assert.ok(source.includes('message.role==="assistant"&&!isNovaTurn'),"NovaTurn internals cannot be exposed by opening the raw record in the editor");
+assert.ok(source.includes("Nova Life failed to produce a valid reply")&&source.includes("Retry Nova Life"),"failed reactive turns display a failed state and retry path");
 
 assert.match(source,/class ViewErrorBoundary extends React\.Component/);
 assert.match(source,/componentDidCatch\(error:Error,info:React\.ErrorInfo\)/);
