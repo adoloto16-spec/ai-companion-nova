@@ -80,8 +80,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
   },
   "app-settings": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v7",
-    "title": "AI Companion Nova App Settings v7",
+    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v8",
+    "title": "AI Companion Nova App Settings v8",
     "type": "object",
     "additionalProperties": false,
     "required": [
@@ -103,7 +103,7 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         "const": "1"
       },
       "schemaVersion": {
-        "const": "7"
+        "const": "8"
       },
       "chat": {
         "type": "object",
@@ -416,7 +416,7 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           "maxMessagesPerHour": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 60
+            "maximum": 3600
           }
         }
       }

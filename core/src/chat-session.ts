@@ -1,6 +1,6 @@
 import type {
   AssembledContext,ChatErrorCode,ChatGenerationOptions,ChatMessage,ChatRequest,ChatResponse,ChatStreamEvent,
-  ChatStreamHandlers,ChatStreamOptions,ChatUsage,CharacterId,ChatTraceStore,ContextBuildRequest,ContextBudget,MemoryExtractionRequest,MindExpressionPublication,MindExpressionPublishResult,ModelProfile,Unsubscribe
+  ChatStreamHandlers,ChatStreamOptions,ChatUsage,CharacterId,ChatTraceStore,ContextBuildRequest,ContextBudget,MemoryExtractionRequest,MindExpressionPublication,MindExpressionPublishResult,MindReactiveTurn,ModelProfile,Unsubscribe
 } from "../../contracts/src/index";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,DEFAULT_APP_SETTINGS} from "../../contracts/src/index";
 
@@ -18,20 +18,25 @@ export interface ChatRuntimeBoundary{
   };
 }
 
-export type ChatSessionStatus="idle"|"streaming"|"interrupted"|"completed"|"error";
+export type ChatSessionStatus="idle"|"streaming"|"awaiting-life"|"interrupted"|"completed"|"error";
 
+export type LifeTurnStatus="persisting"|"awaiting"|"completed"|"failed"|"cancelled";
+export interface LifeTurnSnapshot extends MindReactiveTurn{status:LifeTurnStatus;error?:string;}
 export interface ConversationSnapshot{
   conversationId:string;
   characterId:CharacterId;
   messages:readonly ChatMessage[];
   sending:boolean;
   status:ChatSessionStatus;
+  lifeTurn?:LifeTurnSnapshot;
   error?:string;
   errorCode?:ChatErrorCode;
 }
 
 export type ChatActionResult=
   | {status:"sent";response:ChatResponse}
+  | {status:"awaiting-life";turn:MindReactiveTurn}
+  | {status:"life-failed";turn:MindReactiveTurn;message:string}
   | {status:"interrupted";message:ChatMessage}
   | {status:"rejected";reason:"empty"|"busy"|"no-continuation"|"no-regeneration"|"no-retry"}
   | {status:"error";code:ChatErrorCode;message:string};
@@ -183,6 +188,7 @@ export class ChatSessionController{
   private activeRun?:ActiveRun;
   private runSequence=0;
   private publishingExpression=false;
+  private lifeTurn:LifeTurnSnapshot|undefined;
   private readonly expressionPublications=new Map<string,Promise<MindExpressionPublishResult>>();
 
   constructor(
@@ -219,6 +225,7 @@ export class ChatSessionController{
       messages:this.session.getMessages(),
       sending:this.sending,
       status:this.status,
+      ...(this.lifeTurn?{lifeTurn:{...this.lifeTurn}}:{}),
       ...(this.error?{error:this.error}:{}),
       ...(this.errorCode?{errorCode:this.errorCode}: {})
     };
@@ -227,56 +234,131 @@ export class ChatSessionController{
     this.listeners.add(listener);
     return ()=>{this.listeners.delete(listener)};
   }
-  isBusy():boolean{return this.sending||this.publishingExpression;}
+  isBusy():boolean{return this.sending||this.publishingExpression||Boolean(this.lifeTurn&&["persisting","awaiting","failed","cancelled"].includes(this.lifeTurn.status));}
 
   publishExpression(
     expression:MindExpressionPublication,
-    persist:(snapshot:ConversationSnapshot)=>Promise<void>
+    persist:(snapshot:ConversationSnapshot,rollback?:boolean)=>Promise<void>
   ):Promise<MindExpressionPublishResult>{
     if(expression.signal?.aborted)return Promise.resolve({status:"suppressed",reason:"cancelled"});
-    if(expression.characterId!==this.session.characterId||expression.conversationId!==this.session.conversationId){
-      return Promise.resolve({status:"suppressed",reason:"wrong-conversation"});
-    }
+    if(expression.characterId!==this.session.characterId||expression.conversationId!==this.session.conversationId)return Promise.resolve({status:"suppressed",reason:"wrong-conversation"});
     const content=typeof expression.content==="string"?expression.content.trim():"";
-    if(!expression.expressionId.trim()||!content||content.length>2000){
-      return Promise.resolve({status:"suppressed",reason:"invalid-expression"});
-    }
+    if(typeof expression.expressionId!=="string"||!expression.expressionId.trim()||!content||content.length>2000)return Promise.resolve({status:"suppressed",reason:"invalid-expression"});
     const existing=this.session.getMessages().find(message=>message.role==="assistant"&&message.metadata?.source==="nova-life"&&message.metadata?.expressionId===expression.expressionId);
     if(existing?.id)return Promise.resolve({status:"published",messageId:existing.id,conversationId:this.session.conversationId});
     const pending=this.expressionPublications.get(expression.expressionId);
     if(pending)return pending;
-    if(this.isBusy())return Promise.resolve({status:"suppressed",reason:"chat-busy"});
+    const reactive=expression.intent==="reactive";
+    const turn=this.lifeTurn;
+    if(reactive){
+      if(!turn||turn.status!=="awaiting"||turn.characterId!==expression.characterId||turn.conversationId!==expression.conversationId||turn.userMessageId!==expression.userMessageId||turn.turnId!==expression.turnId)return Promise.resolve({status:"suppressed",reason:"wrong-conversation"});
+      const messages=this.session.getMessages();
+      const userIndex=messages.findIndex(message=>message.id===turn.userMessageId&&message.role==="user");
+      const latestUser=[...messages].reverse().find(message=>message.role==="user");
+      if(userIndex<0||latestUser?.id!==turn.userMessageId||messages.slice(userIndex+1).some(message=>message.role==="assistant"))return Promise.resolve({status:"suppressed",reason:"stale-context"});
+    }
+    if(this.sending||this.publishingExpression||(!reactive&&this.isBusy()))return Promise.resolve({status:"suppressed",reason:"chat-busy"});
     this.publishingExpression=true;
     const messageId="nova-life:"+expression.expressionId;
+    const before=this.getSnapshot();
     const operation=Promise.resolve().then(async():Promise<MindExpressionPublishResult>=>{
       try{
         if(expression.signal?.aborted)return {status:"suppressed",reason:"cancelled"};
-        const collision=this.session.getMessages().find(message=>message.id===messageId);
-        if(collision)return {status:"suppressed",reason:"wrong-conversation"};
-        const message:ChatMessage={id:messageId,role:"assistant",content,metadata:{streamStatus:"complete",source:"nova-life",expressionId:expression.expressionId}};
-        this.session.addMessage(message);
-        this.status="completed";
-        this.error=undefined;this.errorCode=undefined;
-        this.notify();
-        try{
-          await persist(this.getSnapshot());
-          return {status:"published",messageId,conversationId:this.session.conversationId};
-        }catch{
-          this.session.removeMessage(messageId);
-          this.recomputeStatus();
+        if(this.session.getMessages().some(message=>message.id===messageId))return {status:"suppressed",reason:"wrong-conversation"};
+        if(reactive&&(!this.lifeTurn||this.lifeTurn.status!=="awaiting"||this.lifeTurn.turnId!==turn!.turnId||this.lifeTurn.userMessageId!==turn!.userMessageId))return {status:"suppressed",reason:"stale-context"};
+        const message:ChatMessage={id:messageId,role:"assistant",content,metadata:{streamStatus:"complete",source:"nova-life",expressionId:expression.expressionId,...(reactive?{turnId:turn!.turnId,userMessageId:turn!.userMessageId}:{})}};
+        const candidate:ConversationSnapshot={...before,messages:[...before.messages,message],status:"completed"};
+        try{await persist(candidate);}
+        catch{
+          if(reactive)this.failLifeTurn(turn!.userMessageId,"publication-failed");
           return {status:"failed",reason:"publication-failed",errorCode:"PERSIST_FAILED"};
         }
-      }finally{
-        this.publishingExpression=false;
+        const stillCurrent=(!expression.signal||!expression.signal.aborted)&&this.session.characterId===expression.characterId&&this.session.conversationId===expression.conversationId&&
+          (!reactive||(this.lifeTurn?.status==="awaiting"&&this.lifeTurn.turnId===turn!.turnId&&this.lifeTurn.userMessageId===turn!.userMessageId));
+        if(!stillCurrent){
+          try{await persist(before,true);}catch{/* Best-effort rollback; an unconfirmed delivery is never added to the active session. */}
+          if(reactive)this.failLifeTurn(turn!.userMessageId,"cancelled");
+          return {status:"suppressed",reason:expression.signal?.aborted?"cancelled":"stale-context"};
+        }
+        this.session.addMessage(message);
+        this.status="completed";this.error=undefined;this.errorCode=undefined;
+        if(reactive&&this.lifeTurn){const completed={...this.lifeTurn,status:"completed"} as LifeTurnSnapshot;delete completed.error;this.lifeTurn=completed;}
         this.notify();
-      }
+        if(reactive&&this.memoryExtractor&&(this.memoryExtractionEnabled?.()??true)){
+          const messages=this.session.getMessages();
+          const userIndex=messages.findIndex(item=>item.id===turn!.userMessageId&&item.role==="user");
+          const userMessage=messages[userIndex];
+          if(userMessage){
+            const providerPresetId=expression.providerPresetId??this.modelProfile?.providerPresetId??this.runtime.getActiveProviderPresetId?.();
+            const extractionRequest:MemoryExtractionRequest={
+              apiVersion:"1",schemaVersion:"1",characterId:this.session.characterId,conversationId:this.session.conversationId,turnId:turn!.turnId,
+              model:expression.model??this.modelProfile?.model??"",
+              ...(expression.providerId?{providerId:expression.providerId}:{}),...(providerPresetId?{providerPresetId}:{}),
+              userMessage:cloneMessage(userMessage),assistantMessage:cloneMessage(message),
+              contextMessages:messages.slice(0,userIndex+1).filter(item=>item.metadata?.contextSource===undefined||item.metadata?.contextSource==="conversation").slice(-(this.recentConversationMessagesProvider?.()??8)).map(cloneMessage)
+            };
+            void Promise.resolve().then(()=>this.memoryExtractor!.extract(extractionRequest)).catch(()=>undefined);
+          }
+        }
+        return {status:"published",messageId,conversationId:this.session.conversationId};
+      }finally{this.publishingExpression=false;this.notify();}
     });
     this.expressionPublications.set(expression.expressionId,operation);
-    return operation.finally(()=>{
-      if(this.expressionPublications.get(expression.expressionId)===operation)this.expressionPublications.delete(expression.expressionId);
-    });
+    return operation.finally(()=>{if(this.expressionPublications.get(expression.expressionId)===operation)this.expressionPublications.delete(expression.expressionId);});
   }
 
+  async submitToLife(content:string,persist:(snapshot:ConversationSnapshot)=>Promise<void>,wake:(turn:MindReactiveTurn)=>boolean|void):Promise<ChatSubmitResult>{
+    const text=content.trim();
+    if(!text)return {status:"rejected",reason:"empty"};
+    if(this.isBusy())return {status:"rejected",reason:"busy"};
+    const requestId=this.requestIdFactory();
+    const turn:MindReactiveTurn={characterId:this.session.characterId,conversationId:this.session.conversationId,userMessageId:requestId+":user",turnId:requestId};
+    this.session.addMessage({id:turn.userMessageId,role:"user",content:text});
+    this.lifeTurn={...turn,status:"persisting"};
+    this.status="awaiting-life";this.error=undefined;this.errorCode=undefined;this.notify();
+    try{await persist(this.getSnapshot());}
+    catch(error){
+      this.session.removeMessage(turn.userMessageId);this.lifeTurn=undefined;this.recomputeStatus();
+      const normalized=userMessageForError(error);
+      this.status="error";this.error=normalized.message;this.errorCode=normalized.code;this.notify();throw error;
+    }
+    if(this.lifeTurn?.turnId!==turn.turnId)return {status:"life-failed",turn,message:this.lifeTurn?.error??"Nova Life could not complete this reply. Retry Nova Life."};
+    this.lifeTurn={...turn,status:"awaiting"};this.notify();
+    let accepted=false;try{accepted=wake(turn)!==false;}catch{/* The explicit Life retry path handles rejected wakes. */}
+    if(!accepted){
+      this.failLifeTurn(turn.userMessageId,"life-unavailable");
+      return {status:"life-failed",turn,message:this.lifeTurn?.error??"Nova Life is not available. Turn Life on and retry this reply."};
+    }
+    return {status:"awaiting-life",turn};
+  }
+
+  retryLife(wake:(turn:MindReactiveTurn)=>boolean|void):ChatSubmitResult{
+    const turn=this.lifeTurn;
+    if(this.sending||this.publishingExpression||!turn||!(turn.status==="failed"||turn.status==="cancelled"))return {status:"rejected",reason:"busy"};
+    const messages=this.session.getMessages(),userIndex=messages.findIndex(message=>message.id===turn.userMessageId&&message.role==="user");
+    const latestUser=[...messages].reverse().find(message=>message.role==="user");
+    if(userIndex<0||latestUser?.id!==turn.userMessageId||messages.slice(userIndex+1).some(message=>message.role==="assistant")){
+      this.failLifeTurn(turn.userMessageId,"stale-context");
+      return {status:"life-failed",turn,message:"The pending user turn is no longer the latest unanswered message."};
+    }
+    const retrying={...turn,status:"awaiting"} as LifeTurnSnapshot;delete retrying.error;
+    this.lifeTurn=retrying;this.status="awaiting-life";this.error=undefined;this.errorCode=undefined;this.notify();
+    let accepted=false;try{accepted=wake({...turn})!==false;}catch{/* Keep the explicit Life failure visible. */}
+    if(!accepted){
+      this.failLifeTurn(turn.userMessageId,"life-unavailable");
+      return {status:"life-failed",turn,message:this.lifeTurn?.error??"Nova Life is not available. Turn Life on and retry this reply."};
+    }
+    return {status:"awaiting-life",turn};
+  }
+
+  failLifeTurn(userMessageId:string,reason:string):boolean{
+    const current=this.lifeTurn;
+    if(!current||current.userMessageId!==userMessageId||!(current.status==="persisting"||current.status==="awaiting"))return false;
+    const cancelled=/cancel|superseded|stale-context|character-change|life-off/i.test(reason);
+    const message=cancelled?"Nova Life response was cancelled. Retry Nova Life.":"Nova Life could not complete this reply. Retry Nova Life.";
+    this.lifeTurn={...current,status:cancelled?"cancelled":"failed",error:message};
+    this.status="error";this.error=message;this.errorCode="PROVIDER_ERROR";this.notify();return true;
+  }
   clear():void{
     if(this.isBusy())return;
     this.session.clear();
@@ -313,6 +395,7 @@ export class ChatSessionController{
     const text=content.trim();
     if(!text)return {status:"rejected",reason:"empty"};
     if(this.isBusy())return {status:"rejected",reason:"busy"};
+    if(this.lifeTurn?.status==="completed")this.lifeTurn=undefined;
     const requestId=this.requestIdFactory();
     const userMessage:ChatMessage={id:requestId+":user",role:"user",content:text};
     this.session.addMessage(userMessage);

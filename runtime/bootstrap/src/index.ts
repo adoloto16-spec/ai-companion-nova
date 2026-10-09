@@ -1,6 +1,6 @@
 import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatRequestOptions,ChatResponse,CredentialStore,ProviderConfiguration,ProviderPreset,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryArchiveReason,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,MemorySemanticIndexStore,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider} from "../../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
-import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore,MindExpressionPublisher} from "../../../contracts/src/index";
+import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore,MindExpressionPublisher,MindReactiveTurn} from "../../../contracts/src/index";
 import type {Conversation,ConversationCreateInput,ConversationId,ConversationStore,ConversationUpdateInput} from "../../../contracts/src/index";
 import {
   AiRuntime,AutomaticMemoryAgent,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,MemorySemanticDeduplicator,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,MindRuntime,LLMCognitiveStep,
@@ -74,6 +74,7 @@ export interface FoundationRuntime{
   getMindState():import("../../../contracts/src/index").MindState;
   setMindExpressionPublisher(publisher:MindExpressionPublisher|undefined):void;
   wakeMind():void;
+  wakeMindForUserMessage(turn:MindReactiveTurn):boolean;
   subscribeMindState(listener:(state:import("../../../contracts/src/index").MindState)=>void):import("../../../contracts/src/index").Unsubscribe;
   subscribeThoughts(listener:(thought:import("../../../contracts/src/index").Thought)=>void):import("../../../contracts/src/index").Unsubscribe;
   deleteThought(thoughtId:string):boolean;
@@ -621,6 +622,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     getMindState:()=>mindRuntime.getState(),
     setMindExpressionPublisher:publisher=>mindRuntime.setExpressionPublisher(publisher),
     wakeMind:()=>mindRuntime.wake("user-message"),
+    wakeMindForUserMessage:turn=>mindRuntime.wakeForUserMessage(turn),
     subscribeMindState:listener=>mindRuntime.subscribe(listener),
     subscribeThoughts:listener=>mindRuntime.subscribeThoughts(listener),
     deleteThought:thoughtId=>mindRuntime.deleteThought(thoughtId),
