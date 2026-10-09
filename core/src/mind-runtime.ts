@@ -340,7 +340,7 @@ export class MindRuntime{
       applied=this.errorBackoffMs();decision="error-backoff";nextDelay=applied;nextReason="error-backoff";
       const errorCode=cancellation==="timeout"?"STEP_TIMEOUT":error instanceof Error?error.name:"COGNITIVE_STEP_FAILED";
       this.safeOnError(error);
-      finishTrace("error",{errorCode,intervalDecision:decision});
+      finishTrace("error",{...expressionTrace,errorCode,intervalDecision:decision});
     }finally{
       if(timeout!==undefined)clearTimeout(timeout);
       this.stepController=undefined;this.cancelActiveStep=undefined;this.stepActive=false;
