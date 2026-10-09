@@ -945,19 +945,22 @@ function ProviderPresetsView({
     setBusy(true);setMessage("");
     try{
       if(!draft.name.trim())throw new Error("Provider preset name is required.");
-      if(draft.sources.length===0)throw new Error("Provider preset must contain at least one source.");
       validateProviderPresetCredentialReferences(draft,credentialProfiles);
-      const sources=draft.sources.map(source=>({
-        ...source,
-        credentialReference:source.credentialReference?{...source.credentialReference}:null
-      }));
-      const next:ProviderPreset={
-        ...draft,
-        name:draft.name.trim(),
-        sources,
-        activeSourceId:draft.activeSourceId&&sources.some(source=>source.id===draft.activeSourceId)?draft.activeSourceId:sources[0]!.id,
-        updatedAt:new Date().toISOString()
-      };
+      let next:ProviderPreset;
+      if(draft.type==="single"){
+        if(draft.sources.length!==0||draft.activeSourceId!==null)throw new Error("Single presets must not contain pool sources.");
+        if(draft.providerId!=="openai-compatible"&&draft.providerId!=="gemini")throw new Error("Choose a supported provider.");
+        if(!draft.baseUrl?.trim()||!draft.model?.trim())throw new Error("Base URL and model are required for a single preset.");
+        if(!draft.credentialReference)throw new Error("Select or create a saved API credential.");
+        const url=new URL(draft.baseUrl);
+        if((url.protocol!=="https:"&&url.protocol!=="http:")||url.username||url.password||url.search||url.hash)throw new Error("Base URL must use HTTP(S) and must not contain credentials, query, or fragment.");
+        next={...draft,name:draft.name.trim(),type:"single",sources:[],activeSourceId:null,providerId:draft.providerId,baseUrl:url.toString().replace(/\/$/,""),model:draft.model.trim(),credentialReference:{...draft.credentialReference},enabled:draft.enabled??true,timeoutMs:draft.timeoutMs??30000,updatedAt:new Date().toISOString()};
+      }else{
+        if(draft.sources.length===0)throw new Error("Pool presets must contain at least one source.");
+        const sources=draft.sources.map(source=>({...source,credentialReference:source.credentialReference?{...source.credentialReference}:null}));
+        const {providerId:_providerId,baseUrl:_baseUrl,model:_model,credentialReference:_credentialReference,enabled:_enabled,timeoutMs:_timeoutMs,...poolFields}=draft;
+        next={...poolFields,name:draft.name.trim(),type:"pool",sources,activeSourceId:draft.activeSourceId&&sources.some(source=>source.id===draft.activeSourceId)?draft.activeSourceId:sources[0]!.id,updatedAt:new Date().toISOString()};
+      }
       await onSavePreset(next,activate);
       setDraft(next);setSelectedId(next.id);setDirty(false);
       setMessage(activate?"Provider preset saved and activated.":"Provider preset saved.");
@@ -969,13 +972,18 @@ function ProviderPresetsView({
     setBusy(true);setMessage("");
     try{
       if(!draft.name.trim())throw new Error("Provider preset name is required.");
-      if(draft.sources.length===0)throw new Error("Provider preset must contain at least one source.");
-      validateProviderPresetCredentialReferences(draft,credentialProfiles);
+      await validateProviderPresetCredentialReferences(draft,credentialProfiles);
+      if(draft.type==="single"){
+        if(draft.sources.length!==0||draft.activeSourceId!==null||!draft.providerId||!draft.baseUrl?.trim()||!draft.model?.trim()||!draft.credentialReference)throw new Error("Single preset requires one complete API configuration and a saved credential reference.");
+        const url=new URL(draft.baseUrl);
+        if((url.protocol!=="https:"&&url.protocol!=="http:")||url.username||url.password||url.search||url.hash)throw new Error("Base URL must use HTTP(S) and must not contain credentials, query, or fragment.");
+      }else if(draft.sources.length===0)throw new Error("Pool presets must contain at least one source.");
       const now=new Date().toISOString();
       const newId="provider-preset:"+(draft.name.trim()||"preset").toLowerCase().replace(/[^a-z0-9]+/g,"-")+":"+Date.now();
-      const next=cloneProviderPresetForSaveAsNew(draft,newId,now);
+      let next=cloneProviderPresetForSaveAsNew(draft,newId,now);
+      next={...next,name:draft.name.trim(),type:draft.type??"pool"};
       await onSavePreset(next,false);
-      setDraft(next);setSelectedId(next.id);setSelectedSourceId(current=>next.sources.some(source=>source.id===current)?current:next.activeSourceId??next.sources[0]?.id);setDirty(false);
+      setDraft(next);setSelectedId(next.id);setSelectedSourceId(next.type==="single"?undefined:next.sources.some(source=>source.id===selectedSourceId)?selectedSourceId:next.activeSourceId??next.sources[0]?.id);setDirty(false);
       setMessage("Provider preset saved as new preset.");
     }catch(error){setMessage("Provider preset could not be saved: "+safeErrorMessage(error))}
     finally{setBusy(false)}
