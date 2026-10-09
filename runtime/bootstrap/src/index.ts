@@ -347,6 +347,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       getChatModel:()=>activeProviderId(providerConfiguration)==="openai-compatible"&&providerConfiguration?providerConfiguration.model:"fake-chat",
       getChatModelForPreset,
       getCognitiveSchedule:()=>settingsManager.get().cognitiveSchedule,
+      getOutputMode:()=>settingsManager.get().chat.responseMode,
       getAvailableTools:()=>tools.list().map(tool=>({name:tool.name,description:tool.description,parameters:tool.parameters})),
       clock:()=>new Date().toISOString()
     }),
