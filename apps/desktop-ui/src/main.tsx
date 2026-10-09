@@ -7,7 +7,7 @@ import {startFoundationRuntime,testProviderPresetConfiguration,listProviderModel
 import type {FoundationRuntime} from "../../../runtime/bootstrap/src/index";
 import {IpcCredentialStore,InMemoryCredentialStore} from "../../../host/credentials/src/index";
 import {IpcCredentialProfileStore,InMemoryCredentialProfileStore,emptyCredentialProfileState} from "../../../host/credential-profiles/src/index";
-import {IpcProviderPresetStore,InMemoryProviderPresetStore,materializeProviderConfiguration,migrateProviderConfiguration,emptyProviderPresetState,cloneProviderPresetForSaveAsNew,validateProviderPresetCredentialReferences} from "../../../host/provider-presets/src/index";
+import {IpcProviderPresetStore,InMemoryProviderPresetStore,materializeProviderConfiguration,materializeSingleProviderConfiguration,migrateProviderConfiguration,emptyProviderPresetState,cloneProviderPresetForSaveAsNew,validateProviderPresetCredentialReferences} from "../../../host/provider-presets/src/index";
 import {IpcProviderConfigurationStore,loadProviderConfigurationSafely} from "../../../host/config/src/index";
 import {IpcCharacterStore} from "../../../host/characters/src/index";
 import {IpcCoreBookStore,InMemoryCoreBookStore} from "../../../host/core-book/src/index";
@@ -1923,6 +1923,10 @@ function materializePresetConfigurations(
   presets:readonly ProviderPreset[]
 ):readonly {presetId:string;configuration:ProviderConfiguration}[]{
   return presets.flatMap(preset=>{
+    if(preset.type==="single"){
+      const configuration=materializeSingleProviderConfiguration(preset);
+      return configuration?[{presetId:preset.id,configuration}]:[];
+    }
     const source=preset.sources.find(candidate=>candidate.id===preset.activeSourceId)??preset.sources[0];
     return source?[{presetId:preset.id,configuration:materializeProviderConfiguration(source)}]:[];
   });
@@ -2306,8 +2310,10 @@ function App(){
           try{savedMap[profile.id]=await credentialStore.exists(profile.credentialReference)}catch{savedMap[profile.id]=false;}
         }
         const activePreset=presetState.activePresetId?presetState.presets.find(preset=>preset.id===presetState.activePresetId):undefined;
-        const activeSource=activePreset?.sources.find(source=>source.id===activePreset.activeSourceId)??activePreset?.sources[0];
-        const activeConfiguration=activeSource?materializeProviderConfiguration(activeSource):undefined;
+        const activeSource=activePreset?.type==="single"?undefined:activePreset?.sources.find(source=>source.id===activePreset.activeSourceId)??activePreset?.sources[0];
+        const activeConfiguration=activePreset?.type==="single"
+          ?materializeSingleProviderConfiguration(activePreset)
+          :activeSource?materializeProviderConfiguration(activeSource):undefined;
         setCredentialProfiles(credentialState.profiles);
         setCredentialSavedMap(savedMap);
         setProviderPresets(presetState.presets);
@@ -2444,7 +2450,11 @@ function App(){
     if(before?.id===id||before?.id!==nextActive.id)setChatController(loaded.controller);
   },[activeCharacter,chatController,loadActiveConversation,modelProfileStore]);
 
-  const activeSourceForPreset=(preset:ProviderPreset):ProviderPresetSource|undefined=>preset.sources.find(source=>source.id===preset.activeSourceId)??preset.sources[0];
+  const configurationForPreset=(preset:ProviderPreset):ProviderConfiguration|undefined=>{
+    if(preset.type==="single")return materializeSingleProviderConfiguration(preset);
+    const source=preset.sources.find(item=>item.id===preset.activeSourceId)??preset.sources[0];
+    return source?materializeProviderConfiguration(source):undefined;
+  };
 
   const saveProviderPreset=React.useCallback(async(preset:ProviderPreset,activate:boolean)=>{
     const current=providerPresetStateRef.current;
@@ -2460,8 +2470,7 @@ function App(){
     setProviderPresets(nextState.presets);
     setActivePresetId(nextState.activePresetId);
     if(activate||current.activePresetId===preset.id){
-      const source=activeSourceForPreset(preset);
-      await refreshRuntime(source?materializeProviderConfiguration(source):undefined,undefined,nextState,credentialProfileStateRef.current);
+      await refreshRuntime(configurationForPreset(preset),undefined,nextState,credentialProfileStateRef.current);
     }
   },[providerPresetStore,refreshRuntime]);
 
@@ -2488,8 +2497,7 @@ function App(){
     setActivePresetId(nextActive);
     if(nextActive){
       const preset=remaining.find(item=>item.id===nextActive)!;
-      const source=activeSourceForPreset(preset);
-      await refreshRuntime(source?materializeProviderConfiguration(source):undefined,undefined,nextState,credentialProfileStateRef.current);
+      await refreshRuntime(configurationForPreset(preset),undefined,nextState,credentialProfileStateRef.current);
     }else{
       await refreshRuntime(undefined,undefined,nextState,credentialProfileStateRef.current);
     }
@@ -2520,7 +2528,7 @@ function App(){
   const deleteCredentialProfile=React.useCallback(async(id:string)=>{
     const profile=credentialProfileStateRef.current.profiles.find(item=>item.id===id);
     const referenceId=profile?.credentialReference.id;
-    if(referenceId&&providerPresetStateRef.current.presets.some(preset=>preset.sources.some(source=>source.credentialReference?.id===referenceId))){
+    if(referenceId&&providerPresetStateRef.current.presets.some(preset=>preset.type==="single"?preset.credentialReference?.id===referenceId:preset.sources.some(source=>source.credentialReference?.id===referenceId))){
       throw new Error("Credential is still used by a provider preset source.");
     }
     if(profile)await credentialStore.deleteSecret(profile.credentialReference);
@@ -2532,19 +2540,23 @@ function App(){
   },[credentialProfileStore,credentialStore]);
 
   const refreshPresetModels=React.useCallback(async(preset:ProviderPreset,sourceId:string):Promise<readonly ModelInfo[]>=>{
-    const source=preset.sources.find(item=>item.id===sourceId);
-    if(!source)throw new Error("Provider source was not found.");
-    return listProviderModels(materializeProviderConfiguration(source),credentialStore);
+    const config=preset.type==="single"
+      ?materializeSingleProviderConfiguration(preset)
+      :(()=>{const source=preset.sources.find(item=>item.id===sourceId);return source?materializeProviderConfiguration(source):undefined;})();
+    if(!config)throw new Error(preset.type==="single"?"Single provider preset configuration is incomplete.":"Provider source was not found.");
+    return listProviderModels(config,credentialStore);
   },[credentialStore]);
 
   const testPreset=React.useCallback(async(preset:ProviderPreset,sourceId:string):Promise<ProviderConnectionTestResult>=>{
-    const source=preset.sources.find(item=>item.id===sourceId);
-    if(!source)throw new Error("Provider source was not found.");
-    let config=materializeProviderConfiguration(source);
+    const source=preset.type==="single"?undefined:preset.sources.find(item=>item.id===sourceId);
+    let config=preset.type==="single"
+      ?materializeSingleProviderConfiguration(preset)
+      :source?materializeProviderConfiguration(source):undefined;
+    if(!config)throw new Error(preset.type==="single"?"Single provider preset configuration is incomplete.":"Provider source was not found.");
     if(!config.model){
       const models=await listProviderModels(config,credentialStore);
       const first=models[0]?.id;
-      if(!first)return {apiVersion:"1",schemaVersion:"1",status:"configuration_error",providerId:source.providerId,message:"Model discovery is unavailable; choose a model manually."};
+      if(!first)return {apiVersion:"1",schemaVersion:"1",status:"configuration_error",providerId:config.providerId,message:"Model discovery is unavailable; choose a model manually."};
       config={...config,model:first,enabled:true};
     }
     return testProviderPresetConfiguration(config,credentialStore);
