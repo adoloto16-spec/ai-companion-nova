@@ -474,6 +474,15 @@ fn single_preset(id:&str)->ProviderPreset{ProviderPreset{id:id.to_string(),name:
  assert_eq!(saved["presets"][0]["type"],"pool");
  fs::remove_dir_all(path.parent().unwrap()).unwrap();
 }
+#[test]fn validates_single_credential_reference_against_saved_profile(){
+ let mut s=state();s.presets=vec![single_preset("single-a")];s.active_preset_id=Some("single-a".to_string());
+ let mut credentials=credential_state();
+ credentials.profiles[0].credential_reference.id="single-credential".to_string();
+ assert!(validate_credential_links(&s,Some(&credentials)).is_ok());
+ credentials.profiles[0].provider_id="gemini".to_string();
+ assert!(validate_credential_links(&s,Some(&credentials)).is_err());
+ assert!(validate_credential_links(&s,None).is_err());
+}
 #[test]fn accepts_valid_single_api_configuration(){
  let mut s=state();s.presets=vec![single_preset("single-a")];s.active_preset_id=Some("single-a".to_string());
  assert!(validate_state(&s).is_ok());
