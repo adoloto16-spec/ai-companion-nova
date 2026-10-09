@@ -107,7 +107,7 @@ export class LLMCognitiveStep implements CognitiveStep {
       return copy;
     });
     if(reactiveUserMessage&&!messages.some(message=>message.id===reactiveUserMessage!.id)){
-      const copy=cloneMessage(reactiveUserMessage);copy.content=escapeUntrustedUserText(copy.content);messages.push(copy);
+      const copy=cloneMessage(reactiveUserMessage);if(outputMode==="structured")copy.content=escapeUntrustedUserText(copy.content);messages.push(copy);
     }
     const cue=outputMode==="structured"
       ?(context.userTurn?REACTIVE_CUE:BACKGROUND_CUE)
@@ -128,7 +128,7 @@ export class LLMCognitiveStep implements CognitiveStep {
       apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION,requestId:request,model,
       context:{conversationId:conversation.id,messages:contextMessages},
       generation:{maxTokens:1800,responseFormat:{type:"text"}},
-      metadata:{cognition:true,protocol:"NOVA_TURN",protocolVersion:1,outputMode},
+      metadata:{cognition:true,protocol:outputMode==="structured"?"NOVA_TURN":"PLAIN_TEXT",protocolVersion:1,outputMode},
     };
     const response=await this.options.runtime.chat(chatRequest,providerPresetId,{signal:context.signal});
     throwIfAborted(context.signal);
