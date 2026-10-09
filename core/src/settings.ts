@@ -5,7 +5,6 @@ function cloneSettings(settings:AppSettings):AppSettings{
   return {
     ...settings,
     cognitiveSchedule:{...settings.cognitiveSchedule},
-    proactiveChat:{...settings.proactiveChat},
     chat:{...settings.chat},
     context:{...settings.context},
     memory:{...settings.memory},

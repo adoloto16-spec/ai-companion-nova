@@ -347,10 +347,10 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       getChatModel:()=>activeProviderId(providerConfiguration)==="openai-compatible"&&providerConfiguration?providerConfiguration.model:"fake-chat",
       getChatModelForPreset,
       getCognitiveSchedule:()=>settingsManager.get().cognitiveSchedule,
+      getAvailableTools:()=>tools.list().map(tool=>({name:tool.name,description:tool.description,parameters:tool.parameters})),
       clock:()=>new Date().toISOString()
     }),
     schedule:settingsManager.get().cognitiveSchedule,
-    getAvailableTools:()=>tools.list().map(tool=>({name:tool.name,description:tool.description,parameters:tool.parameters})),
     onError:error=>{
       const chatError=error&&typeof error==="object"&&"chatError" in error
         ?(error as {chatError?:{requestId?:unknown;code?:unknown;message?:unknown;providerId?:unknown;details?:Record<string,unknown>}}).chatError
