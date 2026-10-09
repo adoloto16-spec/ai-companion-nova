@@ -24,6 +24,7 @@ import {
   type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo, type MindState, type MindTurnSink, type MindReactiveTurn
 } from "../../../contracts/src/index";
 import {countVisibleSpeechMessages,shouldRenderNovaTurn} from "./nova-turn-visibility";
+import {chatDraftKey,readChatDraft,writeChatDraft,clearSubmittedChatDraft} from "./chat-drafts";
 import "./styles.css";
 
 const preview:RuntimeDiagnostics={schemaVersion:"1",timestamp:new Date().toISOString(),runtimeStatus:"stopped",coreStatus:"stopped",modules:[],providers:[],recentErrors:[],capabilities:[]};
@@ -2700,7 +2701,7 @@ function App(){
   },[]);
 
   const activeChatDraftKey=activeCharacter&&activeConversation
-    ?JSON.stringify([activeCharacter.id,activeConversation.id])
+    ?chatDraftKey(activeCharacter.id,activeConversation.id)
     :undefined;
 
   return <main className="app-shell">
@@ -2759,9 +2760,9 @@ function App(){
       :view==="chat"&&activeCharacter&&chatController&&activeConversation
       ?<ChatView key={activeChatDraftKey} controller={chatController} runtime={foundationRef.current!} character={activeCharacter}
           conversations={conversations} activeConversation={activeConversation}
-          input={activeChatDraftKey?chatDrafts[activeChatDraftKey]??"":""}
-          onDraftChange={value=>{if(activeChatDraftKey)setChatDrafts(current=>({...current,[activeChatDraftKey]:value}));}}
-          onClearSubmittedDraft={submitted=>{if(activeChatDraftKey)setChatDrafts(current=>current[activeChatDraftKey]===submitted?({...current,[activeChatDraftKey]:""}):current);}}
+          input={activeChatDraftKey?readChatDraft(chatDrafts,activeChatDraftKey):""}
+          onDraftChange={value=>{if(activeChatDraftKey)setChatDrafts(current=>writeChatDraft(current,activeChatDraftKey,value));}}
+          onClearSubmittedDraft={submitted=>{if(activeChatDraftKey)setChatDrafts(current=>clearSubmittedChatDraft(current,activeChatDraftKey,submitted));}}
           onPersist={()=>persistConversation(chatController!)}
           onClear={()=>clearConversation(chatController!)}
           onSelectConversation={selectConversation}
