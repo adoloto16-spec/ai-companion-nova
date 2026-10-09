@@ -18,8 +18,14 @@ pub struct ProviderConfiguration{
     pub model:String,
     #[serde(rename="credentialReference")]
     pub credential_reference:Option<super::windows_credentials::CredentialReference>,
-    #[serde(rename="timeoutMs")]
+    #[serde(rename="timeoutMs",default)]
     pub timeout_ms:Option<f64>,
+    #[serde(rename="numCtx",default,skip_serializing_if="Option::is_none")]
+    pub num_ctx:Option<u32>,
+    #[serde(rename="numPredict",default,skip_serializing_if="Option::is_none")]
+    pub num_predict:Option<u32>,
+    #[serde(rename="keepAlive",default,skip_serializing_if="Option::is_none")]
+    pub keep_alive:Option<Value>,
 }
 
 fn config_dir(app:&tauri::AppHandle)->Result<PathBuf,String>{
@@ -49,20 +55,41 @@ fn decode_provider_configuration(bytes:&[u8])->Result<(ProviderConfiguration,boo
 
 fn validate(configuration:&ProviderConfiguration)->Result<(),String>{
     if configuration.api_version!="1"||configuration.schema_version!="1"{return Err("unsupported provider configuration version".to_string());}
-    if configuration.provider_id!="openai-compatible"{return Err("unsupported provider id".to_string());}
+    if configuration.provider_id!="openai-compatible"&&configuration.provider_id!="ollama"{return Err("unsupported provider id".to_string());}
     if configuration.base_url.trim()!=configuration.base_url{return Err("provider base URL must not have surrounding whitespace".to_string());}
     let url=url::Url::parse(&configuration.base_url).map_err(|_|"provider base URL is invalid".to_string())?;
     if url.scheme()!="http"&&url.scheme()!="https"{return Err("provider base URL must use HTTP or HTTPS".to_string());}
     if !url.username().is_empty()||url.password().is_some(){return Err("provider base URL must not contain credentials".to_string());}
     if url.query().is_some()||url.fragment().is_some(){return Err("provider base URL must not contain query or fragment".to_string());}
+    if configuration.provider_id=="ollama"{
+        let host=url.host_str().ok_or_else(||"Ollama base URL has no host".to_string())?;
+        let host=host.strip_prefix('[').and_then(|value|value.strip_suffix(']')).unwrap_or(host);
+        let loopback=host.eq_ignore_ascii_case("localhost")||host.parse::<std::net::IpAddr>().map(|ip|ip.is_loopback()).unwrap_or(false);
+        if url.scheme()!="http"||!loopback||url.path()!="/"{
+            return Err("Ollama base URL must use HTTP on localhost, 127.0.0.1, or ::1 without an API path".to_string());
+        }
+        if configuration.credential_reference.is_some(){return Err("Ollama configuration must not contain an API credential".to_string());}
+    }
     if configuration.model.trim()!=configuration.model||configuration.model.is_empty(){return Err("provider model must be a non-empty trimmed string".to_string());}
     if let Some(timeout)=configuration.timeout_ms{
         if !timeout.is_finite()||timeout<=0.0{return Err("provider timeout must be finite and positive".to_string());}
     }
     if let Some(reference)=&configuration.credential_reference{
-        if reference.kind!="api-key"||reference.provider.as_deref()!=Some("openai-compatible"){return Err("invalid provider credential reference".to_string());}
+        if configuration.provider_id!="openai-compatible"||reference.kind!="api-key"||reference.provider.as_deref()!=Some("openai-compatible"){return Err("invalid provider credential reference".to_string());}
     }
-    if configuration.enabled&&configuration.credential_reference.is_none(){return Err("enabled provider requires a credential reference".to_string());}
+    if configuration.enabled&&configuration.credential_reference.is_none()&&configuration.provider_id!="ollama"{return Err("enabled provider requires a credential reference".to_string());}
+    if configuration.provider_id!="ollama"&&(configuration.num_ctx.is_some()||configuration.num_predict.is_some()||configuration.keep_alive.is_some()){
+        return Err("Ollama generation settings may only be used with the Ollama provider".to_string());
+    }
+    if configuration.num_ctx==Some(0)||configuration.num_predict==Some(0){return Err("Ollama numCtx and numPredict must be positive integers".to_string());}
+    if let Some(value)=&configuration.keep_alive{
+        let valid=match value{
+            Value::String(duration)=>!duration.trim().is_empty(),
+            Value::Number(number)=>number.as_f64().map(|number|number.is_finite()&&number>=0.0).unwrap_or(false),
+            _=>false
+        };
+        if !valid{return Err("Ollama keepAlive must be a non-empty duration string or a non-negative number".to_string());}
+    }
     Ok(())
 }
 
