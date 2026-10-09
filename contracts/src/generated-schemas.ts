@@ -80,8 +80,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
   },
   "app-settings": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v9",
-    "title": "AI Companion Nova App Settings v9",
+    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v10",
+    "title": "AI Companion Nova App Settings v10",
     "type": "object",
     "additionalProperties": false,
     "required": [
@@ -102,17 +102,25 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         "const": "1"
       },
       "schemaVersion": {
-        "const": "9"
+        "const": "10"
       },
       "chat": {
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "automaticLongTermMemory"
+          "automaticLongTermMemory",
+          "responseMode"
         ],
         "properties": {
           "automaticLongTermMemory": {
             "type": "boolean"
+          },
+          "responseMode": {
+            "type": "string",
+            "enum": [
+              "structured",
+              "plain"
+            ]
           }
         }
       },
