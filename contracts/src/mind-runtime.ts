@@ -53,8 +53,39 @@ export interface Thought{
   expression:ThoughtExpression;
 }
 
+export type MindInitiativeDecision="continue"|"switch"|"pause"|"finish";
+export type MindInitiativeStatus="active"|"paused"|"completed";
+export interface MindInitiativeState{status:MindInitiativeStatus;direction:string|null;lastProgress:string|null;}
+export interface MindInitiativeUpdate{decision:MindInitiativeDecision;focus?:string;direction?:string;progress?:string;}
+
+/** Validate the compact model-authored initiative update; malformed optional updates are ignored. */
+export function validateMindInitiativeUpdate(value:unknown):MindInitiativeUpdate|undefined{
+  if(!value||typeof value!=="object"||Array.isArray(value))return undefined;
+  const record=value as Record<string,unknown>;
+  const keys=Object.keys(record),allowed=new Set(["decision","focus","direction","progress"]);
+  if(keys.some(key=>!allowed.has(key)))return undefined;
+  const decision=record.decision;
+  if(decision!=="continue"&&decision!=="switch"&&decision!=="pause"&&decision!=="finish")return undefined;
+  const hasFocus=Object.prototype.hasOwnProperty.call(record,"focus");
+  let valid=true;
+  const readText=(key:string,maxLength:number):string|undefined=>{
+    if(!Object.prototype.hasOwnProperty.call(record,key))return undefined;
+    const raw=record[key];
+    if(typeof raw!=="string"){valid=false;return undefined;}
+    const text=raw.trim();
+    if(!text||text.length>maxLength){valid=false;return undefined;}
+    return text;
+  };
+  const focus=readText("focus",160);
+  const direction=readText("direction",280);
+  const progress=readText("progress",1000);
+  if(!valid||(decision==="switch"&&!focus)||(decision!=="switch"&&hasFocus))return undefined;
+  return {decision,...(focus?{focus}:{}),...(direction?{direction}:{}),...(progress?{progress}:{})};
+}
+
 export interface MindState{
   focus:string|null;
+  initiative:MindInitiativeState|null;
   lastThought:Thought|null;
   lastThoughtAt:string|null;
   recentThoughts:readonly Thought[];
