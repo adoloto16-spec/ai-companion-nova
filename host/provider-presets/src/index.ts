@@ -67,14 +67,14 @@ export function credentialReferenceForProfile(profile:CredentialProfile|undefine
 }
 
 export function materializeSingleProviderConfiguration(preset:ProviderPreset):ProviderConfiguration|undefined{
-  if(preset.type!=="single"||!preset.providerId||!preset.baseUrl||!preset.model||preset.enabled===undefined||preset.enabled===null||!preset.credentialReference)return undefined;
+  if(preset.type!=="single"||!preset.providerId||!preset.baseUrl||preset.enabled===undefined||preset.enabled===null||!preset.credentialReference)return undefined;
   return {
     apiVersion:"1",
     schemaVersion:"1",
     providerId:preset.providerId,
     enabled:preset.enabled,
     baseUrl:preset.baseUrl,
-    model:preset.model,
+    model:preset.model??"",
     credentialReference:preset.credentialReference?{...preset.credentialReference}:null,
     ...(preset.timeoutMs==null?{}:{timeoutMs:preset.timeoutMs})
   };
