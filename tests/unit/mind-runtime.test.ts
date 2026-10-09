@@ -852,8 +852,12 @@ async function stopRejectsLateThoughtTest(){
   try{
     await runtime.start();await waitFor(()=>started===1);
     await runtime.stop();
+    const startsAfterStop=started;
     release?.(makeThought("character.late","late"));
+    runtime.wake("scheduled");
+    equal(runtime.wakeForUserMessage({characterId:"character.late",conversationId:"conversation.late",userMessageId:"user-after-off",turnId:"turn-after-off"}),false,"Life OFF rejects reactive wake requests");
     await new Promise(resolve=>setTimeout(resolve,15));
+    equal(started,startsAfterStop,"Life OFF prevents later scheduled wakes from starting another cognitive step");
     equal(runtime.getState().lifecycleState,"off","stop leaves Life off");
     equal(runtime.getState().recentThoughts.length,0,"late result after OFF cannot be saved");
     equal(runtime.getState().nextWakeAt,null,"OFF has no pending wake timer");
