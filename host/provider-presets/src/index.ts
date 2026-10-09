@@ -48,13 +48,20 @@ function cloneState(state:ProviderPresetStoreState):ProviderPresetStoreState{
 }
 
 export function migrateProviderPresetStoreState(state:ProviderPresetStoreState):ProviderPresetStoreState{
-  const legacy=state.schemaVersion!=="3";
+  if(state.apiVersion!=="1")throw new Error("Unsupported provider preset API version.");
+  if(state.schemaVersion==="3"){
+    for(const preset of state.presets){
+      if(preset.type!=="pool"&&preset.type!=="single")throw new Error("Provider preset type is required and must be pool or single.");
+    }
+    return cloneState(state);
+  }
+  if(state.schemaVersion!=="2")throw new Error("Unsupported provider preset storage version.");
   return {
     ...state,
     schemaVersion:"3",
     presets:state.presets.map(preset=>clonePreset({
       ...preset,
-      type:legacy&&preset.type===undefined?"pool":preset.type??"pool"
+      type:(preset as ProviderPreset & {type?:string}).type===undefined?"pool":preset.type
     }))
   };
 }
