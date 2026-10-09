@@ -6,12 +6,22 @@ export interface NovaToolCall {
   arguments: Record<string, unknown>;
 }
 
+export interface NovaToolResult {
+  callId: string;
+  name: string;
+  status: "success" | "error" | "unknown-tool";
+  output?: unknown;
+  error?: string;
+}
+
 export interface NovaTurn {
   version: typeof NOVA_TURN_PROTOCOL_VERSION;
   situation: string;
   thoughts: string;
   emotion: string;
   tools: readonly NovaToolCall[];
+  /** Runtime-produced results; model responses may omit the TOOL_RESULTS block. */
+  toolResults: readonly NovaToolResult[];
   speech: string;
   nextWakeMs: number;
 }
@@ -31,6 +41,8 @@ const FIELD_LIMITS = {
   SPEECH: 4_000,
   TOOL_COUNT: 12,
   TOOL_ARGUMENTS: 4_000,
+  TOOL_RESULTS: 12,
+  TOOL_RESULT_CHARS: 4_000,
   NEXT_WAKE_MS: 3_600_000,
 } as const;
 
@@ -66,12 +78,26 @@ export function serializeNovaTurn(turn: NovaTurn): string {
     if (!TOOL_NAME.test(call.name)) throw new Error("Invalid NovaTurn tool name.");
     return "<" + call.name + ">" + escapeXml(JSON.stringify(call.arguments)) + "</" + call.name + ">";
   }).join("\n");
+  const toolResults = (turn.toolResults ?? []).map(result => {
+    const serialized = JSON.stringify({
+      callId: result.callId,
+      name: result.name,
+      status: result.status,
+      ...(result.output === undefined ? {} : { output: result.output }),
+      ...(result.error === undefined ? {} : { error: result.error.slice(0, FIELD_LIMITS.TOOL_RESULT_CHARS) }),
+    });
+    if (!serialized || serialized.length > FIELD_LIMITS.TOOL_RESULT_CHARS) {
+      return "<tool_result>" + escapeXml(JSON.stringify({callId: result.callId, name: result.name, status: "error", error: "result-too-large"})) + "</tool_result>";
+    }
+    return "<tool_result>" + escapeXml(serialized) + "</tool_result>";
+  }).join("\n");
   return [
     '<NOVA_TURN version="1">',
     "<SITUATION>" + escapeXml(turn.situation) + "</SITUATION>",
     "<THOUGHTS>" + escapeXml(turn.thoughts) + "</THOUGHTS>",
     "<EMOTION>" + escapeXml(turn.emotion) + "</EMOTION>",
     "<TOOLS>" + tools + "</TOOLS>",
+    "<TOOL_RESULTS>" + toolResults + "</TOOL_RESULTS>",
     "<SPEECH>" + escapeXml(turn.speech) + "</SPEECH>",
     "<NEXT_WAKE_MS>" + String(turn.nextWakeMs) + "</NEXT_WAKE_MS>",
     "</NOVA_TURN>",
@@ -110,6 +136,7 @@ export function parseNovaTurn(content: string): NovaTurnParseResult {
   const thoughtsField = readSingleTag(body, "THOUGHTS");
   const emotionField = readSingleTag(body, "EMOTION");
   const toolsField = readSingleTag(body, "TOOLS");
+  const toolResultsField = readSingleTag(body, "TOOL_RESULTS");
   const nextWakeField = readSingleTag(body, "NEXT_WAKE_MS");
   for (const field of [situationField, thoughtsField, emotionField, toolsField, nextWakeField]) {
     if (field.diagnostic) diagnostics.push(field.diagnostic);
@@ -151,6 +178,36 @@ export function parseNovaTurn(content: string): NovaTurnParseResult {
     }
   }
 
+  const toolResults: NovaToolResult[] = [];
+  if (toolResultsField.value !== undefined) {
+    const rawResults = [...toolResultsField.value.matchAll(/<tool_result>([\\s\\S]*?)<\\/tool_result>/gi)];
+    if (rawResults.length > FIELD_LIMITS.TOOL_RESULTS) diagnostics.push("TOOL_RESULTS-too-many");
+    const residue = toolResultsField.value.replace(/<tool_result>[\\s\\S]*?<\\/tool_result>/gi, "").trim();
+    if (residue) diagnostics.push("TOOL_RESULTS-malformed-content");
+    for (const match of rawResults.slice(0, FIELD_LIMITS.TOOL_RESULTS)) {
+      const json = unescapeXml(match[1]!).trim();
+      if (json.length > FIELD_LIMITS.TOOL_RESULT_CHARS) {
+        diagnostics.push("tool-result-too-large");
+        continue;
+      }
+      try {
+        const parsed: unknown = JSON.parse(json);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not-object");
+        const item = parsed as Record<string, unknown>;
+        if (typeof item.callId !== "string" || item.callId.length > 200 ||
+          typeof item.name !== "string" || !TOOL_NAME.test(item.name) ||
+          !["success", "error", "unknown-tool"].includes(String(item.status))) throw new Error("invalid-shape");
+        toolResults.push({
+          callId: item.callId, name: item.name, status: item.status as NovaToolResult["status"],
+          ...(item.output === undefined ? {} : { output: item.output }),
+          ...(typeof item.error === "string" ? { error: item.error.slice(0, FIELD_LIMITS.TOOL_RESULT_CHARS) } : {}),
+        });
+      } catch {
+        diagnostics.push("tool-result-invalid");
+      }
+    }
+  }
+
   const nextWakeRaw = nextWakeField.value;
   const nextWakeMs = nextWakeRaw !== undefined && /^\d+$/.test(nextWakeRaw) ? Number(nextWakeRaw) : Number.NaN;
   const nextWakeValid = Number.isSafeInteger(nextWakeMs) && nextWakeMs >= 1 && nextWakeMs <= FIELD_LIMITS.NEXT_WAKE_MS;
@@ -177,6 +234,7 @@ export function parseNovaTurn(content: string): NovaTurnParseResult {
       thoughts,
       emotion,
       tools,
+      toolResults,
       speech,
       nextWakeMs: nextWakeValid ? nextWakeMs : 30_000,
     },

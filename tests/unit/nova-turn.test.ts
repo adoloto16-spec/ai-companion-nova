@@ -7,6 +7,7 @@ const source: NovaTurn = {
   thoughts: "Keep the response focused.",
   emotion: "Curious and calm.",
   tools: [{ name: "read_memory", arguments: { query: "travel preferences" } }, { name: "web_search", arguments: { query: "current fares" } }],
+  toolResults: [],
   speech: "Here is the comparison. The input contained <SPEECH> as quoted text.",
   nextWakeMs: 30_000,
 };
