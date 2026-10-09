@@ -103,7 +103,7 @@ export class LLMCognitiveStep implements CognitiveStep{
     const response=await this.options.runtime.chat(baseRequest,providerPresetId,{signal:context.signal});
     throwIfAborted(context.signal);
     const result=parseCognitiveResponse(response.message.content);
-    return {thought:{characterId:context.characterId,id:"thought:"+request,timestamp:this.clock(),content:result.thought,expression:"internal"},nextWakeInMs:result.nextWakeInMs,...(result.expression?{expression:result.expression}:{}),...(result.expressionInvalid?{expressionInvalid:true}:{}),conversationId:conversation.id,requestId:response.requestId,providerId:response.providerId,model:response.model,...(providerPresetId?{providerPresetId}:{})};
+    return {thought:{characterId:context.characterId,id:"thought:"+request,timestamp:this.clock(),content:result.thought,expression:"internal"},nextWakeInMs:result.nextWakeInMs,...(result.expression?{expression:result.expression}:{}),...(result.expressionInvalid?{expressionInvalid:true}:{}),...(result.initiative?{initiative:result.initiative}:{}),conversationId:conversation.id,requestId:response.requestId,providerId:response.providerId,model:response.model,...(providerPresetId?{providerPresetId}:{})};
   }
   private buildMindContext(state:Readonly<MindState>):string{
     const history=state.recentThoughts.length===0?"No previous internal thoughts.":state.recentThoughts.map((thought,index)=>"Thought "+(index+1)+": "+thought.content).join("\n");
