@@ -114,7 +114,7 @@ async function main(){
   ] as const;
   for(const messages of conversationCases){
     await runtime.updateConversation(character.id,conversation.id,{messages:[...messages]});
-    await cognitiveStep.run({characterId:character.id,state:cognitiveState,signal:new AbortController().signal});
+    await cognitiveStep.run({characterId:character.id,state:cognitiveState,signal:new AbortController().signal,wakeReason:"scheduled"});
   }
 
   const expectedConversationRoles=[

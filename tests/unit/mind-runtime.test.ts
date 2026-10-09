@@ -271,7 +271,7 @@ async function cognitiveProviderBadRequestRegressionTest(){
     getChatModel:()=> "unused",
     getChatModelForPreset:async()=> "test-model"
   });
-  const thought=await step.run({characterId:"char-regression",state:{focus:null,lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"thinking"},signal:new AbortController().signal});
+  const thought=await step.run({characterId:"char-regression",state:{focus:null,lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"thinking"},signal:new AbortController().signal,wakeReason:"scheduled"});
   equal(calls.length,1,"text cognitive request does not trigger structured-output retry path");
   equal(calls[0]?.generation?.responseFormat?.type,"text","regression request bypasses json-schema");
   equal(thought.thought.content,"plain cognitive text","plain provider response is parsed as Thought content");
