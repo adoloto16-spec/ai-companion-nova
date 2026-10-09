@@ -283,6 +283,11 @@ fn decode(bytes:&[u8])->Result<DecodedProviderPresetState,String>{
     let value:serde_json::Value=serde_json::from_slice(bytes).map_err(|e|format!("invalid provider preset storage file: {e}"))?;
     let schema=value.get("schemaVersion").and_then(serde_json::Value::as_str).unwrap_or_default();
     if schema==SCHEMA_VERSION{
+        let presets=value.get("presets").and_then(serde_json::Value::as_array)
+            .ok_or_else(||"invalid provider preset storage: presets must be an array".to_string())?;
+        if presets.iter().any(|preset|preset.get("type").and_then(serde_json::Value::as_str).is_none()){
+            return Err("provider preset type is required for schema v3".to_string());
+        }
         let state:ProviderPresetStoreState=serde_json::from_value(value).map_err(|e|format!("invalid provider preset storage file: {e}"))?;
         validate_state(&state)?;
         Ok(DecodedProviderPresetState::Current(state))
