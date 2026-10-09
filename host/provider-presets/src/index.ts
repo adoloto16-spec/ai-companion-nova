@@ -59,10 +59,13 @@ export function migrateProviderPresetStoreState(state:ProviderPresetStoreState):
   return {
     ...state,
     schemaVersion:"3",
-    presets:state.presets.map(preset=>clonePreset({
-      ...preset,
-      type:(preset as ProviderPreset & {type?:string}).type===undefined?"pool":preset.type
-    }))
+    presets:state.presets.map(preset=>{
+      const storedType=(preset as ProviderPreset & {type?:string}).type;
+      if(storedType!==undefined&&storedType!=="pool"&&storedType!=="single"){
+        throw new Error("Unsupported provider preset type in legacy storage.");
+      }
+      return clonePreset({...preset,type:storedType??"pool"});
+    })
   };
 }
 
