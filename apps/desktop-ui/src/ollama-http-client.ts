@@ -1,4 +1,5 @@
 import {Channel, invoke} from "@tauri-apps/api/core";
+import {FetchHttpClient, type HttpClient as CompatibleHttpClient, type HttpClientRequest as CompatibleHttpClientRequest} from "../../../providers/chat/openai-compatible/src";
 import type {
   OllamaHttpClient,
   OllamaHttpRequest,
@@ -185,5 +186,46 @@ export class TauriOllamaHttpClient implements OllamaHttpClient {
       cleanup();
       throw error;
     }
+  }
+}
+
+/**
+ * Shared desktop transport: only the native Ollama API routes use the Tauri
+ * loopback transport. Existing cloud and OpenAI-compatible providers retain
+ * their established fetch transport.
+ */
+export class NovaHttpClient implements CompatibleHttpClient {
+  private readonly fallback = new FetchHttpClient();
+  private readonly ollama: TauriOllamaHttpClient;
+
+  constructor(timeoutMs = 600_000) {
+    this.ollama = new TauriOllamaHttpClient(timeoutMs);
+  }
+
+  private usesNativeOllamaRoute(request: CompatibleHttpClientRequest): boolean {
+    try {
+      const url = new URL(request.url);
+      const hostname = url.hostname.toLowerCase().replace(/^\\[|\\]$/g, "");
+      if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "::1"].includes(hostname)) return false;
+      if (url.username || url.password || url.search || url.hash) return false;
+      if (!["/api/tags", "/api/version", "/api/chat"].includes(url.pathname)) return false;
+      return url.pathname === "/api/chat" ? request.method === "POST" : request.method === "GET";
+    } catch {
+      return false;
+    }
+  }
+
+  request(request: CompatibleHttpClientRequest) {
+    if (this.usesNativeOllamaRoute(request)) return this.ollama.request(request);
+    return this.fallback.request(request);
+  }
+
+  stream(request: CompatibleHttpClientRequest) {
+    if (this.usesNativeOllamaRoute(request)) {
+      if (!this.ollama.stream) throw new Error("Native Ollama streaming transport is unavailable.");
+      return this.ollama.stream(request);
+    }
+    if (!this.fallback.stream) throw new Error("The configured HTTP transport does not support streaming.");
+    return this.fallback.stream(request);
   }
 }
