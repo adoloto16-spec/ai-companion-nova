@@ -1,8 +1,9 @@
 import type {
   AssembledContext,ChatErrorCode,ChatGenerationOptions,ChatMessage,ChatRequest,ChatResponse,ChatStreamEvent,
-  ChatStreamHandlers,ChatStreamOptions,ChatUsage,CharacterId,ChatTraceStore,ContextBuildRequest,ContextBudget,MemoryExtractionRequest,MindExpressionPublication,MindExpressionPublishResult,MindReactiveTurn,ModelProfile,Unsubscribe
+  ChatStreamHandlers,ChatStreamOptions,ChatUsage,CharacterId,ChatTraceStore,ContextBuildRequest,ContextBudget,MemoryExtractionRequest,MindReactiveTurn,MindTurnExecutionContext,ModelProfile,Unsubscribe
 } from "../../contracts/src/index";
-import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,DEFAULT_APP_SETTINGS} from "../../contracts/src/index";
+import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,DEFAULT_APP_SETTINGS,parseNovaTurn,serializeNovaTurn} from "../../contracts/src/index";
+import type {NovaTurn} from "../../contracts/src/nova-turn";
 
 export interface ChatRuntimeBoundary{
   chat(request:ChatRequest,providerPresetId?:string):Promise<ChatResponse>;
@@ -29,6 +30,7 @@ export interface ConversationSnapshot{
   sending:boolean;
   status:ChatSessionStatus;
   lifeTurn?:LifeTurnSnapshot;
+  committingNovaTurn?:boolean;
   error?:string;
   errorCode?:ChatErrorCode;
 }
@@ -169,6 +171,17 @@ interface ActiveRun{
   promise:Promise<ChatActionResult>;
 }
 
+function projectNovaTurnToSpeech(message:ChatMessage):ChatMessage|undefined{
+  if(message.metadata?.novaTurnVersion!==1)return cloneMessage(message);
+  const parsed=parseNovaTurn(message.content);
+  if(!parsed.turn||!parsed.turn.speech.trim())return undefined;
+  return {
+    id:message.id,role:message.role,content:parsed.turn.speech,
+    ...(message.toolCallId?{toolCallId:message.toolCallId}:{}),
+    metadata:{streamStatus:"complete",source:"nova-life",novaTurnVersion:1}
+  };
+}
+
 export class ChatSessionController{
   private readonly listeners=new Set<(snapshot:ConversationSnapshot)=>void>();
   private readonly requestIdFactory:()=>string;
@@ -187,9 +200,8 @@ export class ChatSessionController{
   private errorCode?:ChatErrorCode;
   private activeRun?:ActiveRun;
   private runSequence=0;
-  private publishingExpression=false;
+  private committingNovaTurn=false;
   private lifeTurn:LifeTurnSnapshot|undefined;
-  private readonly expressionPublications=new Map<string,Promise<MindExpressionPublishResult>>();
 
   constructor(
     private readonly session:ConversationSession,
@@ -224,6 +236,7 @@ export class ChatSessionController{
       characterId:this.session.characterId,
       messages:this.session.getMessages(),
       sending:this.sending,
+      committingNovaTurn:this.committingNovaTurn,
       status:this.status,
       ...(this.lifeTurn?{lifeTurn:{...this.lifeTurn}}:{}),
       ...(this.error?{error:this.error}:{}),
@@ -234,79 +247,96 @@ export class ChatSessionController{
     this.listeners.add(listener);
     return ()=>{this.listeners.delete(listener)};
   }
-  isBusy():boolean{return this.sending||this.publishingExpression||Boolean(this.lifeTurn&&["persisting","awaiting","failed","cancelled"].includes(this.lifeTurn.status));}
+  isBusy():boolean{return this.sending||this.committingNovaTurn||Boolean(this.lifeTurn&&["persisting","awaiting","failed","cancelled"].includes(this.lifeTurn.status));}
 
-  publishExpression(
-    expression:MindExpressionPublication,
+  async commitNovaTurn(
+    turn:NovaTurn,
+    context:MindTurnExecutionContext,
     persist:(snapshot:ConversationSnapshot,rollback?:boolean)=>Promise<void>
-  ):Promise<MindExpressionPublishResult>{
-    if(expression.signal?.aborted)return Promise.resolve({status:"suppressed",reason:"cancelled"});
-    if(expression.characterId!==this.session.characterId||expression.conversationId!==this.session.conversationId)return Promise.resolve({status:"suppressed",reason:"wrong-conversation"});
-    const content=typeof expression.content==="string"?expression.content.trim():"";
-    if(typeof expression.expressionId!=="string"||!expression.expressionId.trim()||!content||content.length>2000)return Promise.resolve({status:"suppressed",reason:"invalid-expression"});
-    const existing=this.session.getMessages().find(message=>message.role==="assistant"&&message.metadata?.source==="nova-life"&&message.metadata?.expressionId===expression.expressionId);
-    if(existing?.id)return Promise.resolve({status:"published",messageId:existing.id,conversationId:this.session.conversationId});
-    const pending=this.expressionPublications.get(expression.expressionId);
-    if(pending)return pending;
-    const reactive=expression.intent==="reactive";
-    const turn=this.lifeTurn;
-    if(reactive){
-      if(!turn||turn.status!=="awaiting"||turn.characterId!==expression.characterId||turn.conversationId!==expression.conversationId||turn.userMessageId!==expression.userMessageId||turn.turnId!==expression.turnId)return Promise.resolve({status:"suppressed",reason:"wrong-conversation"});
-      const messages=this.session.getMessages();
-      const userIndex=messages.findIndex(message=>message.id===turn.userMessageId&&message.role==="user");
-      const latestUser=[...messages].reverse().find(message=>message.role==="user");
-      if(userIndex<0||latestUser?.id!==turn.userMessageId||messages.slice(userIndex+1).some(message=>message.role==="assistant"))return Promise.resolve({status:"suppressed",reason:"stale-context"});
+  ):Promise<void>{
+    if(context.signal.aborted)throw new Error("NovaTurn commit was cancelled.");
+    if(context.characterId!==this.session.characterId||context.conversationId!==this.session.conversationId)throw new Error("NovaTurn scope does not match the active Conversation.");
+    if(!context.turnId.trim())throw new Error("NovaTurn requires a stable turn id.");
+    const messageId="nova-turn:"+context.turnId;
+    const existing=this.session.getMessages().find(message=>message.id===messageId);
+    if(existing){
+      if(existing.metadata?.novaTurnVersion!==1)throw new Error("NovaTurn id collides with an existing non-protocol message.");
+      if(context.userMessageId&&this.lifeTurn?.turnId===context.turnId&&this.lifeTurn.status==="awaiting"){
+        const completed={...this.lifeTurn,status:"completed"} as LifeTurnSnapshot;delete completed.error;this.lifeTurn=completed;
+      }
+      return;
     }
-    if(this.sending||this.publishingExpression||(!reactive&&this.isBusy()))return Promise.resolve({status:"suppressed",reason:"chat-busy"});
-    this.publishingExpression=true;
-    const messageId="nova-life:"+expression.expressionId;
+    const reactive=Boolean(context.userMessageId);
+    const turnState=this.lifeTurn;
+    if(reactive){
+      if(!turnState||turnState.status!=="awaiting"||turnState.characterId!==context.characterId||
+        turnState.conversationId!==context.conversationId||turnState.userMessageId!==context.userMessageId||turnState.turnId!==context.turnId){
+        throw new Error("NovaTurn does not match the currently awaited reactive user turn.");
+      }
+      const messages=this.session.getMessages();
+      const userIndex=messages.findIndex(message=>message.id===context.userMessageId&&message.role==="user");
+      const latestUser=[...messages].reverse().find(message=>message.role==="user");
+      if(userIndex<0||latestUser?.id!==context.userMessageId||messages.slice(userIndex+1).some(message=>message.role==="assistant")){
+        throw new Error("Reactive NovaTurn is stale or its user message already has an assistant response.");
+      }
+      if(!turn.speech.trim())throw new Error("Reactive NovaTurn speech is required.");
+    }else{
+      if(this.sending||this.committingNovaTurn||Boolean(this.lifeTurn&&["persisting","awaiting","failed","cancelled"].includes(this.lifeTurn.status))){
+        throw new Error("Background NovaTurn cannot commit while Chat is busy.");
+      }
+      const messages=this.session.getMessages();
+      const latestUserIndex=messages.map(message=>message.role).lastIndexOf("user");
+      const latestAssistantIndex=messages.map(message=>message.role).lastIndexOf("assistant");
+      if(latestUserIndex>latestAssistantIndex)throw new Error("Background NovaTurn was superseded by a newer unanswered user message.");
+    }
+    if(this.committingNovaTurn)throw new Error("Another NovaTurn commit is already in progress.");
+    this.committingNovaTurn=true;this.notify();
     const before=this.getSnapshot();
-    const operation=Promise.resolve().then(async():Promise<MindExpressionPublishResult>=>{
-      try{
-        if(expression.signal?.aborted)return {status:"suppressed",reason:"cancelled"};
-        if(this.session.getMessages().some(message=>message.id===messageId))return {status:"suppressed",reason:"wrong-conversation"};
-        if(reactive&&(!this.lifeTurn||this.lifeTurn.status!=="awaiting"||this.lifeTurn.turnId!==turn!.turnId||this.lifeTurn.userMessageId!==turn!.userMessageId))return {status:"suppressed",reason:"stale-context"};
-        const message:ChatMessage={id:messageId,role:"assistant",content,metadata:{streamStatus:"complete",source:"nova-life",expressionId:expression.expressionId,...(reactive?{turnId:turn!.turnId,userMessageId:turn!.userMessageId}:{})}};
-        const candidate:ConversationSnapshot={...before,messages:[...before.messages,message],status:"completed"};
-        try{await persist(candidate);}
-        catch{
-          if(reactive)this.failLifeTurn(turn!.userMessageId,"publication-failed");
-          return {status:"failed",reason:"publication-failed",errorCode:"PERSIST_FAILED"};
+    const message:ChatMessage={
+      id:messageId,role:"assistant",content:serializeNovaTurn(turn),
+      metadata:{streamStatus:"complete",source:"nova-life",novaTurnVersion:1,novaTurnId:context.turnId,
+        ...(reactive?{turnId:context.turnId,userMessageId:context.userMessageId}:{})}
+    };
+    const candidate:ConversationSnapshot={...before,messages:[...before.messages,message],status:"completed",committingNovaTurn:false};
+    try{
+      if(context.signal.aborted)throw new Error("NovaTurn commit was cancelled before persistence.");
+      await persist(candidate);
+      const stillCurrent=!context.signal.aborted&&this.session.characterId===context.characterId&&
+        this.session.conversationId===context.conversationId&&(!reactive||
+          (this.lifeTurn?.status==="awaiting"&&this.lifeTurn.turnId===context.turnId&&this.lifeTurn.userMessageId===context.userMessageId));
+      if(!stillCurrent){
+        try{await persist(before,true);}catch{/* Rollback is best-effort; stale turns are never added to the live session. */}
+        throw new Error("NovaTurn commit was cancelled or its Conversation changed during persistence.");
+      }
+      this.session.addMessage(message);
+      this.status="completed";this.error=undefined;this.errorCode=undefined;
+      if(reactive&&this.lifeTurn){
+        const completed={...this.lifeTurn,status:"completed"} as LifeTurnSnapshot;delete completed.error;this.lifeTurn=completed;
+      }
+      this.notify();
+      if(reactive&&this.memoryExtractor&&(this.memoryExtractionEnabled?.()??true)){
+        const messages=this.session.getMessages();
+        const userIndex=messages.findIndex(item=>item.id===context.userMessageId&&item.role==="user");
+        const userMessage=messages[userIndex];
+        if(userMessage){
+          const providerPresetId=context.providerPresetId??this.modelProfile?.providerPresetId??this.runtime.getActiveProviderPresetId?.();
+          const projection=messages.slice(0,userIndex+1)
+            .filter(item=>item.metadata?.contextSource===undefined||item.metadata?.contextSource==="conversation")
+            .map(projectNovaTurnToSpeech).filter((item):item is ChatMessage=>Boolean(item))
+            .slice(-(this.recentConversationMessagesProvider?.()??8));
+          const assistantProjection:ChatMessage={id:message.id,role:"assistant",content:turn.speech,metadata:{streamStatus:"complete",source:"nova-life",novaTurnVersion:1}};
+          const extractionRequest:MemoryExtractionRequest={
+            apiVersion:"1",schemaVersion:"1",characterId:this.session.characterId,conversationId:this.session.conversationId,turnId:context.turnId,
+            model:context.model??this.modelProfile?.model??"",
+            ...(context.providerId?{providerId:context.providerId}:{}),...(providerPresetId?{providerPresetId}:{}),
+            userMessage:cloneMessage(userMessage),assistantMessage:assistantProjection,contextMessages:projection
+          };
+          void Promise.resolve().then(()=>this.memoryExtractor!.extract(extractionRequest)).catch(()=>undefined);
         }
-        const stillCurrent=(!expression.signal||!expression.signal.aborted)&&this.session.characterId===expression.characterId&&this.session.conversationId===expression.conversationId&&
-          (!reactive||(this.lifeTurn?.status==="awaiting"&&this.lifeTurn.turnId===turn!.turnId&&this.lifeTurn.userMessageId===turn!.userMessageId));
-        if(!stillCurrent){
-          try{await persist(before,true);}catch{/* Best-effort rollback; an unconfirmed delivery is never added to the active session. */}
-          if(reactive)this.failLifeTurn(turn!.userMessageId,"cancelled");
-          return {status:"suppressed",reason:expression.signal?.aborted?"cancelled":"stale-context"};
-        }
-        this.session.addMessage(message);
-        this.status="completed";this.error=undefined;this.errorCode=undefined;
-        if(reactive&&this.lifeTurn){const completed={...this.lifeTurn,status:"completed"} as LifeTurnSnapshot;delete completed.error;this.lifeTurn=completed;}
-        this.notify();
-        try{
-        if(reactive&&this.memoryExtractor&&(this.memoryExtractionEnabled?.()??true)){
-          const messages=this.session.getMessages();
-          const userIndex=messages.findIndex(item=>item.id===turn!.userMessageId&&item.role==="user");
-          const userMessage=messages[userIndex];
-          if(userMessage){
-            const providerPresetId=expression.providerPresetId??this.modelProfile?.providerPresetId??this.runtime.getActiveProviderPresetId?.();
-            const extractionRequest:MemoryExtractionRequest={
-              apiVersion:"1",schemaVersion:"1",characterId:this.session.characterId,conversationId:this.session.conversationId,turnId:turn!.turnId,
-              model:expression.model??this.modelProfile?.model??"",
-              ...(expression.providerId?{providerId:expression.providerId}:{}),...(providerPresetId?{providerPresetId}:{}),
-              userMessage:cloneMessage(userMessage),assistantMessage:cloneMessage(message),
-              contextMessages:messages.slice(0,userIndex+1).filter(item=>item.metadata?.contextSource===undefined||item.metadata?.contextSource==="conversation").slice(-(this.recentConversationMessagesProvider?.()??8)).map(cloneMessage)
-            };
-            void Promise.resolve().then(()=>this.memoryExtractor!.extract(extractionRequest)).catch(()=>undefined);
-          }
-        }
-        }catch{/* Memory extraction must never turn a persisted reply into a failed delivery. */}
-        return {status:"published",messageId,conversationId:this.session.conversationId};
-      }finally{this.publishingExpression=false;this.notify();}
-    });
-    this.expressionPublications.set(expression.expressionId,operation);
-    return operation.finally(()=>{if(this.expressionPublications.get(expression.expressionId)===operation)this.expressionPublications.delete(expression.expressionId);});
+      }
+    }finally{
+      this.committingNovaTurn=false;this.notify();
+    }
   }
 
   async submitToLife(content:string,persist:(snapshot:ConversationSnapshot)=>Promise<void>,wake:(turn:MindReactiveTurn)=>boolean|void):Promise<ChatSubmitResult>{
@@ -336,7 +366,7 @@ export class ChatSessionController{
 
   retryLife(wake:(turn:MindReactiveTurn)=>boolean|void):ChatSubmitResult{
     const turn=this.lifeTurn;
-    if(this.sending||this.publishingExpression||!turn||!(turn.status==="failed"||turn.status==="cancelled"))return {status:"rejected",reason:"busy"};
+    if(this.sending||this.committingNovaTurn||!turn||!(turn.status==="failed"||turn.status==="cancelled"))return {status:"rejected",reason:"busy"};
     const messages=this.session.getMessages(),userIndex=messages.findIndex(message=>message.id===turn.userMessageId&&message.role==="user");
     const latestUser=[...messages].reverse().find(message=>message.role==="user");
     if(userIndex<0||latestUser?.id!==turn.userMessageId||messages.slice(userIndex+1).some(message=>message.role==="assistant")){
