@@ -119,7 +119,7 @@ function ConversationSwitcher({conversations,activeConversationId,sending,onSele
           disabled={sending}
         >
           <span className="conversation-title">{conversation.title}</span>
-          <span className="conversation-meta">{conversation.messages.length} stored records · {countVisibleSpeechMessages(conversation.messages)} visible speech messages</span>
+          <span className="conversation-meta">{conversation.messages.length} stored messages · {countVisibleSpeechMessages(conversation.messages)} visible assistant replies</span>
         </button>
       )}
     </div>
