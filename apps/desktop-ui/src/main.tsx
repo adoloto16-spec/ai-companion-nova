@@ -2067,6 +2067,7 @@ function App(){
     let attached=true;
     const publisher:MindExpressionPublisher={
       publish:async expression=>{
+        if(expression.signal?.aborted)return {status:"suppressed",reason:"cancelled"};
         if(!attached)return {status:"suppressed",reason:"publisher-unavailable"};
         const controllerSnapshot=chatController.getSnapshot();
         if(expression.characterId!==activeCharacter.id||expression.conversationId!==activeConversation.id||
@@ -2082,8 +2083,8 @@ function App(){
             currentConversation.id!==expression.conversationId)return {status:"suppressed",reason:"wrong-conversation"};
         }catch{return {status:"suppressed",reason:"publisher-unavailable"};}
         const result=await chatController.publishExpression(expression,async current=>{
-          if(!attached||current.characterId!==expression.characterId||current.conversationId!==expression.conversationId){
-            throw new Error("Expression publisher detached or conversation scope changed before persistence.");
+          if(expression.signal?.aborted||!attached||current.characterId!==expression.characterId||current.conversationId!==expression.conversationId){
+            throw new Error("Expression publisher cancelled, detached or conversation scope changed before persistence.");
           }
           const updated=await foundation.updateConversation(current.characterId,current.conversationId,{messages:current.messages});
           if(attached&&activeCharacter.id===current.characterId&&activeConversation.id===current.conversationId){

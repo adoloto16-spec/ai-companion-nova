@@ -233,6 +233,7 @@ export class ChatSessionController{
     expression:MindExpressionPublication,
     persist:(snapshot:ConversationSnapshot)=>Promise<void>
   ):Promise<MindExpressionPublishResult>{
+    if(expression.signal?.aborted)return Promise.resolve({status:"suppressed",reason:"cancelled"});
     if(expression.characterId!==this.session.characterId||expression.conversationId!==this.session.conversationId){
       return Promise.resolve({status:"suppressed",reason:"wrong-conversation"});
     }
@@ -249,6 +250,7 @@ export class ChatSessionController{
     const messageId="nova-life:"+expression.expressionId;
     const operation=Promise.resolve().then(async():Promise<MindExpressionPublishResult>=>{
       try{
+        if(expression.signal?.aborted)return {status:"suppressed",reason:"cancelled"};
         const collision=this.session.getMessages().find(message=>message.id===messageId);
         if(collision)return {status:"suppressed",reason:"wrong-conversation"};
         const message:ChatMessage={id:messageId,role:"assistant",content,metadata:{streamStatus:"complete",source:"nova-life",expressionId:expression.expressionId}};

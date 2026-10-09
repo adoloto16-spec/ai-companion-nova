@@ -351,7 +351,7 @@ export class MindRuntime{
     if(!publisher)return suppressed("publisher-unavailable");
     let outcome:MindExpressionPublishResult;
     try{
-      outcome=await publisher.publish({characterId:input.characterId,conversationId:input.conversationId,expressionId:input.expressionId,content:input.content});
+      outcome=await publisher.publish({characterId:input.characterId,conversationId:input.conversationId,expressionId:input.expressionId,content:input.content,signal:input.stepController.signal});
     }catch(error){
       this.safeOnExpressionError(error);
       return failed("publication-failed",error instanceof Error?error.name:"PUBLISH_FAILED");

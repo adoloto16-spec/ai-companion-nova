@@ -4,7 +4,7 @@ export type MindExpressionKind="internal"|"chat";
 export type MindExpressionStatus="internal"|"published"|"suppressed"|"invalid"|"failed";
 export type MindExpressionSuppressionReason="user-message-wake"|"life-start-wake"|"character-change-wake"|"not-scheduled-wake"|"disabled"|"cooldown"|"hourly-limit"|"stale-context"|"wrong-conversation"|"chat-busy"|"publisher-unavailable"|"invalid-expression"|"cancelled"|"publication-failed";
 export type MindExpressionCandidate={kind:"internal"}|{kind:"chat";content:string};
-export interface MindExpressionPublication{characterId:string;conversationId:string;expressionId:string;content:string;}
+export interface MindExpressionPublication{characterId:string;conversationId:string;expressionId:string;content:string;signal?:AbortSignal;}
 export type MindExpressionPublishResult=
   | {status:"published";messageId:string;conversationId:string}
   | {status:"suppressed";reason:MindExpressionSuppressionReason}
