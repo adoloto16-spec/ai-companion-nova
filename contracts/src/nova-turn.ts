@@ -231,7 +231,7 @@ export function parseNovaTurn(content: string): NovaTurnParseResult {
   if(toolsRaw.value!==undefined&&toolsRaw.status!=="invalid"){
     const toolContent=toolsRaw.value;
     const calls=[...toolContent.matchAll(/<\s*([a-z][a-z0-9_.-]*)\s*>([\s\S]*?)<\s*\/\s*\1\s*>/gi)];
-    const residue=toolContent.replace(/<\s*[a-z][a-z0-9_.-]*\s*>[\s\S]*?<\s*\/\s*[a-z][a-z0-9_.-]*\s*>/gi,"").trim();
+    const residue=toolContent.replace(/<\s*([a-z][a-z0-9_.-]*)\s*>[\s\S]*?<\s*\/\s*\1\s*>/gi,"").trim();
     if(residue){diagnostics.push("TOOLS-malformed-content");toolsStatus="invalid";}
     if(calls.length>FIELD_LIMITS.TOOL_COUNT){diagnostics.push("TOOLS-too-many");toolsStatus="invalid";}
     for(const match of calls.slice(0,FIELD_LIMITS.TOOL_COUNT)){
