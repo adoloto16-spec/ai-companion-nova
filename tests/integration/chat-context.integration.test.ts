@@ -130,14 +130,14 @@ async function main(){
   for(let index=0;index<expectedConversationRoles.length;index+=1){
     const request=cognitiveCalls[index]!.request;
     equal(request.context.messages.map(message=>message.role),expectedConversationRoles[index],`Case ${index+1} preserves conversation roles and appends a user cognition cue`);
-    equal(request.context.messages[request.context.messages.length-1]?.content,"Continue the internal cognition step. Produce exactly one internal thought based on the context above. Do not answer the user.","cognitive request ends with the synthetic user cue");
+    equal(request.context.messages[request.context.messages.length-1]?.content,"Continue Nova's internal cognition. Produce exactly one private thought based on the context above and, only if useful, an optional separate chat expression in the required JSON object. Do not answer the user's current message; ordinary Chat handles that response.","cognitive request ends with the synthetic user cue");
     equal(request.context.messages[request.context.messages.length-1]?.id,request.context.conversationId+":cognition:user-cue","synthetic cognition cue has a request-local id");
   }
   equal(cognitiveCalls[1]?.request.context.messages.find(message=>message.id==="cognition-assistant-2")?.metadata?.safeMarker,"assistant-metadata","assistant metadata survives ContextEngine into canonical request");
   equal(cognitiveCalls[1]?.request.context.messages.slice(3,-1).map(message=>message.content),["Hello","Hi there"],"Case B preserves user and assistant content before the cue");
   equal(cognitiveCalls[3]?.request.context.messages.slice(3,-1).map(message=>message.content),["First","Reply","Second","Second reply"],"Case D preserves the full conversation before the cue");
   equal((await runtime.getActiveConversation(character.id))?.messages.map(message=>message.content),["First","Reply","Second","Second reply"],"synthetic cue is not written to Conversation");
-  equal((await runtime.getActiveConversation(character.id))?.messages.some(message=>message.content.includes("Continue the internal cognition step.")),false,"synthetic cue does not enter stored Conversation");
+  equal((await runtime.getActiveConversation(character.id))?.messages.some(message=>message.content.includes("Continue Nova's internal cognition.")),false,"synthetic cue does not enter stored Conversation");
   console.log("PASS cognitive context role regression integration test");  }finally{
     await runtime.stop();
   }
