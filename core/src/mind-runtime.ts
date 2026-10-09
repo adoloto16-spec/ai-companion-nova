@@ -1,5 +1,6 @@
-import type {CognitiveScheduleSettings,MindRuntimeLifecycleState,MindState,MindTraceEntry,MindWakeReason,Thought,Unsubscribe} from "../../contracts/src";
-import {DEFAULT_COGNITIVE_SCHEDULE} from "../../contracts/src";
+import type {CognitiveScheduleSettings,MindExpressionCandidate,MindExpressionPublishResult,MindExpressionPublisher,MindExpressionSuppressionReason,MindRuntimeLifecycleState,MindState,MindTraceEntry,MindWakeReason,Thought,Unsubscribe} from "../../contracts/src";
+import {DEFAULT_COGNITIVE_SCHEDULE,DEFAULT_PROACTIVE_CHAT} from "../../contracts/src";
+import type {ProactiveChatSettings} from "../../contracts/src";
 import {MindScheduler} from "./mind-scheduler";
 
 const DEFAULT_RECENT_THOUGHTS=50;
@@ -8,8 +9,8 @@ const MAX_THOUGHT_CHARS=8_000;
 const MAX_TRACE_ENTRIES=100;
 const HOUR_MS=3_600_000;
 
-export interface CognitiveStepContext{characterId:string;state:Readonly<MindState>;signal:AbortSignal;}
-export interface CognitiveStepResult{thought:Thought;nextWakeInMs?:unknown;requestId?:string;providerId?:string;}
+export interface CognitiveStepContext{characterId:string;state:Readonly<MindState>;signal:AbortSignal;wakeReason:MindWakeReason;}
+export interface CognitiveStepResult{thought:Thought;nextWakeInMs?:unknown;requestId?:string;providerId?:string;expression?:MindExpressionCandidate;expressionInvalid?:boolean;conversationId?:string;}
 export interface CognitiveStep{run(context:CognitiveStepContext):Promise<Thought|CognitiveStepResult>;}
 export interface MindRuntimeOptions{
   cognitiveStep:CognitiveStep;
@@ -22,6 +23,10 @@ export interface MindRuntimeOptions{
   onError?:(error:unknown)=>void;
   clock?:()=>string;
   now?:()=>number;
+  proactiveChat?:ProactiveChatSettings;
+  expressionPublisher?:MindExpressionPublisher;
+  isExpressionContextCurrent?:(characterId:string,conversationId:string)=>Promise<boolean>|boolean;
+  onExpressionError?:(error:unknown)=>void;
 }
 
 interface CharacterMindState{focus:string|null;lastThought:Thought|null;lastThoughtAt:string|null;recentThoughts:Thought[];}
@@ -41,12 +46,17 @@ function normalizeSchedule(schedule:CognitiveScheduleSettings):CognitiveSchedule
   const maxRequestsPerHour=validInt(schedule?.maxRequestsPerHour,DEFAULT_COGNITIVE_SCHEDULE.maxRequestsPerHour,1,3600);
   return {mode:schedule?.mode==="fixed"?"fixed":"adaptive",defaultIntervalMs,minIntervalMs,maxIntervalMs,maxRequestsPerHour};
 }
-function extractResult(value:Thought|CognitiveStepResult):{thought:Thought;nextWakeInMs?:unknown;requestId?:string;providerId?:string}{
-  if(value&&typeof value==="object"&&"thought" in value){
-    const result=value as CognitiveStepResult;
-    return {thought:result.thought,nextWakeInMs:result.nextWakeInMs,requestId:result.requestId,providerId:result.providerId};
-  }
+function extractResult(value:Thought|CognitiveStepResult):CognitiveStepResult{
+  if(value&&typeof value==="object"&&"thought" in value)return value as CognitiveStepResult;
   return {thought:value as Thought};
+}
+function normalizeProactiveChat(settings:ProactiveChatSettings|undefined):ProactiveChatSettings{
+  const integer=(value:unknown,fallback:number,min:number,max:number)=>typeof value==="number"&&Number.isSafeInteger(value)?Math.max(min,Math.min(max,value)):fallback;
+  return {
+    enabled:typeof settings?.enabled==="boolean"?settings.enabled:DEFAULT_PROACTIVE_CHAT.enabled,
+    minMessageIntervalMs:integer(settings?.minMessageIntervalMs,DEFAULT_PROACTIVE_CHAT.minMessageIntervalMs,10_000,3_600_000),
+    maxMessagesPerHour:integer(settings?.maxMessagesPerHour,DEFAULT_PROACTIVE_CHAT.maxMessagesPerHour,1,60)
+  };
 }
 function chooseInterval(raw:unknown,settings:CognitiveScheduleSettings):IntervalChoice{
   if(settings.mode==="fixed")return {intervalMs:settings.defaultIntervalMs,decision:"fixed-mode"};
@@ -73,6 +83,11 @@ export class MindRuntime{
   private readonly clock:()=>string;
   private readonly now:()=>number;
   private scheduleSettings:CognitiveScheduleSettings;
+  private proactiveChatSettings:ProactiveChatSettings;
+  private expressionPublisher:MindExpressionPublisher|undefined;
+  private readonly isExpressionContextCurrent:((characterId:string,conversationId:string)=>Promise<boolean>|boolean)|undefined;
+  private readonly onExpressionError:((error:unknown)=>void)|undefined;
+  private readonly expressionPublicationTimes:number[]=[];
   private readonly state:MindState;
   private readonly characterStates=new Map<string,CharacterMindState>();
   private readonly listeners=new Set<(state:MindState)=>void>();
@@ -102,6 +117,10 @@ export class MindRuntime{
     this.recentThoughtLimit=options.recentThoughtLimit??DEFAULT_RECENT_THOUGHTS;
     this.stepTimeoutMs=options.stepTimeoutMs??DEFAULT_STEP_TIMEOUT_MS;
     this.onError=options.onError;
+    this.proactiveChatSettings=normalizeProactiveChat(options.proactiveChat);
+    this.expressionPublisher=options.expressionPublisher;
+    this.isExpressionContextCurrent=options.isExpressionContextCurrent;
+    this.onExpressionError=options.onExpressionError;
     this.initialFocus=options.initialFocus??null;
     this.clock=options.clock??(()=>new Date().toISOString());
     this.now=options.now??(()=>Date.now());
@@ -165,6 +184,8 @@ export class MindRuntime{
     const priorReason=this.scheduler.scheduledReason??"scheduled";
     this.scheduler.cancel();this.scheduleNext(this.scheduleSettings.defaultIntervalMs,priorReason);
   }
+  updateProactiveChat(settings:ProactiveChatSettings):void{this.proactiveChatSettings=normalizeProactiveChat(settings);}
+  setExpressionPublisher(publisher:MindExpressionPublisher|undefined):void{this.expressionPublisher=publisher;}
 
   deleteThought(thoughtId:string):boolean{
     const id=thoughtId.trim();if(!id||!this.activeCharacterId)return false;
@@ -198,12 +219,13 @@ export class MindRuntime{
     const startedMs=this.now(),startedAt=this.clock(),runId="mind-run-"+startedMs+"-"+(++this.runSequence);
     let nextDelay:number|undefined, nextReason:MindWakeReason="scheduled";
     let requestId:string|undefined,providerId:string|undefined,requested:number|undefined,applied:number|undefined,decision:string|undefined;
+    let expressionTrace:Partial<MindTraceEntry>={};
     let cancellation:CancellationKind|undefined;
     let stepController:AbortController|undefined;
     let timeout:ReturnType<typeof setTimeout>|undefined;
     const finishTrace=(result:MindTraceEntry["result"],extra:Partial<MindTraceEntry>={})=>{
       const finishedAt=this.clock(),durationMs=Math.max(0,this.now()-startedMs);
-      this.trace.push({runId,characterId,wakeReason:reason,startedAt,finishedAt,durationMs,result,...(requested===undefined?{}:{requestedNextWakeInMs:requested}),...(applied===undefined?{}:{appliedIntervalMs:applied}),...(decision===undefined?{}:{intervalDecision:decision}),...(requestId?{requestId}:{}),...(providerId?{providerId}:{}),...extra});
+      this.trace.push({runId,characterId,wakeReason:reason,startedAt,finishedAt,durationMs,result,...(requested===undefined?{}:{requestedNextWakeInMs:requested}),...(applied===undefined?{}:{appliedIntervalMs:applied}),...(decision===undefined?{}:{intervalDecision:decision}),...(requestId?{requestId}:{}),...(providerId?{providerId}:{}),...expressionTrace,...extra});
       if(this.trace.length>MAX_TRACE_ENTRIES)this.trace.splice(0,this.trace.length-MAX_TRACE_ENTRIES);
       this.state.recentTrace=this.trace.map(entry=>({...entry}));this.notify();
     };
@@ -223,7 +245,7 @@ export class MindRuntime{
       const onLifeAbort=()=>cancel("cancelled");
       life.signal.addEventListener("abort",onLifeAbort,{once:true});
       timeout=setTimeout(()=>cancel("timeout"),this.stepTimeoutMs);
-      const rawPromise=this.cognitiveStep.run({characterId,state:this.getState(),signal:stepController.signal});
+      const rawPromise=this.cognitiveStep.run({characterId,state:this.getState(),signal:stepController.signal,wakeReason:reason});
       const abortPromise=new Promise<never>((_,reject)=>{
         const rejectAbort=()=>{
           if(cancellation==="timeout"){const error=new Error("Cognitive step timed out.");error.name="TimeoutError";reject(error);}
@@ -247,8 +269,21 @@ export class MindRuntime{
       requested=choice.requested;applied=choice.intervalMs;decision=choice.decision;
       if(stepController.signal.aborted||life.signal.aborted||contextVersion!==this.contextVersion){finishTrace("cancelled",{intervalDecision:"cancelled-before-apply"});return;}
       this.applyThought(thought);
+      if(result.expressionInvalid){
+        expressionTrace={expressionKind:"chat",expressionStatus:"invalid",expressionSuppressionReason:"invalid-expression",expressionId:"nova-life-expression:"+runId,...(typeof result.conversationId==="string"?{expressionConversationId:result.conversationId}:{})};
+      }else if(!result.expression||result.expression.kind==="internal"){
+        expressionTrace={expressionKind:"internal",expressionStatus:"internal"};
+      }else if(result.expression.kind==="chat"){
+        expressionTrace=await this.attemptExpression({
+          characterId,conversationId:result.conversationId,content:result.expression.content,
+          expressionId:"nova-life-expression:"+runId,reason,contextVersion,stepController,life,
+          isCancelled:()=>cancellation!==undefined
+        });
+      }else{
+        expressionTrace={expressionKind:"chat",expressionStatus:"invalid",expressionSuppressionReason:"invalid-expression",expressionId:"nova-life-expression:"+runId};
+      }
       this.consecutiveErrors=0;nextDelay=applied;nextReason="scheduled";
-      finishTrace("success");
+      finishTrace("success",expressionTrace);
     }catch(error){
       if(cancellation==="cancelled"||cancellation==="superseded"||life.signal.aborted||contextVersion!==this.contextVersion||characterId!==this.activeCharacterId){
         finishTrace("cancelled",{intervalDecision:cancellation==="superseded"?"superseded-by-new-context":"cancelled"});return;
@@ -270,6 +305,67 @@ export class MindRuntime{
     }
   }
 
+  private async attemptExpression(input:{
+    characterId:string;
+    conversationId?:string;
+    content:string;
+    expressionId:string;
+    reason:MindWakeReason;
+    contextVersion:number;
+    stepController:AbortController;
+    life:AbortController;
+    isCancelled:()=>boolean;
+  }):Promise<Partial<MindTraceEntry>>{
+    const base:Partial<MindTraceEntry>={expressionKind:"chat",expressionId:input.expressionId,...(input.conversationId?{expressionConversationId:input.conversationId}:{})};
+    const suppressed=(reason:MindExpressionSuppressionReason):Partial<MindTraceEntry>=>({...base,expressionStatus:"suppressed",expressionSuppressionReason:reason});
+    const failed=(reason:MindExpressionSuppressionReason,errorCode?:string):Partial<MindTraceEntry>=>({...base,expressionStatus:"failed",expressionSuppressionReason:reason,...(errorCode?{expressionErrorCode:errorCode}:{})});
+    if(input.reason!=="scheduled"){
+      const reason:MindExpressionSuppressionReason=input.reason==="user-message"?"user-message-wake":input.reason==="life-start"?"life-start-wake":input.reason==="character-change"?"character-change-wake":"not-scheduled-wake";
+      return suppressed(reason);
+    }
+    if(!this.proactiveChatSettings.enabled)return suppressed("disabled");
+    if(typeof input.content!=="string"||!input.content.trim()||input.content.length>2000)return {...base,expressionStatus:"invalid",expressionSuppressionReason:"invalid-expression"};
+    if(!input.conversationId?.trim())return suppressed("wrong-conversation");
+    if(!this.expressionPublisher)return suppressed("publisher-unavailable");
+    const current=()=>{
+      if(input.life.signal.aborted||this.lifeController!==input.life||input.stepController.signal.aborted||input.isCancelled())return false;
+      if(input.contextVersion!==this.contextVersion||input.characterId!==this.activeCharacterId)return false;
+      return true;
+    };
+    if(!current())return suppressed(input.isCancelled()&&this.pendingWakeReason==="user-message"?"user-message-wake":input.isCancelled()&&this.pendingWakeReason==="character-change"?"character-change-wake":"stale-context");
+    try{
+      if(!this.isExpressionContextCurrent||!await this.isExpressionContextCurrent(input.characterId,input.conversationId))return suppressed("stale-context");
+    }catch{return suppressed("stale-context");}
+    if(!current())return suppressed(input.isCancelled()&&this.pendingWakeReason==="user-message"?"user-message-wake":input.isCancelled()&&this.pendingWakeReason==="character-change"?"character-change-wake":"stale-context");
+    const now=this.now();
+    while(this.expressionPublicationTimes.length>0&&now-this.expressionPublicationTimes[0]!>=HOUR_MS)this.expressionPublicationTimes.shift();
+    const last=this.expressionPublicationTimes[this.expressionPublicationTimes.length-1];
+    if(last!==undefined&&now-last<this.proactiveChatSettings.minMessageIntervalMs)return suppressed("cooldown");
+    if(this.expressionPublicationTimes.length>=this.proactiveChatSettings.maxMessagesPerHour)return suppressed("hourly-limit");
+    if(!current())return suppressed("stale-context");
+    try{
+      if(!this.isExpressionContextCurrent||!await this.isExpressionContextCurrent(input.characterId,input.conversationId))return suppressed("stale-context");
+    }catch{return suppressed("stale-context");}
+    if(!current())return suppressed(input.isCancelled()&&this.pendingWakeReason==="user-message"?"user-message-wake":input.isCancelled()&&this.pendingWakeReason==="character-change"?"character-change-wake":"stale-context");
+    const publisher=this.expressionPublisher;
+    if(!publisher)return suppressed("publisher-unavailable");
+    let outcome:MindExpressionPublishResult;
+    try{
+      outcome=await publisher.publish({characterId:input.characterId,conversationId:input.conversationId,expressionId:input.expressionId,content:input.content});
+    }catch(error){
+      this.safeOnExpressionError(error);
+      return failed("publication-failed",error instanceof Error?error.name:"PUBLISH_FAILED");
+    }
+    if(outcome.status==="suppressed")return suppressed(outcome.reason);
+    if(outcome.status==="failed"){
+      if(outcome.reason==="publication-failed"||outcome.reason==="publisher-unavailable")this.safeOnExpressionError(new Error(outcome.errorCode??outcome.reason));
+      return failed(outcome.reason,outcome.errorCode);
+    }
+    if(outcome.conversationId!==input.conversationId||typeof outcome.messageId!=="string"||!outcome.messageId.trim())return suppressed("wrong-conversation");
+    this.expressionPublicationTimes.push(this.now());
+    return {...base,expressionStatus:"published",expressionMessageId:outcome.messageId};
+  }
+
   private quotaWaitMs():number{
     const now=this.now();
     while(this.requestStarts.length>0&&now-this.requestStarts[0]!>=HOUR_MS)this.requestStarts.shift();
@@ -287,6 +383,7 @@ export class MindRuntime{
     this.state.nextWakeAt=new Date(deadline).toISOString();this.setLifecycleState("waiting");
   }
   private safeOnError(error:unknown):void{try{this.onError?.(error)}catch{/* diagnostics must not stop Life */}}
+  private safeOnExpressionError(error:unknown):void{try{this.onExpressionError?.(error)}catch{/* expression diagnostics must not stop Life */}}
   private setLifecycleState(lifecycleState:MindRuntimeLifecycleState):void{this.state.lifecycleState=lifecycleState;this.notify();}
   private applyThought(thought:Thought):void{
     const characterState=this.characterStates.get(thought.characterId)??createCharacterMindState();
