@@ -206,7 +206,7 @@ async function llmCognitiveStepTest(){
     const request=calls[index]!;
     const roles=request.context.messages.map(message=>message.role);
     equal(roles.slice(-1)[0],"user","cognition request always ends with a synthetic user cue");
-    equal(request.context.messages[request.context.messages.length-1]?.content,"Continue Nova's internal cognition. Produce exactly one private thought based on the context above and, only if useful, an optional separate chat expression in the required JSON object. Do not answer the user's current message; ordinary Chat handles that response.","final message is the internal cognition cue");
+    equal(request.context.messages[request.context.messages.length-1]?.content,"Continue Nova's internal cognition. Produce exactly one private Thought based on the actual topic and recent context. On this scheduled/background step, you may either keep the Thought private or send one distinct, meaningful chat expression. Do not repeat the previous message just to keep the loop active. If the user explicitly requested several separate messages, you may send at most one per step and should stop once that bounded request is complete.","scheduled cognition uses the optional, bounded cue rather than delegating to ordinary Chat");
     equal(roles.slice(3),[...cases[index]!.map(role=>role),"user"],"conversation roles are preserved and the cognition cue is appended");
     equal(JSON.stringify(conversation.messages),before,"synthetic cognition cue is not written into Conversation");
     equal(contextInputs[index]?.some(message=>message.content.includes("Continue Nova's internal cognition.")),false,"synthetic cognition cue is absent from ContextEngine input");
@@ -247,6 +247,20 @@ async function llmCognitiveStepTest(){
   const unknownField=await step.run({characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"scheduled"});
   equal(unknownField.expression,undefined,"unknown fields never authorize public output");
   equal(unknownField.expressionInvalid,true,"unknown response fields invalidate the expression");
+
+  conversation.messages=[{id:"reactive-user-1",role:"user",content:"What do you think about making time for creativity?"}];
+  cognitiveContent=JSON.stringify({thought:"Creative routines can protect room for experimentation.",nextWakeInMs:45000,expression:{kind:"chat",content:"I think creativity needs protected space, but not so much structure that it stops feeling exploratory."}});
+  const reactiveResult=await step.run({
+    characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"user-message",
+    userTurn:{characterId:"char-1",conversationId:"conv-1",userMessageId:"reactive-user-1",turnId:"reactive-turn-1"}
+  });
+  equal(reactiveResult.expression,{kind:"chat",content:"I think creativity needs protected space, but not so much structure that it stops feeling exploratory."},"reactive cognition returns a distinct public reply");
+  equal(reactiveResult.thought.content,"Creative routines can protect room for experimentation.","reactive cognition keeps its Thought private and separate");
+  const reactiveRequest=calls[calls.length-1]!;
+  equal(reactiveRequest.context.messages.at(-1)?.content.includes("response-required user turn"),true,"reactive cue explicitly requires a user-facing answer");
+  equal(reactiveRequest.context.messages.at(-2)?.id,"reactive-user-1","persisted user message is preserved immediately before the provider-order cue");
+  equal(reactiveRequest.context.messages.at(-2)?.content,"What do you think about making time for creativity?","reactive prompt contains the latest user message, not internal planning");
+  equal(reactiveRequest.context.messages.at(-1)?.content.includes("ordinary Chat handles"),false,"reactive cognition never delegates the current response to ordinary Chat");
 }
 async function cognitiveProviderBadRequestRegressionTest(){
   const calls:ChatRequest[]=[];
