@@ -16,7 +16,7 @@ const roundTrip = parseNovaTurn(serialized);
 assert.equal(roundTrip.complete, true);
 assert.deepEqual(roundTrip.turn, source);
 
-const damaged = serialized.replace(/<SITUATION>[\s\S]*?<\/SITUATION>/, "<SITUATION>broken");
+const damaged = serialized.replace(/<SITUATION>[\s\S]*?<\/SITUATION>/, '<SITUATION malformed="yes">broken</SITUATION>');
 const recovered = parseNovaTurn(damaged);
 assert.equal(recovered.complete, false);
 assert.equal(recovered.turn?.speech, source.speech);
@@ -71,6 +71,9 @@ assert.ok(missingWrapper.diagnostics.includes("NOVA_TURN-wrapper-invalid"));
 const damagedSpeechTag=parseNovaTurn("<NOVA_TURN version=\"1\"><SPEECH>private malformed protocol");
 assert.equal(damagedSpeechTag.turn,undefined,"unclosed speech is not public");
 assert.equal(damagedSpeechTag.fields.speech.status,"invalid");
+const speechHiddenInsideThoughts=parseNovaTurn("<NOVA_TURN version=\"1\"><THOUGHTS>private <SPEECH>do not publish this</SPEECH></THOUGHTS><SPEECH>ordinary public reply</SPEECH></NOVA_TURN>");
+assert.equal(speechHiddenInsideThoughts.turn,undefined,"a speech-shaped block nested inside private thoughts makes the response ambiguous");
+assert.equal(speechHiddenInsideThoughts.fields.speech.status,"invalid");
 
 const missingSpeech=parseNovaTurn(serialized.replace(/<SPEECH>[\s\S]*?<\/SPEECH>/,""));
 assert.equal(missingSpeech.turn,undefined,"missing speech is not inferred from other fields");
