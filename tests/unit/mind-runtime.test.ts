@@ -185,7 +185,7 @@ async function llmCognitiveStepTest(){
     getChatModelForPreset:async()=> "unused"
   });
 
-  const state={focus:"test",lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"thinking" as const};
+  const state={focus:"test",initiative:null,lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"thinking" as const};
   const cases:Array<ChatMessage["role"][]>=[
     ["user"],
     ["user","assistant"],
@@ -262,6 +262,156 @@ async function llmCognitiveStepTest(){
   equal(reactiveRequest.context.messages.at(-2)?.content,"What do you think about making time for creativity?","reactive prompt contains the latest user message, not internal planning");
   equal(reactiveRequest.context.messages.at(-1)?.content.includes("ordinary Chat handles"),false,"reactive cognition never delegates the current response to ordinary Chat");
 }
+async function autonomousInitiativeRuntimeIntegrationTest(){
+  const calls:ChatRequest[]=[];
+  const published:Array<{content:string;expressionId:string}>=[];
+  const conversationA:Conversation={apiVersion:"1",schemaVersion:"2",id:"conversation-a",characterId:"char-a",title:"Alpha",messages:[],createdAt:"now",updatedAt:"now"};
+  const conversationB:Conversation={apiVersion:"1",schemaVersion:"2",id:"conversation-b",characterId:"char-b",title:"Beta",messages:[],createdAt:"now",updatedAt:"now"};
+  const conversations=new Map<string,Conversation>([["char-a",conversationA],["char-b",conversationB]]);
+  const responses:unknown[]=[
+    {thought:"Street-tree shade changes radiant heat exposure before it changes air temperature.",initiative:{decision:"switch",focus:"Urban tree shade and heat",direction:"Separate radiant heat from air temperature",progress:"Canopy shade reduces radiant exposure even before the air cools."}},
+    {thought:"Surface temperature and stored heat help explain why shaded streets can stay cooler after sunset.",initiative:{decision:"continue",progress:"Cooler surfaces can store less heat and release less of it after sunset."}},
+    {thought:"Libraries can function as heat refuges when people can access them during the hottest hours.",initiative:{decision:"switch",focus:"Public libraries as heat refuges",direction:"Examine practical access during heat waves",progress:"A refuge only helps when opening hours and location make it reachable."}},
+    {thought:"Access hours and location suggest a useful question to leave open for now.",initiative:{decision:"pause"}},
+    {thought:"The key distinction is between having a cool building and having reliable access to it.",initiative:{decision:"finish",progress:"Access during the hottest hours is part of the refuge itself, not an administrative detail."}},
+    {thought:"A malformed optional update should not replace a completed topic.",initiative:{decision:"switch",focus:"   "}},
+    {thought:"The completed topic remains unchanged when no initiative update is returned."},
+    {thought:"Coastal dunes can reduce erosion by absorbing wave energy, although their protection depends on sediment supply.",initiative:{decision:"switch",focus:"Coastal erosion and dune vegetation",direction:"Consider how dunes absorb wave energy",progress:"Vegetated dunes offer protection only while sediment and space remain available."}},
+    {thought:"Alpha's completed topic remains in its own character state."},
+    {thought:"Libraries can be especially important when heat makes ordinary public spaces unsafe.",expression:{kind:"chat",content:"Public libraries can help during heat waves by providing a reliably cool, accessible place to spend the hottest part of the day."},initiative:{decision:"switch",focus:""}}
+  ];
+  const makeResponse=(request:ChatRequest,content:string):import("../../contracts/src").ChatResponse=>({
+    apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,
+    providerId:"fake.chat",model:request.model,message:{id:request.requestId+":assistant",role:"assistant",content},finishReason:"stop"
+  });
+  const cognitiveStep=new LLMCognitiveStep({
+    runtime:{chat:async request=>{
+      calls.push(request);
+      const payload=responses.shift();
+      if(payload===undefined)throw new Error("Test cognitive response queue is empty.");
+      return makeResponse(request,JSON.stringify(payload));
+    }},
+    getCharacter:async characterId=>({id:characterId,name:characterId==="char-a"?"Alpha":"Beta",description:"Initiative integration fixture",createdAt:"now",updatedAt:"now",enabled:true}),
+    getActiveConversation:async characterId=>conversations.get(characterId),
+    buildContext:async request=>({apiVersion:"1",schemaVersion:"1",characterId:request.characterId,conversationId:request.conversationId,messages:request.messages.filter(message=>message.role!=="system"),includedCandidates:[],omittedCandidates:[],budget:request.budget,estimatedTokens:0}),
+    getContextBudget:()=>({availableContextTokens:1000,reservedOutputTokens:256,systemOverheadTokens:0,safetyMarginTokens:0}),
+    getActiveProviderPresetId:()=>undefined,getChatModel:()=>"fake-model",getChatModelForPreset:async()=>"unused"
+  });
+  const runtime=new MindRuntime({
+    cognitiveStep,
+    schedule:{mode:"fixed",defaultIntervalMs:60_000,minIntervalMs:60_000,maxIntervalMs:60_000,maxRequestsPerHour:30},
+    expressionPublisher:{publish:async expression=>{
+      published.push({content:expression.content,expressionId:expression.expressionId});
+      return {status:"published",messageId:"assistant:"+published.length,conversationId:expression.conversationId};
+    }},
+    isExpressionContextCurrent:()=>true
+  });
+  const waitForRun=(count:number)=>waitFor(()=>((runtime.getState().recentTrace?.length??0)>=count&&runtime.getState().lifecycleState==="waiting"));
+  runtime.setActiveCharacter("char-a");
+  try{
+    await runtime.start();
+    await waitForRun(1);
+    equal(runtime.getState().focus,"Urban tree shade and heat","model can create an initiative and update the existing focus");
+    equal(runtime.getState().initiative,{status:"active",direction:"Separate radiant heat from air temperature",lastProgress:"Canopy shade reduces radiant exposure even before the air cools."},"a new initiative records status, direction and actual progress");
+    runtime.wake("scheduled");await waitForRun(2);
+    const nextContext=calls[1]?.context.messages.find(message=>message.id==="conversation-a:cognition:mind")?.content??"";
+    ok(nextContext.includes("Focus: Urban tree shade and heat"),"next wake includes the current focus in the actual LLM request");
+    ok(nextContext.includes("Initiative status: active"),"next wake includes initiative status in the LLM request");
+    ok(nextContext.includes("Direction: Separate radiant heat from air temperature"),"next wake includes the chosen direction");
+    ok(nextContext.includes("Last meaningful progress: Canopy shade reduces radiant exposure even before the air cools."),"next wake includes the previous meaningful advancement");
+    equal(runtime.getState().focus,"Urban tree shade and heat","continue preserves the current focus");
+    equal(runtime.getState().initiative?.lastProgress,"Cooler surfaces can store less heat and release less of it after sunset.","continue updates substantive progress");
+    equal(runtime.getState().initiative?.status,"active","continue keeps the initiative active");
+    runtime.wake("scheduled");await waitForRun(3);
+    equal(runtime.getState().focus,"Public libraries as heat refuges","switch changes focus to the new substantive topic");
+    equal(runtime.getState().initiative?.direction,"Examine practical access during heat waves","switch replaces the old direction");
+    equal(runtime.getState().initiative?.lastProgress,"A refuge only helps when opening hours and location make it reachable.","switch records progress for the new topic");
+    runtime.wake("scheduled");await waitForRun(4);
+    equal(runtime.getState().focus,"Public libraries as heat refuges","pause retains the topic");
+    equal(runtime.getState().initiative?.status,"paused","pause marks the initiative as paused");
+    runtime.wake("scheduled");await waitForRun(5);
+    equal(runtime.getState().initiative?.status,"completed","finish marks the initiative completed");
+    equal(runtime.getState().initiative?.lastProgress,"Access during the hottest hours is part of the refuge itself, not an administrative detail.","finish may record the final substantive progress");
+    const finishedFocus=runtime.getState().focus;
+    const finishedInitiative=runtime.getState().initiative;
+    runtime.wake("scheduled");await waitForRun(6);
+    equal(runtime.getState().focus,finishedFocus,"invalid optional initiative data does not erase focus");
+    equal(runtime.getState().initiative,finishedInitiative,"invalid optional initiative data does not erase state");
+    equal(runtime.getState().recentTrace?.at(-1)?.result,"success","invalid optional initiative data does not fail the cognitive step");
+    runtime.wake("scheduled");await waitForRun(7);
+    equal(runtime.getState().focus,finishedFocus,"missing optional initiative update preserves focus");
+    equal(runtime.getState().initiative,finishedInitiative,"missing optional initiative update preserves initiative state");
+    runtime.setActiveCharacter("char-b");await waitForRun(8);
+    equal(runtime.getState().focus,"Coastal erosion and dune vegetation","the second character can establish its own focus");
+    equal(runtime.getState().initiative?.lastProgress,"Vegetated dunes offer protection only while sediment and space remain available.","the second character owns its own initiative details");
+    runtime.setActiveCharacter("char-a");
+    equal(runtime.getState().focus,finishedFocus,"switching back restores the first character's focus");
+    equal(runtime.getState().initiative,finishedInitiative,"switching back restores the first character's initiative status");
+    await waitForRun(9);
+    conversationA.messages=[{id:"reactive-user-1",role:"user",content:"How can libraries help during extreme heat?"}];
+    equal(runtime.wakeForUserMessage({characterId:"char-a",conversationId:"conversation-a",userMessageId:"reactive-user-1",turnId:"initiative-reactive-turn"}),true,"Life accepts the current persisted user turn");
+    await waitForRun(10);
+    equal(published.length,1,"the reactive LLM path publishes exactly one Chat answer");
+    equal(published[0]?.content,"Public libraries can help during heat waves by providing a reliably cool, accessible place to spend the hottest part of the day.","Chat receives only the model's separate public expression");
+    equal(runtime.getState().lastThought?.content,"Libraries can be especially important when heat makes ordinary public spaces unsafe.","private Thought remains in the internal Thought history");
+    ok(published[0]?.content!==runtime.getState().lastThought?.content,"private Thought content is never copied into Chat");
+    equal(runtime.getState().focus,finishedFocus,"an invalid optional update does not block a valid reactive answer or change focus");
+    equal(runtime.getState().initiative,finishedInitiative,"an invalid optional update does not block or erase the initiative during reactive Chat");
+    equal(runtime.getState().recentTrace?.at(-1)?.expressionStatus,"published","reactive answer traverses the existing expression publication path");
+  }finally{await runtime.stop();}
+}
+
+async function autonomousInitiativeStaleResponseTest(){
+  const calls:ChatRequest[]=[];
+  const conversationA:Conversation={apiVersion:"1",schemaVersion:"2",id:"stale-conversation-a",characterId:"char-a",title:"Alpha",messages:[],createdAt:"now",updatedAt:"now"};
+  const conversationB:Conversation={apiVersion:"1",schemaVersion:"2",id:"stale-conversation-b",characterId:"char-b",title:"Beta",messages:[],createdAt:"now",updatedAt:"now"};
+  const conversations=new Map<string,Conversation>([["char-a",conversationA],["char-b",conversationB]]);
+  const makeResponse=(request:ChatRequest,content:string):import("../../contracts/src").ChatResponse=>({
+    apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,
+    providerId:"fake.chat",model:request.model,message:{id:request.requestId+":assistant",role:"assistant",content},finishReason:"stop"
+  });
+  let alphaCalls=0;
+  let deferredStarted=false;
+  let deferredRequest:ChatRequest|undefined;
+  let releaseDeferred:(response:import("../../contracts/src").ChatResponse)=>void=()=>undefined;
+  const deferred=new Promise<import("../../contracts/src").ChatResponse>(resolve=>{releaseDeferred=resolve;});
+  const cognitiveStep=new LLMCognitiveStep({
+    runtime:{chat:async request=>{
+      calls.push(request);
+      const identity=request.context.messages.find(message=>message.id.endsWith(":cognition:identity"))?.content??"";
+      if(identity.includes("Name: Alpha")){
+        alphaCalls+=1;
+        if(alphaCalls===1)return makeResponse(request,JSON.stringify({thought:"Alpha begins with a stable research question.",initiative:{decision:"switch",focus:"Alpha original focus",direction:"Compare causes and effects",progress:"The initial distinction is now explicit."}}));
+        if(alphaCalls===2){deferredStarted=true;deferredRequest=request;return deferred;}
+        return makeResponse(request,JSON.stringify({thought:"Alpha's existing topic remains available after returning.",initiative:{decision:"continue",progress:"The old result was not committed."}}));
+      }
+      return makeResponse(request,JSON.stringify({thought:"Beta considers the way shore vegetation changes erosion.",initiative:{decision:"switch",focus:"Beta independent focus",direction:"Inspect sediment and roots",progress:"Rooted dunes can reduce erosion while the sediment budget remains healthy."}}));
+    }},
+    getCharacter:async characterId=>({id:characterId,name:characterId==="char-a"?"Alpha":"Beta",description:"Stale-result fixture",createdAt:"now",updatedAt:"now",enabled:true}),
+    getActiveConversation:async characterId=>conversations.get(characterId),
+    buildContext:async request=>({apiVersion:"1",schemaVersion:"1",characterId:request.characterId,conversationId:request.conversationId,messages:request.messages.filter(message=>message.role!=="system"),includedCandidates:[],omittedCandidates:[],budget:request.budget,estimatedTokens:0}),
+    getContextBudget:()=>({availableContextTokens:1000,reservedOutputTokens:256,systemOverheadTokens:0,safetyMarginTokens:0}),
+    getActiveProviderPresetId:()=>undefined,getChatModel:()=>"fake-model",getChatModelForPreset:async()=>"unused"
+  });
+  const runtime=new MindRuntime({cognitiveStep,schedule:{mode:"fixed",defaultIntervalMs:60_000,minIntervalMs:60_000,maxIntervalMs:60_000,maxRequestsPerHour:20}});
+  const waitForRun=(count:number)=>waitFor(()=>((runtime.getState().recentTrace?.length??0)>=count&&runtime.getState().lifecycleState==="waiting"));
+  runtime.setActiveCharacter("char-a");
+  try{
+    await runtime.start();await waitForRun(1);
+    equal(runtime.getState().focus,"Alpha original focus","initial initiative is stored for Alpha");
+    runtime.wake("scheduled");await waitFor(()=>deferredStarted);
+    runtime.setActiveCharacter("char-b");
+    await waitForRun(3);
+    equal(runtime.getState().focus,"Beta independent focus","the current character can update initiative after cancellation");
+    ok((runtime.getState().recentTrace??[]).some(entry=>entry.characterId==="char-a"&&entry.wakeReason==="scheduled"&&entry.result==="cancelled"),"switching character cancels the in-flight stale cognitive request");
+    releaseDeferred(makeResponse(deferredRequest!,JSON.stringify({thought:"Late stale Thought",initiative:{decision:"switch",focus:"Stale focus that must not apply"}})));
+    await new Promise(resolve=>setTimeout(resolve,20));
+    runtime.setActiveCharacter("char-a");
+    equal(runtime.getState().focus,"Alpha original focus","late model result cannot change the cancelled character's focus");
+    equal(runtime.getState().initiative?.lastProgress,"The initial distinction is now explicit.","late model result cannot change the cancelled character's initiative progress");
+  }finally{await runtime.stop();}
+}
+
 async function cognitiveProviderBadRequestRegressionTest(){
   const calls:ChatRequest[]=[];
   const chatRuntime={
@@ -285,7 +435,7 @@ async function cognitiveProviderBadRequestRegressionTest(){
     getChatModel:()=> "unused",
     getChatModelForPreset:async()=> "test-model"
   });
-  const thought=await step.run({characterId:"char-regression",state:{focus:null,lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"thinking"},signal:new AbortController().signal,wakeReason:"scheduled"});
+  const thought=await step.run({characterId:"char-regression",state:{focus:null,initiative:null,lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"thinking"},signal:new AbortController().signal,wakeReason:"scheduled"});
   equal(calls.length,1,"text cognitive request does not trigger structured-output retry path");
   equal(calls[0]?.generation?.responseFormat?.type,"text","regression request bypasses json-schema");
   equal(thought.thought.content,"plain cognitive text","plain provider response is parsed as Thought content");
@@ -517,6 +667,7 @@ async function reactiveRequiredExpressionFailureTest(){
     cognitiveStep:{run:async({characterId})=>({
       thought:makeThought(characterId,"required-expression-failure","A private Thought that must not be committed without the required answer."),
       expression:{kind:"internal" as const},
+      initiative:{decision:"switch" as const,focus:"This must not be committed without a required reactive answer"},
       conversationId:"conversation.required"
     })},
     schedule:{mode:"fixed",defaultIntervalMs:10_000,minIntervalMs:10_000,maxIntervalMs:10_000,maxRequestsPerHour:20},
@@ -545,6 +696,8 @@ async function reactiveRequiredExpressionFailureTest(){
     equal(failedTrace?.expressionStatus,"failed","missing required expression is traced as failed, not internally completed");
     equal(publishCount,0,"private Thought is never published as a fallback Chat response");
     equal(runtime.getState().recentThoughts.length,thoughtCount,"Thought from a malformed required response is not committed");
+    equal(runtime.getState().focus,null,"initiative update from a rejected required reactive response is not applied");
+    equal(runtime.getState().initiative,null,"rejected reactive response cannot create initiative state");
     equal(failure?.turn.turnId,"turn-required","failed reactive turn is surfaced to the controller for explicit retry");
   }finally{await runtime.stop();}
 }
@@ -705,6 +858,8 @@ async function main(){
   await thoughtSubscriptionTest();
   await characterScopedThoughtHistoryTest();
   await llmCognitiveStepTest();
+  await autonomousInitiativeRuntimeIntegrationTest();
+  await autonomousInitiativeStaleResponseTest();
   await cognitiveProviderBadRequestRegressionTest();
   await adaptiveIntervalPolicyTest();
   await fixedIntervalIgnoresModelTest();
