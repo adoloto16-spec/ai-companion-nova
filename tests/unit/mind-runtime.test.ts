@@ -329,7 +329,7 @@ async function autonomousInitiativeRuntimeIntegrationTest(){
     const nextContext=calls[1]?.context.messages.find(message=>message.id==="conversation-a:cognition:mind")?.content??"";
     ok(nextContext.includes("Focus: Urban tree shade and heat"),"next wake includes the current focus in the actual LLM request");
     ok(nextContext.includes("Initiative status: active"),"next wake includes initiative status in the LLM request");
-    ok(nextContext.includes("Direction: Separate radiant heat from air temperature"),"next wake includes the chosen direction");
+    ok(nextContext.includes("Initiative direction: Separate radiant heat from air temperature"),"next wake includes the chosen direction");
     ok(nextContext.includes("Last meaningful progress: Canopy shade reduces radiant exposure even before the air cools."),"next wake includes the previous meaningful advancement");
     equal(runtime.getState().focus,"Urban tree shade and heat","continue preserves the current focus");
     equal(runtime.getState().initiative?.lastProgress,"Cooler surfaces can store less heat and release less of it after sunset.","continue updates substantive progress");
