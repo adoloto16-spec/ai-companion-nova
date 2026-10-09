@@ -52,17 +52,24 @@ async function main(){
   equal((await reloaded.listCoreBookEntries("character.b"))[0]?.content,"Bravo","B data remains isolated");
 
   const legacyStore=new InMemoryCoreBookStore();
-  const {role:_oldRole,...legacyEntry}=({...a,source:"system" as const});
-  await legacyStore.save({apiVersion:"1",schemaVersion:"1",characterId:"character.legacy",entries:[legacyEntry as unknown as typeof a] as any});
+  const legacyEntries=(["system","user","import","other"] as const).map(source=>{
+    const {role:_oldRole,...entryWithoutRole}=({
+      ...a,id:"legacy."+source,characterId:"character.legacy",source
+    });
+    return entryWithoutRole;
+  });
+  await legacyStore.save({apiVersion:"1",schemaVersion:"1",characterId:"character.legacy",entries:legacyEntries as unknown as typeof a[]});
   const legacyManager=new CoreBookManager(legacyStore,{clock,idFactory:()=>`legacy.${++ids}`,characterExists:async id=>id==="character.legacy"});
-  const migrated=(await legacyManager.listCoreBookEntries("character.legacy"))[0]!;
-  equal(migrated.role,"system","legacy system source migrates to system role");
+  const migratedEntries=await legacyManager.listCoreBookEntries("character.legacy");
+  equal(migratedEntries.map(entry=>entry.role),["system","user","user","user"],"legacy source mapping is applied once to all four sources");
+  equal(migratedEntries.map(entry=>entry.source),["system","user","import","other"],"Core Book migration preserves independent source values");
+  const migrated=migratedEntries[0]!;
   const migratedState=await legacyStore.load("character.legacy");
   equal(migratedState?.schemaVersion,"2","legacy Core Book state is migrated and persisted at schema v2");
-  equal(migrated.id,legacyEntry.id,"Core Book migration preserves ID");
-  equal(migrated.tags,legacyEntry.tags,"Core Book migration preserves tags");
-  equal(migrated.content,legacyEntry.content,"Core Book migration preserves content");
-    const semantic=await reloaded.createCoreBookEntry("character.a",{title:"Reserved semantic",content:"future",activation:{kind:"semantic"},source:"system"});
+  equal(migrated.id,legacyEntries[0]!.id,"Core Book migration preserves ID");
+  equal(migrated.tags,legacyEntries[0]!.tags,"Core Book migration preserves tags");
+  equal(migrated.content,legacyEntries[0]!.content,"Core Book migration preserves content");
+  const semantic=await reloaded.createCoreBookEntry("character.a",{title:"Reserved semantic",content:"future",activation:{kind:"semantic"},source:"system"});
   const modelSearch=await reloaded.createCoreBookEntry("character.a",{title:"Reserved model search",content:"future",activation:{kind:"model_search"},source:"system"});
   ok(semantic.activation.kind==="semantic"&&modelSearch.activation.kind==="model_search","reserved activation modes are stored without retrieval");
 
