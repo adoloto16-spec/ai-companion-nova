@@ -13,9 +13,9 @@ export function writeChatDraft(drafts:ChatDraftMap,key:string,value:string):Reco
 }
 
 export function clearSubmittedChatDraft(
-  drafts:ChatDraftMap,
+  drafts:Record<string,string>,
   key:string,
   submitted:string
-):ChatDraftMap{
+):Record<string,string>{
   return drafts[key]===submitted?{...drafts,[key]:""}:drafts;
 }
