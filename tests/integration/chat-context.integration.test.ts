@@ -130,7 +130,7 @@ async function main(){
   for(let index=0;index<expectedConversationRoles.length;index+=1){
     const request=cognitiveCalls[index]!.request;
     equal(request.context.messages.map(message=>message.role),expectedConversationRoles[index],`Case ${index+1} preserves conversation roles and appends a user cognition cue`);
-    equal(request.context.messages[request.context.messages.length-1]?.content,"Continue Nova's internal cognition. Produce exactly one private thought based on the context above and, only if useful, an optional separate chat expression in the required JSON object. Do not answer the user's current message; ordinary Chat handles that response.","cognitive request ends with the synthetic user cue");
+    equal(request.context.messages[request.context.messages.length-1]?.content,"Continue Nova's internal cognition. Produce exactly one private Thought based on the actual topic and recent context. On this scheduled/background step, you may either keep the Thought private or send one distinct, meaningful chat expression. Do not repeat the previous message just to keep the loop active. If the user explicitly requested several separate messages, you may send at most one per step and should stop once that bounded request is complete.","cognitive request ends with the scheduled cognition cue");
     equal(request.context.messages[request.context.messages.length-1]?.id,request.context.conversationId+":cognition:user-cue","synthetic cognition cue has a request-local id");
   }
   equal(cognitiveCalls[1]?.request.context.messages.find(message=>message.id==="cognition-assistant-2")?.metadata?.safeMarker,"assistant-metadata","assistant metadata survives ContextEngine into canonical request");
