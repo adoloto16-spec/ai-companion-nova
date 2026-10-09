@@ -1,6 +1,6 @@
 import type {
   CharacterId,Clock,CoreBookActivation,CoreBookEntry,CoreBookEntryId,CoreBookEntrySource,
-  CoreBookMutationPolicy,CoreBookStore,CoreBookStoreState,EventBus
+  CoreBookMutationPolicy,CoreBookRole,CoreBookStore,CoreBookStoreState,EventBus
 } from "../../contracts/src/index";
 import {CORE_BOOK_API_VERSION,CORE_BOOK_SCHEMA_VERSION,createEvent} from "../../contracts/src/index";
 
@@ -14,6 +14,7 @@ export interface CoreBookCreateInput{
   mutationPolicy?:CoreBookMutationPolicy;
   enabled?:boolean;
   source?:CoreBookEntrySource;
+  role?:CoreBookRole;
   metadata?:Record<string,unknown>;
 }
 
@@ -132,6 +133,7 @@ function validateEntry(entry:CoreBookEntry,characterId:string):void{
   if(!["locked","suggest","auto"].includes(entry.mutationPolicy))throw new Error("Invalid Core Book mutationPolicy.");
   if(typeof entry.enabled!=="boolean")throw new Error("Core Book enabled must be boolean.");
   if(!["user","import","system","other"].includes(entry.source))throw new Error("Invalid Core Book source.");
+  if(!["system","user","assistant"].includes(entry.role))throw new Error("Invalid Core Book role.");
   if(!isRecord(entry.metadata))throw new Error("Core Book metadata must be an object.");
   if(!entry.createdAt.trim()||!entry.updatedAt.trim())throw new Error("Core Book timestamps are required.");
 }
@@ -195,6 +197,7 @@ export class CoreBookManager{
       mutationPolicy:input.mutationPolicy??DEFAULT_MUTATION_POLICY,
       enabled:input.enabled??true,
       source:input.source??DEFAULT_SOURCE,
+      role:input.role??"user",
       metadata:{...(input.metadata??{})},
       createdAt:now,
       updatedAt:now
@@ -223,6 +226,7 @@ export class CoreBookManager{
       mutationPolicy:input.mutationPolicy===undefined?current.mutationPolicy:input.mutationPolicy,
       enabled:input.enabled===undefined?current.enabled:input.enabled,
       source:input.source===undefined?current.source:input.source,
+      role:input.role===undefined?current.role:input.role,
       metadata:input.metadata===undefined?{...current.metadata}:{...input.metadata},
       updatedAt:this.clock.now()
     };
@@ -275,6 +279,22 @@ export class CoreBookManager{
       const empty:CoreBookEntry[]=[];
       this.cache.set(scope,empty);
       return empty;
+    }
+    if(stored.schemaVersion==="1"){
+      const migrated:CoreBookStoreState={
+        apiVersion:CORE_BOOK_API_VERSION,
+        schemaVersion:CORE_BOOK_SCHEMA_VERSION,
+        characterId:scope,
+        entries:stored.entries.map(entry=>({
+          ...entry,
+          role:((entry as CoreBookEntry & {role?:CoreBookRole}).role)??(entry.source==="system"?"system":"user")
+        }))
+      };
+      validateState(migrated,scope);
+      await this.store.save({ ...migrated, entries:migrated.entries.map(cloneEntry) });
+      const entries=migrated.entries.map(cloneEntry);
+      this.cache.set(scope,entries);
+      return entries;
     }
     validateState(stored,scope);
     const entries=stored.entries.map(cloneEntry);
