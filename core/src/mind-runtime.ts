@@ -327,7 +327,8 @@ export class MindRuntime{
     life:AbortController;
     isCancelled:()=>boolean;
   }):Promise<Partial<MindTraceEntry>>{
-    const base:Partial<MindTraceEntry>={expressionKind:"chat",expressionId:input.expressionId,...(input.conversationId?{expressionConversationId:input.conversationId}:{})};
+    const conversationId=input.conversationId;
+    const base:Partial<MindTraceEntry>={expressionKind:"chat",expressionId:input.expressionId,...(conversationId?{expressionConversationId:conversationId}:{})};
     const suppressed=(reason:MindExpressionSuppressionReason):Partial<MindTraceEntry>=>({...base,expressionStatus:"suppressed",expressionSuppressionReason:reason});
     const failed=(reason:MindExpressionSuppressionReason,errorCode?:string):Partial<MindTraceEntry>=>({...base,expressionStatus:"failed",expressionSuppressionReason:reason,...(errorCode?{expressionErrorCode:errorCode}:{})});
     if(input.reason!=="scheduled"){
@@ -336,7 +337,7 @@ export class MindRuntime{
     }
     if(!this.proactiveChatSettings.enabled)return suppressed("disabled");
     if(typeof input.content!=="string"||!input.content.trim()||input.content.length>2000)return {...base,expressionStatus:"invalid",expressionSuppressionReason:"invalid-expression"};
-    if(!input.conversationId?.trim())return suppressed("wrong-conversation");
+    if(!conversationId?.trim())return suppressed("wrong-conversation");
     if(!this.expressionPublisher)return suppressed("publisher-unavailable");
     const current=()=>{
       if(input.life.signal.aborted||this.lifeController!==input.life||input.stepController.signal.aborted||input.isCancelled())return false;
@@ -346,7 +347,7 @@ export class MindRuntime{
     if(!current())return suppressed(input.isCancelled()&&this.pendingWakeReason==="user-message"?"user-message-wake":input.isCancelled()&&this.pendingWakeReason==="character-change"?"character-change-wake":"stale-context");
     try{
       if(!this.isExpressionContextCurrent)return suppressed("stale-context");
-      const contextCurrent=await abortable(Promise.resolve().then(()=>this.isExpressionContextCurrent!(input.characterId,input.conversationId)),input.stepController.signal);
+      const contextCurrent=await abortable(Promise.resolve().then(()=>this.isExpressionContextCurrent!(input.characterId,conversationId)),input.stepController.signal);
       if(!contextCurrent)return suppressed("stale-context");
     }catch{return suppressed(input.stepController.signal.aborted||input.life.signal.aborted?"cancelled":"stale-context");}
     if(!current())return suppressed(input.isCancelled()&&this.pendingWakeReason==="user-message"?"user-message-wake":input.isCancelled()&&this.pendingWakeReason==="character-change"?"character-change-wake":"stale-context");
@@ -358,7 +359,7 @@ export class MindRuntime{
     if(!current())return suppressed("stale-context");
     try{
       if(!this.isExpressionContextCurrent)return suppressed("stale-context");
-      const contextCurrent=await abortable(Promise.resolve().then(()=>this.isExpressionContextCurrent!(input.characterId,input.conversationId)),input.stepController.signal);
+      const contextCurrent=await abortable(Promise.resolve().then(()=>this.isExpressionContextCurrent!(input.characterId,conversationId)),input.stepController.signal);
       if(!contextCurrent)return suppressed("stale-context");
     }catch{return suppressed(input.stepController.signal.aborted||input.life.signal.aborted?"cancelled":"stale-context");}
     if(!current())return suppressed(input.isCancelled()&&this.pendingWakeReason==="user-message"?"user-message-wake":input.isCancelled()&&this.pendingWakeReason==="character-change"?"character-change-wake":"stale-context");
@@ -366,7 +367,7 @@ export class MindRuntime{
     if(!publisher)return suppressed("publisher-unavailable");
     let outcome:MindExpressionPublishResult;
     try{
-      outcome=await abortable(Promise.resolve().then(()=>publisher.publish({characterId:input.characterId,conversationId:input.conversationId,expressionId:input.expressionId,content:input.content,signal:input.stepController.signal})),input.stepController.signal);
+      outcome=await abortable(Promise.resolve().then(()=>publisher.publish({characterId:input.characterId,conversationId,expressionId:input.expressionId,content:input.content,signal:input.stepController.signal})),input.stepController.signal);
     }catch(error){
       if(input.stepController.signal.aborted||input.life.signal.aborted)return suppressed("cancelled");
       this.safeOnExpressionError(error);
