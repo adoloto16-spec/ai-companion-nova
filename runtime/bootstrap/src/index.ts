@@ -1,6 +1,6 @@
 import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatRequestOptions,ChatResponse,CredentialStore,ProviderConfiguration,ProviderPreset,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryArchiveReason,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,MemorySemanticIndexStore,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider} from "../../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
-import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore} from "../../../contracts/src/index";
+import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore,MindExpressionPublisher,MindReactiveTurn} from "../../../contracts/src/index";
 import type {Conversation,ConversationCreateInput,ConversationId,ConversationStore,ConversationUpdateInput} from "../../../contracts/src/index";
 import {
   AiRuntime,AutomaticMemoryAgent,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,MemorySemanticDeduplicator,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,MindRuntime,LLMCognitiveStep,
@@ -72,7 +72,9 @@ export interface FoundationRuntime{
   startLife():Promise<void>;
   stopLife():Promise<void>;
   getMindState():import("../../../contracts/src/index").MindState;
+  setMindExpressionPublisher(publisher:MindExpressionPublisher|undefined):void;
   wakeMind():void;
+  wakeMindForUserMessage(turn:MindReactiveTurn):boolean;
   subscribeMindState(listener:(state:import("../../../contracts/src/index").MindState)=>void):import("../../../contracts/src/index").Unsubscribe;
   subscribeThoughts(listener:(thought:import("../../../contracts/src/index").Thought)=>void):import("../../../contracts/src/index").Unsubscribe;
   deleteThought(thoughtId:string):boolean;
@@ -352,6 +354,14 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       clock:()=>new Date().toISOString()
     }),
     schedule:settingsManager.get().cognitiveSchedule,
+    proactiveChat:settingsManager.get().proactiveChat,
+    isExpressionContextCurrent:async(characterId,conversationId)=>{
+      const activeCharacter=await characterManager.getActiveCharacter();
+      if(activeCharacter.id!==characterId)return false;
+      const activeConversation=await conversationManager.getActiveConversation(characterId);
+      return activeConversation.characterId===characterId&&activeConversation.id===conversationId;
+    },
+    onExpressionError:error=>diagnosticsStore.recordError("mind-expression","EXPRESSION_PUBLISH_FAILED",error instanceof Error?error.name:"PUBLISH_FAILED"),
     recentThoughtLimit:50,
     onError:error=>{
       const chatError=error&&typeof error==="object"&&"chatError" in error
@@ -610,7 +620,9 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     startLife:()=>mindRuntime.start(),
     stopLife:()=>mindRuntime.stop(),
     getMindState:()=>mindRuntime.getState(),
+    setMindExpressionPublisher:publisher=>mindRuntime.setExpressionPublisher(publisher),
     wakeMind:()=>mindRuntime.wake("user-message"),
+    wakeMindForUserMessage:turn=>mindRuntime.wakeForUserMessage(turn),
     subscribeMindState:listener=>mindRuntime.subscribe(listener),
     subscribeThoughts:listener=>mindRuntime.subscribeThoughts(listener),
     deleteThought:thoughtId=>mindRuntime.deleteThought(thoughtId),
@@ -647,6 +659,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     updateSettings:async(settings)=>{
       const next=await settingsManager.set(settings);
       mindRuntime.updateSchedule(next.cognitiveSchedule);
+      mindRuntime.updateProactiveChat(next.proactiveChat);
       diagnosticsStore.setMaxEntries(next.diagnostics.keepRecentEntries);
       traceStore.configure(next.diagnostics.logLevel,next.diagnostics.keepRecentEntries);
       // Record the values the already-running runtime will use after a Settings Save.
@@ -662,6 +675,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     resetSettings:async()=>{
       const next=await settingsManager.reset();
       mindRuntime.updateSchedule(next.cognitiveSchedule);
+      mindRuntime.updateProactiveChat(next.proactiveChat);
       diagnosticsStore.setMaxEntries(next.diagnostics.keepRecentEntries);
       traceStore.configure(next.diagnostics.logLevel,next.diagnostics.keepRecentEntries);
       return next;

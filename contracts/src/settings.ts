@@ -14,9 +14,19 @@ export const DEFAULT_COGNITIVE_SCHEDULE:CognitiveScheduleSettings={
   maxIntervalMs:900_000,
   maxRequestsPerHour:120
 };
+export interface ProactiveChatSettings{
+  enabled:boolean;
+  minMessageIntervalMs:number;
+  maxMessagesPerHour:number;
+}
+export const DEFAULT_PROACTIVE_CHAT:ProactiveChatSettings={
+  enabled:true,
+  minMessageIntervalMs:10_000,
+  maxMessagesPerHour:120
+};
 
 export const APP_SETTINGS_API_VERSION:"1"="1";
-export const APP_SETTINGS_SCHEMA_VERSION:"6"="6";
+export const APP_SETTINGS_SCHEMA_VERSION:"8"="8";
 export const DEFAULT_MEMORY_AGENT_PROMPT_VERSION="1";
 export const DEFAULT_AUTOMATIC_MEMORY_PROMPT="You are a long-term memory agent.\nDecide whether the exchange contains durable information worth remembering after this conversation ends.\nReturn only the requested output.\nGood memories are brief, self-contained, durable, and understandable without the original conversation.\nDo not invent ids or metadata; the application supplies all internal state.";
 export const DEFAULT_MEMORY_JUDGE_PROMPT_VERSION="2";
@@ -26,8 +36,9 @@ const LEGACY_MEMORY_JUDGE_PROMPT="You are a memory deduplication judge.\n\nCompa
 
 export interface AppSettings{
   apiVersion:"1";
-  schemaVersion:"6";
+  schemaVersion:"8";
   cognitiveSchedule:CognitiveScheduleSettings;
+  proactiveChat:ProactiveChatSettings;
   chat:{
     automaticLongTermMemory:boolean;
   };
@@ -81,6 +92,7 @@ export const DEFAULT_APP_SETTINGS:AppSettings={
   apiVersion:APP_SETTINGS_API_VERSION,
   schemaVersion:APP_SETTINGS_SCHEMA_VERSION,
   cognitiveSchedule:{...DEFAULT_COGNITIVE_SCHEDULE},
+  proactiveChat:{...DEFAULT_PROACTIVE_CHAT},
   chat:{automaticLongTermMemory:true},
   memoryAgent:{enabled:true,providerPresetId:null,model:"",outputMode:"auto",prompt:DEFAULT_AUTOMATIC_MEMORY_PROMPT,promptBackup:null,defaultPromptVersion:DEFAULT_MEMORY_AGENT_PROMPT_VERSION},
   semanticDedup:{enabled:false,embeddingProviderPresetId:null,embeddingModel:"",candidateSimilarityThreshold:0.88,candidateLimit:5,judge:{enabled:true,providerPresetId:null,model:"",outputMode:"auto",prompt:DEFAULT_MEMORY_JUDGE_PROMPT,promptBackup:null,defaultPromptVersion:DEFAULT_MEMORY_JUDGE_PROMPT_VERSION}},
@@ -101,6 +113,7 @@ export function defaultAppSettings():AppSettings{
     apiVersion:DEFAULT_APP_SETTINGS.apiVersion,
     schemaVersion:DEFAULT_APP_SETTINGS.schemaVersion,
     cognitiveSchedule:{...DEFAULT_APP_SETTINGS.cognitiveSchedule},
+    proactiveChat:{...DEFAULT_APP_SETTINGS.proactiveChat},
     chat:{...DEFAULT_APP_SETTINGS.chat},
     memoryAgent:{...DEFAULT_APP_SETTINGS.memoryAgent},
     semanticDedup:{...DEFAULT_APP_SETTINGS.semanticDedup,judge:{...DEFAULT_APP_SETTINGS.semanticDedup.judge}},
@@ -122,7 +135,9 @@ const SECURITY_MAX={
   memoryCandidateLimit:100,
   retrievalCandidateLimit:100,
   semanticCandidateLimit:100,
-  diagnosticsEntries:500
+  diagnosticsEntries:500,
+  proactiveMessageIntervalMs:3_600_000,
+  proactiveMessagesPerHour:3_600
 } as const;
 
 export function validateAppSettings(settings:AppSettings):string[]{
@@ -132,6 +147,14 @@ export function validateAppSettings(settings:AppSettings):string[]{
   };
   if(settings.apiVersion!==APP_SETTINGS_API_VERSION)errors.push("Unsupported AppSettings apiVersion.");
   if(settings.schemaVersion!==APP_SETTINGS_SCHEMA_VERSION)errors.push("Unsupported AppSettings schemaVersion.");
+  const proactive=settings.proactiveChat;
+  if(!proactive||typeof proactive!=="object"){
+    errors.push("Proactive Chat settings must be an object.");
+  }else{
+    if(typeof proactive.enabled!=="boolean")errors.push("Proactive Chat enabled must be boolean.");
+    integer(proactive.minMessageIntervalMs,"Proactive Chat minimum message interval",10_000,SECURITY_MAX.proactiveMessageIntervalMs);
+    integer(proactive.maxMessagesPerHour,"Proactive Chat messages per hour",1,SECURITY_MAX.proactiveMessagesPerHour);
+  }
   const schedule=settings.cognitiveSchedule;
   if(!schedule||typeof schedule!=="object"){
     errors.push("Cognitive schedule settings must be an object.");
@@ -183,7 +206,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const input=value as Record<string,unknown>;
   const legacy=input.schemaVersion==="0"||input.schemaVersion===undefined||input.schemaVersion==="1";
   if(input.apiVersion!==undefined&&input.apiVersion!=="1"&&!legacy)throw new Error("Unsupported AppSettings apiVersion.");
-  if(input.schemaVersion!==undefined&&!["0","1","2","3","4","5","6"].includes(String(input.schemaVersion)))throw new Error("Unsupported AppSettings schemaVersion.");
+  if(input.schemaVersion!==undefined&&!["0","1","2","3","4","5","6","7","8"].includes(String(input.schemaVersion)))throw new Error("Unsupported AppSettings schemaVersion.");
   const root=value as Record<string,any>;
   const context=root.context&&typeof root.context==="object"?root.context:{};
   const memory=root.memory&&typeof root.memory==="object"?root.memory:{};
@@ -192,6 +215,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const memoryAgent=root.memoryAgent&&typeof root.memoryAgent==="object"?root.memoryAgent:{};
   const ui=root.ui&&typeof root.ui==="object"?root.ui:{};
   const cognitiveSchedule=root.cognitiveSchedule&&typeof root.cognitiveSchedule==="object"?root.cognitiveSchedule:{};
+  const proactiveChat=root.proactiveChat&&typeof root.proactiveChat==="object"?root.proactiveChat:{};
   const semanticDedup=root.semanticDedup&&typeof root.semanticDedup==="object"?root.semanticDedup:{};
   const semanticJudge=semanticDedup.judge&&typeof semanticDedup.judge==="object"?semanticDedup.judge:{};
   const legacyContextBudget=typeof root.contextBudget==="number"?root.contextBudget:undefined;
@@ -202,7 +226,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
   if(!["off","errors","normal","verbose","debug"].includes(logLevelValue))throw new Error("Unsupported diagnostics log level.");
   const legacyEnabled=typeof chat.automaticLongTermMemory==="boolean"?chat.automaticLongTermMemory:defaults.chat.automaticLongTermMemory;
   // Schema v5 is canonical, so Memory Agent persistence fields must survive migration unchanged; legacy schemas keep their historical gates.
-  const preservesMemoryAgentBinding=["2","3","4","5","6"].includes(String(input.schemaVersion));
+  const preservesMemoryAgentBinding=["2","3","4","5","6","7","8"].includes(String(input.schemaVersion));
   const previousSchema=input.schemaVersion==="2";
   const memoryAgentEnabled=preservesMemoryAgentBinding&&typeof memoryAgent.enabled==="boolean"?memoryAgent.enabled:legacyEnabled;
   const memoryAgentPreset=preservesMemoryAgentBinding&&typeof memoryAgent.providerPresetId==="string"&&memoryAgent.providerPresetId.trim()?memoryAgent.providerPresetId.trim():null;
@@ -227,14 +251,27 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const semanticJudgePrompt=semanticJudgePromptIsLegacyDefault?DEFAULT_MEMORY_JUDGE_PROMPT:(storedSemanticJudgePrompt||semanticJudgeLegacyPrompt||DEFAULT_MEMORY_JUDGE_PROMPT);
   const semanticJudgeBackup=typeof semanticJudge.promptBackup==="string"&&semanticJudge.promptBackup.length>0?semanticJudge.promptBackup:null;
   const semanticJudgeVersion=semanticJudgePromptIsLegacyDefault?DEFAULT_MEMORY_JUDGE_PROMPT_VERSION:(typeof semanticJudge.defaultPromptVersion==="string"&&semanticJudge.defaultPromptVersion.trim()?semanticJudge.defaultPromptVersion.trim():DEFAULT_MEMORY_JUDGE_PROMPT_VERSION);
+  // v7 shipped with 120000 ms / 6 messages per hour as defaults. Migrate only those exact defaults;
+  // independently preserve customized values and the enabled toggle.
+  const migratedProactiveMin=typeof proactiveChat.minMessageIntervalMs==="number"
+    ?(String(input.schemaVersion)==="7"&&proactiveChat.minMessageIntervalMs===120_000?defaults.proactiveChat.minMessageIntervalMs:proactiveChat.minMessageIntervalMs)
+    :defaults.proactiveChat.minMessageIntervalMs;
+  const migratedProactiveMax=typeof proactiveChat.maxMessagesPerHour==="number"
+    ?(String(input.schemaVersion)==="7"&&proactiveChat.maxMessagesPerHour===6?defaults.proactiveChat.maxMessagesPerHour:proactiveChat.maxMessagesPerHour)
+    :defaults.proactiveChat.maxMessagesPerHour;
   const next:AppSettings={
-    apiVersion:"1",schemaVersion:"6",
+    apiVersion:"1",schemaVersion:"8",
     cognitiveSchedule:{
       mode:typeof cognitiveSchedule.mode==="string"?cognitiveSchedule.mode as CognitiveScheduleMode:defaults.cognitiveSchedule.mode,
       defaultIntervalMs:typeof cognitiveSchedule.defaultIntervalMs==="number"?cognitiveSchedule.defaultIntervalMs:defaults.cognitiveSchedule.defaultIntervalMs,
       minIntervalMs:typeof cognitiveSchedule.minIntervalMs==="number"?cognitiveSchedule.minIntervalMs:defaults.cognitiveSchedule.minIntervalMs,
       maxIntervalMs:typeof cognitiveSchedule.maxIntervalMs==="number"?cognitiveSchedule.maxIntervalMs:defaults.cognitiveSchedule.maxIntervalMs,
       maxRequestsPerHour:typeof cognitiveSchedule.maxRequestsPerHour==="number"?cognitiveSchedule.maxRequestsPerHour:defaults.cognitiveSchedule.maxRequestsPerHour
+    },
+    proactiveChat:{
+      enabled:typeof proactiveChat.enabled==="boolean"?proactiveChat.enabled:defaults.proactiveChat.enabled,
+      minMessageIntervalMs:migratedProactiveMin,
+      maxMessagesPerHour:migratedProactiveMax
     },
     chat:{automaticLongTermMemory:legacyEnabled},
     memoryAgent:{enabled:memoryAgentEnabled,providerPresetId:memoryAgentPreset,model:memoryAgentModel,outputMode,prompt:currentPrompt,promptBackup:currentBackup,defaultPromptVersion},

@@ -80,14 +80,15 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
   },
   "app-settings": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v6",
-    "title": "AI Companion Nova App Settings v6",
+    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v8",
+    "title": "AI Companion Nova App Settings v8",
     "type": "object",
     "additionalProperties": false,
     "required": [
       "apiVersion",
       "schemaVersion",
       "cognitiveSchedule",
+      "proactiveChat",
       "chat",
       "context",
       "memory",
@@ -102,7 +103,7 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         "const": "1"
       },
       "schemaVersion": {
-        "const": "6"
+        "const": "8"
       },
       "chat": {
         "type": "object",
@@ -389,6 +390,30 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             "maximum": 3600000
           },
           "maxRequestsPerHour": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3600
+          }
+        }
+      },
+      "proactiveChat": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "enabled",
+          "minMessageIntervalMs",
+          "maxMessagesPerHour"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "minMessageIntervalMs": {
+            "type": "integer",
+            "minimum": 10000,
+            "maximum": 3600000
+          },
+          "maxMessagesPerHour": {
             "type": "integer",
             "minimum": 1,
             "maximum": 3600
