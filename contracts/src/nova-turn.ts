@@ -318,7 +318,7 @@ export function parseNovaTurn(content: string): NovaTurnParseResult {
   const fieldAcceptable=(field:NovaTurnParsedField<unknown>)=>field.status==="valid"||field.status==="empty"||field.status==="recovered";
   const speechUsable=speech.value!==undefined&&fieldAcceptable(speech)&&speech.status!=="invalid";
   const nextWakeValid=Number.isFinite(nextWakeMs);
-  const requiredValid=wrapperValid&&[situation,thoughts,emotion,tools].every(fieldAcceptable)&&speechUsable&&nextWakeValid;
+  const requiredValid=wrapperValid&&[situation,thoughts,emotion,fields.tools].every(fieldAcceptable)&&speechUsable&&nextWakeValid;
   const complete=requiredValid&&toolResultsStatus!=="invalid";
   if(!complete&&diagnostics.length===0)diagnostics.push("protocol-incomplete");
   if(!speechUsable)return {complete:false,diagnostics,fields};
