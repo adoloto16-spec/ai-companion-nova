@@ -13,6 +13,7 @@
   },
   "workspaces": [
     "providers/chat/gemini",
+    "providers/chat/ollama",
     "apps/*",
     "contracts",
     "sdk/typescript",
