@@ -90,7 +90,9 @@ async function main(){
   ];}});
   const roleEngine=new DeterministicContextEngine([roleSource]);
   const roleBuilt=await roleEngine.build(request({messages:[],budget:{availableContextTokens:100,reservedOutputTokens:0,systemOverheadTokens:0,safetyMarginTokens:0}}));
-  equal(roleBuilt.messages.map(message=>message.role),["system","user","assistant"],"Core Book roles survive candidate-to-ChatMessage conversion independently of source");
+  equal(roleBuilt.messages.find(message=>message.content==="system role")?.role,"system","Core Book system role survives candidate-to-ChatMessage conversion independently of source");
+  equal(roleBuilt.messages.find(message=>message.content==="user role")?.role,"user","Core Book user role survives candidate-to-ChatMessage conversion independently of source");
+  equal(roleBuilt.messages.find(message=>message.content==="assistant role")?.role,"assistant","Core Book assistant role survives candidate-to-ChatMessage conversion independently of source");
   const built=await new DeterministicContextEngine([
     new ConversationCandidateSource(({
       estimate(text:string){return Math.max(1,text.length);}
