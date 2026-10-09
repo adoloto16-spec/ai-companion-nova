@@ -1,5 +1,5 @@
-import type {CognitiveScheduleSettings,MindExpressionCandidate,MindExpressionPublishResult,MindExpressionPublisher,MindExpressionSuppressionReason,MindReactiveTurn,MindRuntimeLifecycleState,MindState,MindTraceEntry,MindWakeReason,Thought,Unsubscribe} from "../../contracts/src";
-import {DEFAULT_COGNITIVE_SCHEDULE,DEFAULT_PROACTIVE_CHAT} from "../../contracts/src";
+import type {CognitiveScheduleSettings,MindExpressionCandidate,MindExpressionPublishResult,MindExpressionPublisher,MindExpressionSuppressionReason,MindInitiativeState,MindInitiativeUpdate,MindReactiveTurn,MindRuntimeLifecycleState,MindState,MindTraceEntry,MindWakeReason,Thought,Unsubscribe} from "../../contracts/src";
+import {DEFAULT_COGNITIVE_SCHEDULE,DEFAULT_PROACTIVE_CHAT,validateMindInitiativeUpdate} from "../../contracts/src";
 import type {ProactiveChatSettings} from "../../contracts/src";
 import {MindScheduler} from "./mind-scheduler";
 
@@ -12,7 +12,7 @@ const defaultNow=()=>Date.now();
 const sharedProactivePublicationTimes:number[]=[];
 
 export interface CognitiveStepContext{characterId:string;state:Readonly<MindState>;signal:AbortSignal;wakeReason:MindWakeReason;userTurn?:MindReactiveTurn;}
-export interface CognitiveStepResult{thought:Thought;nextWakeInMs?:unknown;requestId?:string;providerId?:string;model?:string;providerPresetId?:string;expression?:MindExpressionCandidate;expressionInvalid?:boolean;conversationId?:string;}
+export interface CognitiveStepResult{thought:Thought;nextWakeInMs?:unknown;requestId?:string;providerId?:string;model?:string;providerPresetId?:string;expression?:MindExpressionCandidate;expressionInvalid?:boolean;initiative?:MindInitiativeUpdate;conversationId?:string;}
 export interface CognitiveStep{run(context:CognitiveStepContext):Promise<Thought|CognitiveStepResult>;}
 export interface MindRuntimeOptions{
   cognitiveStep:CognitiveStep;
@@ -31,7 +31,7 @@ export interface MindRuntimeOptions{
   onExpressionError?:(error:unknown)=>void;
 }
 
-interface CharacterMindState{focus:string|null;lastThought:Thought|null;lastThoughtAt:string|null;recentThoughts:Thought[];}
+interface CharacterMindState{focus:string|null;initiative:MindInitiativeState|null;lastThought:Thought|null;lastThoughtAt:string|null;recentThoughts:Thought[];}
 type CancellationKind="cancelled"|"superseded"|"timeout";
 interface IntervalChoice{intervalMs:number;requested?:number;decision:string;}
 function abortError():Error{const error=new Error("Mind Runtime cognitive step aborted.");error.name="AbortError";return error;}
@@ -44,9 +44,9 @@ function abortable<T>(promise:Promise<T>,signal:AbortSignal):Promise<T>{
   });
 }
 function cloneState(state:MindState):MindState{
-  return {...state,recentThoughts:[...state.recentThoughts],nextWakeAt:state.nextWakeAt??null,recentTrace:(state.recentTrace??[]).map(entry=>({...entry}))};
+  return {...state,initiative:state.initiative?{...state.initiative}:null,recentThoughts:[...state.recentThoughts],nextWakeAt:state.nextWakeAt??null,recentTrace:(state.recentTrace??[]).map(entry=>({...entry}))};
 }
-function createCharacterMindState(focus:string|null=null):CharacterMindState{return {focus,lastThought:null,lastThoughtAt:null,recentThoughts:[]};}
+function createCharacterMindState(focus:string|null=null):CharacterMindState{return {focus,initiative:null,lastThought:null,lastThoughtAt:null,recentThoughts:[]};}
 function normalizeSchedule(schedule:CognitiveScheduleSettings):CognitiveScheduleSettings{
   const upper=3_600_000;
   const validInt=(value:unknown,fallback:number,min=1,max=upper)=>typeof value==="number"&&Number.isFinite(value)&&Number.isInteger(value)?Math.min(max,Math.max(min,value)):fallback;
@@ -136,7 +136,7 @@ export class MindRuntime{
     this.clock=options.clock??(()=>new Date().toISOString());
     this.now=options.now??defaultNow;
     this.expressionPublicationTimes=options.now?[]:sharedProactivePublicationTimes;
-    this.state={focus:this.initialFocus,lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"off",nextWakeAt:null,recentTrace:[]};
+    this.state={focus:this.initialFocus,initiative:null,lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"off",nextWakeAt:null,recentTrace:[]};
     this.scheduler=new MindScheduler(reason=>this.handleWake(reason),this.now);
   }
 
@@ -308,6 +308,7 @@ export class MindRuntime{
         throw error;
       }
       // Do not commit a Thought from a malformed response that failed the required reactive output contract.
+      this.applyInitiative(characterId,result.initiative);
       this.applyThought(thought);
       if(result.expressionInvalid){
         expressionTrace={expressionKind:"chat",expressionStatus:"invalid",expressionSuppressionReason:"invalid-expression",expressionId:"nova-life-expression:"+runId};
@@ -475,6 +476,22 @@ export class MindRuntime{
   private safeOnError(error:unknown):void{try{this.onError?.(error)}catch{/* diagnostics must not stop Life */}}
   private safeOnExpressionError(error:unknown):void{try{this.onExpressionError?.(error)}catch{/* expression diagnostics must not stop Life */}}
   private setLifecycleState(lifecycleState:MindRuntimeLifecycleState):void{this.state.lifecycleState=lifecycleState;this.notify();}
+  private applyInitiative(characterId:string,raw:unknown):void{
+    const update=validateMindInitiativeUpdate(raw);
+    if(!update)return;
+    const characterState=this.characterStates.get(characterId)??createCharacterMindState();
+    if(update.decision==="switch"){
+      if(characterState.focus===update.focus)return;
+      characterState.focus=update.focus!;
+      characterState.initiative={status:"active",direction:update.direction??null,lastProgress:update.progress??null};
+    }else{
+      if(!characterState.focus)return;
+      const prior=characterState.initiative;
+      const status=update.decision==="pause"?"paused":update.decision==="finish"?"completed":"active";
+      characterState.initiative={status,direction:update.direction??prior?.direction??null,lastProgress:update.progress??prior?.lastProgress??null};
+    }
+    this.characterStates.set(characterId,characterState);
+  }
   private applyThought(thought:Thought):void{
     const characterState=this.characterStates.get(thought.characterId)??createCharacterMindState();
     characterState.lastThought=thought;characterState.lastThoughtAt=thought.timestamp;
@@ -488,7 +505,7 @@ export class MindRuntime{
     if(!this.activeCharacterId)return;
     const characterState=this.characterStates.get(this.activeCharacterId)??createCharacterMindState();
     this.characterStates.set(this.activeCharacterId,characterState);
-    this.state.focus=characterState.focus;this.state.lastThought=characterState.lastThought;this.state.lastThoughtAt=characterState.lastThoughtAt;this.state.recentThoughts=[...characterState.recentThoughts];
+    this.state.focus=characterState.focus;this.state.initiative=characterState.initiative?{...characterState.initiative}:null;this.state.lastThought=characterState.lastThought;this.state.lastThoughtAt=characterState.lastThoughtAt;this.state.recentThoughts=[...characterState.recentThoughts];
   }
   private notify():void{const snapshot=this.getState();for(const listener of [...this.listeners]){try{listener(snapshot)}catch{/* observers cannot affect runtime */}}}
   static createAbortError():Error{return abortError();}
