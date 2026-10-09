@@ -61,6 +61,9 @@ export interface ProviderPresetSource{
   failureCount:number;
   cooldownUntil:string|null;
   timeoutMs?:number;
+  numCtx?:number;
+  numPredict?:number;
+  keepAlive?:string|number;
   createdAt:string;
   updatedAt:string;
 }
@@ -78,6 +81,9 @@ export interface ProviderPreset{
   credentialReference?:CredentialReference|null;
   enabled?:boolean|null;
   timeoutMs?:number|null;
+  numCtx?:number|null;
+  numPredict?:number|null;
+  keepAlive?:string|number|null;
   createdAt:string;
   updatedAt:string;
 }
@@ -96,7 +102,7 @@ export interface ProviderPresetModelResolver{
   listModels(presetId:string):Promise<readonly ModelInfo[]>;
 }
 
-export interface ProviderConfiguration{apiVersion:ApiVersion;schemaVersion:string;providerId:string;enabled:boolean;baseUrl:string;model:string;credentialReference:CredentialReference|null;timeoutMs?:number}
+export interface ProviderConfiguration{apiVersion:ApiVersion;schemaVersion:string;providerId:string;enabled:boolean;baseUrl:string;model:string;credentialReference:CredentialReference|null;timeoutMs?:number;numCtx?:number;numPredict?:number;keepAlive?:string|number}
 export interface ProviderConnectionTestResult{apiVersion:ApiVersion;schemaVersion:string;status:ProviderConnectionTestStatus;providerId:string;message?:string}
 export type CharacterId=string;
 export const CHARACTER_API_VERSION:ApiVersion="1";
@@ -622,13 +628,13 @@ export function createEvent<K extends keyof EventPayloadMap>(type:K,payload:Even
 
 export interface ProviderCapabilities{streaming?:boolean;vision?:boolean;toolCalling?:boolean;structuredOutput?:boolean;reasoning?:boolean;audioInput?:boolean;audioOutput?:boolean;embeddings?:boolean;[key:string]:boolean|undefined}
 export interface ModelInfo{id:string;displayName?:string;capabilities?:ProviderCapabilities}
-export interface JsonSchema{$schema?:string;type?:string|string[];properties?:Record<string,JsonSchema>;required?:readonly string[];additionalProperties?:boolean|JsonSchema;items?:JsonSchema;enum?:readonly unknown[];oneOf?:readonly JsonSchema[];const?:unknown;minimum?:number;maximum?:number;minLength?:number;maxLength?:number;minItems?:number;maxItems?:number}
+export interface JsonSchema{$schema?:string;$id?:string;title?:string;description?:string;default?:unknown;examples?:readonly unknown[];type?:string|string[];properties?:Record<string,JsonSchema>;required?:readonly string[];additionalProperties?:boolean|JsonSchema;items?:JsonSchema;enum?:readonly unknown[];oneOf?:readonly JsonSchema[];const?:unknown;minimum?:number;maximum?:number;minLength?:number;maxLength?:number;minItems?:number;maxItems?:number}
 export interface ToolDefinition{id:string;version:string;schemaVersion:string;name:string;description:string;risk:ActionRisk;requiredCapabilities:readonly string[];resourceType:"domain"|"filesystem"|"application"|"resource";action:string;targetResolverId:string;confirmation:"never"|"policy";parameters:JsonSchema}
 export interface ChatMessage{id?:string;role:"system"|"user"|"assistant"|"tool";content:string;toolCallId?:string;metadata?:Record<string,unknown>}
 export interface ChatContext{conversationId:string;messages:readonly ChatMessage[];metadata?:Record<string,unknown>}
 export interface StructuredResponseFormat{type:"json-schema";schema:JsonSchema;name?:string;strict?:boolean}
 export type AgentOutputMode="auto"|"structured"|"plain";
-export type ResponseFormat={type:"text"}|{type:"json";schema:Record<string,unknown>}|StructuredResponseFormat;
+export type ResponseFormat={type:"text"}|{type:"json";schema?:Record<string,unknown>}|StructuredResponseFormat;
 export interface ChatGenerationOptions{temperature?:number;maxTokens?:number;topP?:number;responseFormat?:ResponseFormat}
 export interface ChatUsage{promptTokens?:number;completionTokens?:number;totalTokens?:number}
 export type ChatFinishReason="stop"|"length"|"content_filter"|"error"|"unknown"
