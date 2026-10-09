@@ -247,6 +247,18 @@ async function llmCognitiveStepTest(){
   const unknownField=await step.run({characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"scheduled"});
   equal(unknownField.expression,undefined,"unknown fields never authorize public output");
   equal(unknownField.expressionInvalid,true,"unknown response fields invalidate the expression");
+  cognitiveContent=JSON.stringify({thought,initiative:{decision:"switch",focus:"x".repeat(161)}});
+  const overlongFocus=await step.run({characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"scheduled"});
+  equal(overlongFocus.initiative,undefined,"initiative focus longer than 160 characters is rejected independently of Thought");
+  cognitiveContent=JSON.stringify({thought,initiative:{decision:"continue",focus:"not allowed on continue"}});
+  const focusOnContinue=await step.run({characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"scheduled"});
+  equal(focusOnContinue.initiative,undefined,"continue cannot silently replace the current focus");
+  cognitiveContent=JSON.stringify({thought,initiative:{decision:"switch",focus:"A valid focus",direction:"d".repeat(281)}});
+  const overlongDirection=await step.run({characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"scheduled"});
+  equal(overlongDirection.initiative,undefined,"overlong initiative direction is rejected independently of Thought");
+  cognitiveContent=JSON.stringify({thought,initiative:{decision:"unexpected",focus:"A valid focus"}});
+  const invalidDecision=await step.run({characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"scheduled"});
+  equal(invalidDecision.initiative,undefined,"unsupported initiative decisions are ignored without failing the cognitive step");
 
   conversation.messages=[{id:"reactive-user-1",role:"user",content:"What do you think about making time for creativity?"}];
   cognitiveContent=JSON.stringify({thought:"Creative routines can protect room for experimentation.",nextWakeInMs:45000,expression:{kind:"chat",content:"I think creativity needs protected space, but not so much structure that it stops feeling exploratory."}});
