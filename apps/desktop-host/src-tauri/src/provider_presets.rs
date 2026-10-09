@@ -381,6 +381,7 @@ fn credential_state()->super::super::credential_profiles::CredentialProfileStore
 fn source(id:&str)->ProviderPresetSource{ProviderPresetSource{id:id.to_string(),name:"Main".to_string(),provider_id:"openai-compatible".to_string(),base_url:"https://api.example.test/v1".to_string(),model:"model".to_string(),credential_reference:Some(reference("credential-a","openai-compatible")),enabled:true,health:"healthy".to_string(),failure_count:0,cooldown_until:None,timeout_ms:Some(30000.0),created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
 fn preset(id:&str)->ProviderPreset{let source_id=format!("source:{}:primary",id);ProviderPreset{id:id.to_string(),name:id.to_string(),preset_type:"pool".to_string(),sources:vec![source(&source_id)],active_source_id:Some(source_id),provider_id:None,base_url:None,model:None,credential_reference:None,enabled:None,timeout_ms:None,created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
 fn state()->ProviderPresetStoreState{ProviderPresetStoreState{api_version:API_VERSION.to_string(),schema_version:SCHEMA_VERSION.to_string(),presets:vec![preset("preset-a")],active_preset_id:Some("preset-a".to_string())}}
+fn single_preset(id:&str)->ProviderPreset{ProviderPreset{id:id.to_string(),name:id.to_string(),preset_type:"single".to_string(),sources:vec![],active_source_id:None,provider_id:Some("openai-compatible".to_string()),base_url:Some("https://single.example/v1".to_string()),model:Some("single-model".to_string()),credential_reference:Some(reference("single-credential","openai-compatible")),enabled:Some(true),timeout_ms:Some(15000.0),created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
 
 #[test]fn rejects_unknown_fields(){
  let value=serde_json::json!({"id":"x","name":"X","sources":[],"activeSourceId":null,"createdAt":"x","updatedAt":"x","secret":"bad"});
@@ -408,6 +409,42 @@ fn state()->ProviderPresetStoreState{ProviderPresetStoreState{api_version:API_VE
  let migrated=migrate_legacy_state(legacy,None).unwrap();
  assert_eq!(migrated.presets[0].sources[0].model,"unconfigured");
  assert!(!migrated.presets[0].sources[0].enabled);
+}
+#[test]fn migrates_v2_presets_without_discriminator_to_pool_and_preserves_sources(){
+ let path=temp("v2-migration");
+ let mut old=state();
+ old.schema_version=V2_SCHEMA_VERSION.to_string();
+ old.presets[0].sources=vec![source("source-first"),source("source-backup")];
+ old.presets[0].active_source_id=Some("source-backup".to_string());
+ let mut value=serde_json::to_value(old).unwrap();
+ value["schemaVersion"]=serde_json::Value::String(V2_SCHEMA_VERSION.to_string());
+ for preset_value in value["presets"].as_array_mut().unwrap(){
+  let object=preset_value.as_object_mut().unwrap();
+  object.remove("type");object.remove("providerId");object.remove("baseUrl");object.remove("model");
+  object.remove("credentialReference");object.remove("enabled");object.remove("timeoutMs");
+ }
+ fs::write(&path,serde_json::to_vec(&value).unwrap()).unwrap();
+ let migrated=load_from_path(&path,None).unwrap().unwrap();
+ assert_eq!(migrated.schema_version,SCHEMA_VERSION);
+ assert_eq!(migrated.presets[0].preset_type,"pool");
+ assert_eq!(migrated.presets[0].sources.iter().map(|item|item.id.as_str()).collect::<Vec<_>>(),vec!["source-first","source-backup"]);
+ assert_eq!(migrated.presets[0].active_source_id.as_deref(),Some("source-backup"));
+ assert_eq!(migrated.presets[0].sources[0].credential_reference.as_ref().unwrap().id,"credential-a");
+ let saved:serde_json::Value=serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+ assert_eq!(saved["schemaVersion"],"3");
+ assert_eq!(saved["presets"][0]["type"],"pool");
+ fs::remove_dir_all(path.parent().unwrap()).unwrap();
+}
+#[test]fn accepts_valid_single_api_configuration(){
+ let mut s=state();s.presets=vec![single_preset("single-a")];s.active_preset_id=Some("single-a".to_string());
+ assert!(validate_state(&s).is_ok());
+}
+#[test]fn rejects_single_preset_with_pool_sources_or_missing_credential(){
+ let mut s=state();s.presets=vec![single_preset("single-a")];s.active_preset_id=Some("single-a".to_string());
+ s.presets[0].sources=vec![source("unexpected-pool-source")];
+ assert!(validate_state(&s).is_err());
+ s.presets[0].sources.clear();s.presets[0].credential_reference=None;
+ assert!(validate_state(&s).is_err());
 }
 #[test]fn rejects_invalid_active_source(){
  let mut s=state();s.presets[0].active_source_id=Some("missing".to_string());assert!(validate_state(&s).is_err());
