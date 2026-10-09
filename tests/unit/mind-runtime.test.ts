@@ -378,6 +378,15 @@ async function proactiveExpressionPolicyTest(){
     await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=6&&runtime.getState().lifecycleState==="waiting");
     equal(runtime.getState().recentTrace?.at(-1)?.expressionSuppressionReason,"disabled","disabled proactivity continues thought but suppresses publication");
     equal(published.length,1,"suppressed expressions never reach the publisher");
+    await runtime.stop();
+    runtime.updateProactiveChat({enabled:true,minMessageIntervalMs:120_000,maxMessagesPerHour:1});
+    await runtime.start();
+    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=7&&runtime.getState().lifecycleState==="waiting");
+    equal(runtime.getState().recentTrace?.at(-1)?.expressionSuppressionReason,"life-start-wake","OFF/ON still suppresses automatic life-start publication");
+    runtime.wake("scheduled");
+    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=8&&runtime.getState().lifecycleState==="waiting");
+    equal(runtime.getState().recentTrace?.at(-1)?.expressionSuppressionReason,"hourly-limit","OFF/ON cannot reset the rolling expression limit");
+    equal(published.length,1,"restarted Life remains inside the existing hourly quota");
   }finally{await runtime.stop();}
 }
 

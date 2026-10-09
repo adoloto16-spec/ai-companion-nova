@@ -416,6 +416,14 @@ async function main(){
   const longExpression=await expressionController.publishExpression({...expression,expressionId:"expr-long",content:"x".repeat(2001)},async()=>undefined);
   equal(longExpression,{status:"suppressed",reason:"invalid-expression"},"overlong expressions are rejected");
   equal(expressionPersistCalls,1,"invalid and duplicate expressions do not invoke persistence");
+  const collisionSession=new ConversationSession("conversation.collision","character.collision");
+  collisionSession.addMessage({id:"nova-life:expr-collision",role:"user",content:"existing message"});
+  const collisionController=new ChatSessionController(collisionSession,{async chat(request:ChatRequest):Promise<ChatResponse>{return responseFor(request,"unused");}});
+  const collisionResult=await collisionController.publishExpression({
+    characterId:"character.collision",conversationId:"conversation.collision",expressionId:"expr-collision",content:"collision"
+  },async()=>undefined);
+  equal(collisionResult,{status:"suppressed",reason:"wrong-conversation"},"message id collision is rejected without replacing existing history");
+  equal(collisionController.isBusy(),false,"message id collision releases publisher busy state");
   const failedPersistController=new ChatSessionController(new ConversationSession("conversation.persist-fail","character.persist-fail"),{
     async chat(request:ChatRequest):Promise<ChatResponse>{expressionLlmCalls++;return responseFor(request,"normal chat after failure");}
   });

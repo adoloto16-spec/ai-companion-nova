@@ -8,6 +8,8 @@ const DEFAULT_STEP_TIMEOUT_MS=60_000;
 const MAX_THOUGHT_CHARS=8_000;
 const MAX_TRACE_ENTRIES=100;
 const HOUR_MS=3_600_000;
+const defaultNow=()=>Date.now();
+const sharedProactivePublicationTimes:number[]=[];
 
 export interface CognitiveStepContext{characterId:string;state:Readonly<MindState>;signal:AbortSignal;wakeReason:MindWakeReason;}
 export interface CognitiveStepResult{thought:Thought;nextWakeInMs?:unknown;requestId?:string;providerId?:string;expression?:MindExpressionCandidate;expressionInvalid?:boolean;conversationId?:string;}
@@ -87,7 +89,7 @@ export class MindRuntime{
   private expressionPublisher:MindExpressionPublisher|undefined;
   private readonly isExpressionContextCurrent:((characterId:string,conversationId:string)=>Promise<boolean>|boolean)|undefined;
   private readonly onExpressionError:((error:unknown)=>void)|undefined;
-  private readonly expressionPublicationTimes:number[]=[];
+  private readonly expressionPublicationTimes:number[];
   private readonly state:MindState;
   private readonly characterStates=new Map<string,CharacterMindState>();
   private readonly listeners=new Set<(state:MindState)=>void>();
@@ -123,7 +125,8 @@ export class MindRuntime{
     this.onExpressionError=options.onExpressionError;
     this.initialFocus=options.initialFocus??null;
     this.clock=options.clock??(()=>new Date().toISOString());
-    this.now=options.now??(()=>Date.now());
+    this.now=options.now??defaultNow;
+    this.expressionPublicationTimes=options.now?[]:sharedProactivePublicationTimes;
     this.state={focus:this.initialFocus,lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"off",nextWakeAt:null,recentTrace:[]};
     this.scheduler=new MindScheduler(reason=>this.handleWake(reason),this.now);
   }
