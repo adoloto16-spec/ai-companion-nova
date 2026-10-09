@@ -136,6 +136,16 @@ async function main(){
   equal(cognitiveCalls[3]?.request.context.messages.slice(3,-1).map(message=>message.content),["First","Reply","Second","Second reply"],"Case D preserves the full conversation before the cue");
   equal((await runtime.getActiveConversation(character.id))?.messages.map(message=>message.content),["First","Reply","Second","Second reply"],"synthetic cue is not written to Conversation");
   equal((await runtime.getActiveConversation(character.id))?.messages.some(message=>message.content.includes("Continue Nova's internal cognition.")),false,"synthetic cue does not enter stored Conversation");
+  const roleSystem=await runtime.createCoreBookEntry(character.id,{title:"System role",content:"Core Book system-role payload",source:"user",role:"system"});
+  const roleUser=await runtime.createCoreBookEntry(character.id,{title:"User role",content:"Core Book user-role payload",source:"system",role:"user"});
+  const roleAssistant=await runtime.createCoreBookEntry(character.id,{title:"Assistant role",content:"Core Book assistant-role payload",source:"import",role:"assistant"});
+  await cognitiveStep.run({characterId:character.id,state:cognitiveState,signal:new AbortController().signal,wakeReason:"scheduled"});
+  equal(cognitiveCalls.length,5,"Nova Life cognition ran with Core Book role entries");
+  const novaLifeRequest=cognitiveCalls[4]!.request;
+  equal(novaLifeRequest.context.messages.find(message=>message.content===roleSystem.content)?.role,"system","Nova Life ChatRequest preserves Core Book system role");
+  equal(novaLifeRequest.context.messages.find(message=>message.content===roleUser.content)?.role,"user","Nova Life ChatRequest preserves Core Book user role even with system source");
+  equal(novaLifeRequest.context.messages.find(message=>message.content===roleAssistant.content)?.role,"assistant","Nova Life ChatRequest preserves Core Book assistant role");
+
   console.log("PASS cognitive context role regression integration test");  }finally{
     await runtime.stop();
   }
