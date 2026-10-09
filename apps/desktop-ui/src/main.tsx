@@ -909,12 +909,13 @@ function ProviderPresetsView({
     const now=new Date().toISOString();
     if(type==="single"){
       const source=selectedSource??draft.sources[0];
+      const sourceProviderId:ConfigurableChatProviderId=source?.providerId==="gemini"?"gemini":source?.providerId==="ollama"?"ollama":"openai-compatible";
       const {sources:_sources,activeSourceId:_activeSourceId,...withoutPool}=draft;
       updateDraft({
         ...withoutPool,type:"single",sources:[],activeSourceId:null,
-        providerId:source?.providerId??"openai-compatible",
-        baseUrl:source?.baseUrl??defaultProviderBaseUrl(source?.providerId as ConfigurableChatProviderId??"openai-compatible"),
-        model:source?.model??"",
+        providerId:sourceProviderId,
+        baseUrl:source?.baseUrl??defaultProviderBaseUrl(sourceProviderId),
+        model:source?.model??defaultProviderModel(sourceProviderId),
         credentialReference:source?.credentialReference?{...source.credentialReference}:draft.credentialReference??null,
         enabled:source?.enabled??draft.enabled??true,
         timeoutMs:source?.timeoutMs??draft.timeoutMs??30000,
@@ -1120,7 +1121,7 @@ function ProviderPresetsView({
     finally{setBusy(false)}
   };
 
-  const setStarter=(name:string,providerId:"openai-compatible"|"gemini",baseUrl:string,model="")=>{
+  const setStarter=(name:string,providerId:ConfigurableChatProviderId,baseUrl:string,model="")=>{
     const now=new Date().toISOString();
     const source=defaultSource(now,providerId,name);
     updateDraft({...draft,type:"pool",name,sources:[{...source,baseUrl,model}],activeSourceId:source.id,createdAt:draft.createdAt,providerId:undefined,baseUrl:undefined,model:undefined,credentialReference:undefined,enabled:undefined,timeoutMs:undefined});
@@ -1165,15 +1166,18 @@ function ProviderPresetsView({
         <label>Source name<input value={selectedSource.name} onChange={event=>updateSource(selectedSource.id,{name:event.target.value})} disabled={busy}/></label>
         <label>Provider
           <select value={selectedSource.providerId} onChange={event=>{
-            const providerId=event.target.value as "openai-compatible"|"gemini";
-            updateSource(selectedSource.id,{providerId,credentialReference:null,model:providerId==="gemini"?"gemini-2.5-flash":selectedSource.model});
+            const providerId=event.target.value as ConfigurableChatProviderId;
+            updateSource(selectedSource.id,{providerId,baseUrl:defaultProviderBaseUrl(providerId),credentialReference:null,model:defaultProviderModel(providerId)});
             setAddingCredential(false);
           }} disabled={busy}>
             <option value="openai-compatible">OpenAI-compatible</option>
             <option value="gemini">Gemini</option>
+            <option value="ollama">Ollama (local)</option>
+            <option value="ollama">Ollama (local)</option>
           </select>
         </label>
         <label>Base URL<input value={selectedSource.baseUrl} onChange={event=>updateSource(selectedSource.id,{baseUrl:event.target.value})} disabled={busy}/></label>
+        {selectedSource.providerId!=="ollama"&&<> 
         <label>API credential
           <select
             value={selectedSource.credentialReference?.id??""}
@@ -1195,6 +1199,8 @@ function ProviderPresetsView({
             <option value="__new__">+ Add new credential</option>
           </select>
         </label>
+        </>}
+        {selectedSource.providerId==="ollama"&&<p className="hint">Ollama runs locally and does not require an API key.</p>}
         {addingCredential&&<div className="character-actions">
           <label>Label<input value={newCredentialLabel} onChange={event=>setNewCredentialLabel(event.target.value)} disabled={busy}/></label>
           <label>API key<input type="password" autoComplete="off" value={newCredentialSecret} onChange={event=>setNewCredentialSecret(event.target.value)} disabled={busy}/></label>
@@ -1211,6 +1217,11 @@ function ProviderPresetsView({
           <input type="checkbox" checked={selectedSource.enabled} onChange={event=>updateSource(selectedSource.id,{enabled:event.target.checked})} disabled={busy}/>
         </label>
         <label>Timeout (ms)<input type="number" min="1" value={selectedSource.timeoutMs??30000} onChange={event=>updateSource(selectedSource.id,{timeoutMs:Number(event.target.value)})} disabled={busy}/></label>
+        {selectedSource.providerId==="ollama"&&<>
+          <label>Context window (num_ctx)<input type="number" min="1" value={selectedSource.numCtx??""} onChange={event=>updateSource(selectedSource.id,{numCtx:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
+          <label>Maximum output tokens (num_predict)<input type="number" min="1" value={selectedSource.numPredict??""} onChange={event=>updateSource(selectedSource.id,{numPredict:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
+          <label>Keep model loaded (keep_alive)<input value={selectedSource.keepAlive===undefined?"":String(selectedSource.keepAlive)} onChange={event=>updateSource(selectedSource.id,{keepAlive:event.target.value.trim()?event.target.value:undefined})} placeholder="5m, -1, or 0" disabled={busy}/></label>
+        </>}
         <div className="status-grid">
           <span>Health</span><strong>{selectedSource.health}</strong>
           <span>Failures</span><strong>{selectedSource.failureCount}</strong>
@@ -1222,9 +1233,9 @@ function ProviderPresetsView({
       {draft.type==="single"&&<div className="provider-single-config">
         <label>Provider
           <select value={singleProviderId} onChange={event=>{
-            const providerId=event.target.value as "openai-compatible"|"gemini";
-            updateDraft({...draft,providerId,baseUrl:providerId==="gemini"?"https://generativelanguage.googleapis.com/v1beta":"https://api.openai.com/v1",
-              model:providerId==="gemini"?"gemini-2.5-flash":"",credentialReference:null});
+            const providerId=event.target.value as ConfigurableChatProviderId;
+            updateDraft({...draft,providerId,baseUrl:defaultProviderBaseUrl(providerId),
+              model:defaultProviderModel(providerId),credentialReference:null});
             setAddingCredential(false);setModels([]);
           }} disabled={busy}>
             <option value="openai-compatible">OpenAI-compatible</option>
@@ -1232,6 +1243,7 @@ function ProviderPresetsView({
           </select>
         </label>
         <label>Base URL<input value={draft.baseUrl??""} onChange={event=>updateDraft({...draft,baseUrl:event.target.value})} placeholder="https://api.example.com/v1" disabled={busy}/></label>
+        {singleProviderId!=="ollama"&&<> 
         <label>Saved API credential
           <select value={draft.credentialReference?.id??""} onChange={event=>{
             const value=event.target.value;
@@ -1249,6 +1261,8 @@ function ProviderPresetsView({
             <option value="__new__">+ Create credential in CredentialStore</option>
           </select>
         </label>
+        </>}
+        {singleProviderId==="ollama"&&<p className="hint">Ollama uses the local API and does not require a saved API credential.</p>}
         {addingCredential&&<div className="character-actions">
           <label>Credential label<input value={newCredentialLabel} onChange={event=>setNewCredentialLabel(event.target.value)} disabled={busy}/></label>
           <label>API key<input type="password" autoComplete="off" value={newCredentialSecret} onChange={event=>setNewCredentialSecret(event.target.value)} disabled={busy}/></label>
@@ -1265,6 +1279,11 @@ function ProviderPresetsView({
           <input type="checkbox" checked={draft.enabled??true} onChange={event=>updateDraft({...draft,enabled:event.target.checked})} disabled={busy}/>
         </label>
         <label>Timeout (ms)<input type="number" min="1" value={draft.timeoutMs??30000} onChange={event=>updateDraft({...draft,timeoutMs:Number(event.target.value)})} disabled={busy}/></label>
+        {singleProviderId==="ollama"&&<>
+          <label>Context window (num_ctx)<input type="number" min="1" value={draft.numCtx??""} onChange={event=>updateDraft({...draft,numCtx:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
+          <label>Maximum output tokens (num_predict)<input type="number" min="1" value={draft.numPredict??""} onChange={event=>updateDraft({...draft,numPredict:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
+          <label>Keep model loaded (keep_alive)<input value={draft.keepAlive===undefined?"":String(draft.keepAlive)} onChange={event=>updateDraft({...draft,keepAlive:event.target.value.trim()?event.target.value:undefined})} placeholder="5m, -1, or 0" disabled={busy}/></label>
+        </>}
         <p className="hint">Single API requests use only this provider configuration. Network, timeout, authentication, and provider errors return without automatic provider/key failover.</p>
       </div>}
       <div className="actions">
@@ -1279,6 +1298,7 @@ function ProviderPresetsView({
       <div className="actions">
         <button onClick={()=>setStarter("OpenAI","openai-compatible","https://api.openai.com/v1","") } disabled={busy}>Starter: OpenAI</button>
         <button onClick={()=>setStarter("Gemini","gemini","https://generativelanguage.googleapis.com/v1beta","gemini-2.5-flash")} disabled={busy}>Starter: Gemini</button>
+        <button onClick={()=>setStarter("Ollama","ollama","http://127.0.0.1:11434","")} disabled={busy}>Starter: Ollama (local)</button>
       </div>
       {message&&<div className="notice" role="status">{message}</div>}
       <p className="hint">API keys are never loaded back into this UI.</p>
