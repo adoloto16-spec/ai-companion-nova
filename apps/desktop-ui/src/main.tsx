@@ -1,7 +1,7 @@
 import React from "react";
 import {createRoot} from "react-dom/client";
 import {invoke} from "@tauri-apps/api/core";
-import {TauriOllamaHttpClient} from "./ollama-http-client";
+import {NovaHttpClient} from "./ollama-http-client";
 import {validateOllamaBaseUrl} from "../../../providers/chat/ollama/src";
 import {ChatSessionController,ConversationSession,InMemoryCharacterStore} from "../../../core/src/index";
 
@@ -30,7 +30,7 @@ import {chatDraftKey,readChatDraft,writeChatDraft,clearSubmittedChatDraft} from 
 import "./styles.css";
 
 const preview:RuntimeDiagnostics={schemaVersion:"1",timestamp:new Date().toISOString(),runtimeStatus:"stopped",coreStatus:"stopped",modules:[],providers:[],recentErrors:[],capabilities:[]};
-const ollamaHttpClient=new TauriOllamaHttpClient(600_000);
+const ollamaHttpClient=new NovaHttpClient(600_000);
 type ConfigurableChatProviderId="openai-compatible"|"gemini"|"ollama";
 function defaultProviderBaseUrl(providerId:ConfigurableChatProviderId):string{
   if(providerId==="gemini")return "https://generativelanguage.googleapis.com/v1beta";
