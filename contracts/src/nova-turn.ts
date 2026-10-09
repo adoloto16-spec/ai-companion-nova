@@ -122,6 +122,7 @@ function readField(source:string, canonical:CanonicalField, wrapperRecovered:boo
     open.attributes.trim()!==""||close.attributes.trim()!=="" ){
     return {status:"invalid",diagnostic:canonical+"-tag-malformed"};
   }
+  if(open.rawName!==close.rawName)return {status:"invalid",diagnostic:canonical+"-tag-mismatch"};
   const raw=source.slice(open.end,close.start);
   if(canonical==="SPEECH"&&/<\s*\/?\s*[A-Za-z][A-Za-z0-9_.-]*\b[^>]*>/.test(raw)){
     return {status:"invalid",diagnostic:"SPEECH-contains-unescaped-tags"};
