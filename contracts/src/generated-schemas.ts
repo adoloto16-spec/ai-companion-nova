@@ -3502,6 +3502,172 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           }
         }
       }
+    ],
+    "oneOf": [
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "type",
+          "sources",
+          "activeSourceId",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "https://schemas.ai-companion-nova.dev/provider-preset-source/v2"
+            },
+            "minItems": 1
+          },
+          "activeSourceId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "createdAt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "updatedAt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "type": {
+            "const": "pool"
+          },
+          "providerId": {
+            "type": "null"
+          },
+          "baseUrl": {
+            "type": "null"
+          },
+          "model": {
+            "type": "null"
+          },
+          "credentialReference": {
+            "type": "null"
+          },
+          "enabled": {
+            "type": "null"
+          },
+          "timeoutMs": {
+            "type": "null"
+          }
+        }
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "type",
+          "sources",
+          "activeSourceId",
+          "providerId",
+          "baseUrl",
+          "model",
+          "credentialReference",
+          "enabled",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "sources": {
+            "type": "array",
+            "maxItems": 0
+          },
+          "activeSourceId": {
+            "const": null
+          },
+          "createdAt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "updatedAt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "type": {
+            "const": "single"
+          },
+          "providerId": {
+            "enum": [
+              "openai-compatible",
+              "gemini"
+            ]
+          },
+          "baseUrl": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "format": "uri"
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "credentialReference": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "kind": {
+                "const": "api-key"
+              },
+              "provider": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            }
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "timeoutMs": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        }
+      }
     ]
   },
   "retrieval-candidate": {
