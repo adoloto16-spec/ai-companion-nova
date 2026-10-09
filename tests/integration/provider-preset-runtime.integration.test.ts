@@ -136,6 +136,10 @@ async function main(){
     const singleRequests=http.requests.slice(beforeSingle);
     equal(singleRequests.filter(item=>item.method==="POST").length,1,"single preset makes one provider request");
     ok(singleRequests.every(item=>item.url.includes("single.example")),"single preset never calls pool sources or another API");
+    const serializedSingle=JSON.stringify(singlePreset);
+    ok(!serializedSingle.includes("single-secret"),"single preset configuration persists only the credential reference");
+    const singleDiagnostics=JSON.stringify(runtime.getChatProviderDiagnostics("preset-single"));
+    ok(!singleDiagnostics.includes("single-secret"),"single preset diagnostics do not expose credential values");
 
     const beforeFailure=http.requests.length;
     let singleFailureThrown=false;
