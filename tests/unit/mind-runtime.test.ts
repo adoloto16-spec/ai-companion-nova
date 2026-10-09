@@ -390,6 +390,36 @@ async function proactiveExpressionPolicyTest(){
   }finally{await runtime.stop();}
 }
 
+async function cancellationDuringExpressionPublicationTest(){
+  let publishCount=0;
+  let notifyPublisherStarted:()=>void=()=>undefined;
+  const publisherStarted=new Promise<void>(resolve=>{notifyPublisherStarted=resolve;});
+  const runtime=new MindRuntime({
+    cognitiveStep:{run:async({characterId})=>({
+      thought:makeThought(characterId,"expression-cancel:"+publishCount,"private thought"),
+      expression:{kind:"chat",content:"public content"},
+      conversationId:"conversation.cancelled"
+    })},
+    schedule:{mode:"fixed",defaultIntervalMs:60_000,minIntervalMs:10_000,maxIntervalMs:60_000,maxRequestsPerHour:120},
+    expressionPublisher:{publish:async()=>{
+      publishCount++;
+      notifyPublisherStarted();
+      return new Promise(()=>{});
+    }},
+    isExpressionContextCurrent:()=>true
+  });
+  runtime.setActiveCharacter("character.cancelled");
+  try{
+    await runtime.start();
+    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=1&&runtime.getState().lifecycleState==="waiting");
+    runtime.wake("scheduled");
+    await publisherStarted;
+    await runtime.stop();
+    equal(runtime.getState().lifecycleState,"off","cancelling a pending expression publisher does not hang Life shutdown");
+    equal(publishCount,1,"cancelled pending expression is not regenerated");
+  }finally{await runtime.stop();}
+}
+
 async function wakeEventsCoalesceTest(){
   let starts=0;
   const runtime=new MindRuntime({
@@ -520,6 +550,7 @@ async function main(){
   await adaptiveIntervalPolicyTest();
   await fixedIntervalIgnoresModelTest();
   await proactiveExpressionPolicyTest();
+  await cancellationDuringExpressionPublicationTest();
   await wakeEventsCoalesceTest();
   await characterSwitchCancelsOldContextTest();
   await hourlyQuotaDefersBackgroundCallsTest();

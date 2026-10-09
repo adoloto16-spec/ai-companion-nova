@@ -35,6 +35,14 @@ interface CharacterMindState{focus:string|null;lastThought:Thought|null;lastThou
 type CancellationKind="cancelled"|"superseded"|"timeout";
 interface IntervalChoice{intervalMs:number;requested?:number;decision:string;}
 function abortError():Error{const error=new Error("Mind Runtime cognitive step aborted.");error.name="AbortError";return error;}
+function abortable<T>(promise:Promise<T>,signal:AbortSignal):Promise<T>{
+  if(signal.aborted)return Promise.reject(abortError());
+  return new Promise<T>((resolve,reject)=>{
+    const onAbort=()=>{signal.removeEventListener("abort",onAbort);reject(abortError());};
+    signal.addEventListener("abort",onAbort,{once:true});
+    promise.then(value=>{signal.removeEventListener("abort",onAbort);resolve(value);},error=>{signal.removeEventListener("abort",onAbort);reject(error);});
+  });
+}
 function cloneState(state:MindState):MindState{
   return {...state,recentThoughts:[...state.recentThoughts],nextWakeAt:state.nextWakeAt??null,recentTrace:(state.recentTrace??[]).map(entry=>({...entry}))};
 }
@@ -337,8 +345,10 @@ export class MindRuntime{
     };
     if(!current())return suppressed(input.isCancelled()&&this.pendingWakeReason==="user-message"?"user-message-wake":input.isCancelled()&&this.pendingWakeReason==="character-change"?"character-change-wake":"stale-context");
     try{
-      if(!this.isExpressionContextCurrent||!await this.isExpressionContextCurrent(input.characterId,input.conversationId))return suppressed("stale-context");
-    }catch{return suppressed("stale-context");}
+      if(!this.isExpressionContextCurrent)return suppressed("stale-context");
+      const contextCurrent=await abortable(Promise.resolve().then(()=>this.isExpressionContextCurrent!(input.characterId,input.conversationId)),input.stepController.signal);
+      if(!contextCurrent)return suppressed("stale-context");
+    }catch{return suppressed(input.stepController.signal.aborted||input.life.signal.aborted?"cancelled":"stale-context");}
     if(!current())return suppressed(input.isCancelled()&&this.pendingWakeReason==="user-message"?"user-message-wake":input.isCancelled()&&this.pendingWakeReason==="character-change"?"character-change-wake":"stale-context");
     const now=this.now();
     while(this.expressionPublicationTimes.length>0&&now-this.expressionPublicationTimes[0]!>=HOUR_MS)this.expressionPublicationTimes.shift();
@@ -347,15 +357,18 @@ export class MindRuntime{
     if(this.expressionPublicationTimes.length>=this.proactiveChatSettings.maxMessagesPerHour)return suppressed("hourly-limit");
     if(!current())return suppressed("stale-context");
     try{
-      if(!this.isExpressionContextCurrent||!await this.isExpressionContextCurrent(input.characterId,input.conversationId))return suppressed("stale-context");
-    }catch{return suppressed("stale-context");}
+      if(!this.isExpressionContextCurrent)return suppressed("stale-context");
+      const contextCurrent=await abortable(Promise.resolve().then(()=>this.isExpressionContextCurrent!(input.characterId,input.conversationId)),input.stepController.signal);
+      if(!contextCurrent)return suppressed("stale-context");
+    }catch{return suppressed(input.stepController.signal.aborted||input.life.signal.aborted?"cancelled":"stale-context");}
     if(!current())return suppressed(input.isCancelled()&&this.pendingWakeReason==="user-message"?"user-message-wake":input.isCancelled()&&this.pendingWakeReason==="character-change"?"character-change-wake":"stale-context");
     const publisher=this.expressionPublisher;
     if(!publisher)return suppressed("publisher-unavailable");
     let outcome:MindExpressionPublishResult;
     try{
-      outcome=await publisher.publish({characterId:input.characterId,conversationId:input.conversationId,expressionId:input.expressionId,content:input.content,signal:input.stepController.signal});
+      outcome=await abortable(Promise.resolve().then(()=>publisher.publish({characterId:input.characterId,conversationId:input.conversationId,expressionId:input.expressionId,content:input.content,signal:input.stepController.signal})),input.stepController.signal);
     }catch(error){
+      if(input.stepController.signal.aborted||input.life.signal.aborted)return suppressed("cancelled");
       this.safeOnExpressionError(error);
       return failed("publication-failed",error instanceof Error?error.name:"PUBLISH_FAILED");
     }
