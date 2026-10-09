@@ -108,7 +108,7 @@ async function characterScopedThoughtHistoryTest(){
   equal(runtime.deleteThought(deletedId),true,"point delete reports success");
   equal(runtime.getState().recentThoughts.length,1,"point delete removes one thought");
   equal(runtime.getState().recentThoughts[0]?.id,aThoughts[1]?.id,"point delete preserves other thoughts");
-  await step.run({characterId:"character.a",state:runtime.getState(),signal:new AbortController().signal});
+  await step.run({characterId:"character.a",state:runtime.getState(),signal:new AbortController().signal,wakeReason:"scheduled"});
   const deletionContexts=seen.filter(item=>item.characterId==="character.a");
   const deletionContext=deletionContexts[deletionContexts.length-1];
   equal(deletionContext?.history,[aThoughts[1]?.content],"deleted Thought is absent from the next cognition context");
@@ -134,6 +134,7 @@ async function llmCognitiveStepTest(){
   const calls:ChatRequest[]=[];
   const contextInputs:Conversation["messages"][]=[];
   const thought="A useful internal thought";
+  let cognitiveContent=JSON.stringify({thought,nextWakeInMs:45000});
   const conversation:Conversation={
     apiVersion:"1",
     schemaVersion:"2",
@@ -153,7 +154,7 @@ async function llmCognitiveStepTest(){
       conversationId:"conv-1",
       providerId:"fake.chat",
       model:request.model,
-      message:{id:request.requestId+":assistant",role:"assistant" as const,content:JSON.stringify({thought,nextWakeInMs:45000})},
+      message:{id:request.requestId+":assistant",role:"assistant" as const,content:cognitiveContent},
       finishReason:"stop" as const
     };
   }};
@@ -201,17 +202,17 @@ async function llmCognitiveStepTest(){
   for(let index=0;index<cases.length;index+=1){
     conversation.messages=conversations[index]!;
     const before=JSON.stringify(conversation.messages);
-    cognitiveResult=await step.run({characterId:"char-1",state,signal:new AbortController().signal});
+    cognitiveResult=await step.run({characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"scheduled"});
     const request=calls[index]!;
     const roles=request.context.messages.map(message=>message.role);
     equal(roles.slice(-1)[0],"user","cognition request always ends with a synthetic user cue");
-    equal(request.context.messages[request.context.messages.length-1]?.content,"Continue the internal cognition step. Produce exactly one internal thought based on the context above. Do not answer the user.","final message is the internal cognition cue");
+    equal(request.context.messages[request.context.messages.length-1]?.content,"Continue Nova's internal cognition. Produce exactly one private thought based on the context above and, only if useful, an optional separate chat expression in the required JSON object. Do not answer the user's current message; ordinary Chat handles that response.","final message is the internal cognition cue");
     equal(roles.slice(3),[...cases[index]!.map(role=>role),"user"],"conversation roles are preserved and the cognition cue is appended");
     equal(JSON.stringify(conversation.messages),before,"synthetic cognition cue is not written into Conversation");
-    equal(contextInputs[index]?.some(message=>message.content.includes("Continue the internal cognition step.")),false,"synthetic cognition cue is absent from ContextEngine input");
+    equal(contextInputs[index]?.some(message=>message.content.includes("Continue Nova's internal cognition.")),false,"synthetic cognition cue is absent from ContextEngine input");
     equal(request.context.messages.slice(3,-1).map(message=>message.content),conversations[index]!.map(message=>message.content),"real conversation content is preserved before the cognition cue");
-    equal(request.context.messages.find(message=>message.content.includes("Continue the internal cognition step."))?.id,"conv-1:cognition:user-cue","cognition cue uses a request-local id");
-    equal(request.context.messages.find(message=>message.content.includes("Continue the internal cognition step."))?.metadata,undefined,"cognition cue has no persistence or memory metadata");
+    equal(request.context.messages.find(message=>message.content.includes("Continue Nova's internal cognition."))?.id,"conv-1:cognition:user-cue","cognition cue uses a request-local id");
+    equal(request.context.messages.find(message=>message.content.includes("Continue Nova's internal cognition."))?.metadata,undefined,"cognition cue has no persistence or memory metadata");
   }
 
   const firstCall=calls[0]!;
@@ -223,6 +224,29 @@ async function llmCognitiveStepTest(){
   equal(JSON.stringify(conversation.messages),JSON.stringify(conversations[3]),"final Conversation remains unchanged after cognition requests");
   equal(cognitiveResult?.thought.content,"A useful internal thought","LLM response remains the Thought content");
   equal(cognitiveResult?.nextWakeInMs,45000,"LLM response exposes the parsed adaptive wake interval");
+  cognitiveContent=String.fromCharCode(96).repeat(3)+"json\n"+JSON.stringify({thought,nextWakeInMs:45000,expression:{kind:"chat",content:"A separate public message"}})+"\n"+String.fromCharCode(96).repeat(3);
+  const publicResult=await step.run({characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"scheduled"});
+  equal(publicResult.thought.content,thought,"public expression never replaces private Thought");
+  equal(publicResult.thought.expression,"internal","Thought remains private even when a message is proposed");
+  equal(publicResult.expression,{kind:"chat",content:"A separate public message"},"chat text is parsed as separate expression content");
+  equal(publicResult.conversationId,"conv-1","expression retains the exact source conversation");
+  cognitiveContent="plain text fallback";
+  const plainResult=await step.run({characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"scheduled"});
+  equal(plainResult.thought.content,"plain text fallback","plain-text fallback is retained as an internal Thought");
+  equal(plainResult.expression,undefined,"plain-text fallback never creates a public expression");
+  cognitiveContent=JSON.stringify({thought,expression:{kind:"chat",content:"   "}});
+  const invalidEmpty=await step.run({characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"scheduled"});
+  equal(invalidEmpty.thought.content,thought,"invalid expression does not discard a valid Thought");
+  equal(invalidEmpty.expression,undefined,"empty public expression is rejected");
+  equal(invalidEmpty.expressionInvalid,true,"empty public expression is traceable as invalid");
+  cognitiveContent=JSON.stringify({thought,expression:{kind:"chat",content:"x".repeat(2001)}});
+  const invalidLong=await step.run({characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"scheduled"});
+  equal(invalidLong.expression,undefined,"overlong public expression is rejected");
+  equal(invalidLong.thought.content,thought,"overlong expression keeps the private Thought");
+  cognitiveContent=JSON.stringify({thought,expression:{kind:"chat",content:"not permitted"},tool_call:{name:"arbitrary"}});
+  const unknownField=await step.run({characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"scheduled"});
+  equal(unknownField.expression,undefined,"unknown fields never authorize public output");
+  equal(unknownField.expressionInvalid,true,"unknown response fields invalidate the expression");
 }
 async function cognitiveProviderBadRequestRegressionTest(){
   const calls:ChatRequest[]=[];
@@ -305,6 +329,55 @@ async function fixedIntervalIgnoresModelTest(){
     const entry=(runtime.getState().recentTrace??[]).slice(-1)[0];
     equal(entry?.appliedIntervalMs,300,"fixed mode always applies the configured interval");
     equal(entry?.intervalDecision,"fixed-mode","trace identifies fixed scheduling");
+  }finally{await runtime.stop();}
+}
+
+async function proactiveExpressionPolicyTest(){
+  let now=1_000_000;
+  let stepNumber=0;
+  const published:string[]=[];
+  const runtime=new MindRuntime({
+    cognitiveStep:{run:async({characterId})=>({
+      thought:makeThought(characterId,"proactive:"+ ++stepNumber,"private thought"),
+      nextWakeInMs:60_000,
+      expression:{kind:"chat",content:"A distinct public expression"},
+      conversationId:"conversation.a"
+    })},
+    schedule:{mode:"fixed",defaultIntervalMs:60_000,minIntervalMs:10_000,maxIntervalMs:60_000,maxRequestsPerHour:120},
+    proactiveChat:{enabled:true,minMessageIntervalMs:120_000,maxMessagesPerHour:1},
+    expressionPublisher:{publish:async expression=>{
+      published.push(expression.expressionId);
+      return {status:"published" as const,messageId:"message:"+expression.expressionId,conversationId:expression.conversationId};
+    }},
+    isExpressionContextCurrent:(characterId,conversationId)=>characterId==="character.a"&&conversationId==="conversation.a",
+    now:()=>now,
+    clock:()=>new Date(now).toISOString()
+  });
+  runtime.setActiveCharacter("character.a");
+  try{
+    await runtime.start();
+    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=1&&runtime.getState().lifecycleState==="waiting");
+    equal(published.length,0,"life-start creates private thought but does not publish");
+    equal(runtime.getState().recentTrace?.at(-1)?.expressionSuppressionReason,"life-start-wake","life-start suppression is traced");
+    runtime.wake("scheduled");
+    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=2&&runtime.getState().lifecycleState==="waiting");
+    equal(published.length,1,"scheduled wake publishes one eligible expression");
+    equal(runtime.getState().recentTrace?.at(-1)?.expressionStatus,"published","published expression appears in trace");
+    runtime.wake("scheduled");
+    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=3&&runtime.getState().lifecycleState==="waiting");
+    equal(runtime.getState().recentTrace?.at(-1)?.expressionSuppressionReason,"cooldown","minimum expression interval is enforced");
+    now+=120_000;
+    runtime.wake("scheduled");
+    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=4&&runtime.getState().lifecycleState==="waiting");
+    equal(runtime.getState().recentTrace?.at(-1)?.expressionSuppressionReason,"hourly-limit","rolling hourly expression limit is enforced");
+    runtime.wake("user-message");
+    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=5&&runtime.getState().lifecycleState==="waiting");
+    equal(runtime.getState().recentTrace?.at(-1)?.expressionSuppressionReason,"user-message-wake","user-message wake is prevented from sending a second answer");
+    runtime.updateProactiveChat({enabled:false,minMessageIntervalMs:120_000,maxMessagesPerHour:1});
+    runtime.wake("scheduled");
+    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=6&&runtime.getState().lifecycleState==="waiting");
+    equal(runtime.getState().recentTrace?.at(-1)?.expressionSuppressionReason,"disabled","disabled proactivity continues thought but suppresses publication");
+    equal(published.length,1,"suppressed expressions never reach the publisher");
   }finally{await runtime.stop();}
 }
 
@@ -437,6 +510,7 @@ async function main(){
   await cognitiveProviderBadRequestRegressionTest();
   await adaptiveIntervalPolicyTest();
   await fixedIntervalIgnoresModelTest();
+  await proactiveExpressionPolicyTest();
   await wakeEventsCoalesceTest();
   await characterSwitchCancelsOldContextTest();
   await hourlyQuotaDefersBackgroundCallsTest();
