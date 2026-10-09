@@ -381,6 +381,83 @@ async function main(){
   equal(capturedBudget?.reservedOutputTokens,111,"controller uses configurable reserved output");
   equal(capturedBudget?.safetyMarginTokens,22,"controller uses configurable safety margin");
 
+  let expressionLlmCalls=0;
+  let expressionMemoryCalls=0;
+  let persistedMessages:readonly import("../../contracts/src").ChatMessage[]=[];
+  let expressionPersistCalls=0;
+  const expressionController=new ChatSessionController(new ConversationSession("conversation.life","character.life"),{
+    async chat(request:ChatRequest):Promise<ChatResponse>{expressionLlmCalls++;return responseFor(request,"must not generate");}
+  },{
+    memoryExtractor:{extract:async()=>{expressionMemoryCalls++;return [];}}
+  });
+  const expression={characterId:"character.life",conversationId:"conversation.life",expressionId:"expr-1",content:"Separate proactive text"};
+  const published=await expressionController.publishExpression(expression,async snapshot=>{
+    expressionPersistCalls++;
+    persistedMessages=snapshot.messages.map(message=>({...message,...(message.metadata?{metadata:{...message.metadata}}:{})}));
+  });
+  equal(published,{status:"published",messageId:"nova-life:expr-1",conversationId:"conversation.life"},"proactive expression publishes through existing chat controller");
+  equal(expressionController.getSnapshot().messages.length,1,"expression appends exactly one chat message");
+  equal(expressionController.getSnapshot().messages[0]?.role,"assistant","expression is an ordinary assistant message");
+  equal(expressionController.getSnapshot().messages[0]?.content,"Separate proactive text","public content is distinct from private Thought data");
+  equal(expressionController.getSnapshot().messages[0]?.metadata?.streamStatus,"complete","complete expression is never marked streaming");
+  equal(expressionController.getSnapshot().messages[0]?.metadata?.source,"nova-life","message provenance is recorded");
+  equal(expressionController.getSnapshot().messages[0]?.metadata?.expressionId,"expr-1","expression id is stored for idempotency");
+  equal(persistedMessages.length,1,"canonical persistence receives the same message shown in the active session");
+  equal(expressionLlmCalls,0,"expression publication never calls Chat LLM");
+  equal(expressionMemoryCalls,0,"expression publication never triggers Automatic Memory extraction");
+  const duplicate=await expressionController.publishExpression(expression,async()=>{expressionPersistCalls++;});
+  equal(duplicate.status,"published","same expression id resolves as already published");
+  equal(expressionController.getSnapshot().messages.length,1,"repeated publication does not duplicate ChatMessage");
+  equal(expressionPersistCalls,1,"idempotent publication does not persist a second message");
+  const wrongConversation=await expressionController.publishExpression({...expression,conversationId:"another-conversation",expressionId:"expr-wrong"},async()=>undefined);
+  equal(wrongConversation,{status:"suppressed",reason:"wrong-conversation"},"publication requires the exact conversation id");
+  const emptyExpression=await expressionController.publishExpression({...expression,expressionId:"expr-empty",content:"  "},async()=>undefined);
+  equal(emptyExpression,{status:"suppressed",reason:"invalid-expression"},"blank expressions are rejected");
+  const longExpression=await expressionController.publishExpression({...expression,expressionId:"expr-long",content:"x".repeat(2001)},async()=>undefined);
+  equal(longExpression,{status:"suppressed",reason:"invalid-expression"},"overlong expressions are rejected");
+  equal(expressionPersistCalls,1,"invalid and duplicate expressions do not invoke persistence");
+
+  let finishPersistence:()=>void=()=>undefined;
+  let signalPersistenceStarted:()=>void=()=>undefined;
+  const persistenceStarted=new Promise<void>(resolve=>{signalPersistenceStarted=resolve;});
+  let racingPersistenceCalls=0;
+  const raceController=new ChatSessionController(new ConversationSession("conversation.race","character.race"),{
+    async chat(request:ChatRequest):Promise<ChatResponse>{return responseFor(request,"unused");}
+  });
+  const raceExpression={characterId:"character.race",conversationId:"conversation.race",expressionId:"expr-race",content:"one racing message"};
+  const firstPublish=raceController.publishExpression(raceExpression,async()=>{
+    racingPersistenceCalls++;
+    await new Promise<void>(resolve=>{finishPersistence=resolve;signalPersistenceStarted();});
+  });
+  const duplicatePublish=raceController.publishExpression(raceExpression,async()=>{racingPersistenceCalls++;});
+  await persistenceStarted;
+  finishPersistence();
+  const raceResults=await Promise.all([firstPublish,duplicatePublish]);
+  equal(raceResults.every(result=>result.status==="published"),true,"concurrent duplicate calls share the publication result");
+  equal(raceController.getSnapshot().messages.length,1,"concurrent duplicate publication does not append two messages");
+  equal(racingPersistenceCalls,1,"concurrent duplicate publication persists exactly once");
+
+  let releaseStream:()=>void=()=>undefined;
+  let signalStreamStarted:()=>void=()=>undefined;
+  const streamStarted=new Promise<void>(resolve=>{signalStreamStarted=resolve;});
+  const busyController=new ChatSessionController(new ConversationSession("conversation.busy","character.busy"),{
+    async chat(request:ChatRequest):Promise<ChatResponse>{return responseFor(request,"unused");},
+    async stream(request,handlers){
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"delta",text:"partial"});
+      await new Promise<void>(resolve=>{releaseStream=resolve;signalStreamStarted();});
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"delta",text:" final"});
+      await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.streaming",model:request.model,type:"completed",finishReason:"stop"});
+      return responseFor(request,"partial final");
+    }
+  });
+  const streamingTurn=busyController.submit("start stream","fake");
+  try{
+    await streamStarted;
+    const suppressedBusy=await busyController.publishExpression({...expression,characterId:"character.busy",conversationId:"conversation.busy",expressionId:"expr-busy"},async()=>undefined);
+    equal(suppressedBusy,{status:"suppressed",reason:"chat-busy"},"active Chat stream suppresses proactive publication");
+  }finally{releaseStream();await streamingTurn;}
+  equal(busyController.getSnapshot().messages.length,2,"suppressed publication leaves the normal Chat stream unchanged");
+
   console.log("PASS Chat session streaming actions: stream/stop/continue/regenerate/retry/race");
   console.log("PASS Chat session/controller unit tests");
 }
