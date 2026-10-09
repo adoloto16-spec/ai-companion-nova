@@ -378,7 +378,7 @@ async function autonomousInitiativeStaleResponseTest(){
   const cognitiveStep=new LLMCognitiveStep({
     runtime:{chat:async request=>{
       calls.push(request);
-      const identity=request.context.messages.find(message=>message.id.endsWith(":cognition:identity"))?.content??"";
+      const identity=request.context.messages.find(message=>(message.id??"").endsWith(":cognition:identity"))?.content??"";
       if(identity.includes("Name: Alpha")){
         alphaCalls+=1;
         if(alphaCalls===1)return makeResponse(request,JSON.stringify({thought:"Alpha begins with a stable research question.",initiative:{decision:"switch",focus:"Alpha original focus",direction:"Compare causes and effects",progress:"The initial distinction is now explicit."}}));
