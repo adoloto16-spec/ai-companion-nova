@@ -1,6 +1,6 @@
 import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatRequestOptions,ChatResponse,CredentialStore,ProviderConfiguration,ProviderPreset,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryArchiveReason,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,MemorySemanticIndexStore,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider} from "../../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
-import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore,MindExpressionPublisher,MindReactiveTurn} from "../../../contracts/src/index";
+import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore,MindReactiveTurn,MindTurnSink,MindToolExecutionContext,NovaToolCall,NovaToolResult} from "../../../contracts/src/index";
 import type {Conversation,ConversationCreateInput,ConversationId,ConversationStore,ConversationUpdateInput} from "../../../contracts/src/index";
 import {
   AiRuntime,AutomaticMemoryAgent,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,MemorySemanticDeduplicator,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,MindRuntime,LLMCognitiveStep,
@@ -72,14 +72,10 @@ export interface FoundationRuntime{
   startLife():Promise<void>;
   stopLife():Promise<void>;
   getMindState():import("../../../contracts/src/index").MindState;
-  setMindExpressionPublisher(publisher:MindExpressionPublisher|undefined):void;
+  setNovaTurnSink(sink:MindTurnSink|undefined):void;
   wakeMind():void;
   wakeMindForUserMessage(turn:MindReactiveTurn):boolean;
   subscribeMindState(listener:(state:import("../../../contracts/src/index").MindState)=>void):import("../../../contracts/src/index").Unsubscribe;
-  subscribeThoughts(listener:(thought:import("../../../contracts/src/index").Thought)=>void):import("../../../contracts/src/index").Unsubscribe;
-  deleteThought(thoughtId:string):boolean;
-  clearCurrentThoughts():void;
-  clearAllThoughts():void;
   getChatProviderDiagnostics(providerPresetId?:string):{
     providerPresetId?:string;
     providerId:string;
@@ -351,18 +347,11 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       getChatModel:()=>activeProviderId(providerConfiguration)==="openai-compatible"&&providerConfiguration?providerConfiguration.model:"fake-chat",
       getChatModelForPreset,
       getCognitiveSchedule:()=>settingsManager.get().cognitiveSchedule,
+      getOutputMode:()=>settingsManager.get().chat.responseMode,
+      getAvailableTools:()=>tools.list().map(tool=>({name:tool.name,description:tool.description,parameters:tool.parameters})),
       clock:()=>new Date().toISOString()
     }),
     schedule:settingsManager.get().cognitiveSchedule,
-    proactiveChat:settingsManager.get().proactiveChat,
-    isExpressionContextCurrent:async(characterId,conversationId)=>{
-      const activeCharacter=await characterManager.getActiveCharacter();
-      if(activeCharacter.id!==characterId)return false;
-      const activeConversation=await conversationManager.getActiveConversation(characterId);
-      return activeConversation.characterId===characterId&&activeConversation.id===conversationId;
-    },
-    onExpressionError:error=>diagnosticsStore.recordError("mind-expression","EXPRESSION_PUBLISH_FAILED",error instanceof Error?error.name:"PUBLISH_FAILED"),
-    recentThoughtLimit:50,
     onError:error=>{
       const chatError=error&&typeof error==="object"&&"chatError" in error
         ?(error as {chatError?:{requestId?:unknown;code?:unknown;message?:unknown;providerId?:unknown;details?:Record<string,unknown>}}).chatError
@@ -487,6 +476,66 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const broker=new DefaultActionBroker({
     toolRegistry:tools,permissions,foreground,riskPolicy:new DefaultRiskPolicy(),confirmation,audit,
     schemaValidator:new StandardContractValidator(),diagnostics:diagnosticsStore,targetResolvers,actorResolver
+  });
+
+  const memoryResolver:ActionTargetResolver={
+    id:"memory.search-query",
+    async resolve(request){
+      const query=request.arguments?.query;
+      if(typeof query!=="string"||!query.trim())throw new Error("read_memory requires a non-empty search query.");
+      return {kind:"resource",resource:query.trim()};
+    }
+  };
+  targetResolvers.set(memoryResolver.id,memoryResolver);
+  const readMemoryDefinition:ToolDefinition={
+    id:"memory.search",
+    version:"1.0.0",
+    schemaVersion:FOUNDATION_SCHEMA_VERSION,
+    name:"read_memory",
+    description:"Search Nova's existing long-term memory for relevant stored facts.",
+    risk:"low",
+    requiredCapabilities:["memory.search"],
+    resourceType:"resource",
+    action:"memory.search",
+    targetResolverId:memoryResolver.id,
+    confirmation:"never",
+    parameters:objectSchema({query:{type:"string",minLength:1,maxLength:500}},["query"])
+  };
+  const readMemoryDriver:ActionDriver={
+    id:"memory-search-driver",
+    async execute(request,target){
+      if(target.kind!=="resource")throw new Error("read_memory requires a resource query target.");
+      const characterId=request.metadata?.characterId;
+      if(typeof characterId!=="string"||!characterId.trim())throw new Error("read_memory is missing its character scope.");
+      const matches=await memoryBroker.search({characterId,query:target.resource,limit:8});
+      return matches.map(item=>({
+        id:item.id,type:item.type,content:item.content,tags:item.tags,
+        importance:item.importance,confidence:item.confidence
+      }));
+    }
+  };
+  tools.register(readMemoryDefinition,readMemoryDriver);
+  permissions.add({
+    id:"character-memory-search",
+    schemaVersion:FOUNDATION_SCHEMA_VERSION,
+    subject:"character",
+    resourceType:"resource",
+    action:"memory.search",
+    effect:"allow"
+  });
+  mindRuntime.setToolExecutor({
+    async execute(call:NovaToolCall,context:MindToolExecutionContext):Promise<NovaToolResult>{
+      if(!tools.get(call.name))return {callId:context.callId,name:call.name,status:"unknown-tool",error:"Tool is not registered: "+call.name};
+      const result=await broker.execute({
+        request:{
+          id:context.callId,schemaVersion:FOUNDATION_SCHEMA_VERSION,tool:call.name,arguments:call.arguments,
+          metadata:{characterId:context.characterId,conversationId:context.conversationId,turnId:context.turnId,callId:context.callId}
+        },
+        credential:characterCredential
+      });
+      if(result.status==="success")return {callId:context.callId,name:call.name,status:"success",output:result.output};
+      return {callId:context.callId,name:call.name,status:"error",error:result.error.message};
+    }
   });
 
   let runtimeStatus:RuntimeDiagnostics["runtimeStatus"]="starting";
@@ -620,14 +669,10 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     startLife:()=>mindRuntime.start(),
     stopLife:()=>mindRuntime.stop(),
     getMindState:()=>mindRuntime.getState(),
-    setMindExpressionPublisher:publisher=>mindRuntime.setExpressionPublisher(publisher),
-    wakeMind:()=>mindRuntime.wake("user-message"),
+    setNovaTurnSink:sink=>mindRuntime.setNovaTurnSink(sink),
+    wakeMind:()=>mindRuntime.wake("scheduled"),
     wakeMindForUserMessage:turn=>mindRuntime.wakeForUserMessage(turn),
     subscribeMindState:listener=>mindRuntime.subscribe(listener),
-    subscribeThoughts:listener=>mindRuntime.subscribeThoughts(listener),
-    deleteThought:thoughtId=>mindRuntime.deleteThought(thoughtId),
-    clearCurrentThoughts:()=>mindRuntime.clearCurrentThoughts(),
-    clearAllThoughts:()=>mindRuntime.clearAllThoughts(),
     getChatProviderDiagnostics:providerPresetId=>{
       const effectiveId=providerPresetId??activeProviderPresetId;
       if(effectiveId){
@@ -659,7 +704,6 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     updateSettings:async(settings)=>{
       const next=await settingsManager.set(settings);
       mindRuntime.updateSchedule(next.cognitiveSchedule);
-      mindRuntime.updateProactiveChat(next.proactiveChat);
       diagnosticsStore.setMaxEntries(next.diagnostics.keepRecentEntries);
       traceStore.configure(next.diagnostics.logLevel,next.diagnostics.keepRecentEntries);
       // Record the values the already-running runtime will use after a Settings Save.
@@ -675,7 +719,6 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     resetSettings:async()=>{
       const next=await settingsManager.reset();
       mindRuntime.updateSchedule(next.cognitiveSchedule);
-      mindRuntime.updateProactiveChat(next.proactiveChat);
       diagnosticsStore.setMaxEntries(next.diagnostics.keepRecentEntries);
       traceStore.configure(next.diagnostics.logLevel,next.diagnostics.keepRecentEntries);
       return next;

@@ -83,11 +83,10 @@ input,select{padding:9px;border:1px solid #394655;border-radius:7px;background:#
 .life-control{display:flex;align-items:center;gap:8px;margin-left:auto;padding-left:12px}
 .life-label{font-size:13px;white-space:nowrap}
 .life-control button{min-width:48px}
-.thoughts-view{display:flex;flex-direction:column;gap:16px}
-.mind-status-badge{font-size:12px;font-weight:700;letter-spacing:.08em}
-.thought-list{display:flex;flex-direction:column;gap:10px;max-height:calc(100vh - 190px);overflow:auto}
-.thought-entry{padding:12px 14px;border:1px solid var(--border-color);border-radius:8px;background:var(--panel-background)}
-.thought-meta{display:flex;gap:12px;margin-bottom:6px;font-size:11px;opacity:.7}
-.thought-meta span{font-family:monospace}
-.thought-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.thought-actions .mind-status-badge{margin-right:4px}
+
+.nova-turn-controls{margin-top:8px}
+.nova-turn-controls button{font-size:12px;padding:4px 8px;opacity:.78}
+.technical-toggle{white-space:nowrap;font-size:12px}
+.nova-turn-technical{margin-top:10px;padding:10px;border:1px solid #394655;border-radius:8px;background:#111820;display:grid;gap:10px;font-size:12px}
+.nova-turn-technical p{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.nova-turn-technical pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:5px 0 0;padding:8px;border-radius:5px;background:#0b1016}
