@@ -97,11 +97,20 @@ async function main(){
     equal(novaTrace.length>=1,true,"Nova Life records cognitive turns in general diagnostics");
     equal(novaTrace.at(-1)?.characterId,nova.id,"Nova cognitive diagnostics retain their character scope");
     equal("recentThoughts" in runtime.getMindState(),false,"MindState no longer stores a parallel Thought history");
+    const lastNovaRequestAt=Date.parse(novaTrace.at(-1)!.startedAt);
+    const minRequestSpacingMs=runtime.getSettings().cognitiveSchedule.minIntervalMs;
+    const nextAllowedRequestAt=lastNovaRequestAt+minRequestSpacingMs;
 
     await runtime.setActiveCharacter(gm.id);
     equal((await runtime.getActiveCharacter()).id,gm.id,"runtime switches active character");
     await runtime.startLife();
-    await waitFor(()=>Boolean(runtime.getMindState().recentTrace?.some(entry=>entry.characterId===gm.id)));
+    // Life OFF cancels timers, but the configured minimum interval still applies across a quick OFF/ON.
+    // Base the wait on the actual prior request and setting, rather than timing out before the allowed wake.
+    const traceWaitMs=Math.max(2500,nextAllowedRequestAt-Date.now()+2500);
+    await waitFor(()=>Boolean(runtime.getMindState().recentTrace?.some(entry=>entry.characterId===gm.id)),traceWaitMs);
+    const firstGmTrace=(runtime.getMindState().recentTrace??[]).find(entry=>entry.characterId===gm.id);
+    ok(firstGmTrace,"restarting Life for another character produces a cognitive trace");
+    equal(Date.parse(firstGmTrace!.startedAt)>=nextAllowedRequestAt,true,"restarted Life respects the configured minimum spacing between model requests");
     await runtime.stopLife();
     const gmTrace=runtime.getMindState().recentTrace??[];
     equal(gmTrace.some(entry=>entry.characterId===gm.id),true,"GM cognitive diagnostics record the selected character");
