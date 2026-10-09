@@ -358,7 +358,7 @@ async function proactiveExpressionPolicyTest(){
       conversationId:"conversation.a"
     })},
     schedule:{mode:"fixed",defaultIntervalMs:60_000,minIntervalMs:10_000,maxIntervalMs:60_000,maxRequestsPerHour:120},
-    proactiveChat:{enabled:true,minMessageIntervalMs:120_000,maxMessagesPerHour:1},
+    proactiveChat:{enabled:true,minMessageIntervalMs:10_000,maxMessagesPerHour:1},
     expressionPublisher:{publish:async expression=>{
       published.push(expression.expressionId);
       return {status:"published" as const,messageId:"message:"+expression.expressionId,conversationId:expression.conversationId};
@@ -380,20 +380,20 @@ async function proactiveExpressionPolicyTest(){
     runtime.wake("scheduled");
     await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=3&&runtime.getState().lifecycleState==="waiting");
     equal(runtime.getState().recentTrace?.at(-1)?.expressionSuppressionReason,"cooldown","minimum expression interval is enforced");
-    now+=120_000;
+    now+=10_000;
     runtime.wake("scheduled");
     await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=4&&runtime.getState().lifecycleState==="waiting");
     equal(runtime.getState().recentTrace?.at(-1)?.expressionSuppressionReason,"hourly-limit","rolling hourly expression limit is enforced");
     runtime.wake("user-message");
     await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=5&&runtime.getState().lifecycleState==="waiting");
     equal(runtime.getState().recentTrace?.at(-1)?.expressionSuppressionReason,"user-message-wake","user-message wake is prevented from sending a second answer");
-    runtime.updateProactiveChat({enabled:false,minMessageIntervalMs:120_000,maxMessagesPerHour:1});
+    runtime.updateProactiveChat({enabled:false,minMessageIntervalMs:10_000,maxMessagesPerHour:1});
     runtime.wake("scheduled");
     await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=6&&runtime.getState().lifecycleState==="waiting");
     equal(runtime.getState().recentTrace?.at(-1)?.expressionSuppressionReason,"disabled","disabled proactivity continues thought but suppresses publication");
     equal(published.length,1,"suppressed expressions never reach the publisher");
     await runtime.stop();
-    runtime.updateProactiveChat({enabled:true,minMessageIntervalMs:120_000,maxMessagesPerHour:1});
+    runtime.updateProactiveChat({enabled:true,minMessageIntervalMs:10_000,maxMessagesPerHour:1});
     await runtime.start();
     await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=7&&runtime.getState().lifecycleState==="waiting");
     equal(runtime.getState().recentTrace?.at(-1)?.expressionSuppressionReason,"life-start-wake","OFF/ON still suppresses automatic life-start publication");
@@ -411,11 +411,16 @@ async function reactiveTurnBypassesProactiveAndRequestLimitsTest(){
   const runtime=new MindRuntime({
     cognitiveStep:{run:async context=>{
       steps++;const turn=context.userTurn;
-      return {thought:makeThought(context.characterId,"reactive-quota:"+steps,turn?"considering the user's actual question":"private startup thought"),
-        ...(turn?{expression:{kind:"chat" as const,content:"A direct answer from Nova Life"},conversationId:turn.conversationId,model:"cognitive-model",providerId:"fake.cognitive",providerPresetId:"preset.cognitive"}:{expression:{kind:"internal" as const},conversationId:"conversation.reactive"})};
+      const expression=turn
+        ?{kind:"chat" as const,content:"A direct answer from Nova Life"}
+        :context.wakeReason==="scheduled"
+          ?{kind:"chat" as const,content:"A preceding unsolicited message"}
+          :{kind:"internal" as const};
+      return {thought:makeThought(context.characterId,"reactive-quota:"+steps,turn?"considering the user's actual question":"private background thought"),
+        expression,conversationId:turn?.conversationId??"conversation.reactive",...(turn?{model:"cognitive-model",providerId:"fake.cognitive",providerPresetId:"preset.cognitive"}:{})};
     }},
-    schedule:{mode:"fixed",defaultIntervalMs:10_000,minIntervalMs:10_000,maxIntervalMs:10_000,maxRequestsPerHour:1},
-    proactiveChat:{enabled:false,minMessageIntervalMs:10_000,maxMessagesPerHour:1},
+    schedule:{mode:"fixed",defaultIntervalMs:10_000,minIntervalMs:10_000,maxIntervalMs:10_000,maxRequestsPerHour:2},
+    proactiveChat:{enabled:true,minMessageIntervalMs:10_000,maxMessagesPerHour:1},
     expressionPublisher:{publish:async expression=>{
       publications.push(expression);
       return {status:"published" as const,messageId:"message:"+expression.expressionId,conversationId:expression.conversationId};
@@ -427,21 +432,83 @@ async function reactiveTurnBypassesProactiveAndRequestLimitsTest(){
   try{
     await runtime.start();
     await waitFor(()=>Boolean(runtime.getState().recentTrace?.length)&&runtime.getState().lifecycleState==="waiting");
-    equal(steps,1,"startup cognition uses the only background request quota slot");
+    equal(steps,1,"startup cognition uses the first background request quota slot");
+    equal(publications.length,0,"life-start remains silent");
+
+    runtime.wake("scheduled");
+    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=2&&runtime.getState().lifecycleState==="waiting");
+    equal(steps,2,"one scheduled proactive step runs before the direct reply");
+    equal(publications.length,1,"the scheduled step uses the only allowed proactive publication");
+    equal(publications[0]?.intent,"proactive","first publication is unsolicited and scheduled");
+    // Both the rolling proactive quota and cooldown are now active. Turn off proactive
+    // output as well, then verify they cannot suppress the correlated user response.
+    runtime.updateProactiveChat({enabled:false,minMessageIntervalMs:10_000,maxMessagesPerHour:1});
     equal(runtime.wakeForUserMessage({characterId:"character.reactive",conversationId:"conversation.reactive",userMessageId:"persisted-user-1",turnId:"turn-1"}),true,"correlated user message wakes Life");
     await waitFor(()=>Boolean(runtime.getState().recentTrace?.some(entry=>entry.expressionStatus==="published"&&entry.expressionRequired===true))&&runtime.getState().lifecycleState==="waiting");
-    equal(steps,2,"reactive answer bypasses exhausted background cognition quota");
-    equal(publications.length,1,"reply publishes while proactiveChat is disabled");
-    equal(publications[0]?.intent,"reactive","publication carries reactive intent");
-    equal(publications[0]?.userMessageId,"persisted-user-1","publication carries the exact user message id");
+    equal(steps,3,"reactive answer bypasses the exhausted background cognition request quota");
+    equal(publications.length,2,"reactive reply is allowed despite proactive cooldown, hourly quota, and disabled toggle");
+    equal(publications[1]?.intent,"reactive","publisher receives a distinct reactive expression");
+    equal(publications[1]?.userMessageId,"persisted-user-1","publication carries the exact user message id");
     equal(runtime.getState().recentTrace?.at(-1)?.expressionRequired,true,"trace records required expression");
     equal(runtime.getState().recentTrace?.at(-1)?.expressionStatus,"published","trace records successful publication");
-    now+=20_000;runtime.wake("user-message");
-    await waitFor(()=>Boolean(runtime.getState().recentTrace?.some(entry=>entry.wakeReason==="user-message"&&!entry.expressionRequired)));
-    equal(publications.length,1,"arbitrary uncorrelated user wake cannot publish a reply");
+
+    now+=3_600_001;
+    runtime.wake("user-message");
+    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=4&&runtime.getState().lifecycleState==="waiting");
+    equal(runtime.getState().recentTrace?.at(-1)?.wakeReason,"user-message","arbitrary user wake is processed as an uncorrelated wake");
+    equal(runtime.getState().recentTrace?.at(-1)?.expressionRequired,undefined,"arbitrary wake cannot impersonate a pending turn");
+    equal(publications.length,2,"uncorrelated user wake cannot publish a second answer");
   }finally{await runtime.stop();}
 }
 
+async function scheduledExpressionUsesNewProactiveDefaultsTest(){
+  let now=4_000_000,step=0;
+  const published:import("../../contracts/src").MindExpressionPublication[]=[];
+  const runtime=new MindRuntime({
+    cognitiveStep:{run:async context=>{
+      step++;
+      const publicStep=context.wakeReason==="scheduled";
+      return {
+        thought:makeThought(context.characterId,"scheduled-sequence:"+step,"a substantive private continuation"),
+        nextWakeInMs:publicStep?10_000:undefined,
+        expression:publicStep
+          ?{kind:"chat" as const,content:step===2?"First distinct requested message":"Second distinct requested message"}
+          :{kind:"internal" as const},
+        conversationId:"conversation.sequence"
+      };
+    }},
+    schedule:{mode:"adaptive",defaultIntervalMs:10_000,minIntervalMs:10_000,maxIntervalMs:30_000,maxRequestsPerHour:3600},
+    expressionPublisher:{publish:async expression=>{
+      published.push(expression);
+      return {status:"published" as const,messageId:"message:"+expression.expressionId,conversationId:expression.conversationId};
+    }},
+    isExpressionContextCurrent:()=>true,
+    now:()=>now,clock:()=>new Date(now).toISOString()
+  });
+  runtime.setActiveCharacter("character.sequence");
+  try{
+    await runtime.start();
+    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=1&&runtime.getState().lifecycleState==="waiting");
+    equal(published.length,0,"life-start does not produce an unsolicited greeting");
+
+    runtime.wake("scheduled");
+    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=2&&runtime.getState().lifecycleState==="waiting");
+    equal(published.length,1,"first scheduled step can publish one public message");
+    equal(published[0]?.content,"First distinct requested message","scheduled step publishes the current distinct message");
+    equal(runtime.getState().recentTrace?.at(-1)?.appliedIntervalMs,10_000,"adaptive scheduler accepts the model's 10-second next wake");
+
+    runtime.wake("scheduled");
+    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=3&&runtime.getState().lifecycleState==="waiting");
+    equal(runtime.getState().recentTrace?.at(-1)?.expressionSuppressionReason,"cooldown","default proactive minimum prevents an immediate duplicate step");
+    equal(published.length,1,"one LLM step publishes at most one message");
+
+    now+=10_000;
+    runtime.wake("scheduled");
+    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=4&&runtime.getState().lifecycleState==="waiting");
+    equal(published.length,2,"a distinct follow-up is permitted after the 10-second default interval");
+    equal(published.map(expression=>expression.content),["First distinct requested message","Second distinct requested message"],"separate scheduled steps can continue a bounded multi-message request without repeats");
+  }finally{await runtime.stop();}
+}
 async function cancellationDuringExpressionPublicationTest(){
   let publishCount=0;
   let notifyPublisherStarted:()=>void=()=>undefined;
@@ -602,6 +669,7 @@ async function main(){
   await adaptiveIntervalPolicyTest();
   await fixedIntervalIgnoresModelTest();
   await proactiveExpressionPolicyTest();
+  await scheduledExpressionUsesNewProactiveDefaultsTest();
   await reactiveTurnBypassesProactiveAndRequestLimitsTest();
   await cancellationDuringExpressionPublicationTest();
   await wakeEventsCoalesceTest();
