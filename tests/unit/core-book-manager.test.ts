@@ -23,6 +23,7 @@ async function main(){
     retentionPriority:90,placementWeight:10,mutationPolicy:"locked",enabled:true,source:"user",metadata:{origin:"test"}
   });
   equal(a.characterId,"character.a","entry scoped to character A");
+  equal(a.role,"user","new Core Book entries default to user role");
   equal((await manager.listCoreBookEntries("character.a")).length,1,"A has one entry");
 
   const b=await manager.createCoreBookEntry("character.b",{title:"B lore",content:"Bravo",activation:{kind:"regex",pattern:"\\bBravo\\b",flags:"i"},source:"import"});
@@ -34,9 +35,11 @@ async function main(){
   try{await manager.updateCoreBookEntry("character.a",b.id,{title:"leak"});}catch{crossScopeUpdate=true}
   ok(crossScopeUpdate,"cross-character update rejected");
 
-  const updated=await manager.updateCoreBookEntry("character.a",a.id,{title:"A identity renamed"});
+  const updated=await manager.updateCoreBookEntry("character.a",a.id,{title:"A identity renamed",role:"assistant"});
   equal(updated.id,a.id,"rename preserves Core Book entry identity");
   equal(updated.title,"A identity renamed","entry updated");
+  equal(updated.role,"assistant","role can be edited independently");
+  equal(updated.source,"user","changing role does not change source");
 
   const disabled=await manager.setCoreBookEntryEnabled("character.a",a.id,false);
   equal(disabled.enabled,false,"entry disables without deletion");
@@ -45,9 +48,21 @@ async function main(){
   const reloaded=new CoreBookManager(store,{clock,idFactory:()=>`core-book.unused.${++ids}`,events,characterExists:async id=>characters.has(id)});
   equal((await reloaded.listCoreBookEntries("character.a")).length,1,"A entries survive manager reload");
   equal((await reloaded.listCoreBookEntries("character.a"))[0]?.enabled,false,"enabled state survives reload");
+  equal((await reloaded.listCoreBookEntries("character.a"))[0]?.role,"assistant","role survives reload");
   equal((await reloaded.listCoreBookEntries("character.b"))[0]?.content,"Bravo","B data remains isolated");
 
-  const semantic=await reloaded.createCoreBookEntry("character.a",{title:"Reserved semantic",content:"future",activation:{kind:"semantic"},source:"system"});
+  const legacyStore=new InMemoryCoreBookStore();
+  const {role:_oldRole,...legacyEntry}=({...a,source:"system" as const});
+  await legacyStore.save({apiVersion:"1",schemaVersion:"1",characterId:"character.legacy",entries:[legacyEntry as typeof a] as any});
+  const legacyManager=new CoreBookManager(legacyStore,{clock,idFactory:()=>`legacy.${++ids}`,characterExists:async id=>id==="character.legacy"});
+  const migrated=(await legacyManager.listCoreBookEntries("character.legacy"))[0]!;
+  equal(migrated.role,"system","legacy system source migrates to system role");
+  const migratedState=await legacyStore.load("character.legacy");
+  equal(migratedState?.schemaVersion,"2","legacy Core Book state is migrated and persisted at schema v2");
+  equal(migrated.id,legacyEntry.id,"Core Book migration preserves ID");
+  equal(migrated.tags,legacyEntry.tags,"Core Book migration preserves tags");
+  equal(migrated.content,legacyEntry.content,"Core Book migration preserves content");
+    const semantic=await reloaded.createCoreBookEntry("character.a",{title:"Reserved semantic",content:"future",activation:{kind:"semantic"},source:"system"});
   const modelSearch=await reloaded.createCoreBookEntry("character.a",{title:"Reserved model search",content:"future",activation:{kind:"model_search"},source:"system"});
   ok(semantic.activation.kind==="semantic"&&modelSearch.activation.kind==="model_search","reserved activation modes are stored without retrieval");
 
