@@ -2120,8 +2120,8 @@ function App(){
             currentConversation.id!==expression.conversationId)return {status:"suppressed",reason:"wrong-conversation"};
         }catch{return {status:"suppressed",reason:"publisher-unavailable"};}
         const result=await chatController.publishExpression(expression,async(current,rollback=false)=>{
-          if((!rollback&&expression.signal?.aborted)||!attached||current.characterId!==expression.characterId||current.conversationId!==expression.conversationId||
-            activeCharacterId!==current.characterId||activeConversationId!==current.conversationId){
+          if(current.characterId!==expression.characterId||current.conversationId!==expression.conversationId||
+            (!rollback&&(expression.signal?.aborted||!attached||activeCharacterId!==current.characterId||activeConversationId!==current.conversationId)){
             throw new Error("Expression publisher cancelled, detached or conversation scope changed before persistence.");
           }
           const updated=await foundation.updateConversation(current.characterId,current.conversationId,{messages:current.messages});
