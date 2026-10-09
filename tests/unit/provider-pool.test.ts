@@ -57,7 +57,7 @@ const source=(id:string,providerId="openai-compatible",enabled=true):ProviderPre
   credentialReference:credential("cred-"+id,providerId),enabled,health:"healthy",failureCount:0,cooldownUntil:null,createdAt:"2026-10-08T00:00:00Z",updatedAt:"2026-10-08T00:00:00Z"
 });
 const preset=(sources:readonly ProviderPresetSource[],activeSourceId=sources[0]?.id??null):ProviderPreset=>({
-  id:"pool-test",name:"Pool Test",sources,activeSourceId,createdAt:"2026-10-08T00:00:00Z",updatedAt:"2026-10-08T00:00:00Z"
+  id:"pool-test",name:"Pool Test",type:"pool",sources,activeSourceId,createdAt:"2026-10-08T00:00:00Z",updatedAt:"2026-10-08T00:00:00Z"
 });
 const request=():ChatRequest=>({
   apiVersion:"1",schemaVersion:"1",requestId:"pool-request",model:"caller-model",
