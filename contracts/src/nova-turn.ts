@@ -26,12 +26,27 @@ export interface NovaTurn {
   nextWakeMs: number;
 }
 
+export type NovaTurnFieldStatus = "valid" | "empty" | "missing" | "invalid" | "recovered";
+export interface NovaTurnParsedField<T> {
+  status: NovaTurnFieldStatus;
+  value?: T;
+}
+export interface NovaTurnParseFields {
+  situation: NovaTurnParsedField<string>;
+  thoughts: NovaTurnParsedField<string>;
+  emotion: NovaTurnParsedField<string>;
+  tools: NovaTurnParsedField<readonly NovaToolCall[]>;
+  toolResults: NovaTurnParsedField<readonly NovaToolResult[]>;
+  speech: NovaTurnParsedField<string>;
+  nextWakeMs: NovaTurnParsedField<number>;
+}
 export interface NovaTurnParseResult {
+  /** Present only when SPEECH is unique and safe to use as public speech. */
   turn?: NovaTurn;
-  /** A unique, independently valid SPEECH block can be recovered from a damaged wrapper. */
   speech?: string;
   complete: boolean;
   diagnostics: readonly string[];
+  fields: NovaTurnParseFields;
 }
 
 const FIELD_LIMITS = {
@@ -65,12 +80,61 @@ function unescapeXml(value: string): string {
   });
 }
 
-function readSingleTag(source: string, name: string): { value?: string; diagnostic?: string } {
-  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp("<" + escapedName + ">([\\s\\S]*?)</" + escapedName + ">", "gi");
-  const matches = [...source.matchAll(re)];
-  if (matches.length !== 1) return { diagnostic: name + (matches.length === 0 ? "-missing" : "-duplicate") };
-  return { value: unescapeXml(matches[0]![1]!).trim() };
+type CanonicalField = "SITUATION" | "THOUGHTS" | "EMOTION" | "TOOLS" | "TOOL_RESULTS" | "SPEECH" | "NEXT_WAKE_MS";
+interface TagToken { closing:boolean; rawName:string; canonical:CanonicalField; attributes:string; start:number; end:number; }
+interface ReadFieldResult { status:NovaTurnFieldStatus; value?:string; diagnostic?:string; }
+const FIELD_ALIASES:Record<CanonicalField,readonly string[]> = {
+  SITUATION:["CURRENT_SITUATION"],
+  THOUGHTS:["THOUGHT"],
+  EMOTION:[],
+  TOOLS:["TOOL_CALLS"],
+  TOOL_RESULTS:["TOOLRESULTS"],
+  SPEECH:["PUBLIC_SPEECH"],
+  NEXT_WAKE_MS:["NEXT_WAKE_INTERVAL_MS"],
+};
+const FIELD_NAMES = Object.entries(FIELD_ALIASES).flatMap(([canonical,aliases])=>[canonical,...aliases].map(alias=>[alias,canonical] as const));
+const FIELD_NAME_MAP = new Map<string,CanonicalField>(FIELD_NAMES.map(([alias,canonical])=>[alias,canonical]));
+function scanTagTokens(source:string, canonical:CanonicalField):TagToken[] {
+  const tokens:TagToken[]=[];
+  const re=/<\s*(\/?)\s*([A-Za-z][A-Za-z0-9_.-]*)\b([^>]*)>/g;
+  for(const match of source.matchAll(re)){
+    const rawName=match[2]!.toUpperCase();
+    if(FIELD_NAME_MAP.get(rawName)!==canonical)continue;
+    const start=match.index!;
+    tokens.push({closing:match[1]==="/",rawName,canonical,attributes:match[3]??"",start,end:start+match[0].length});
+  }
+  return tokens;
+}
+function readField(source:string, canonical:CanonicalField, wrapperRecovered:boolean):ReadFieldResult {
+  const tokens=scanTagTokens(source,canonical);
+  if(tokens.length===0){
+    const names=[canonical,...FIELD_ALIASES[canonical]].join("|");
+    const malformed=new RegExp("<\\s*\\/?\\s*(?:"+names+")\\b[^>]*(?:$|\\n)","i").test(source);
+    return malformed
+      ?{status:"invalid",diagnostic:canonical+"-tag-malformed"}
+      :{status:"missing",diagnostic:canonical+"-missing"};
+  }
+  if(tokens.length!==2)return {status:"invalid",diagnostic:canonical+(tokens.length>2?"-duplicate":"-unclosed")};
+  const [open,close]=tokens;
+  if(!open||!close||open.closing||!close.closing||open.start>=close.start||
+    open.attributes.trim()!==""||close.attributes.trim()!=="" ){
+    return {status:"invalid",diagnostic:canonical+"-tag-malformed"};
+  }
+  const raw=source.slice(open.end,close.start);
+  if(canonical==="SPEECH"&&/<\s*\/?\s*[A-Za-z][A-Za-z0-9_.-]*\b[^>]*>/.test(raw)){
+    return {status:"invalid",diagnostic:"SPEECH-contains-unescaped-tags"};
+  }
+  const value=unescapeXml(raw).trim();
+  const aliasUsed=open.rawName!==canonical||close.rawName!==canonical;
+  return {
+    status:value.length===0?"empty":(wrapperRecovered||aliasUsed?"recovered":"valid"),
+    value,
+    ...(wrapperRecovered?{diagnostic:canonical+"-recovered-from-damaged-wrapper"}:{}),
+    ...(aliasUsed?{diagnostic:canonical+"-recovered-from-alias"}:{}),
+  };
+}
+function withFieldDiagnostic(field:ReadFieldResult, diagnostics:string[]):void {
+  if(field.diagnostic&&!diagnostics.includes(field.diagnostic))diagnostics.push(field.diagnostic);
 }
 
 export function serializeNovaTurn(turn: NovaTurn): string {
@@ -105,144 +169,153 @@ export function serializeNovaTurn(turn: NovaTurn): string {
 }
 
 /**
- * Parse only the versioned tagged protocol. Plain text, JSON-only responses and
- * unsupported versions are never treated as complete NovaTurn records.
- * Speech recovery is deliberately limited to a single, bounded SPEECH block.
+ * Parse the versioned tagged protocol conservatively. Recover only uniquely paired,
+ * bounded fields; malformed or unlabelled text is never promoted to public speech.
  */
 export function parseNovaTurn(content: string): NovaTurnParseResult {
-  const diagnostics: string[] = [];
-  if (typeof content !== "string" || content.length === 0 || content.length > NOVA_TURN_MAX_SERIALIZED_CHARS) {
-    return { complete: false, diagnostics: [typeof content === "string" && content.length > NOVA_TURN_MAX_SERIALIZED_CHARS ? "response-too-large" : "response-empty-or-invalid"] };
-  }
-
-  const speechField = readSingleTag(content, "SPEECH");
-  const recoveredSpeech = speechField.value !== undefined && speechField.value.length <= FIELD_LIMITS.SPEECH
-    ? speechField.value
-    : undefined;
-  if (speechField.diagnostic) diagnostics.push(speechField.diagnostic);
-  if (speechField.value !== undefined && recoveredSpeech === undefined) diagnostics.push("SPEECH-too-long");
-
-  const wrappers = [...content.matchAll(/<NOVA_TURN\b([^>]*)>/gi)];
-  const closers = [...content.matchAll(/<\/NOVA_TURN\s*>/gi)];
-  const version = wrappers.length === 1 ? wrappers[0]![1]!.match(/\bversion\s*=\s*["'](\d+)["']/i)?.[1] : undefined;
-  const wrapperValid = wrappers.length === 1 && closers.length === 1 && closers[0]!.index! > wrappers[0]!.index! && version === "1";
-  if (wrappers.length !== 1 || closers.length !== 1) diagnostics.push("NOVA_TURN-wrapper-invalid");
-  else if (version !== "1") {
-    diagnostics.push("unsupported-protocol-version");
-    return {complete:false, diagnostics};
-  }
-
-  const body = wrapperValid
-    ? content.slice(wrappers[0]!.index! + wrappers[0]![0].length, closers[0]!.index)
-    : content;
-  const situationField = readSingleTag(body, "SITUATION");
-  const thoughtsField = readSingleTag(body, "THOUGHTS");
-  const emotionField = readSingleTag(body, "EMOTION");
-  const toolsField = readSingleTag(body, "TOOLS");
-  const toolResultsField = readSingleTag(body, "TOOL_RESULTS");
-  const nextWakeField = readSingleTag(body, "NEXT_WAKE_MS");
-  for (const field of [situationField, thoughtsField, emotionField, toolsField, nextWakeField]) {
-    if (field.diagnostic) diagnostics.push(field.diagnostic);
-  }
-
-  const boundedText = (name: keyof typeof FIELD_LIMITS, raw: string | undefined): string => {
-    const limit = FIELD_LIMITS[name] as number;
-    if (raw === undefined) return "";
-    if (raw.length > limit) {
-      diagnostics.push(name + "-too-long");
-      return "";
-    }
-    return raw;
+  const diagnostics:string[]=[];
+  const missing=(status:NovaTurnFieldStatus="missing"):NovaTurnParsedField<string>=>({status});
+  const emptyFieldResult=(status:NovaTurnFieldStatus="missing"):ReadFieldResult=>({status});
+  const blankFields: NovaTurnParseFields = {
+    situation:missing(),thoughts:missing(),emotion:missing(),
+    tools:{status:"missing"},toolResults:{status:"missing"},speech:missing(),nextWakeMs:{status:"missing"},
   };
-  let tools: NovaToolCall[] = [];
-  if (toolsField.value !== undefined) {
-    const toolContent = toolsField.value;
-    const calls = [...toolContent.matchAll(/<([a-z][a-z0-9_.-]*)>([\s\S]*?)<\/\1>/gi)];
-    const residue = toolContent.replace(/<([a-z][a-z0-9_.-]*)>[\s\S]*?<\/\1>/gi, "").trim();
-    if (residue) diagnostics.push("TOOLS-malformed-content");
-    if (calls.length > FIELD_LIMITS.TOOL_COUNT) diagnostics.push("TOOLS-too-many");
-    for (const match of calls.slice(0, FIELD_LIMITS.TOOL_COUNT)) {
-      const name = match[1]!;
-      const json = unescapeXml(match[2]!).trim();
-      if (!TOOL_NAME.test(name) || json.length > FIELD_LIMITS.TOOL_ARGUMENTS) {
-        diagnostics.push("tool-call-invalid:" + name);
-        continue;
+  if(typeof content!=="string"||content.length===0){
+    return {complete:false,diagnostics:["response-empty-or-invalid"],fields:blankFields};
+  }
+  if(content.length>NOVA_TURN_MAX_SERIALIZED_CHARS){
+    return {complete:false,diagnostics:["response-too-large"],fields:{
+      situation:{status:"invalid"},thoughts:{status:"invalid"},emotion:{status:"invalid"},
+      tools:{status:"invalid"},toolResults:{status:"invalid"},speech:{status:"invalid"},nextWakeMs:{status:"invalid"},
+    }};
+  }
+
+  const wrapperTokens=[...content.matchAll(/<\s*(\/?)\s*NOVA_TURN\b([^>]*)>/gi)].map(match=>({
+    closing:match[1]==="/", attributes:match[2]??"", start:match.index!, end:match.index!+match[0].length, raw:match[0],
+  }));
+  const opens=wrapperTokens.filter(token=>!token.closing);
+  const closes=wrapperTokens.filter(token=>token.closing);
+  const version=opens.length===1?opens[0]!.attributes.match(/\bversion\s*=\s*["']\s*(\d+)\s*["']/i)?.[1]:undefined;
+  if(opens.length===1&&version!==undefined&&version!=="1"){
+    return {complete:false,diagnostics:["unsupported-protocol-version"],fields:{
+      situation:{status:"invalid"},thoughts:{status:"invalid"},emotion:{status:"invalid"},
+      tools:{status:"invalid"},toolResults:{status:"invalid"},speech:{status:"invalid"},nextWakeMs:{status:"invalid"},
+    }};
+  }
+  const wrapperValid=opens.length===1&&closes.length===1&&wrapperTokens.length===2&&
+    opens[0]!.start<closes[0]!.start&&version==="1"&&opens[0]!.attributes.replace(/\bversion\s*=\s*["']\s*\d+\s*["']/i,"").trim()==="";
+  if(!wrapperValid)diagnostics.push("NOVA_TURN-wrapper-invalid");
+  const body=wrapperValid?content.slice(opens[0]!.end,closes[0]!.start):content;
+  const situationRaw=readField(body,"SITUATION",!wrapperValid);
+  const thoughtsRaw=readField(body,"THOUGHTS",!wrapperValid);
+  const emotionRaw=readField(body,"EMOTION",!wrapperValid);
+  const toolsRaw=readField(body,"TOOLS",!wrapperValid);
+  const toolResultsRaw=readField(body,"TOOL_RESULTS",!wrapperValid);
+  const speechRaw=readField(body,"SPEECH",!wrapperValid);
+  const wakeRaw=readField(body,"NEXT_WAKE_MS",!wrapperValid);
+  for(const field of [situationRaw,thoughtsRaw,emotionRaw,toolsRaw,toolResultsRaw,speechRaw,wakeRaw])withFieldDiagnostic(field,diagnostics);
+
+  const readBoundedText=(name:"SITUATION"|"THOUGHTS"|"EMOTION"|"SPEECH",field:ReadFieldResult,limit:number):NovaTurnParsedField<string>=>{
+    if(field.value===undefined)return {status:field.status};
+    if(field.value.length>limit){diagnostics.push(name+"-too-long");return {status:"invalid"};}
+    return {status:field.status,value:field.value};
+  };
+  const situation=readBoundedText("SITUATION",situationRaw,FIELD_LIMITS.SITUATION);
+  const thoughts=readBoundedText("THOUGHTS",thoughtsRaw,FIELD_LIMITS.THOUGHTS);
+  const emotion=readBoundedText("EMOTION",emotionRaw,FIELD_LIMITS.EMOTION);
+  const speech=readBoundedText("SPEECH",speechRaw,FIELD_LIMITS.SPEECH);
+
+  let tools:NovaToolCall[]=[];
+  let toolsStatus: NovaTurnFieldStatus=toolsRaw.status;
+  if(toolsRaw.value!==undefined&&toolsRaw.status!=="invalid"){
+    const toolContent=toolsRaw.value;
+    const calls=[...toolContent.matchAll(/<\s*([a-z][a-z0-9_.-]*)\s*>([\s\S]*?)<\s*\/\s*\1\s*>/gi)];
+    const residue=toolContent.replace(/<\s*[a-z][a-z0-9_.-]*\s*>[\s\S]*?<\s*\/\s*[a-z][a-z0-9_.-]*\s*>/gi,"").trim();
+    if(residue){diagnostics.push("TOOLS-malformed-content");toolsStatus="invalid";}
+    if(calls.length>FIELD_LIMITS.TOOL_COUNT){diagnostics.push("TOOLS-too-many");toolsStatus="invalid";}
+    for(const match of calls.slice(0,FIELD_LIMITS.TOOL_COUNT)){
+      const name=match[1]!;
+      const json=unescapeXml(match[2]!).trim();
+      if(!TOOL_NAME.test(name)||json.length>FIELD_LIMITS.TOOL_ARGUMENTS){
+        diagnostics.push("tool-call-invalid:"+name);toolsStatus="invalid";continue;
       }
-      try {
-        const args: unknown = JSON.parse(json);
-        if (!args || typeof args !== "object" || Array.isArray(args)) {
-          diagnostics.push("tool-arguments-invalid:" + name);
-          continue;
+      try{
+        const args:unknown=JSON.parse(json);
+        if(!args||typeof args!=="object"||Array.isArray(args)){
+          diagnostics.push("tool-arguments-invalid:"+name);toolsStatus="invalid";continue;
         }
-        tools.push({ name, arguments: args as Record<string, unknown> });
-      } catch {
-        diagnostics.push("tool-arguments-invalid:" + name);
+        tools.push({name,arguments:args as Record<string,unknown>});
+      }catch{diagnostics.push("tool-arguments-invalid:"+name);toolsStatus="invalid";}
+    }
+    if(!toolContent.trim()&&toolsStatus!=="invalid")toolsStatus=toolsRaw.status==="recovered"?"recovered":"empty";
+  }
+
+  const toolResults:NovaToolResult[]=[];
+  let toolResultsStatus: NovaTurnFieldStatus=toolResultsRaw.status;
+  if(toolResultsRaw.value!==undefined&&toolResultsRaw.status!=="invalid"){
+    const resultsContent=toolResultsRaw.value;
+    const results=[...resultsContent.matchAll(/<\s*tool_result\s*>([\s\S]*?)<\s*\/\s*tool_result\s*>/gi)];
+    const residue=resultsContent.replace(/<\s*tool_result\s*>[\s\S]*?<\s*\/\s*tool_result\s*>/gi,"").trim();
+    if(residue){diagnostics.push("TOOL_RESULTS-malformed-content");toolResultsStatus="invalid";}
+    if(results.length>FIELD_LIMITS.TOOL_RESULTS){diagnostics.push("TOOL_RESULTS-too-many");toolResultsStatus="invalid";}
+    for(const match of results.slice(0,FIELD_LIMITS.TOOL_RESULTS)){
+      const json=unescapeXml(match[1]!).trim();
+      if(json.length>FIELD_LIMITS.TOOL_RESULT_CHARS){diagnostics.push("tool-result-too-large");toolResultsStatus="invalid";continue;}
+      try{
+        const parsed:unknown=JSON.parse(json);
+        if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))throw new Error("not-object");
+        const item=parsed as Record<string,unknown>;
+        if(typeof item.callId!=="string"||item.callId.length>200||typeof item.name!=="string"||
+          !TOOL_NAME.test(item.name)||!["success","error","unknown-tool"].includes(String(item.status)))throw new Error("invalid-shape");
+        toolResults.push({callId:item.callId,name:item.name,status:item.status as NovaToolResult["status"],
+          ...(item.output===undefined?{}:{output:item.output}),
+          ...(typeof item.error==="string"?{error:item.error.slice(0,FIELD_LIMITS.TOOL_RESULT_CHARS)}:{})});
+      }catch{diagnostics.push("tool-result-invalid");toolResultsStatus="invalid";}
+    }
+    if(!resultsContent.trim()&&toolResultsStatus!=="invalid")toolResultsStatus=toolResultsRaw.status==="recovered"?"recovered":"empty";
+  }
+
+  let nextWakeMs=Number.NaN;
+  let wakeStatus:NovaTurnFieldStatus=wakeRaw.status;
+  if(wakeRaw.value!==undefined&&wakeRaw.status!=="invalid"){
+    if(wakeRaw.value.length===0){
+      wakeStatus="empty";
+      diagnostics.push("NEXT_WAKE_MS-empty");
+    }else{
+      nextWakeMs=/^\d+$/.test(wakeRaw.value)?Number(wakeRaw.value):Number.NaN;
+      if(!Number.isSafeInteger(nextWakeMs)||nextWakeMs<1||nextWakeMs>FIELD_LIMITS.NEXT_WAKE_MS){
+        wakeStatus="invalid";diagnostics.push("NEXT_WAKE_MS-invalid");nextWakeMs=Number.NaN;
       }
     }
-  }
+  }else if(wakeRaw.status!=="invalid")diagnostics.push("NEXT_WAKE_MS-invalid");
 
-  const toolResults: NovaToolResult[] = [];
-  if (toolResultsField.value !== undefined) {
-    const rawResults = [...toolResultsField.value.matchAll(/<tool_result>([\s\S]*?)<\/tool_result>/gi)];
-    if (rawResults.length > FIELD_LIMITS.TOOL_RESULTS) diagnostics.push("TOOL_RESULTS-too-many");
-    const residue = toolResultsField.value.replace(/<tool_result>[\s\S]*?<\/tool_result>/gi, "").trim();
-    if (residue) diagnostics.push("TOOL_RESULTS-malformed-content");
-    for (const match of rawResults.slice(0, FIELD_LIMITS.TOOL_RESULTS)) {
-      const json = unescapeXml(match[1]!).trim();
-      if (json.length > FIELD_LIMITS.TOOL_RESULT_CHARS) {
-        diagnostics.push("tool-result-too-large");
-        continue;
-      }
-      try {
-        const parsed: unknown = JSON.parse(json);
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not-object");
-        const item = parsed as Record<string, unknown>;
-        if (typeof item.callId !== "string" || item.callId.length > 200 ||
-          typeof item.name !== "string" || !TOOL_NAME.test(item.name) ||
-          !["success", "error", "unknown-tool"].includes(String(item.status))) throw new Error("invalid-shape");
-        toolResults.push({
-          callId: item.callId, name: item.name, status: item.status as NovaToolResult["status"],
-          ...(item.output === undefined ? {} : { output: item.output }),
-          ...(typeof item.error === "string" ? { error: item.error.slice(0, FIELD_LIMITS.TOOL_RESULT_CHARS) } : {}),
-        });
-      } catch {
-        diagnostics.push("tool-result-invalid");
-      }
-    }
-  }
+  const fields:NovaTurnParseFields={
+    situation,thoughts,emotion,tools:{status:toolsStatus,...(toolsStatus==="invalid"?{}:{value:tools})},
+    toolResults:{status:toolResultsStatus,...(toolResultsStatus==="invalid"?{}:{value:toolResults})},
+    speech,nextWakeMs:{status:wakeStatus,...(Number.isFinite(nextWakeMs)?{value:nextWakeMs}:{})},
+  };
+  const fieldAcceptable=(field:NovaTurnParsedField<unknown>)=>field.status==="valid"||field.status==="empty"||field.status==="recovered";
+  const speechUsable=speech.value!==undefined&&fieldAcceptable(speech)&&speech.status!=="invalid";
+  const nextWakeValid=Number.isFinite(nextWakeMs);
+  const requiredValid=wrapperValid&&[situation,thoughts,emotion,tools].every(fieldAcceptable)&&speechUsable&&nextWakeValid;
+  const complete=requiredValid&&toolResultsStatus!=="invalid";
+  if(!complete&&diagnostics.length===0)diagnostics.push("protocol-incomplete");
+  if(!speechUsable)return {complete:false,diagnostics,fields};
 
-  const nextWakeRaw = nextWakeField.value;
-  const nextWakeMs = nextWakeRaw !== undefined && /^\d+$/.test(nextWakeRaw) ? Number(nextWakeRaw) : Number.NaN;
-  const nextWakeValid = Number.isSafeInteger(nextWakeMs) && nextWakeMs >= 1 && nextWakeMs <= FIELD_LIMITS.NEXT_WAKE_MS;
-  if (!nextWakeValid) diagnostics.push("NEXT_WAKE_MS-invalid");
-
-  const situation = boundedText("SITUATION", situationField.value);
-  const thoughts = boundedText("THOUGHTS", thoughtsField.value);
-  const emotion = boundedText("EMOTION", emotionField.value);
-  const speech = boundedText("SPEECH", recoveredSpeech);
-  const toolsFieldValid = toolsField.value !== undefined && !diagnostics.some(d => d.startsWith("TOOLS-") || d.startsWith("tool-"));
-  const complete = wrapperValid && situationField.value !== undefined && thoughtsField.value !== undefined &&
-    emotionField.value !== undefined && toolsFieldValid && recoveredSpeech !== undefined && nextWakeValid &&
-    situationField.value.length <= FIELD_LIMITS.SITUATION && thoughtsField.value.length <= FIELD_LIMITS.THOUGHTS &&
-    emotionField.value.length <= FIELD_LIMITS.EMOTION;
-  if (!complete && diagnostics.length === 0) diagnostics.push("protocol-incomplete");
-
-  if (recoveredSpeech === undefined) {
-    return { complete: false, diagnostics };
-  }
   return {
-    turn: {
-      version: NOVA_TURN_PROTOCOL_VERSION,
-      situation,
-      thoughts,
-      emotion,
-      tools,
-      toolResults,
-      speech,
-      nextWakeMs: nextWakeValid ? nextWakeMs : 30_000,
+    turn:{
+      version:NOVA_TURN_PROTOCOL_VERSION,
+      situation:situation.value??"",
+      thoughts:thoughts.value??"",
+      emotion:emotion.value??"",
+      tools:toolsStatus==="invalid"?[]:tools,
+      toolResults:toolResultsStatus==="invalid"?[]:toolResults,
+      speech:speech.value??"",
+      nextWakeMs:nextWakeValid?nextWakeMs:30_000,
     },
-    speech,
+    speech:speech.value??"",
     complete,
     diagnostics,
+    fields,
   };
 }
