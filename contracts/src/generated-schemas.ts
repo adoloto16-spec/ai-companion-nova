@@ -937,163 +937,17 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           "type": {
             "enum": [
               "text",
-              "json"
+              "json",
+              "json-schema"
             ]
           },
           "schema": {
             "type": "object",
             "additionalProperties": true
           }
-        }
-      }
-    }
-  },
-  "chat-message": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/chat-message/v1",
-    "title": "AI Companion Nova Chat Message v1",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "role",
-      "content"
-    ],
-    "properties": {
-      "id": {
-        "type": "string",
-        "minLength": 1
-      },
-      "role": {
-        "enum": [
-          "system",
-          "user",
-          "assistant",
-          "tool"
-        ]
-      },
-      "content": {
-        "type": "string"
-      },
-      "toolCallId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "metadata": {
-        "type": "object",
-        "additionalProperties": true
-      }
-    }
-  },
-  "chat-request": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/chat-request/v1",
-    "title": "AI Companion Nova Chat Request v1",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "apiVersion",
-      "schemaVersion",
-      "requestId",
-      "model",
-      "context"
-    ],
-    "properties": {
-      "apiVersion": {
-        "enum": [
-          "1"
-        ]
-      },
-      "schemaVersion": {
-        "enum": [
-          "1"
-        ]
-      },
-      "requestId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "providerId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "model": {
-        "type": "string",
-        "minLength": 1
-      },
-      "context": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "conversationId",
-          "messages"
-        ],
-        "properties": {
-          "conversationId": {
-            "type": "string",
-            "minLength": 1
-          },
-          "messages": {
-            "type": "array",
-            "minItems": 1,
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "role",
-                "content"
-              ],
-              "properties": {
-                "id": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "role": {
-                  "enum": [
-                    "system",
-                    "user",
-                    "assistant",
-                    "tool"
-                  ]
-                },
-                "content": {
-                  "type": "string"
-                },
-                "toolCallId": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "metadata": {
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          },
-          "metadata": {
-            "type": "object",
-            "additionalProperties": true
-          }
-        }
-      },
-      "generation": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "temperature": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 2
-          },
-          "maxTokens": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "topP": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 1
-          },
-          "responseFormat": {
+        },
+        "oneOf": [
+          {
             "type": "object",
             "additionalProperties": false,
             "required": [
@@ -1101,11 +955,36 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             ],
             "properties": {
               "type": {
-                "enum": [
-                  "text",
-                  "json",
-                  "json-schema"
-                ]
+                "const": "text"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "json"
+              },
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "schema"
+            ],
+            "properties": {
+              "type": {
+                "const": "json-schema"
               },
               "schema": {
                 "type": "object",
@@ -1113,128 +992,14 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
               },
               "name": {
                 "type": "string",
-                "minLength": 1,
-                "maxLength": 128
+                "minLength": 1
               },
               "strict": {
                 "type": "boolean"
               }
             }
           }
-        }
-      },
-      "metadata": {
-        "type": "object",
-        "additionalProperties": true
-      }
-    }
-  },
-  "chat-response": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/chat-response/v1",
-    "title": "AI Companion Nova Chat Response v1",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "apiVersion",
-      "schemaVersion",
-      "requestId",
-      "conversationId",
-      "providerId",
-      "model",
-      "message",
-      "finishReason"
-    ],
-    "properties": {
-      "apiVersion": {
-        "enum": [
-          "1"
         ]
-      },
-      "schemaVersion": {
-        "enum": [
-          "1"
-        ]
-      },
-      "requestId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "conversationId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "providerId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "model": {
-        "type": "string",
-        "minLength": 1
-      },
-      "message": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "role",
-          "content"
-        ],
-        "properties": {
-          "id": {
-            "type": "string",
-            "minLength": 1
-          },
-          "role": {
-            "enum": [
-              "system",
-              "user",
-              "assistant",
-              "tool"
-            ]
-          },
-          "content": {
-            "type": "string"
-          },
-          "toolCallId": {
-            "type": "string",
-            "minLength": 1
-          },
-          "metadata": {
-            "type": "object",
-            "additionalProperties": true
-          }
-        }
-      },
-      "finishReason": {
-        "enum": [
-          "stop",
-          "length",
-          "content_filter",
-          "error",
-          "unknown"
-        ]
-      },
-      "usage": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "promptTokens": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "completionTokens": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "totalTokens": {
-            "type": "integer",
-            "minimum": 0
-          }
-        }
-      },
-      "metadata": {
-        "type": "object",
-        "additionalProperties": true
       }
     }
   },
@@ -3086,49 +2851,22 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       "timeoutMs": {
         "type": "number",
         "minimum": 0.000001
-      }
-    }
-  },
-  "provider-connection-test-result": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/provider-connection-test-result/v1",
-    "title": "AI Companion Nova Provider Connection Test Result v1",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "apiVersion",
-      "schemaVersion",
-      "status",
-      "providerId"
-    ],
-    "properties": {
-      "apiVersion": {
-        "enum": [
-          "1"
-        ]
       },
-      "schemaVersion": {
-        "enum": [
-          "1"
-        ]
+      "numCtx": {
+        "type": "integer",
+        "minimum": 1
       },
-      "status": {
-        "enum": [
-          "connected",
-          "authentication_failed",
-          "configuration_error",
-          "network_error",
-          "timeout",
-          "provider_error"
-        ]
+      "numPredict": {
+        "type": "integer",
+        "minimum": 1
       },
-      "providerId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "message": {
-        "type": "string",
-        "minLength": 1
+      "keepAlive": {
+        "type": [
+          "string",
+          "number"
+        ],
+        "minLength": 1,
+        "minimum": 0
       }
     }
   },
@@ -3219,6 +2957,22 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       "updatedAt": {
         "type": "string",
         "minLength": 1
+      },
+      "numCtx": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "numPredict": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "keepAlive": {
+        "type": [
+          "string",
+          "number"
+        ],
+        "minLength": 1,
+        "minimum": 0
       }
     }
   },
@@ -3316,7 +3070,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           {
             "enum": [
               "openai-compatible",
-              "gemini"
+              "gemini",
+              "ollama"
             ]
           }
         ]
@@ -3360,6 +3115,29 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           "null"
         ],
         "exclusiveMinimum": 0
+      },
+      "numCtx": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "minimum": 1
+      },
+      "numPredict": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "minimum": 1
+      },
+      "keepAlive": {
+        "type": [
+          "string",
+          "number",
+          "null"
+        ],
+        "minLength": 1,
+        "minimum": 0
       }
     },
     "allOf": [
@@ -3441,6 +3219,39 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
                     "type": "number"
                   }
                 }
+              },
+              {
+                "required": [
+                  "numCtx"
+                ],
+                "properties": {
+                  "numCtx": {
+                    "type": "integer"
+                  }
+                }
+              },
+              {
+                "required": [
+                  "numPredict"
+                ],
+                "properties": {
+                  "numPredict": {
+                    "type": "integer"
+                  }
+                }
+              },
+              {
+                "required": [
+                  "keepAlive"
+                ],
+                "properties": {
+                  "keepAlive": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  }
+                }
               }
             ]
           }
@@ -3475,7 +3286,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             "providerId": {
               "enum": [
                 "openai-compatible",
-                "gemini"
+                "gemini",
+                "ollama"
               ]
             },
             "baseUrl": {
@@ -3490,7 +3302,14 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
               "maxLength": 200
             },
             "credentialReference": {
-              "$ref": "https://schemas.ai-companion-nova.dev/credential-reference/v1"
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "https://schemas.ai-companion-nova.dev/credential-reference/v1"
+                }
+              ]
             },
             "enabled": {
               "type": "boolean"
@@ -3498,6 +3317,29 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             "timeoutMs": {
               "type": "number",
               "exclusiveMinimum": 0
+            },
+            "numCtx": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "numPredict": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "keepAlive": {
+              "type": [
+                "string",
+                "number",
+                "null"
+              ],
+              "minLength": 1,
+              "minimum": 0
             }
           }
         }
@@ -3569,6 +3411,15 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           },
           "timeoutMs": {
             "type": "null"
+          },
+          "numCtx": {
+            "type": "null"
+          },
+          "numPredict": {
+            "type": "null"
+          },
+          "keepAlive": {
+            "type": "null"
           }
         }
       },
@@ -3621,7 +3472,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           "providerId": {
             "enum": [
               "openai-compatible",
-              "gemini"
+              "gemini",
+              "ollama"
             ]
           },
           "baseUrl": {
@@ -3636,28 +3488,14 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             "maxLength": 200
           },
           "credentialReference": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "id",
-              "kind"
-            ],
-            "properties": {
-              "id": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 200
+            "anyOf": [
+              {
+                "type": "null"
               },
-              "kind": {
-                "const": "api-key"
-              },
-              "provider": {
-                "type": "string"
-              },
-              "version": {
-                "type": "string"
+              {
+                "$ref": "https://schemas.ai-companion-nova.dev/credential-reference/v1"
               }
-            }
+            ]
           },
           "enabled": {
             "type": "boolean"
@@ -3665,342 +3503,32 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           "timeoutMs": {
             "type": "number",
             "exclusiveMinimum": 0
-          }
-        }
-      }
-    ]
-  },
-  "retrieval-candidate": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/retrieval-candidate/v1",
-    "title": "AI Companion Nova Retrieval Candidate v1",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "source",
-      "sourceId",
-      "characterId",
-      "score",
-      "matchedText",
-      "matches"
-    ],
-    "properties": {
-      "source": {
-        "enum": [
-          "core_book",
-          "memory"
-        ]
-      },
-      "sourceId": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200
-      },
-      "characterId": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200
-      },
-      "score": {
-        "type": "number"
-      },
-      "matchedText": {
-        "type": "string"
-      },
-      "matches": {
-        "type": "array",
-        "maxItems": 3,
-        "items": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "field",
-            "text"
-          ],
-          "properties": {
-            "field": {
-              "enum": [
-                "title",
-                "content",
-                "tags"
-              ]
-            },
-            "text": {
-              "type": "string"
-            }
-          }
-        }
-      },
-      "metadata": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "updatedAt"
-        ],
-        "properties": {
-          "title": {
-            "type": "string"
           },
-          "status": {
-            "type": "string"
+          "numCtx": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
           },
-          "type": {
-            "type": "string"
+          "numPredict": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
           },
-          "updatedAt": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      },
-      "conversationId": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200
-      }
-    }
-  },
-  "retrieval-index-document": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/retrieval-index-document/v1",
-    "title": "AI Companion Nova Retrieval Index Document v1",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "apiVersion",
-      "schemaVersion",
-      "characterId",
-      "source",
-      "sourceId",
-      "title",
-      "content",
-      "tags",
-      "updatedAt"
-    ],
-    "properties": {
-      "apiVersion": {
-        "enum": [
-          "1"
-        ]
-      },
-      "schemaVersion": {
-        "enum": [
-          "1"
-        ]
-      },
-      "characterId": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200
-      },
-      "source": {
-        "enum": [
-          "core_book",
-          "memory"
-        ]
-      },
-      "sourceId": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200
-      },
-      "title": {
-        "type": "string",
-        "maxLength": 200
-      },
-      "content": {
-        "type": "string"
-      },
-      "tags": {
-        "type": "array",
-        "items": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 64
-        },
-        "maxItems": 32
-      },
-      "status": {
-        "type": "string",
-        "maxLength": 32
-      },
-      "type": {
-        "type": "string",
-        "maxLength": 32
-      },
-      "updatedAt": {
-        "type": "string",
-        "minLength": 1
-      },
-      "conversationId": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200
-      }
-    }
-  },
-  "retrieval-match": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/retrieval-match/v1",
-    "title": "AI Companion Nova Retrieval Match v1",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "field",
-      "text"
-    ],
-    "properties": {
-      "field": {
-        "enum": [
-          "title",
-          "content",
-          "tags"
-        ]
-      },
-      "text": {
-        "type": "string"
-      }
-    }
-  },
-  "retrieval-query": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/retrieval-query/v1",
-    "title": "AI Companion Nova Retrieval Query v1",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "apiVersion",
-      "schemaVersion",
-      "characterId",
-      "query"
-    ],
-    "properties": {
-      "apiVersion": {
-        "enum": [
-          "1"
-        ]
-      },
-      "schemaVersion": {
-        "enum": [
-          "1"
-        ]
-      },
-      "characterId": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200
-      },
-      "query": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 4096
-      },
-      "sources": {
-        "type": "array",
-        "items": {
-          "enum": [
-            "core_book",
-            "memory"
-          ]
-        },
-        "uniqueItems": true,
-        "minItems": 1,
-        "maxItems": 2
-      },
-      "limit": {
-        "type": "integer",
-        "minimum": 1,
-        "maximum": 100
-      },
-      "filters": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "status": {
-            "type": "string",
+          "keepAlive": {
+            "type": [
+              "string",
+              "number",
+              "null"
+            ],
             "minLength": 1,
-            "maxLength": 32
-          },
-          "type": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 32
-          },
-          "tags": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 64
-            },
-            "uniqueItems": true,
-            "maxItems": 32
+            "minimum": 0
           }
         }
-      },
-      "conversationId": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200
       }
-    }
-  },
-  "retrieval-result": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/retrieval-result/v1",
-    "title": "AI Companion Nova Retrieval Result v1",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "apiVersion",
-      "schemaVersion",
-      "characterId",
-      "query",
-      "candidates",
-      "degraded"
-    ],
-    "properties": {
-      "apiVersion": {
-        "enum": [
-          "1"
-        ]
-      },
-      "schemaVersion": {
-        "enum": [
-          "1"
-        ]
-      },
-      "characterId": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200
-      },
-      "query": {
-        "type": "string"
-      },
-      "candidates": {
-        "type": "array",
-        "items": {
-          "type": "object"
-        }
-      },
-      "degraded": {
-        "type": "boolean"
-      },
-      "error": {
-        "type": "string",
-        "minLength": 1
-      }
-    }
-  },
-  "retrieval-source": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/retrieval-source/v1",
-    "title": "AI Companion Nova Retrieval Source v1",
-    "type": "string",
-    "enum": [
-      "core_book",
-      "memory"
     ]
   }
 } as unknown as Record<string, JsonSchema>;
