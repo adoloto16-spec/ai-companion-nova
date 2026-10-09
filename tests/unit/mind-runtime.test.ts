@@ -676,10 +676,10 @@ async function reactiveRequiredExpressionFailureTest(){
   let publishCount=0;
   let failure:{turn:import("../../contracts/src").MindReactiveTurn;reason:string}|undefined;
   const runtime=new MindRuntime({
-    cognitiveStep:{run:async({characterId})=>({
+    cognitiveStep:{run:async({characterId,wakeReason})=>({
       thought:makeThought(characterId,"required-expression-failure","A private Thought that must not be committed without the required answer."),
       expression:{kind:"internal" as const},
-      initiative:{decision:"switch" as const,focus:"This must not be committed without a required reactive answer"},
+      initiative:wakeReason==="user-message"?{decision:"switch" as const,focus:"This must not be committed without a required reactive answer"}:undefined,
       conversationId:"conversation.required"
     })},
     schedule:{mode:"fixed",defaultIntervalMs:10_000,minIntervalMs:10_000,maxIntervalMs:10_000,maxRequestsPerHour:20},
