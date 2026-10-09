@@ -27,5 +27,5 @@ const messages:ChatMessage[]=[
   {id:"tool",role:"tool",content:"tool result"}
 ];
 assert.equal(messages.length,6,"test keeps all persisted records");
-assert.equal(countVisibleSpeechMessages(messages),3,"speech count includes user, visible NovaTurn speech and legacy reply, but excludes hidden/unparseable turns and tool records");
+assert.equal(countVisibleSpeechMessages(messages),2,"speech count includes visible NovaTurn speech and legacy assistant replies, but excludes user messages, hidden/unparseable turns and tool records");
 console.log("nova-turn-visibility: ok");
