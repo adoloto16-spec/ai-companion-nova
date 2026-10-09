@@ -1094,7 +1094,7 @@ function ProviderPresetsView({
   return <section className="settings-grid">
     <section>
       <h2>Provider Presets</h2>
-      <p className="chat-subtitle">Each preset is a pool of independent API sources. API secrets remain in the OS credential store.</p>
+      <p className="chat-subtitle">Pool presets retain ordered sources and automatic failover. Single presets use exactly one API. API secrets remain in the existing OS CredentialStore.</p>
       <label>Active preset
         <select value={activePresetId??""} onChange={event=>{if(event.target.value)void onActivatePreset(event.target.value)}} disabled={busy||presets.length===0}>
           {presets.length===0?<option value="">No saved presets</option>:presets.map(p=><option key={p.id} value={p.id}>{p.name||p.id}</option>)}
@@ -1106,6 +1106,13 @@ function ProviderPresetsView({
         </select>
       </label>
       <label>Name<input value={draft.name} onChange={event=>updateDraft({...draft,name:event.target.value})} disabled={busy}/></label>
+      <label>Preset type
+        <select value={draft.type??"pool"} onChange={event=>setPresetType(event.target.value as "pool"|"single")} disabled={busy}>
+          <option value="pool">Pool (automatic failover)</option>
+          <option value="single">Single API (no failover)</option>
+        </select>
+      </label>
+      {draft.type!=="single"&&<>
       <div className="actions">
         <button onClick={()=>void addSource()} disabled={busy}>Add source</button>
         <button onClick={()=>void removeSource()} disabled={busy||!selectedSource}>Delete source</button>
@@ -1175,9 +1182,57 @@ function ProviderPresetsView({
           <span>Active</span><strong>{selectedSource.id===draft.activeSourceId?"yes":"no"}</strong>
         </div>
       </>}
+      {draft.type==="single"&&<div className="provider-single-config">
+        <label>Provider
+          <select value={singleProviderId} onChange={event=>{
+            const providerId=event.target.value as "openai-compatible"|"gemini";
+            updateDraft({...draft,providerId,baseUrl:providerId==="gemini"?"https://generativelanguage.googleapis.com/v1beta":"https://api.openai.com/v1",
+              model:providerId==="gemini"?"gemini-2.5-flash":"",credentialReference:null});
+            setAddingCredential(false);setModels([]);
+          }} disabled={busy}>
+            <option value="openai-compatible">OpenAI-compatible</option>
+            <option value="gemini">Gemini</option>
+          </select>
+        </label>
+        <label>Base URL<input value={draft.baseUrl??""} onChange={event=>updateDraft({...draft,baseUrl:event.target.value})} placeholder="https://api.example.com/v1" disabled={busy}/></label>
+        <label>Saved API credential
+          <select value={draft.credentialReference?.id??""} onChange={event=>{
+            const value=event.target.value;
+            if(value==="__new__"){setAddingCredential(true);return;}
+            setAddingCredential(false);
+            if(!value){updateDraft({...draft,credentialReference:null});return;}
+            const profile=credentialProfiles.find(candidate=>candidate.credentialReference.id===value&&candidate.providerId===singleProviderId);
+            if(!profile){setMessage("Credential profile is unavailable or belongs to a different provider.");return;}
+            updateDraft({...draft,credentialReference:{...profile.credentialReference}});
+          }} disabled={busy}>
+            <option value="">Select a saved credential…</option>
+            {draft.credentialReference&&!credentialProfiles.some(profile=>profile.credentialReference.id===draft.credentialReference?.id)&&
+              <option value={draft.credentialReference.id} disabled>Unavailable credential: {draft.credentialReference.id}</option>}
+            {credentialProfiles.filter(profile=>profile.providerId===singleProviderId).map(profile=><option key={profile.id} value={profile.credentialReference.id}>{profile.label} {credentialSaved[profile.id]?"••••••••":"(not saved)"}</option>)}
+            <option value="__new__">+ Create credential in CredentialStore</option>
+          </select>
+        </label>
+        {addingCredential&&<div className="character-actions">
+          <label>Credential label<input value={newCredentialLabel} onChange={event=>setNewCredentialLabel(event.target.value)} disabled={busy}/></label>
+          <label>API key<input type="password" autoComplete="off" value={newCredentialSecret} onChange={event=>setNewCredentialSecret(event.target.value)} disabled={busy}/></label>
+          <button onClick={()=>void createCredential()} disabled={busy}>Save credential</button>
+        </div>}
+        <label>Model
+          {models.length>0
+            ?<select value={draft.model??""} onChange={event=>updateDraft({...draft,model:event.target.value})} disabled={busy}>
+              {models.map(model=><option key={model.id} value={model.id}>{model.displayName&&model.displayName!==model.id?model.displayName+" · "+model.id:model.id}</option>)}
+            </select>
+            :<input value={draft.model??""} onChange={event=>updateDraft({...draft,model:event.target.value})} placeholder="model-id" disabled={busy}/>}
+        </label>
+        <label className="checkbox">Enabled
+          <input type="checkbox" checked={draft.enabled??true} onChange={event=>updateDraft({...draft,enabled:event.target.checked})} disabled={busy}/>
+        </label>
+        <label>Timeout (ms)<input type="number" min="1" value={draft.timeoutMs??30000} onChange={event=>updateDraft({...draft,timeoutMs:Number(event.target.value)})} disabled={busy}/></label>
+        <p className="hint">Single API requests use only this provider configuration. Network, timeout, authentication, and provider errors return without automatic provider/key failover.</p>
+      </div>}
       <div className="actions">
-        <button onClick={()=>void refresh()} disabled={busy||!selectedSource}>Refresh models</button>
-        <button onClick={()=>void test()} disabled={busy||!selectedSource}>Test source</button>
+        <button onClick={()=>void refresh()} disabled={busy||(draft.type!=="single"&&!selectedSource)}>Refresh models</button>
+        <button onClick={()=>void test()} disabled={busy||(draft.type!=="single"&&!selectedSource)}>Test connection</button>
         <button onClick={()=>void save(false)} disabled={busy||!draft.name.trim()}>Save</button>
         <button onClick={()=>void save(true)} disabled={busy||!draft.name.trim()}>Save &amp; activate</button>
         <button onClick={()=>void saveAsNew()} disabled={busy||!draft.name.trim()}>Save as new preset</button>
@@ -1192,8 +1247,10 @@ function ProviderPresetsView({
       <p className="hint">API keys are never loaded back into this UI.</p>
     </section>
     <section>
-      <h2>Sources</h2>
-      {draft.sources.length===0?<div>No sources in this preset.</div>:draft.sources.map(source=>
+      <h2>{draft.type==="single"?"Single API configuration":"Pool sources"}</h2>
+      {draft.type==="single"
+        ?<p>{draft.providerId??"No provider"} · {draft.model||"no model"} · {draft.baseUrl||"no Base URL"}</p>
+        :draft.sources.length===0?<div>No sources in this preset.</div>:draft.sources.map(source=>
         <div className="row" key={source.id}>
           <span>{source.name} · {source.providerId} · {source.model||"no model"} · {source.baseUrl}</span>
           <span>{source.health}{source.id===draft.activeSourceId?" · active":""}</span>
