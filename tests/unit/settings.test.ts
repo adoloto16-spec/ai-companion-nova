@@ -19,6 +19,7 @@ async function main(){
   const manager=new SettingsManager(store,validator);
   const defaults=await manager.initialize();
   equal(defaults,defaultAppSettings(),"missing settings resolve to deterministic defaults");
+  equal(defaults.chat.responseMode,"structured","Chat response mode defaults to structured protocol");
   equal(DEFAULT_APP_SETTINGS.context.availableContextTokens,4096,"default context size");
   equal(defaults.cognitiveSchedule,{mode:"adaptive",defaultIntervalMs:30000,minIntervalMs:3000,maxIntervalMs:300000,maxRequestsPerHour:null},"NovaTurn schedule defaults have 3000/300000 ms bounds and no quota");
   const isolatedDefaults=defaultAppSettings();isolatedDefaults.cognitiveSchedule.defaultIntervalMs=45000;
@@ -32,7 +33,7 @@ async function main(){
     memory:{...defaults.memory,candidateLimit:3},
     retrieval:{...defaults.retrieval,candidateLimit:7},
     diagnostics:{...defaults.diagnostics,logLevel:"verbose" as const,keepRecentEntries:25},
-    chat:{...defaults.chat,automaticLongTermMemory:false},
+    chat:{...defaults.chat,automaticLongTermMemory:false,responseMode:"plain" as const},
     cognitiveSchedule:{mode:"fixed" as const,defaultIntervalMs:60000,minIntervalMs:10000,maxIntervalMs:300000,maxRequestsPerHour:60},
     memoryAgent:{...defaults.memoryAgent,enabled:true,providerPresetId:"preset.memory",model:"memory-model",outputMode:"structured" as const,prompt:"Custom full prompt",promptBackup:"Previous prompt",defaultPromptVersion:"1"},
     semanticDedup:{
@@ -61,6 +62,8 @@ async function main(){
   equal(persistedIpcSettings?.cognitiveSchedule.maxRequestsPerHour,60,"IpcSettingsStore persists the cognitive hourly quota");
   equal((await manager.get()).memory.candidateLimit,3,"custom memory candidate limit persists");
   equal((await manager.get()).chat.automaticLongTermMemory,false,"custom extraction toggle persists");
+  equal((await manager.get()).chat.responseMode,"plain","Chat response mode persists");
+  equal(persistedIpcSettings?.chat.responseMode,"plain","IPC settings store persists Chat response mode");
   equal((await manager.get()).memoryAgent.providerPresetId,"preset.memory","agent provider preset persists");
   equal((await manager.get()).memoryAgent.model,"memory-model","agent model persists");
   equal((await manager.get()).memoryAgent.outputMode,"structured","agent output mode persists");
@@ -103,8 +106,14 @@ async function main(){
   v8.cognitiveSchedule={...v8.cognitiveSchedule,maxRequestsPerHour:42};
   const migratedV8Custom=migrateAppSettings(v8);
   equal(migratedV8Custom.cognitiveSchedule.maxRequestsPerHour,42,"custom hourly quota survives migration");
-  const v9={...v8,schemaVersion:"9",cognitiveSchedule:{...v8.cognitiveSchedule,maxRequestsPerHour:120}};
-  equal(migrateAppSettings(v9).cognitiveSchedule.maxRequestsPerHour,120,"explicit quota in the new schema is preserved");
+  const v9={...v8,schemaVersion:"9",chat:{automaticLongTermMemory:false},cognitiveSchedule:{...v8.cognitiveSchedule,maxRequestsPerHour:120}};
+  const migratedV9=migrateAppSettings(v9);
+  equal(migratedV9.chat.automaticLongTermMemory,false,"schema v9 migration preserves automatic long-term memory");
+  equal(migratedV9.chat.responseMode,"structured","legacy Chat settings migrate to structured output mode");
+  equal(migratedV9.cognitiveSchedule.maxRequestsPerHour,null,"schema v9 default quota migrates to disabled");
+  const v10={...v9,schemaVersion:"10",chat:{automaticLongTermMemory:false,responseMode:"plain"}};
+  equal(migrateAppSettings(v10).chat.responseMode,"plain","schema v10 persists the selected Chat response mode");
+  equal(migrateAppSettings(v10).cognitiveSchedule.maxRequestsPerHour,120,"explicit quota in the new schema is preserved");
   const v6=JSON.parse(JSON.stringify(defaultAppSettings())) as Record<string,unknown>;
   v6.schemaVersion="6";
   v6.memoryAgent={...defaultAppSettings().memoryAgent,enabled:false,providerPresetId:"preset.legacy",model:"legacy-model",outputMode:"plain",prompt:"old prompt",promptBackup:"backup",defaultPromptVersion:"9"};
