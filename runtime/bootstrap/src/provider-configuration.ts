@@ -28,6 +28,11 @@ import {
   validateOpenAICompatibleProviderConfig
 } from "../../../providers/chat/openai-compatible/src";
 import {
+  OLLAMA_PROVIDER_ID,
+  OllamaChatProvider,
+  validateOllamaProviderConfig
+} from "../../../providers/chat/ollama/src";
+import {
   GEMINI_PROVIDER_ID,
   GeminiChatProvider,
   GeminiProviderError,
@@ -42,12 +47,13 @@ import {
 const validator=new StandardContractValidator();
 
 function isSupportedChatProvider(providerId:string):boolean{
-  return providerId===OPENAI_COMPATIBLE_PROVIDER_ID||providerId===GEMINI_PROVIDER_ID;
+  return providerId===OPENAI_COMPATIBLE_PROVIDER_ID||providerId===GEMINI_PROVIDER_ID||providerId===OLLAMA_PROVIDER_ID;
 }
 
 function providerCredentialError(configuration:ProviderConfiguration):string|undefined{
   const reference=configuration.credentialReference;
   if(reference===null)return undefined;
+  if(configuration.providerId===OLLAMA_PROVIDER_ID)return "Ollama does not use an API credential; remove the saved credential reference.";
   if(reference.kind!=="api-key")return "Provider credential reference kind must be api-key.";
   if(reference.provider!==undefined&&reference.provider!==configuration.providerId){
     return "Provider credential reference provider does not match providerId.";
@@ -64,7 +70,7 @@ export function validateProviderConfiguration(configuration:ProviderConfiguratio
   if(configuration.model!==configuration.model.trim()||configuration.model.length===0)errors.push("Provider model must be a non-empty trimmed string.");
   const credentialError=providerCredentialError(configuration);
   if(credentialError)errors.push(credentialError);
-  if(configuration.enabled&&configuration.credentialReference===null&&!options.allowMissingCredentialReference)errors.push("An enabled real provider requires a credential reference.");
+  if(configuration.enabled&&configuration.credentialReference===null&&configuration.providerId!==OLLAMA_PROVIDER_ID&&!options.allowMissingCredentialReference)errors.push("An enabled real provider requires a credential reference.");
   if(configuration.providerId===OPENAI_COMPATIBLE_PROVIDER_ID){
     const providerErrors=validateOpenAICompatibleProviderConfig({
       baseUrl:configuration.baseUrl,
@@ -79,6 +85,17 @@ export function validateProviderConfiguration(configuration:ProviderConfiguratio
       model:configuration.model,
       credential:configuration.credentialReference,
       timeoutMs:configuration.timeoutMs
+    });
+    for(const error of providerErrors)if(!errors.includes(error))errors.push(error);
+  }else if(configuration.providerId===OLLAMA_PROVIDER_ID){
+    const providerErrors=validateOllamaProviderConfig({
+      baseUrl:configuration.baseUrl,
+      model:configuration.model,
+      credential:configuration.credentialReference,
+      timeoutMs:configuration.timeoutMs,
+      numCtx:configuration.numCtx,
+      numPredict:configuration.numPredict,
+      keepAlive:configuration.keepAlive
     });
     for(const error of providerErrors)if(!errors.includes(error))errors.push(error);
   }
@@ -172,6 +189,19 @@ export function buildChatProviderForSource(
   if(!isSupportedChatProvider(configuration.providerId))return undefined;
   const validation=validateProviderPresetConfiguration(configuration,{allowMissingCredentialReference:true});
   if(!validation.valid)return undefined;
+  if(configuration.providerId===OLLAMA_PROVIDER_ID){
+    return new OllamaChatProvider({
+      baseUrl:configuration.baseUrl,
+      model:configuration.model,
+      credential:configuration.credentialReference,
+      timeoutMs:configuration.timeoutMs,
+      numCtx:configuration.numCtx,
+      numPredict:configuration.numPredict,
+      keepAlive:configuration.keepAlive,
+      ...(diagnostics?{diagnostics}:{}),
+      ...(providerPresetId?{providerPresetId}:{})
+    },credentialStore,httpClient);
+  }
   if(configuration.providerId===OPENAI_COMPATIBLE_PROVIDER_ID){
     return new OpenAICompatibleChatProvider({
       baseUrl:configuration.baseUrl,
@@ -201,6 +231,19 @@ export function buildProviderForPreset(
 ):ChatProvider|undefined{
   const validation=validateProviderPresetConfiguration(configuration,{allowMissingCredentialReference:true});
   if(!validation.valid||!configuration.enabled)return undefined;
+  if(configuration.providerId===OLLAMA_PROVIDER_ID){
+    return new OllamaChatProvider({
+      baseUrl:configuration.baseUrl,
+      model:configuration.model,
+      credential:configuration.credentialReference,
+      timeoutMs:configuration.timeoutMs,
+      numCtx:configuration.numCtx,
+      numPredict:configuration.numPredict,
+      keepAlive:configuration.keepAlive,
+      ...(diagnostics?{diagnostics}:{}),
+      ...(providerPresetId?{providerPresetId}:{})
+    },credentialStore,httpClient);
+  }
   if(configuration.providerId===OPENAI_COMPATIBLE_PROVIDER_ID){
     return new OpenAICompatibleChatProvider({
       baseUrl:configuration.baseUrl,
@@ -239,6 +282,23 @@ export function buildProviderForDiscovery(configuration:ProviderConfiguration,cr
     credential:configuration.credentialReference,
     timeoutMs:configuration.timeoutMs
   };
+  if(configuration.providerId===OLLAMA_PROVIDER_ID){
+    if(validateOllamaProviderConfig({
+      baseUrl:configuration.baseUrl,
+      model:configuration.model,
+      credential:configuration.credentialReference,
+      timeoutMs:configuration.timeoutMs,
+      numCtx:configuration.numCtx,
+      numPredict:configuration.numPredict,
+      keepAlive:configuration.keepAlive
+    },{allowEmptyModel:true}).length>0)return undefined;
+    return new OllamaChatProvider({
+      ...common,
+      numCtx:configuration.numCtx,
+      numPredict:configuration.numPredict,
+      keepAlive:configuration.keepAlive
+    },credentialStore,httpClient);
+  }
   if(configuration.providerId===OPENAI_COMPATIBLE_PROVIDER_ID){
     if(validateOpenAICompatibleProviderConfig(common,{allowEmptyModel:true}).length>0)return undefined;
     return new OpenAICompatibleChatProvider(common,credentialStore,httpClient);
@@ -269,7 +329,7 @@ export function buildConfiguredProvider(
 
 export function activeProviderId(configuration:ProviderConfiguration|undefined):string{
   if(configuration?.enabled&&validateProviderConfiguration(configuration).valid){
-    if(configuration.providerId===OPENAI_COMPATIBLE_PROVIDER_ID||configuration.providerId===GEMINI_PROVIDER_ID)return configuration.providerId;
+    if(configuration.providerId===OPENAI_COMPATIBLE_PROVIDER_ID||configuration.providerId===GEMINI_PROVIDER_ID||configuration.providerId===OLLAMA_PROVIDER_ID)return configuration.providerId;
   }
   return "fake.chat";
 }
