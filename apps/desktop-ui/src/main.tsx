@@ -23,6 +23,7 @@ import {
   defaultAppSettings, validateAppSettings, StandardContractValidator, parseNovaTurn,
   type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo, type MindState, type MindTurnSink, type MindReactiveTurn
 } from "../../../contracts/src/index";
+import {countVisibleSpeechMessages,shouldRenderNovaTurn} from "./nova-turn-visibility";
 import "./styles.css";
 
 const preview:RuntimeDiagnostics={schemaVersion:"1",timestamp:new Date().toISOString(),runtimeStatus:"stopped",coreStatus:"stopped",modules:[],providers:[],recentErrors:[],capabilities:[]};
@@ -118,7 +119,7 @@ function ConversationSwitcher({conversations,activeConversationId,sending,onSele
           disabled={sending}
         >
           <span className="conversation-title">{conversation.title}</span>
-          <span className="conversation-meta">{conversation.messages.length} messages</span>
+          <span className="conversation-meta">{conversation.messages.length} stored messages · {countVisibleSpeechMessages(conversation.messages)} visible assistant replies</span>
         </button>
       )}
     </div>
@@ -152,7 +153,6 @@ function ChatView({controller,runtime,character,conversations,activeConversation
   const [editingId,setEditingId]=React.useState<string|undefined>();
   const [editingText,setEditingText]=React.useState("");
   const [showTechnicalData,setShowTechnicalData]=React.useState(false);
-  const [technicalOpen,setTechnicalOpen]=React.useState<Record<string,boolean>>({});
   const [persistenceError,setPersistenceError]=React.useState("");
   const bottomRef=React.useRef<HTMLDivElement|null>(null);
 
@@ -281,7 +281,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
       </div>
       <div className="chat-toolbar-actions">
         <label className="checkbox technical-toggle"><input type="checkbox" checked={showTechnicalData}
-          onChange={event=>{setShowTechnicalData(event.target.checked);setTechnicalOpen({});}}/>Show technical data</label>
+          onChange={event=>setShowTechnicalData(event.target.checked)}/>Show technical data</label>
         {snapshot.status==="streaming"&&<button type="button" onClick={()=>void stop()}>Stop</button>}
         {showContinue&&!chatBusy&&lifeState==="off"&&<button type="button" onClick={()=>void continueGeneration()}>Continue</button>}
         {showRegenerate&&!chatBusy&&lifeState==="off"&&<button type="button" onClick={()=>void regenerate()}>Regenerate</button>}
@@ -306,13 +306,26 @@ function ChatView({controller,runtime,character,conversations,activeConversation
       {snapshot.messages.length===0&&<div className="empty-chat">Write a message to start the conversation.</div>}
       {snapshot.messages.map((message,index)=>{
         const state=messageStreamStatus(message);
-        const editable=message.role==="user"||message.role==="assistant";
-        const isEditing=editingId===message.id;
         const isNovaTurn=message.metadata?.novaTurnVersion===1;
-        const parsedTurn=isNovaTurn?parseNovaTurn(message.content).turn:undefined;
-        if(isNovaTurn&&(!parsedTurn||!parsedTurn.speech.trim()))return null;
+        const editable=message.role==="user"||(message.role==="assistant"&&!isNovaTurn);
+        const isEditing=editingId===message.id;
+        const parseResult=isNovaTurn?parseNovaTurn(message.content):undefined;
+        const parsedTurn=parseResult?.turn;
+        if(isNovaTurn&&parseResult&&!shouldRenderNovaTurn(parseResult,showTechnicalData))return null;
         const messageKey=message.id??"message-"+index;
-        const showDetails=technicalOpen[messageKey]??showTechnicalData;
+        const statusText=(field:{status:string;value?:unknown}|undefined):string=>{
+          if(!field)return "missing";
+          if(field.status==="empty")return "empty";
+          if(field.value===undefined)return field.status;
+          return field.status;
+        };
+        const textField=(field:{status:string;value?:string}|undefined):string=>{
+          if(!field||field.status==="missing")return "Missing";
+          if(field.status==="invalid")return "Invalid";
+          if(field.value===undefined)return "Not available";
+          if(field.status==="empty"||!field.value.trim())return "Empty";
+          return field.value;
+        };
         return <article className={"chat-message "+message.role} key={messageKey}>
           <div className="message-author">{message.role==="user"?"You":character.name}</div>
           {isEditing
@@ -323,18 +336,25 @@ function ChatView({controller,runtime,character,conversations,activeConversation
                 <button type="button" onClick={()=>{setEditingId(undefined);setEditingText("")}}>Cancel</button>
               </div>
             </div>
-            :<div className="message-content">{isNovaTurn?parsedTurn!.speech:message.content}</div>}
-          {parsedTurn&&<div className="nova-turn-controls"><button type="button" aria-expanded={showDetails}
-            onClick={()=>setTechnicalOpen(current=>({...current,[messageKey]:!(current[messageKey]??showTechnicalData)}))}>
-            {showDetails?"Hide":"Show"} technical details</button></div>}
-          {parsedTurn&&showDetails&&<section className="nova-turn-technical" aria-label="NovaTurn technical data">
-            <div><strong>Situation</strong><p>{parsedTurn.situation||"Not available"}</p></div>
-            <div><strong>Thoughts (private)</strong><p>{parsedTurn.thoughts||"Not available"}</p></div>
-            <div><strong>Emotion</strong><p>{parsedTurn.emotion||"Not available"}</p></div>
-            <div><strong>Tool calls</strong>{parsedTurn.tools.length?parsedTurn.tools.map((tool,i)=><pre key={tool.name+"-"+i}>{tool.name+"\n"+JSON.stringify(tool.arguments,null,2)}</pre>):<p>None</p>}</div>
-            <div><strong>Tool results</strong>{parsedTurn.toolResults.length?parsedTurn.toolResults.map(result=><pre key={result.callId}>{result.name+" · "+result.status+"\n"+(result.error??JSON.stringify(result.output??null,null,2))}</pre>):<p>None</p>}</div>
-            <div><strong>Next wake</strong><p>{parsedTurn.nextWakeMs} ms</p></div>
-            {parseNovaTurn(message.content).diagnostics.length>0&&<div><strong>Protocol diagnostics</strong><p>{parseNovaTurn(message.content).diagnostics.join(", ")}</p></div>}
+            :<div className="message-content">{isNovaTurn
+              ?(parsedTurn?.speech.trim()?parsedTurn.speech:"The model returned no valid speech.")
+              :message.content}</div>}
+          {isNovaTurn&&showTechnicalData&&<section className="nova-turn-technical" aria-label="NovaTurn technical data">
+            <div><strong>Situation</strong><p>{textField(parseResult?.fields.situation)} <em>({statusText(parseResult?.fields.situation)})</em></p></div>
+            <div><strong>Thoughts (private)</strong><p>{textField(parseResult?.fields.thoughts)} <em>({statusText(parseResult?.fields.thoughts)})</em></p></div>
+            <div><strong>Emotion</strong><p>{textField(parseResult?.fields.emotion)} <em>({statusText(parseResult?.fields.emotion)})</em></p></div>
+            <div><strong>Tool calls</strong>{parseResult?.fields.tools.value?.length
+              ?parseResult.fields.tools.value.map((tool,i)=><pre key={tool.name+"-"+i}>{tool.name+"\n"+JSON.stringify(tool.arguments,null,2)}</pre>)
+              :<p>{parseResult?.fields.tools.status==="empty"?"Empty":parseResult?.fields.tools.status==="invalid"?"Invalid":parseResult?.fields.tools.status==="recovered"?"Recovered (no calls)": "Missing or no calls"} <em>({parseResult?.fields.tools.status??"missing"})</em></p>}</div>
+            <div><strong>Tool results</strong>{parseResult?.fields.toolResults.value?.length
+              ?parseResult.fields.toolResults.value.map(result=><pre key={result.callId}>{result.name+" · "+result.status+"\n"+(result.error??JSON.stringify(result.output??null,null,2))}</pre>)
+              :<p>{parseResult?.fields.toolResults.status==="empty"?"Empty":parseResult?.fields.toolResults.status==="invalid"?"Invalid":parseResult?.fields.toolResults.status==="recovered"?"Recovered (no results)":"Missing or no results"} <em>({parseResult?.fields.toolResults.status??"missing"})</em></p>}</div>
+            <div><strong>Speech</strong><p>{textField(parseResult?.fields.speech)} <em>({statusText(parseResult?.fields.speech)})</em></p></div>
+            <div><strong>Next wake</strong><p>{parseResult?.fields.nextWakeMs.value===undefined?"Not available":parseResult.fields.nextWakeMs.value+" ms"} <em>({parseResult?.fields.nextWakeMs.status??"missing"})</em></p></div>
+            <div><strong>Protocol diagnostics</strong><p>{parseResult?.diagnostics.length?parseResult.diagnostics.join(", "):"None"}</p></div>
+            <div><strong>Unrecognized / raw output (bounded)</strong>
+              <pre>{message.content.length>4000?message.content.slice(0,4000)+"\n[truncated at 4000 characters]":message.content||"(empty provider response)"}</pre>
+            </div>
           </section>}
           {state==="interrupted"&&<div className="message-status">Interrupted</div>}
           {editable&&!chatBusy&&!isEditing&&message.id&&
@@ -348,6 +368,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     </div>
     {snapshot.lifeTurn?.status==="persisting"&&<p className="chat-hint" role="status">Saving your message for Nova Life…</p>}
     {snapshot.lifeTurn?.status==="awaiting"&&<p className="chat-hint" role="status">Nova is thinking…</p>}
+    {snapshot.lifeTurn?.status==="failed"&&<p className="chat-error" role="alert">Nova Life failed to produce a valid reply. The turn remains failed and can be retried with Retry Nova Life.</p>}
     <form className="chat-composer" onSubmit={event=>{event.preventDefault();if(!chatBusy)void send()}}>
       <textarea value={input} onChange={event=>setInput(event.target.value)} onKeyDown={onKeyDown} placeholder="Write a message…" aria-label="Chat message" disabled={chatBusy} rows={2}/>
       <button type="submit" disabled={chatBusy||input.trim().length===0}>{snapshot.sending?"Streaming…":lifeTurnBusy?"Nova is thinking…":"Send"}</button>
@@ -1498,6 +1519,41 @@ function AppSettingsView({
   </div>;
 }
 
+function ChatSettingsView({settings,onChange,onSave,onReset,saving,message}:{
+  settings:AppSettings;
+  onChange:(settings:AppSettings)=>void;
+  onSave:()=>Promise<void>;
+  onReset:()=>Promise<void>;
+  saving:boolean;
+  message:string;
+}){
+  const defaults=defaultAppSettings();
+  return <div className="settings-grid">
+    <section>
+      <div className="section-header">
+        <div><h2>Chat</h2><p className="chat-subtitle">Choose the output format used for the next Nova Life cognitive request.</p></div>
+        <button type="button" onClick={()=>void onReset()} disabled={saving}>Reset to Defaults</button>
+      </div>
+      <label>Chat response mode
+        <select value={settings.chat.responseMode}
+          onChange={event=>onChange({...settings,chat:{...settings.chat,responseMode:event.target.value as AppSettings["chat"]["responseMode"]}})} disabled={saving}>
+          <option value="structured">Structured protocol (recommended)</option>
+          <option value="plain">Plain text (fallback)</option>
+        </select>
+      </label>
+      {settings.chat.responseMode==="structured"
+        ?<p className="hint">Uses the versioned NOVA_TURN v1 protocol with validated tool calls, separate user-facing speech, and a model-proposed next wake interval.</p>
+        :<p className="hint">Uses a separate plain-text prompt. The entire response is user-facing speech; model-requested tools and protocol interpretation are disabled. Background replies may be suppressed only by the exact [[NOVA_SILENT]] sentinel. A silent reactive reply fails and can be retried.</p>}
+      <p className="hint">This setting is saved independently of technical-data visibility. It applies on the next cognitive request and does not change previously saved Conversation messages.</p>
+      <p className="hint">Default: {defaults.chat.responseMode==="structured"?"Structured protocol (recommended)":"Plain text (fallback)"}.</p>
+      <div className="actions">
+        <button type="button" onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save Settings"}</button>
+      </div>
+      {message&&<div className="notice" role="status">{message}</div>}
+    </section>
+  </div>;
+}
+
 function TraceCandidate({candidate}:{candidate:any}){
   return <div className="diagnostic-candidate">
     <div className="diagnostic-candidate-header">
@@ -1827,21 +1883,26 @@ function SettingsContainerView({
   onTestPreset:(preset:ProviderPreset,sourceId:string)=>Promise<ProviderConnectionTestResult>;
   onError:(error:Error,info:React.ErrorInfo)=>void;
 }){
-  const [tab,setTab]=React.useState<"general"|"provider-presets">("general");
+  const [tab,setTab]=React.useState<"general"|"chat"|"provider-presets">("general");
   return <section className="settings-container" aria-label="Settings">
     <div className="settings-subnav" role="tablist" aria-label="Settings sections">
       <button type="button" role="tab" aria-selected={tab==="general"} className={tab==="general"?"nav-button active":"nav-button"} onClick={()=>setTab("general")}>General</button>
+      <button type="button" role="tab" aria-selected={tab==="chat"} className={tab==="chat"?"nav-button active":"nav-button"} onClick={()=>setTab("chat")}>Chat</button>
       <button type="button" role="tab" aria-selected={tab==="provider-presets"} className={tab==="provider-presets"?"nav-button active":"nav-button"} onClick={()=>setTab("provider-presets")}>Provider Presets</button>
     </div>
     {tab==="general"
       ?<ViewErrorBoundary key="settings-general" view="settings-general" onError={onError}>
         <AppSettingsView settings={appSettings} onChange={onAppSettingsChange} onSave={onSaveSettings} onReset={onResetSettings} saving={settingsSaving} message={settingsLoadMessage} providerPresets={providerPresets} activePresetId={activePresetId}/>
       </ViewErrorBoundary>
-      :<ViewErrorBoundary key="settings-provider-presets" view="settings-provider-presets" onError={onError}>
-        <ProviderPresetsView presets={providerPresets} activePresetId={activePresetId} credentialProfiles={credentialProfiles} credentialSaved={credentialSavedMap}
-          runtime={runtime} onSavePreset={onSavePreset} onActivatePreset={onActivatePreset} onDeletePreset={onDeletePreset}
-          onCreateCredential={onCreateCredential} onDeleteCredential={onDeleteCredential} onRefreshModels={onRefreshModels} onTestPreset={onTestPreset}/>
-      </ViewErrorBoundary>}
+      :tab==="chat"
+        ?<ViewErrorBoundary key="settings-chat" view="settings-chat" onError={onError}>
+          <ChatSettingsView settings={appSettings} onChange={onAppSettingsChange} onSave={onSaveSettings} onReset={onResetSettings} saving={settingsSaving} message={settingsLoadMessage}/>
+        </ViewErrorBoundary>
+        :<ViewErrorBoundary key="settings-provider-presets" view="settings-provider-presets" onError={onError}>
+          <ProviderPresetsView presets={providerPresets} activePresetId={activePresetId} credentialProfiles={credentialProfiles} credentialSaved={credentialSavedMap}
+            runtime={runtime} onSavePreset={onSavePreset} onActivatePreset={onActivatePreset} onDeletePreset={onDeletePreset}
+            onCreateCredential={onCreateCredential} onDeleteCredential={onDeleteCredential} onRefreshModels={onRefreshModels} onTestPreset={onTestPreset}/>
+        </ViewErrorBoundary>}
   </section>;
 }
 function isTauriRuntime():boolean{
