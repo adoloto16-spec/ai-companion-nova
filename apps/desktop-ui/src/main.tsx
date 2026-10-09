@@ -196,12 +196,20 @@ function ChatView({controller,runtime,character,conversations,activeConversation
 
   const continueGeneration=React.useCallback(async()=>{
     setPersistenceError("");
+    if(runtime.getMindState().lifecycleState!=="off"){
+      setPersistenceError("Normal Chat continuation is unavailable while Nova Life owns responses.");
+      return;
+    }
     const result=await controller.continue(runtime.getActiveChatModel());
     await persistAfterAction(result);
   },[controller,runtime,persistAfterAction]);
 
   const regenerate=React.useCallback(async()=>{
     setPersistenceError("");
+    if(runtime.getMindState().lifecycleState!=="off"){
+      setPersistenceError("Ordinary Chat regeneration is unavailable while Nova Life owns responses.");
+      return;
+    }
     const result=await controller.regenerate(runtime.getActiveChatModel());
     await persistAfterAction(result);
   },[controller,runtime,persistAfterAction]);
@@ -271,8 +279,8 @@ function ChatView({controller,runtime,character,conversations,activeConversation
       </div>
       <div className="chat-toolbar-actions">
         {snapshot.status==="streaming"&&<button type="button" onClick={()=>void stop()}>Stop</button>}
-        {showContinue&&!chatBusy&&<button type="button" onClick={()=>void continueGeneration()}>Continue</button>}
-        {showRegenerate&&!chatBusy&&<button type="button" onClick={()=>void regenerate()}>Regenerate</button>}
+        {showContinue&&!chatBusy&&lifeState==="off"&&<button type="button" onClick={()=>void continueGeneration()}>Continue</button>}
+        {showRegenerate&&!chatBusy&&lifeState==="off"&&<button type="button" onClick={()=>void regenerate()}>Regenerate</button>}
         {(snapshot.lifeTurn?.status==="failed"||snapshot.lifeTurn?.status==="cancelled")&&!snapshot.sending
           ?<button type="button" onClick={()=>void retry()}>Retry Nova Life</button>
           :showRetry&&!chatBusy&&runtime.getMindState().lifecycleState==="off"&&<button type="button" onClick={()=>void retry()}>Retry</button>}
