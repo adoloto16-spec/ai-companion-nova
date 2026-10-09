@@ -284,6 +284,7 @@ export class ChatSessionController{
         this.status="completed";this.error=undefined;this.errorCode=undefined;
         if(reactive&&this.lifeTurn){const completed={...this.lifeTurn,status:"completed"} as LifeTurnSnapshot;delete completed.error;this.lifeTurn=completed;}
         this.notify();
+        try{
         if(reactive&&this.memoryExtractor&&(this.memoryExtractionEnabled?.()??true)){
           const messages=this.session.getMessages();
           const userIndex=messages.findIndex(item=>item.id===turn!.userMessageId&&item.role==="user");
@@ -300,6 +301,7 @@ export class ChatSessionController{
             void Promise.resolve().then(()=>this.memoryExtractor!.extract(extractionRequest)).catch(()=>undefined);
           }
         }
+        }catch{/* Memory extraction must never turn a persisted reply into a failed delivery. */}
         return {status:"published",messageId,conversationId:this.session.conversationId};
       }finally{this.publishingExpression=false;this.notify();}
     });
@@ -349,6 +351,12 @@ export class ChatSessionController{
       return {status:"life-failed",turn,message:this.lifeTurn?.error??"Nova Life is not available. Turn Life on and retry this reply."};
     }
     return {status:"awaiting-life",turn};
+  }
+
+  clearFailedLifeTurnForOrdinaryChat():void{
+    if(!this.lifeTurn||(this.lifeTurn.status!=="failed"&&this.lifeTurn.status!=="cancelled"))return;
+    this.lifeTurn=undefined;this.error=undefined;this.errorCode=undefined;
+    this.recomputeStatus();this.notify();
   }
 
   failLifeTurn(userMessageId:string,reason:string):boolean{

@@ -390,6 +390,44 @@ async function proactiveExpressionPolicyTest(){
   }finally{await runtime.stop();}
 }
 
+
+async function reactiveTurnBypassesProactiveAndRequestLimitsTest(){
+  let now=2_000_000,steps=0;
+  const publications:import("../../contracts/src").MindExpressionPublication[]=[];
+  const runtime=new MindRuntime({
+    cognitiveStep:{run:async context=>{
+      steps++;const turn=context.userTurn;
+      return {thought:makeThought(context.characterId,"reactive-quota:"+steps,turn?"considering the user's actual question":"private startup thought"),
+        ...(turn?{expression:{kind:"chat" as const,content:"A direct answer from Nova Life"},conversationId:turn.conversationId,model:"cognitive-model",providerId:"fake.cognitive",providerPresetId:"preset.cognitive"}:{expression:{kind:"internal" as const},conversationId:"conversation.reactive"})};
+    }},
+    schedule:{mode:"fixed",defaultIntervalMs:10_000,minIntervalMs:10_000,maxIntervalMs:10_000,maxRequestsPerHour:1},
+    proactiveChat:{enabled:false,minMessageIntervalMs:10_000,maxMessagesPerHour:1},
+    expressionPublisher:{publish:async expression=>{
+      publications.push(expression);
+      return {status:"published" as const,messageId:"message:"+expression.expressionId,conversationId:expression.conversationId};
+    }},
+    isExpressionContextCurrent:(characterId,conversationId)=>characterId==="character.reactive"&&conversationId==="conversation.reactive",
+    now:()=>now,clock:()=>new Date(now).toISOString()
+  });
+  runtime.setActiveCharacter("character.reactive");
+  try{
+    await runtime.start();
+    await waitFor(()=>Boolean(runtime.getState().recentTrace?.length)&&runtime.getState().lifecycleState==="waiting");
+    equal(steps,1,"startup cognition uses the only background request quota slot");
+    equal(runtime.wakeForUserMessage({characterId:"character.reactive",conversationId:"conversation.reactive",userMessageId:"persisted-user-1",turnId:"turn-1"}),true,"correlated user message wakes Life");
+    await waitFor(()=>runtime.getState().recentTrace?.some(entry=>entry.expressionStatus==="published"&&entry.expressionRequired===true)&&runtime.getState().lifecycleState==="waiting");
+    equal(steps,2,"reactive answer bypasses exhausted background cognition quota");
+    equal(publications.length,1,"reply publishes while proactiveChat is disabled");
+    equal(publications[0]?.intent,"reactive","publication carries reactive intent");
+    equal(publications[0]?.userMessageId,"persisted-user-1","publication carries the exact user message id");
+    equal(runtime.getState().recentTrace?.at(-1)?.expressionRequired,true,"trace records required expression");
+    equal(runtime.getState().recentTrace?.at(-1)?.expressionStatus,"published","trace records successful publication");
+    now+=20_000;runtime.wake("user-message");
+    await waitFor(()=>Boolean(runtime.getState().recentTrace?.some(entry=>entry.wakeReason==="user-message"&&!entry.expressionRequired)));
+    equal(publications.length,1,"arbitrary uncorrelated user wake cannot publish a reply");
+  }finally{await runtime.stop();}
+}
+
 async function cancellationDuringExpressionPublicationTest(){
   let publishCount=0;
   let notifyPublisherStarted:()=>void=()=>undefined;
@@ -550,6 +588,7 @@ async function main(){
   await adaptiveIntervalPolicyTest();
   await fixedIntervalIgnoresModelTest();
   await proactiveExpressionPolicyTest();
+  await reactiveTurnBypassesProactiveAndRequestLimitsTest();
   await cancellationDuringExpressionPublicationTest();
   await wakeEventsCoalesceTest();
   await characterSwitchCancelsOldContextTest();

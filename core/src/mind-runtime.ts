@@ -303,7 +303,6 @@ export class MindRuntime{
         expressionTrace={expressionKind:result.expression?.kind==="internal"?"internal":"chat",expressionStatus:result.expressionInvalid?"invalid":"failed",
           expressionSuppressionReason:"invalid-expression",expressionId:"nova-life-expression:"+runId,expressionRequired:true,
           expressionUserMessageId:reactiveTurn.userMessageId,expressionConversationId:reactiveTurn.conversationId};
-        this.failReactiveTurn(reactiveTurn,"required-expression-missing");
         const error=new Error("Nova Life cognition did not return the required public reply.");
         error.name="REACTIVE_EXPRESSION_REQUIRED";
         throw error;

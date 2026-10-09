@@ -23,8 +23,8 @@ async function main(){
   equal(defaults.cognitiveSchedule,{mode:"adaptive",defaultIntervalMs:30000,minIntervalMs:10000,maxIntervalMs:900000,maxRequestsPerHour:120},"cognitive schedule defaults");
   const isolatedDefaults=defaultAppSettings();isolatedDefaults.cognitiveSchedule.defaultIntervalMs=45000;isolatedDefaults.proactiveChat.minMessageIntervalMs=300000;
   equal(defaultAppSettings().cognitiveSchedule.defaultIntervalMs,30000,"nested cognitive settings are deep-copied");
-  equal(defaults.proactiveChat,{enabled:true,minMessageIntervalMs:120000,maxMessagesPerHour:6},"proactive chat defaults are safe and enabled");
-  equal(defaultAppSettings().proactiveChat.minMessageIntervalMs,120000,"nested proactive chat defaults are deep-copied");
+  equal(defaults.proactiveChat,{enabled:true,minMessageIntervalMs:10000,maxMessagesPerHour:120},"proactive chat defaults are safe and enabled");
+  equal(defaultAppSettings().proactiveChat.minMessageIntervalMs,10000,"nested proactive chat defaults are deep-copied");
   ok(defaults.semanticDedup.judge.prompt.includes("In structured mode, return only:"),"default Judge prompt declares structured output");
   ok(defaults.semanticDedup.judge.prompt.includes("In plain mode, return only:"),"default Judge prompt declares plain output");
   equal(defaults.semanticDedup.judge.defaultPromptVersion,"2","default Judge prompt version");
@@ -91,6 +91,15 @@ async function main(){
   equal(migratedV5.memoryAgent.prompt,"custom prompt","schema v5 migration preserves prompt");
   equal(migratedV5.memoryAgent.promptBackup,"previous prompt","schema v5 migration preserves prompt backup");
   equal(migratedV5.memoryAgent.defaultPromptVersion,"7","schema v5 migration preserves prompt version");
+  // Schema v7's old defaults migrate only when the exact old values are stored.
+  const v7=JSON.parse(JSON.stringify(defaultAppSettings())) as Record<string,any>;
+  v7.schemaVersion="7";
+  v7.proactiveChat={enabled:false,minMessageIntervalMs:120000,maxMessagesPerHour:6};
+  const migratedV7=migrateAppSettings(v7);
+  equal(migratedV7.proactiveChat,{enabled:false,minMessageIntervalMs:10000,maxMessagesPerHour:120},"v7 old defaults migrate and preserve the disabled toggle");
+  v7.proactiveChat={enabled:true,minMessageIntervalMs:30000,maxMessagesPerHour:12};
+  const migratedV7Custom=migrateAppSettings(v7);
+  equal(migratedV7Custom.proactiveChat,{enabled:true,minMessageIntervalMs:30000,maxMessagesPerHour:12},"v7 custom values survive migration");
   const v6=JSON.parse(JSON.stringify(defaultAppSettings())) as Record<string,unknown>;
   delete v6.proactiveChat;v6.schemaVersion="6";
   v6.memoryAgent={...defaultAppSettings().memoryAgent,enabled:false,providerPresetId:"preset.legacy",model:"legacy-model",outputMode:"plain",prompt:"old prompt",promptBackup:"backup",defaultPromptVersion:"9"};
@@ -115,7 +124,7 @@ async function main(){
   ok(validateAppSettings(invalidSchedule).some(error=>error.includes("minimum interval")),"inconsistent cognitive interval bounds are rejected");
   const invalidProactiveInterval={...defaultAppSettings(),proactiveChat:{...defaultAppSettings().proactiveChat,minMessageIntervalMs:999}};
   ok(validateAppSettings(invalidProactiveInterval).some(error=>error.includes("minimum message interval")),"unsafe proactive interval is rejected");
-  const invalidProactiveHourly={...defaultAppSettings(),proactiveChat:{...defaultAppSettings().proactiveChat,maxMessagesPerHour:1000}};
+  const invalidProactiveHourly={...defaultAppSettings(),proactiveChat:{...defaultAppSettings().proactiveChat,maxMessagesPerHour:4000}};
   ok(validateAppSettings(invalidProactiveHourly).some(error=>error.includes("messages per hour")),"unsafe proactive hourly limit is rejected");
   const legacy=migrateAppSettings({schemaVersion:"0",contextBudget:8192,recentMessages:12,memoryCandidateLimit:5,diagnosticsLevel:"debug"});
   equal(legacy.context.availableContextTokens,8192,"legacy context budget migrates");

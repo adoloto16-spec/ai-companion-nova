@@ -1,5 +1,5 @@
 import {ChatSessionController,ConversationSession,InMemoryChatTraceStore} from "../../core/src";
-import type {AssembledContext,ChatRequest,ChatResponse,ContextBuildRequest} from "../../contracts/src";
+import type {AssembledContext,ChatRequest,ChatResponse,ContextBuildRequest,MindReactiveTurn} from "../../contracts/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(actual!==expected)throw new Error(label+" expected "+String(expected)+" got "+String(actual))}
 function ok(value:unknown,label:string){if(!value)throw new Error(label)}
@@ -490,6 +490,68 @@ async function main(){
   equal(expressionBusyController.getSnapshot().messages.length,2,"suppressed publication leaves the normal Chat stream unchanged");
 
   console.log("PASS Chat session streaming actions: stream/stop/continue/regenerate/retry/race");
+
+  const lifeSession=new ConversationSession("life-conversation","character.life");
+  let ordinaryLifeRequests=0,userPersistedBeforeWake=false,wokenLifeTurn:MindReactiveTurn|undefined,memoryExtractions=0;
+  const memoryRequests:import("../../contracts/src").MemoryExtractionRequest[]=[];
+  const lifeController=new ChatSessionController(lifeSession,{
+    async chat(request:ChatRequest){ordinaryLifeRequests++;return responseFor(request,"ordinary Chat must not run");}
+  },{
+    requestIdFactory:()=>"life-request-1",
+    memoryExtractor:{extract:async request=>{memoryExtractions++;memoryRequests.push(request);return [];}},
+    memoryExtractionEnabled:()=>true,recentConversationMessagesProvider:()=>8
+  });
+  const lifeSubmit=await lifeController.submitToLife("Answer this from Nova Life",async snapshot=>{
+    equal(snapshot.messages.map(message=>message.role+":"+message.content).join("|"),"user:Answer this from Nova Life","persist receives the active ConversationSession user turn");
+    userPersistedBeforeWake=true;
+  },turn=>{
+    ok(userPersistedBeforeWake,"Life wake happens only after persistence completes");wokenLifeTurn=turn;return true;
+  });
+  equal(lifeSubmit.status,"awaiting-life","Life submission records an explicit awaiting state");
+  equal(ordinaryLifeRequests,0,"Life submission never invokes ordinary Chat generation");
+  equal(lifeController.getSnapshot().sending,false,"pending Life does not masquerade as an ordinary stream");
+  equal(lifeController.getSnapshot().lifeTurn?.status,"awaiting","controller exposes the pending reactive turn");
+  equal(wokenLifeTurn?.userMessageId,"life-request-1:user","wake carries the user message id");
+  equal(wokenLifeTurn?.conversationId,"life-conversation","wake carries the exact Conversation id");
+  const reactiveExpression={
+    characterId:"character.life",conversationId:"life-conversation",expressionId:"life-expression-1",content:"A separate public reply",
+    intent:"reactive" as const,userMessageId:"life-request-1:user",turnId:"life-request-1",model:"cognitive-model",providerId:"fake.cognitive",providerPresetId:"preset.cognitive"
+  };
+  let writes=0;
+  const lifePublication=await lifeController.publishExpression(reactiveExpression,async snapshot=>{
+    writes++;equal(lifeSession.getMessages().length,1,"assistant remains hidden until persistence succeeds");
+    equal(snapshot.messages.map(message=>message.content).join("|"),"Answer this from Nova Life|A separate public reply","persistence sees the distinct public reply");
+  });
+  equal(lifePublication.status,"published","matching reactive expression publishes through the controller");
+  equal(lifeController.getSnapshot().messages.map(message=>message.content).join("|"),"Answer this from Nova Life|A separate public reply","publication updates the same ConversationSession");
+  equal(lifeController.getSnapshot().messages.some(message=>message.content.includes("private Thought")),false,"private Thought is not copied to Chat");
+  equal(lifeController.getSnapshot().lifeTurn?.status,"completed","reactive turn completes only after persistence");
+  await new Promise(resolve=>setTimeout(resolve,0));
+  equal(memoryExtractions,1,"completed reactive exchange invokes Automatic Memory exactly once");
+  equal(memoryRequests[0]?.turnId,"life-request-1","memory receives the original turn id");
+  equal(memoryRequests[0]?.userMessage.id,"life-request-1:user","memory receives the exact user message");
+  equal(memoryRequests[0]?.assistantMessage.content,"A separate public reply","memory receives the public assistant message");
+  equal(memoryRequests[0]?.model,"cognitive-model","memory receives actual cognitive model provenance");
+  const duplicateLifePublication=await lifeController.publishExpression(reactiveExpression,async()=>{writes++;});
+  equal(duplicateLifePublication.status,"published","duplicate expression ID is idempotent");
+  equal(writes,1,"duplicate expression ID is not persisted twice");
+  await lifeController.publishExpression({...reactiveExpression,expressionId:"life-proactive-1",intent:"proactive",content:"An unsolicited later message"},async()=>{});
+  await new Promise(resolve=>setTimeout(resolve,0));
+  equal(memoryExtractions,1,"standalone proactive publication does not trigger Automatic Memory");
+
+  const failedLifeController=new ChatSessionController(new ConversationSession("life-failed-conversation","character.life-failed"),{async chat(request){return responseFor(request);}}, {requestIdFactory:()=>"failed-life-1"});
+  const failedSubmit=await failedLifeController.submitToLife("Persist before reply",async()=>{},()=>true);
+  ok(failedSubmit.status==="awaiting-life","failure fixture has a pending turn");
+  const failedTurn=failedSubmit.status==="awaiting-life"?failedSubmit.turn:undefined;
+  const failedPublish=await failedLifeController.publishExpression({
+    characterId:"character.life-failed",conversationId:"life-failed-conversation",expressionId:"life-expression-failed",content:"This must not be delivered",
+    intent:"reactive",userMessageId:failedTurn!.userMessageId,turnId:failedTurn!.turnId
+  },async()=>{throw new Error("controlled persistence failure");});
+  equal(failedPublish.status,"failed","assistant save failure is surfaced");
+  equal(failedLifeController.getSnapshot().messages.map(message=>message.role).join("|"),"user","unpersisted assistant is absent from Chat");
+  equal(failedLifeController.getSnapshot().lifeTurn?.status,"failed","failed save does not complete the turn");
+  equal(ordinaryLifeRequests,0,"Life publication never starts a second LLM generation");
+
   console.log("PASS Chat session/controller unit tests");
 }
 function abortError():Error{const error=new Error("The operation was aborted.");error.name="AbortError";return error;}

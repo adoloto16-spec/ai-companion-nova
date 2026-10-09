@@ -21,7 +21,7 @@ import {
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
   type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem, type ErrorDiagnostic,
   defaultAppSettings, validateAppSettings, StandardContractValidator,
-  type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo, type MindState, type MindExpressionPublisher
+  type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo, type MindState, type MindExpressionPublisher, type MindReactiveTurn
 } from "../../../contracts/src/index";
 import "./styles.css";
 
@@ -159,18 +159,34 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     bottomRef.current?.scrollIntoView({block:"end"});
   },[snapshot.messages.map(message=>message.content).join("\u0000"),snapshot.status]);
 
+  const lifeState=runtime.getMindState().lifecycleState;
+  const lifeActive=lifeState!=="off";
+  const lifeTurnBusy=snapshot.lifeTurn?.status==="persisting"||snapshot.lifeTurn?.status==="awaiting"||
+    (lifeActive&&(snapshot.lifeTurn?.status==="failed"||snapshot.lifeTurn?.status==="cancelled"));
+  const chatBusy=snapshot.sending||lifeTurnBusy;
   const persistAfterAction=React.useCallback(async(result:{status:string})=>{
-    if(result.status==="rejected")return;
+    if(result.status==="rejected"||result.status==="awaiting-life"||result.status==="life-failed")return;
     try{await onPersist();}
     catch(error){setPersistenceError(error instanceof Error?error.message:"Conversation could not be saved.");}
   },[onPersist]);
 
   const send=React.useCallback(async()=>{
     setPersistenceError("");
+    if(runtime.getMindState().lifecycleState!=="off"){
+      try{
+        const result=await controller.submitToLife(input,async()=>{await onPersist();},turn=>runtime.wakeMindForUserMessage(turn));
+        if(result.status==="awaiting-life"||result.status==="life-failed")setInput("");
+        if(result.status==="life-failed")setPersistenceError(result.message);
+      }catch(error){
+        setPersistenceError(error instanceof Error?error.message:"User message could not be saved for Nova Life.");
+      }
+      return;
+    }
+    controller.clearFailedLifeTurnForOrdinaryChat();
     const result=await controller.submit(input,runtime.getActiveChatModel());
     if(result.status!=="rejected")setInput("");
     await persistAfterAction(result);
-  },[controller,input,runtime,persistAfterAction]);
+  },[controller,input,runtime,onPersist,persistAfterAction]);
 
   const stop=React.useCallback(async()=>{
     setPersistenceError("");
@@ -192,6 +208,21 @@ function ChatView({controller,runtime,character,conversations,activeConversation
 
   const retry=React.useCallback(async()=>{
     setPersistenceError("");
+    const turn=controller.getSnapshot().lifeTurn;
+    if(turn&&(turn.status==="failed"||turn.status==="cancelled")){
+      try{
+        if(runtime.getMindState().lifecycleState==="off")await runtime.startLife();
+        const result=controller.retryLife((pending:MindReactiveTurn)=>runtime.wakeMindForUserMessage(pending));
+        if(result.status==="life-failed")setPersistenceError(result.message);
+      }catch(error){
+        setPersistenceError(error instanceof Error?error.message:"Nova Life retry failed.");
+      }
+      return;
+    }
+    if(runtime.getMindState().lifecycleState!=="off"){
+      setPersistenceError("This turn is owned by Nova Life. Retry the Nova Life turn instead of ordinary Chat.");
+      return;
+    }
     const result=await controller.retry(runtime.getActiveChatModel());
     await persistAfterAction(result);
   },[controller,runtime,persistAfterAction]);
@@ -222,7 +253,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
   const onKeyDown=(event:React.KeyboardEvent<HTMLTextAreaElement>)=>{
     if(event.key==="Enter"&&!event.shiftKey){
       event.preventDefault();
-      if(!snapshot.sending)void send();
+      if(!chatBusy)void send();
     }
   };
 
@@ -240,17 +271,19 @@ function ChatView({controller,runtime,character,conversations,activeConversation
       </div>
       <div className="chat-toolbar-actions">
         {snapshot.status==="streaming"&&<button type="button" onClick={()=>void stop()}>Stop</button>}
-        {showContinue&&<button type="button" onClick={()=>void continueGeneration()}>Continue</button>}
-        {showRegenerate&&<button type="button" onClick={()=>void regenerate()}>Regenerate</button>}
-        {showRetry&&<button type="button" onClick={()=>void retry()}>Retry</button>}
-        <button type="button" onClick={()=>void clear()} disabled={snapshot.sending||snapshot.messages.length===0}>Clear</button>
+        {showContinue&&!chatBusy&&<button type="button" onClick={()=>void continueGeneration()}>Continue</button>}
+        {showRegenerate&&!chatBusy&&<button type="button" onClick={()=>void regenerate()}>Regenerate</button>}
+        {(snapshot.lifeTurn?.status==="failed"||snapshot.lifeTurn?.status==="cancelled")&&!snapshot.sending
+          ?<button type="button" onClick={()=>void retry()}>Retry Nova Life</button>
+          :showRetry&&!chatBusy&&runtime.getMindState().lifecycleState==="off"&&<button type="button" onClick={()=>void retry()}>Retry</button>}
+        <button type="button" onClick={()=>void clear()} disabled={chatBusy||snapshot.messages.length===0}>Clear</button>
       </div>
     </div>
 
     <ConversationSwitcher
       conversations={conversations}
       activeConversationId={activeConversation.id}
-      sending={snapshot.sending}
+      sending={chatBusy}
       onSelect={onSelectConversation}
       onCreate={onCreateConversation}
       onRename={onRenameConversation}
@@ -275,7 +308,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
             </div>
             :<div className="message-content">{message.content}</div>}
           {state==="interrupted"&&<div className="message-status">Interrupted</div>}
-          {editable&&!snapshot.sending&&!isEditing&&message.id&&
+          {editable&&!chatBusy&&!isEditing&&message.id&&
             <div className="message-actions">
               <button type="button" onClick={()=>{setEditingId(message.id);setEditingText(message.content)}}>Edit</button>
               <button type="button" onClick={()=>void deleteMessage(message.id!)}>Delete</button>
@@ -284,9 +317,11 @@ function ChatView({controller,runtime,character,conversations,activeConversation
       })}
       <div ref={bottomRef}/>
     </div>
-    <form className="chat-composer" onSubmit={event=>{event.preventDefault();if(!snapshot.sending)void send()}}>
-      <textarea value={input} onChange={event=>setInput(event.target.value)} onKeyDown={onKeyDown} placeholder="Write a message…" aria-label="Chat message" disabled={snapshot.sending} rows={2}/>
-      <button type="submit" disabled={snapshot.sending||input.trim().length===0}>{snapshot.sending?"Streaming…":"Send"}</button>
+    {snapshot.lifeTurn?.status==="persisting"&&<p className="chat-hint" role="status">Saving your message for Nova Life…</p>}
+    {snapshot.lifeTurn?.status==="awaiting"&&<p className="chat-hint" role="status">Nova is thinking…</p>}
+    <form className="chat-composer" onSubmit={event=>{event.preventDefault();if(!chatBusy)void send()}}>
+      <textarea value={input} onChange={event=>setInput(event.target.value)} onKeyDown={onKeyDown} placeholder="Write a message…" aria-label="Chat message" disabled={chatBusy} rows={2}/>
+      <button type="submit" disabled={chatBusy||input.trim().length===0}>{snapshot.sending?"Streaming…":lifeTurnBusy?"Nova is thinking…":"Send"}</button>
     </form>
     <p className="chat-hint">Enter to send · Shift+Enter for a new line</p>
     {snapshot.error&&<div className="chat-error" role="alert">{snapshot.error}</div>}
@@ -1263,12 +1298,12 @@ function AppSettingsView({
           <small>Default: {defaults.proactiveChat.minMessageIntervalMs} ms</small>
         </label>
         <label>Proactive messages per rolling hour
-          <input type="number" min={1} max={60} step={1} value={settings.proactiveChat.maxMessagesPerHour}
+          <input type="number" min={1} max={3600} step={1} value={settings.proactiveChat.maxMessagesPerHour}
             onChange={event=>onChange({...settings,proactiveChat:{...settings.proactiveChat,maxMessagesPerHour:Number(event.target.value)}})} disabled={saving}/>
           <small>Default: {defaults.proactiveChat.maxMessagesPerHour} messages/hour</small>
         </label>
       </div>
-      <p className="hint">When disabled, Nova Life continues internal thinking and scheduling but publishes no proactive messages. These limits are separate from the background LLM request quota.</p>
+      <p className="hint">When disabled, Nova Life suppresses unsolicited scheduled messages only; user-requested Life replies remain enabled. These limits apply only to proactive messages and are separate from the background cognition request quota.</p>
     </section>
 
     <section>
@@ -1994,11 +2029,10 @@ function App(){
       beforeUserMessage:async snapshot=>{
         const foundation=foundationRef.current;
         if(!foundation)return;
-        try{
-          await foundation.updateConversation(snapshot.characterId,snapshot.conversationId,{messages:snapshot.messages});
-          foundation.wakeMind();
-        }catch(error){
-          foundation.recordDiagnosticError("conversation-storage","PRE_SEND_PERSIST_FAILED",safeErrorMessage(error,"User message could not be persisted before the cognitive wake"));
+        try{await foundation.updateConversation(snapshot.characterId,snapshot.conversationId,{messages:snapshot.messages});}
+        catch(error){
+          foundation.recordDiagnosticError("conversation-storage","PRE_SEND_PERSIST_FAILED",safeErrorMessage(error,"User message could not be persisted before Chat generation"));
+          throw error;
         }
       }
     }
@@ -2055,12 +2089,14 @@ function App(){
     conversationLoadErrorRef.current=undefined;
   },[activeCharacter,activeConversation]);
 
+  const activeCharacterId=activeCharacter?.id;
+  const activeConversationId=activeConversation?.id;
   React.useEffect(()=>{
     const foundation=foundationRef.current;
     if(!foundation)return;
     const snapshot=chatController?.getSnapshot();
-    if(!chatController||!activeCharacter||!activeConversation||
-      snapshot?.characterId!==activeCharacter.id||snapshot.conversationId!==activeConversation.id){
+    if(!chatController||!activeCharacterId||!activeConversationId||
+      snapshot?.characterId!==activeCharacterId||snapshot.conversationId!==activeConversationId){
       foundation.setMindExpressionPublisher(undefined);
       return;
     }
@@ -2070,8 +2106,9 @@ function App(){
         if(expression.signal?.aborted)return {status:"suppressed",reason:"cancelled"};
         if(!attached)return {status:"suppressed",reason:"publisher-unavailable"};
         const controllerSnapshot=chatController.getSnapshot();
-        if(expression.characterId!==activeCharacter.id||expression.conversationId!==activeConversation.id||
-          controllerSnapshot.characterId!==expression.characterId||controllerSnapshot.conversationId!==expression.conversationId){
+        if(expression.characterId!==activeCharacterId||expression.conversationId!==activeConversationId||
+          controllerSnapshot.characterId!==expression.characterId||controllerSnapshot.conversationId!==expression.conversationId||
+          (expression.intent==="reactive"&&(!expression.userMessageId||!expression.turnId))){
           return {status:"suppressed",reason:"wrong-conversation"};
         }
         try{
@@ -2082,12 +2119,13 @@ function App(){
           if(!attached||currentCharacter.id!==expression.characterId||currentConversation.characterId!==expression.characterId||
             currentConversation.id!==expression.conversationId)return {status:"suppressed",reason:"wrong-conversation"};
         }catch{return {status:"suppressed",reason:"publisher-unavailable"};}
-        const result=await chatController.publishExpression(expression,async current=>{
-          if(expression.signal?.aborted||!attached||current.characterId!==expression.characterId||current.conversationId!==expression.conversationId){
+        const result=await chatController.publishExpression(expression,async(current,rollback=false)=>{
+          if((!rollback&&expression.signal?.aborted)||!attached||current.characterId!==expression.characterId||current.conversationId!==expression.conversationId||
+            activeCharacterId!==current.characterId||activeConversationId!==current.conversationId){
             throw new Error("Expression publisher cancelled, detached or conversation scope changed before persistence.");
           }
           const updated=await foundation.updateConversation(current.characterId,current.conversationId,{messages:current.messages});
-          if(attached&&activeCharacter.id===current.characterId&&activeConversation.id===current.conversationId){
+          if(attached&&activeCharacterId===current.characterId&&activeConversationId===current.conversationId){
             try{
               const listed=await foundation.listConversations(current.characterId);
               if(attached)setConversations(listed);
@@ -2096,6 +2134,11 @@ function App(){
           }
         });
         return result;
+      },
+      failReactiveTurn:(turn,reason)=>{
+        if(!attached||turn.characterId!==activeCharacterId||turn.conversationId!==activeConversationId)return;
+        const current=chatController.getSnapshot();
+        if(current.characterId===turn.characterId&&current.conversationId===turn.conversationId)chatController.failLifeTurn(turn.userMessageId,reason);
       }
     };
     foundation.setMindExpressionPublisher(publisher);
@@ -2103,7 +2146,7 @@ function App(){
       attached=false;
       foundation.setMindExpressionPublisher(undefined);
     };
-  },[chatController,activeCharacter,activeConversation]);
+  },[chatController,activeCharacterId,activeConversationId]);
 
   const clearConversation=React.useCallback(async(controller:ChatSessionController)=>{
     const foundation=foundationRef.current;
