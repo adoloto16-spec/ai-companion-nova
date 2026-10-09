@@ -1,6 +1,8 @@
 import React from "react";
 import {createRoot} from "react-dom/client";
 import {invoke} from "@tauri-apps/api/core";
+import {TauriOllamaHttpClient} from "./ollama-http-client";
+import {validateOllamaBaseUrl} from "../../../providers/chat/ollama/src";
 import {ChatSessionController,ConversationSession,InMemoryCharacterStore} from "../../../core/src/index";
 
 import {startFoundationRuntime,testProviderPresetConfiguration,listProviderModels} from "../../../runtime/bootstrap/src/index";
@@ -28,6 +30,14 @@ import {chatDraftKey,readChatDraft,writeChatDraft,clearSubmittedChatDraft} from 
 import "./styles.css";
 
 const preview:RuntimeDiagnostics={schemaVersion:"1",timestamp:new Date().toISOString(),runtimeStatus:"stopped",coreStatus:"stopped",modules:[],providers:[],recentErrors:[],capabilities:[]};
+const ollamaHttpClient=new TauriOllamaHttpClient(600_000);
+type ConfigurableChatProviderId="openai-compatible"|"gemini"|"ollama";
+function defaultProviderBaseUrl(providerId:ConfigurableChatProviderId):string{
+  if(providerId==="gemini")return "https://generativelanguage.googleapis.com/v1beta";
+  if(providerId==="ollama")return "http://127.0.0.1:11434";
+  return "https://api.openai.com/v1";
+}
+function defaultProviderModel(providerId:ConfigurableChatProviderId):string{return providerId==="gemini"?"gemini-2.5-flash":"";}
 
 
 async function publishAndReadRuntimeDiagnostics(snapshot:RuntimeDiagnostics):Promise<RuntimeDiagnostics>{
@@ -849,11 +859,11 @@ function ProviderPresetsView({
   onTestPreset:(preset:ProviderPreset,sourceId:string)=>Promise<ProviderConnectionTestResult>;
 }){
   const firstPreset=presets.find(p=>p.id===activePresetId)??presets[0];
-  const defaultSource=(now=new Date().toISOString(),providerId:"openai-compatible"|"gemini"="openai-compatible",name="Primary"):ProviderPresetSource=>({
+  const defaultSource=(now=new Date().toISOString(),providerId:ConfigurableChatProviderId="openai-compatible",name="Primary"):ProviderPresetSource=>({
     id:"source:"+name.toLowerCase().replace(/[^a-z0-9]+/g,"-")+":"+Date.now(),
     name,
     providerId,
-    baseUrl:providerId==="gemini"?"https://generativelanguage.googleapis.com/v1beta":"https://api.openai.com/v1",
+    baseUrl:defaultProviderBaseUrl(providerId),
     model:"",
     credentialReference:null,
     enabled:true,
@@ -893,7 +903,7 @@ function ProviderPresetsView({
   },[dirty,presets,selectedId]);
 
   const selectedSource=draft.type==="single"?undefined:draft.sources.find(source=>source.id===selectedSourceId)??draft.sources[0];
-  const singleProviderId=draft.providerId==="gemini"?"gemini":"openai-compatible";
+  const singleProviderId:ConfigurableChatProviderId=draft.providerId==="gemini"?"gemini":draft.providerId==="ollama"?"ollama":"openai-compatible";
   const setPresetType=(type:"pool"|"single")=>{
     if(type===(draft.type??"pool"))return;
     const now=new Date().toISOString();
@@ -903,23 +913,29 @@ function ProviderPresetsView({
       updateDraft({
         ...withoutPool,type:"single",sources:[],activeSourceId:null,
         providerId:source?.providerId??"openai-compatible",
-        baseUrl:source?.baseUrl??"https://api.openai.com/v1",
+        baseUrl:source?.baseUrl??defaultProviderBaseUrl(source?.providerId as ConfigurableChatProviderId??"openai-compatible"),
         model:source?.model??"",
         credentialReference:source?.credentialReference?{...source.credentialReference}:draft.credentialReference??null,
         enabled:source?.enabled??draft.enabled??true,
         timeoutMs:source?.timeoutMs??draft.timeoutMs??30000,
+        ...(source?.numCtx!==undefined||draft.numCtx!==undefined?{numCtx:source?.numCtx??draft.numCtx}:{}),
+        ...(source?.numPredict!==undefined||draft.numPredict!==undefined?{numPredict:source?.numPredict??draft.numPredict}:{}),
+        ...(source?.keepAlive!==undefined||draft.keepAlive!==undefined?{keepAlive:source?.keepAlive??draft.keepAlive}:{}),
         updatedAt:now
       });
       setSelectedSourceId(undefined);
     }else{
       const providerId=singleProviderId;
       const source=defaultSource(now,providerId,"Primary");
-      source.baseUrl=draft.baseUrl??(providerId==="gemini"?"https://generativelanguage.googleapis.com/v1beta":"https://api.openai.com/v1");
-      source.model=draft.model??(providerId==="gemini"?"gemini-2.5-flash":"");
+      source.baseUrl=draft.baseUrl??defaultProviderBaseUrl(providerId);
+      source.model=draft.model??defaultProviderModel(providerId);
       source.credentialReference=draft.credentialReference?{...draft.credentialReference}:null;
       source.enabled=draft.enabled??true;
       source.timeoutMs=draft.timeoutMs??30000;
-      const {providerId:_providerId,baseUrl:_baseUrl,model:_model,credentialReference:_credentialReference,enabled:_enabled,timeoutMs:_timeoutMs,...withoutSingle}=draft;
+      if(draft.numCtx!==undefined)source.numCtx=draft.numCtx;
+      if(draft.numPredict!==undefined)source.numPredict=draft.numPredict;
+      if(draft.keepAlive!==undefined)source.keepAlive=draft.keepAlive;
+      const {providerId:_providerId,baseUrl:_baseUrl,model:_model,credentialReference:_credentialReference,enabled:_enabled,timeoutMs:_timeoutMs,numCtx:_numCtx,numPredict:_numPredict,keepAlive:_keepAlive,...withoutSingle}=draft;
       updateDraft({...withoutSingle,type:"pool",sources:[source],activeSourceId:source.id,updatedAt:now});
       setSelectedSourceId(source.id);
     }
@@ -932,13 +948,21 @@ function ProviderPresetsView({
 
   const updateDraft=(next:ProviderPreset)=>{
     setDirty(true);
-    setDraft({...next,updatedAt:new Date().toISOString()});
+    const normalized={...next,updatedAt:new Date().toISOString()};
+    if(normalized.type==="single"&&normalized.providerId!=="ollama"){delete normalized.numCtx;delete normalized.numPredict;delete normalized.keepAlive;}
+    setDraft(normalized);
   };
 
   const updateSource=(sourceId:string,patch:Partial<ProviderPresetSource>)=>{
     updateDraft({
       ...draft,
-      sources:draft.sources.map(source=>source.id===sourceId?{...source,...patch,updatedAt:new Date().toISOString()}:source)
+      sources:draft.sources.map(source=>{
+        if(source.id!==sourceId)return source;
+        const next={...source,...patch,updatedAt:new Date().toISOString()};
+        if(patch.providerId&&patch.providerId!=="ollama"){delete next.numCtx;delete next.numPredict;delete next.keepAlive;}
+        for(const key of ["numCtx","numPredict","keepAlive"] as const)if(patch[key]===undefined&&Object.prototype.hasOwnProperty.call(patch,key))delete next[key];
+        return next;
+      })
     });
   };
 
@@ -977,9 +1001,16 @@ function ProviderPresetsView({
       if(!draft.name.trim())throw new Error("Provider preset name is required.");
       await validateProviderPresetCredentialReferences(draft,credentialProfiles);
       if(draft.type==="single"){
-        if(draft.sources.length!==0||draft.activeSourceId!==null||!draft.providerId||!draft.baseUrl?.trim()||!draft.model?.trim()||!draft.credentialReference)throw new Error("Single preset requires one complete API configuration and a saved credential reference.");
-        const savedCredential=credentialProfiles.find(profile=>profile.credentialReference.id===draft.credentialReference?.id&&profile.providerId===draft.providerId);
-        if(!savedCredential||!credentialSaved[savedCredential.id])throw new Error("The selected credential is not available in CredentialStore.");
+        if(draft.sources.length!==0||draft.activeSourceId!==null||!draft.providerId||!draft.baseUrl?.trim()||!draft.model?.trim())throw new Error("Single preset requires one complete provider configuration.");
+        if(draft.providerId==="ollama"){
+          if(draft.credentialReference)throw new Error("Ollama does not use an API key.");
+          const ollamaErrors=validateOllamaBaseUrl(draft.baseUrl);
+          if(ollamaErrors.length)throw new Error(ollamaErrors.join(" "));
+        }else{
+          if(!draft.credentialReference)throw new Error("Select or create a saved API credential.");
+          const savedCredential=credentialProfiles.find(profile=>profile.credentialReference.id===draft.credentialReference?.id&&profile.providerId===draft.providerId);
+          if(!savedCredential||!credentialSaved[savedCredential.id])throw new Error("The selected credential is not available in CredentialStore.");
+        }
         const url=new URL(draft.baseUrl);
         if((url.protocol!=="https:"&&url.protocol!=="http:")||url.username||url.password||url.search||url.hash)throw new Error("Base URL must use HTTP(S) and must not contain credentials, query, or fragment.");
       }else if(draft.sources.length===0)throw new Error("Pool presets must contain at least one source.");
@@ -1012,7 +1043,7 @@ function ProviderPresetsView({
 
   const addSource=()=>{
     const now=new Date().toISOString();
-    const source=defaultSource(now,selectedSource?.providerId==="gemini"?"gemini":"openai-compatible","Source "+(draft.sources.length+1));
+    const source=defaultSource(now,(selectedSource?.providerId==="gemini"||selectedSource?.providerId==="ollama"?selectedSource.providerId:"openai-compatible"),"Source "+(draft.sources.length+1));
     updateDraft({...draft,sources:[...draft.sources,source],activeSourceId:draft.activeSourceId??source.id});
     setSelectedSourceId(source.id);
   };
@@ -2369,6 +2400,7 @@ function App(){
     await foundationRef.current?.stop();
     const next=await startFoundationRuntime({
       providerConfiguration:config,credentialStore,characterStore,coreBookStore,memoryStore,semanticIndexStore,conversationStore,retriever,retrievalIndexWriter:retriever,
+      httpClient:ollamaHttpClient,
       providerPresetConfigurations:materializePresetConfigurations(presetState.presets),
       providerPresetPools:presetState.presets,
       onProviderPresetPoolStateChange:persistProviderPresetPoolState,
@@ -2649,7 +2681,7 @@ function App(){
       ?materializeSingleProviderConfiguration(preset)
       :(()=>{const source=preset.sources.find(item=>item.id===sourceId);return source?materializeProviderConfiguration(source):undefined;})();
     if(!config)throw new Error(preset.type==="single"?"Single provider preset configuration is incomplete.":"Provider source was not found.");
-    return listProviderModels(preset.type==="single"?{...config,enabled:true}:config,credentialStore);
+    return listProviderModels(preset.type==="single"?{...config,enabled:true}:config,credentialStore,ollamaHttpClient);
   },[credentialStore]);
 
   const testPreset=React.useCallback(async(preset:ProviderPreset,sourceId:string):Promise<ProviderConnectionTestResult>=>{
@@ -2660,12 +2692,12 @@ function App(){
     if(!config)throw new Error(preset.type==="single"?"Single provider preset configuration is incomplete.":"Provider source was not found.");
     if(preset.type==="single")config={...config,enabled:true};
     if(!config.model){
-      const models=await listProviderModels(config,credentialStore);
+      const models=await listProviderModels(config,credentialStore,ollamaHttpClient);
       const first=models[0]?.id;
       if(!first)return {apiVersion:"1",schemaVersion:"1",status:"configuration_error",providerId:config.providerId,message:"Model discovery is unavailable; choose a model manually."};
       config={...config,model:first,enabled:true};
     }
-    return testProviderPresetConfiguration(config,credentialStore);
+    return testProviderPresetConfiguration(config,credentialStore,ollamaHttpClient);
   },[credentialStore]);
 
   const saveModelProfile=React.useCallback(async(profile:ModelProfile)=>{
