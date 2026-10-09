@@ -1,895 +1,163 @@
-import {DeterministicCognitiveStep,LLMCognitiveStep,MindRuntime,type CognitiveStep,type CognitiveStepContext} from "../../core/src";
-import type {ChatMessage,ChatRequest,Conversation} from "../../contracts/src";
+import {LLMCognitiveStep,MindRuntime,type CognitiveStep,type CognitiveStepContext} from "../../core/src";
+import type {AssembledContext,Character,ChatMessage,ChatRequest,ChatResponse,Conversation,MindReactiveTurn,MindTraceEntry,MindTurnExecutionContext,MindTurnSink,MindToolExecutor,NovaToolResult,NovaTurn} from "../../contracts/src";
+import {serializeNovaTurn} from "../../contracts/src";
 
-function equal(actual:unknown,expected:unknown,label:string){if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error(label+" expected "+String(expected)+" got "+String(actual));}
+function equal(actual:unknown,expected:unknown,label:string){if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error(label+" expected "+JSON.stringify(expected)+" got "+JSON.stringify(actual));}
 function ok(value:unknown,label:string){if(!value)throw new Error(label);}
-async function waitFor(predicate:()=>boolean,timeoutMs=1000):Promise<void>{const deadline=Date.now()+timeoutMs;while(!predicate()){if(Date.now()>=deadline)throw new Error("Timed out waiting for condition.");await new Promise(resolve=>setTimeout(resolve,5));}}
+async function waitFor(predicate:()=>boolean,timeoutMs=1500):Promise<void>{const end=Date.now()+timeoutMs;while(!predicate()){if(Date.now()>=end)throw new Error("Timed out waiting for condition.");await new Promise(resolve=>setTimeout(resolve,2));}}
+function makeTurn(speech:string,nextWakeMs=20,tools:NovaTurn["tools"]=[]):NovaTurn{return {version:1,situation:"Current situation and initiative",thoughts:"private internal note",emotion:"focused",tools,toolResults:[],speech,nextWakeMs};}
+function schedule(){return {mode:"adaptive" as const,defaultIntervalMs:20,minIntervalMs:10,maxIntervalMs:40,maxRequestsPerHour:null};}
+function responseFor(request:ChatRequest,content:string):ChatResponse{return {apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.cognitive",model:request.model,message:{role:"assistant",content},finishReason:"stop"};}
+function abortWait(signal:AbortSignal):Promise<never>{return new Promise((_,reject)=>{const abort=()=>{const error=new Error("aborted");error.name="AbortError";reject(error);};if(signal.aborted)abort();else signal.addEventListener("abort",abort,{once:true});});}
+function sinkFixture(){const committed:{turn:NovaTurn;context:MindTurnExecutionContext}[]=[];const failed:{turn:MindReactiveTurn;reason:string}[]=[];const sink:MindTurnSink={async commit(turn,context){committed.push({turn,context});},fail(turn,reason){failed.push({turn,reason});}};return {sink,committed,failed};}
 
-async function startRuntimeTest(){
-  const runtime=new MindRuntime({cognitiveStep:new DeterministicCognitiveStep(),stepIntervalMs:2});
-  runtime.setActiveCharacter("character.a");
-  try{await runtime.start();await waitFor(()=>runtime.getState().recentThoughts.length>=3&&runtime.getState().lifecycleState==="waiting");equal(runtime.getState().lifecycleState,"waiting","runtime waits between cognitive steps");}
-  finally{await runtime.stop();}
-  equal(runtime.getState().lifecycleState,"off","stop transitions runtime to off");
+async function backgroundSchedulingAndSerializationTest(){
+ let active=0,maxActive=0,calls=0;const fixture=sinkFixture();
+ const step:CognitiveStep={async run(context:CognitiveStepContext){active++;maxActive=Math.max(maxActive,active);try{calls++;await new Promise(resolve=>setTimeout(resolve,4));return {turn:makeTurn("background-"+calls,15),conversationId:"conversation.runtime"};}finally{active--;}}};
+ const runtime=new MindRuntime({cognitiveStep:step,schedule:schedule(),turnSink:fixture.sink});
+ runtime.setActiveCharacter("character.runtime");
+ try{await runtime.start();await waitFor(()=>fixture.committed.length>=2&&runtime.getState().lifecycleState==="waiting");}
+ finally{await runtime.stop();}
+ equal(maxActive,1,"one serialized runtime never overlaps model requests");
+ ok(fixture.committed.length>=2,"planned timer continues writing complete background NovaTurn records");
+ equal(fixture.committed[0]?.turn.thoughts,"private internal note","private thoughts remain in the complete persisted turn");
+ equal(fixture.committed[0]?.context.characterId,"character.runtime","turn commit preserves character scope");
+ equal(runtime.getState().lifecycleState,"off","Life OFF cancels the plan timer");
+ ok((runtime.getState().recentTrace??[]).some((entry:MindTraceEntry)=>entry.result==="success"&&entry.appliedIntervalMs===15),"runtime trace records the actual model-selected wake interval");
 }
 
-async function sequentialStepsTest(){
-  const seen:string[]=[];
-  class Step implements CognitiveStep{
-    running=0;maxRunning=0;
-    async run(context:CognitiveStepContext){
-      this.running+=1;this.maxRunning=Math.max(this.maxRunning,this.running);
-      try{await new Promise(resolve=>setTimeout(resolve,4));const sequence=seen.length+1;seen.push(context.state.lastThought?.id??"none");return {characterId:context.characterId,id:"thought:"+sequence,timestamp:new Date().toISOString(),content:"step "+sequence,expression:"internal" as const};}
-      finally{this.running-=1;}
-    }
-  }
-  const step=new Step();const runtime=new MindRuntime({cognitiveStep:step,stepIntervalMs:2,recentThoughtLimit:50});
-  runtime.setActiveCharacter("character.a");
-  try{await runtime.start();await waitFor(()=>runtime.getState().recentThoughts.length>=4);}finally{await runtime.stop();}
-  const state=runtime.getState();equal(step.maxRunning,1,"only one cognitive step runs at a time");ok(state.recentThoughts.length>=4,"recent thought history retains multiple thoughts");equal(seen[0],"none","first cognitive step sees initial state");equal(seen[1],"thought:1","second cognitive step sees first thought");equal(seen[2],"thought:2","third cognitive step sees second thought");
-}
-
-async function historyLimitTest(){
-  const runtime=new MindRuntime({cognitiveStep:new DeterministicCognitiveStep(),stepIntervalMs:1,recentThoughtLimit:3});
-  runtime.setActiveCharacter("character.a");
-  try{await runtime.start();await waitFor(()=>runtime.getState().recentThoughts.length===3);}finally{await runtime.stop();}
-  const state=runtime.getState();
-  equal(state.recentThoughts.length,3,"history is hard limited");
-  const firstNumber=Number(state.recentThoughts[0]?.id.split(":").pop());
-  const lastNumber=Number(state.lastThought?.id.split(":").pop());
-  equal(firstNumber,lastNumber-2,"old thoughts are evicted from the bounded history");
-}
-
-async function stopDuringActiveStepTest(){
-  let started=0;
-  const step:CognitiveStep={run:({signal,characterId})=>{started+=1;return new Promise((_,reject)=>{signal.addEventListener("abort",()=>reject(MindRuntime.createAbortError()),{once:true});void characterId;});}};
-  const runtime=new MindRuntime({cognitiveStep:step,stepIntervalMs:1});runtime.setActiveCharacter("character.a");
-  try{await runtime.start();await waitFor(()=>started===1);const stopPromise=runtime.stop();equal(runtime.getState().lifecycleState,"stopping","stop marks an active step as stopping");await stopPromise;equal(runtime.getState().lifecycleState,"off","runtime stops after an active cognitive step");equal(runtime.getState().recentThoughts.length,0,"aborted active step cannot publish a thought");}
-  finally{await runtime.stop();}
-}
-
-async function restartAfterStopTest(){
-  const step=new DeterministicCognitiveStep();const runtime=new MindRuntime({cognitiveStep:step,stepIntervalMs:1});runtime.setActiveCharacter("character.a");let firstStopCount=0;
-  try{await runtime.start();await waitFor(()=>runtime.getState().recentThoughts.length>=2);await runtime.stop();firstStopCount=runtime.getState().recentThoughts.length;await runtime.start();await waitFor(()=>runtime.getState().recentThoughts.length>=firstStopCount+1);}
-  finally{await runtime.stop();}
-  equal(firstStopCount>=2,true,"first stop completes after multiple thoughts");const lastId=runtime.getState().lastThought?.id??"";equal(lastId.startsWith("thought:deterministic:"),true,"restart continues the deterministic cognitive sequence");
-}
-
-async function errorDoesNotStopLifeTest(){
-  let count=0;
-  const step:CognitiveStep={async run(context){count+=1;if(count===1)throw new Error("cognitive failure");return {characterId:context.characterId,id:"thought:"+count,timestamp:new Date().toISOString(),content:"recovered",expression:"internal" as const};}};
-  const errors:number[]=[];const runtime=new MindRuntime({cognitiveStep:step,stepIntervalMs:2,onError:()=>errors.push(count)});runtime.setActiveCharacter("character.a");
-  try{await runtime.start();await waitFor(()=>runtime.getState().lastThought?.content==="recovered"&&runtime.getState().lifecycleState==="waiting");equal(errors.length,1,"cognitive error is reported");equal(count>=2,true,"runtime retries after error");equal(runtime.getState().lifecycleState,"waiting","life remains active and waits after error");}
-  finally{await runtime.stop();}
-}
-
-async function thoughtSubscriptionTest(){
-  const runtime=new MindRuntime({cognitiveStep:new DeterministicCognitiveStep(),stepIntervalMs:2});runtime.setActiveCharacter("character.a");const thoughts:string[]=[];const unsubscribe=runtime.subscribeThoughts(thought=>thoughts.push(thought.content));
-  try{await runtime.start();await waitFor(()=>thoughts.length>=2);unsubscribe();const before=thoughts.length;await new Promise(resolve=>setTimeout(resolve,10));equal(thoughts.length,before,"unsubscribed observer stops receiving thoughts");}
-  finally{unsubscribe();await runtime.stop();}
-}
-
-async function characterScopedThoughtHistoryTest(){
-  const seen:Array<{characterId:string;history:string[]}>=[];
-  const step:CognitiveStep={
-    async run(context){
-      seen.push({characterId:context.characterId,history:context.state.recentThoughts.map(thought=>thought.content)});
-      const number=seen.filter(item=>item.characterId===context.characterId).length;
-      return {
-        characterId:context.characterId,
-        id:"thought:"+context.characterId+":"+number,
-        timestamp:new Date().toISOString(),
-        content:context.state.lastThought?context.state.lastThought.content+" -> "+context.characterId:"initial "+context.characterId,
-        expression:"internal"
-      };
-    }
-  };
-  const runtime=new MindRuntime({cognitiveStep:step,stepIntervalMs:10000});
-  runtime.setActiveCharacter("character.a");
+async function userPriorityAndStaleCancellationTest(){
+ const fixture=sinkFixture();let starts=0,running=0,maxRunning=0;const seen:MindReactiveTurn[]=[];
+ const step:CognitiveStep={async run(context){
+  starts++;running++;maxRunning=Math.max(maxRunning,running);
   try{
-  await runtime.start();await waitFor(()=>runtime.getState().recentThoughts.length===1);await runtime.stop();
-  const a1=runtime.getState().recentThoughts[0]!;
-  equal(a1.characterId,"character.a","A thought owns character A");
-
-  runtime.setActiveCharacter("character.b");
-  equal(runtime.getState().recentThoughts.length,0,"switching to B exposes only B history");
-  await runtime.start();await waitFor(()=>runtime.getState().recentThoughts.length===1);await runtime.stop();
-  equal(runtime.getState().recentThoughts[0]?.characterId,"character.b","B thought owns character B");
-  ok(!runtime.getState().recentThoughts.some(thought=>thought.content.includes("character.a")),"B history does not contain A");
-  ok(seen.some(item=>item.characterId==="character.b"&&item.history.length===0),"B cognition starts without A history");
-
-  runtime.setActiveCharacter("character.a");
-  equal(runtime.getState().recentThoughts.map(thought=>thought.id),[a1.id],"A history is restored after switching back");
-  await runtime.start();await waitFor(()=>runtime.getState().recentThoughts.length===2);await runtime.stop();
-  equal(seen.filter(item=>item.characterId==="character.a")[1]?.history,[a1.content],"A cognition sees only A history");
-
-  const aThoughts=runtime.getState().recentThoughts;
-  const deletedId=aThoughts[0]!.id;
-  equal(runtime.deleteThought(deletedId),true,"point delete reports success");
-  equal(runtime.getState().recentThoughts.length,1,"point delete removes one thought");
-  equal(runtime.getState().recentThoughts[0]?.id,aThoughts[1]?.id,"point delete preserves other thoughts");
-  await step.run({characterId:"character.a",state:runtime.getState(),signal:new AbortController().signal,wakeReason:"scheduled"});
-  const deletionContexts=seen.filter(item=>item.characterId==="character.a");
-  const deletionContext=deletionContexts[deletionContexts.length-1];
-  equal(deletionContext?.history,[aThoughts[1]?.content],"deleted Thought is absent from the next cognition context");
-  equal(runtime.deleteThought(aThoughts[1]!.id),true,"latest point delete reports success");
-  equal(runtime.getState().lastThought,null,"deleting latest thought clears last thought");
-  equal(runtime.getState().recentThoughts.length,0,"deleting latest thought clears history entry");
-
-  runtime.setActiveCharacter("character.b");
-  equal(runtime.getState().recentThoughts.length,1,"B history survives clearing A");
-  runtime.setActiveCharacter("character.a");
-  runtime.clearCurrentThoughts();
-  equal(runtime.getState().recentThoughts.length,0,"clear current character empties only current history");
-  runtime.setActiveCharacter("character.b");
-  equal(runtime.getState().recentThoughts.length,1,"clear current character leaves other characters unchanged");
-  runtime.clearAllThoughts();
-  equal(runtime.getState().recentThoughts.length,0,"clear all empties current history");
-  runtime.setActiveCharacter("character.a");
-  equal(runtime.getState().recentThoughts.length,0,"clear all also empties previously active character");
-  }finally{await runtime.stop();}
+   if(!context.userTurn&&starts===1)await abortWait(context.signal);
+   if(context.userTurn){seen.push({...context.userTurn});return {turn:makeTurn("reply to exact user",20),conversationId:context.userTurn.conversationId};}
+   return {turn:makeTurn("must be cancelled",20),conversationId:"conversation.runtime"};
+  }finally{running--;}
+ }};
+ const runtime=new MindRuntime({cognitiveStep:step,schedule:schedule(),turnSink:fixture.sink});
+ runtime.setActiveCharacter("character.runtime");
+ try{
+  await runtime.start();await waitFor(()=>starts===1);
+  const userTurn:MindReactiveTurn={characterId:"character.runtime",conversationId:"conversation.reactive",userMessageId:"user-message-17",turnId:"turn-17"};
+  ok(runtime.wakeForUserMessage(userTurn),"a newly persisted user turn queues and supersedes stale background cognition");
+  await waitFor(()=>fixture.committed.some(item=>item.context.turnId==="turn-17"));
+  equal(maxRunning,1,"user priority does not overlap the cancelled request");
+  equal(fixture.committed.length,1,"cancelled stale background result is never committed");
+  equal(fixture.committed[0]?.turn.speech,"reply to exact user","reactive speech is committed directly from the returned NovaTurn");
+  equal(fixture.committed[0]?.context.userMessageId,"user-message-17","commit remains tied to the exact persisted user message");
+  equal(fixture.committed[0]?.context.conversationId,"conversation.reactive","commit remains tied to the exact Conversation");
+  equal(seen[0]?.turnId,"turn-17","runtime passes through the stable user turn id");
+  equal(runtime.wakeForUserMessage(userTurn),false,"a completed reactive turn cannot be answered twice");
+ }finally{await runtime.stop();}
 }
 
-async function llmCognitiveStepTest(){
-  const calls:ChatRequest[]=[];
-  const contextInputs:Conversation["messages"][]=[];
-  const thought="A useful internal thought";
-  let cognitiveContent=JSON.stringify({thought,nextWakeInMs:45000});
-  const conversation:Conversation={
-    apiVersion:"1",
-    schemaVersion:"2",
-    id:"conv-1",
-    characterId:"char-1",
-    title:"Test",
-    messages:[],
-    createdAt:"now",
-    updatedAt:"now"
-  };
-  const chatRuntime={chat:async(request:ChatRequest)=>{
-    calls.push(request);
-    return {
-      apiVersion:"1" as const,
-      schemaVersion:"1",
-      requestId:request.requestId,
-      conversationId:"conv-1",
-      providerId:"fake.chat",
-      model:request.model,
-      message:{id:request.requestId+":assistant",role:"assistant" as const,content:cognitiveContent},
-      finishReason:"stop" as const
-    };
-  }};
-  const step=new LLMCognitiveStep({
-    runtime:chatRuntime,
-    getCharacter:async()=>({id:"char-1",name:"Nova",description:"Test character",createdAt:"now",updatedAt:"now",enabled:true}),
-    getActiveConversation:async()=>{
-      contextInputs.push(conversation.messages.map(message=>({...message,...(message.metadata?{metadata:{...message.metadata}}:{})})));
-      return conversation;
-    },
-    buildContext:async request=>({
-      apiVersion:"1",
-      schemaVersion:"1",
-      characterId:"char-1",
-      conversationId:"conv-1",
-      messages:[...request.messages.filter(message=>message.role!=="system")].map(message=>({
-        ...message,
-        id:message.id+":assembled"
-      })),
-      includedCandidates:[],
-      omittedCandidates:[],
-      budget:{availableContextTokens:1000,reservedOutputTokens:256,systemOverheadTokens:0,safetyMarginTokens:0},
-      estimatedTokens:10
-    }),
-    getContextBudget:()=>({availableContextTokens:1000,reservedOutputTokens:256,systemOverheadTokens:0,safetyMarginTokens:0}),
-    getActiveProviderPresetId:()=>undefined,
-    getChatModel:()=> "fake-model",
-    getChatModelForPreset:async()=> "unused"
-  });
-
-  const state={focus:"test",initiative:null,lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"thinking" as const};
-  const cases:Array<ChatMessage["role"][]>=[
-    ["user"],
-    ["user","assistant"],
-    ["user","assistant","user"],
-    ["user","assistant","user","assistant"]
-  ];
-  const conversations=[
-    [{id:"u1",role:"user" as const,content:"Hello"}],
-    [{id:"u2",role:"user" as const,content:"Hello"},{id:"a2",role:"assistant" as const,content:"Hi",metadata:{streamStatus:"complete"}}],
-    [{id:"u3a",role:"user" as const,content:"First"},{id:"a3",role:"assistant" as const,content:"Reply"},{id:"u3b",role:"user" as const,content:"Follow-up"}],
-    [{id:"u4a",role:"user" as const,content:"First"},{id:"a4a",role:"assistant" as const,content:"Reply"},{id:"u4b",role:"user" as const,content:"Second"},{id:"a4b",role:"assistant" as const,content:"Second reply"}]
-  ];
-  let cognitiveResult:Awaited<ReturnType<typeof step.run>>|undefined;
-  for(let index=0;index<cases.length;index+=1){
-    conversation.messages=conversations[index]!;
-    const before=JSON.stringify(conversation.messages);
-    cognitiveResult=await step.run({characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"scheduled"});
-    const request=calls[index]!;
-    const roles=request.context.messages.map(message=>message.role);
-    equal(roles.slice(-1)[0],"user","cognition request always ends with a synthetic user cue");
-    equal(request.context.messages[request.context.messages.length-1]?.content,"Continue Nova's internal cognition. Produce exactly one private Thought based on the actual topic and recent context. On this scheduled/background step, you may either keep the Thought private or send one distinct, meaningful chat expression. Do not repeat the previous message just to keep the loop active. If the user explicitly requested several separate messages, you may send at most one per step and should stop once that bounded request is complete.","scheduled cognition uses the optional, bounded cue rather than delegating to ordinary Chat");
-    equal(roles.slice(3),[...cases[index]!.map(role=>role),"user"],"conversation roles are preserved and the cognition cue is appended");
-    equal(JSON.stringify(conversation.messages),before,"synthetic cognition cue is not written into Conversation");
-    equal(contextInputs[index]?.some(message=>message.content.includes("Continue Nova's internal cognition.")),false,"synthetic cognition cue is absent from ContextEngine input");
-    equal(request.context.messages.slice(3,-1).map(message=>message.content),conversations[index]!.map(message=>message.content),"real conversation content is preserved before the cognition cue");
-    equal(request.context.messages.find(message=>message.content.includes("Continue Nova's internal cognition."))?.id,"conv-1:cognition:user-cue","cognition cue uses a request-local id");
-    equal(request.context.messages.find(message=>message.content.includes("Continue Nova's internal cognition."))?.metadata,undefined,"cognition cue has no persistence or memory metadata");
-  }
-
-  const firstCall=calls[0]!;
-  equal(calls.length,4,"all four valid conversation role sequences execute");
-  equal(firstCall.metadata?.cognition,true,"cognition request is marked internal");
-  equal(firstCall.generation?.responseFormat?.type,"text","cognitive request uses provider-neutral text output");
-  equal(firstCall.context.messages.some(message=>message.content.includes("INTERNAL THOUGHT HISTORY")),true,"mind context includes thought history section");
-  equal(firstCall.context.messages.some(message=>message.content==="Core book context"),false,"no unrelated synthetic context is injected by the unit fixture");
-  equal(JSON.stringify(conversation.messages),JSON.stringify(conversations[3]),"final Conversation remains unchanged after cognition requests");
-  equal(cognitiveResult?.thought.content,"A useful internal thought","LLM response remains the Thought content");
-  equal(cognitiveResult?.nextWakeInMs,45000,"LLM response exposes the parsed adaptive wake interval");
-  cognitiveContent=String.fromCharCode(96).repeat(3)+"json\n"+JSON.stringify({thought,nextWakeInMs:45000,expression:{kind:"chat",content:"A separate public message"}})+"\n"+String.fromCharCode(96).repeat(3);
-  const publicResult=await step.run({characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"scheduled"});
-  equal(publicResult.thought.content,thought,"public expression never replaces private Thought");
-  equal(publicResult.thought.expression,"internal","Thought remains private even when a message is proposed");
-  equal(publicResult.expression,{kind:"chat",content:"A separate public message"},"chat text is parsed as separate expression content");
-  equal(publicResult.conversationId,"conv-1","expression retains the exact source conversation");
-  cognitiveContent="plain text fallback";
-  const plainResult=await step.run({characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"scheduled"});
-  equal(plainResult.thought.content,"plain text fallback","plain-text fallback is retained as an internal Thought");
-  equal(plainResult.expression,undefined,"plain-text fallback never creates a public expression");
-  cognitiveContent=JSON.stringify({thought,expression:{kind:"chat",content:"   "}});
-  const invalidEmpty=await step.run({characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"scheduled"});
-  equal(invalidEmpty.thought.content,thought,"invalid expression does not discard a valid Thought");
-  equal(invalidEmpty.expression,undefined,"empty public expression is rejected");
-  equal(invalidEmpty.expressionInvalid,true,"empty public expression is traceable as invalid");
-  cognitiveContent=JSON.stringify({thought,expression:{kind:"chat",content:"x".repeat(2001)}});
-  const invalidLong=await step.run({characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"scheduled"});
-  equal(invalidLong.expression,undefined,"overlong public expression is rejected");
-  equal(invalidLong.thought.content,thought,"overlong expression keeps the private Thought");
-  cognitiveContent=JSON.stringify({thought,expression:{kind:"chat",content:"not permitted"},tool_call:{name:"arbitrary"}});
-  const unknownField=await step.run({characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"scheduled"});
-  equal(unknownField.expression,undefined,"unknown fields never authorize public output");
-  equal(unknownField.expressionInvalid,true,"unknown response fields invalidate the expression");
-  cognitiveContent=JSON.stringify({thought,initiative:{decision:"switch",focus:"x".repeat(161)}});
-  const overlongFocus=await step.run({characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"scheduled"});
-  equal(overlongFocus.initiative,undefined,"initiative focus longer than 160 characters is rejected independently of Thought");
-  cognitiveContent=JSON.stringify({thought,initiative:{decision:"continue",focus:"not allowed on continue"}});
-  const focusOnContinue=await step.run({characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"scheduled"});
-  equal(focusOnContinue.initiative,undefined,"continue cannot silently replace the current focus");
-  cognitiveContent=JSON.stringify({thought,initiative:{decision:"switch",focus:"A valid focus",direction:"d".repeat(281)}});
-  const overlongDirection=await step.run({characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"scheduled"});
-  equal(overlongDirection.initiative,undefined,"overlong initiative direction is rejected independently of Thought");
-  cognitiveContent=JSON.stringify({thought,initiative:{decision:"unexpected",focus:"A valid focus"}});
-  const invalidDecision=await step.run({characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"scheduled"});
-  equal(invalidDecision.initiative,undefined,"unsupported initiative decisions are ignored without failing the cognitive step");
-
-  conversation.messages=[{id:"reactive-user-1",role:"user",content:"What do you think about making time for creativity?"}];
-  cognitiveContent=JSON.stringify({thought:"Creative routines can protect room for experimentation.",nextWakeInMs:45000,expression:{kind:"chat",content:"I think creativity needs protected space, but not so much structure that it stops feeling exploratory."}});
-  const reactiveResult=await step.run({
-    characterId:"char-1",state,signal:new AbortController().signal,wakeReason:"user-message",
-    userTurn:{characterId:"char-1",conversationId:"conv-1",userMessageId:"reactive-user-1",turnId:"reactive-turn-1"}
-  });
-  equal(reactiveResult.expression,{kind:"chat",content:"I think creativity needs protected space, but not so much structure that it stops feeling exploratory."},"reactive cognition returns a distinct public reply");
-  equal(reactiveResult.thought.content,"Creative routines can protect room for experimentation.","reactive cognition keeps its Thought private and separate");
-  const reactiveRequest=calls[calls.length-1]!;
-  equal(reactiveRequest.context.messages.at(-1)?.content.includes("response-required user turn"),true,"reactive cue explicitly requires a user-facing answer");
-  equal(reactiveRequest.context.messages.at(-2)?.id,"reactive-user-1","persisted user message is preserved immediately before the provider-order cue");
-  equal(reactiveRequest.context.messages.at(-2)?.content,"What do you think about making time for creativity?","reactive prompt contains the latest user message, not internal planning");
-  equal(reactiveRequest.context.messages.at(-1)?.content.includes("ordinary Chat handles"),false,"reactive cognition never delegates the current response to ordinary Chat");
-}
-async function autonomousInitiativeRuntimeIntegrationTest(){
-  const calls:ChatRequest[]=[];
-  const published:Array<{content:string;expressionId:string}>=[];
-  const conversationA:Conversation={apiVersion:"1",schemaVersion:"2",id:"conversation-a",characterId:"char-a",title:"Alpha",messages:[],createdAt:"now",updatedAt:"now"};
-  const conversationB:Conversation={apiVersion:"1",schemaVersion:"2",id:"conversation-b",characterId:"char-b",title:"Beta",messages:[],createdAt:"now",updatedAt:"now"};
-  const conversations=new Map<string,Conversation>([["char-a",conversationA],["char-b",conversationB]]);
-  const responses:unknown[]=[
-    {thought:"Street-tree shade changes radiant heat exposure before it changes air temperature.",initiative:{decision:"switch",focus:"Urban tree shade and heat",direction:"Separate radiant heat from air temperature",progress:"Canopy shade reduces radiant exposure even before the air cools."}},
-    {thought:"Surface temperature and stored heat help explain why shaded streets can stay cooler after sunset.",initiative:{decision:"continue",progress:"Cooler surfaces can store less heat and release less of it after sunset."}},
-    {thought:"Libraries can function as heat refuges when people can access them during the hottest hours.",initiative:{decision:"switch",focus:"Public libraries as heat refuges",direction:"Examine practical access during heat waves",progress:"A refuge only helps when opening hours and location make it reachable."}},
-    {thought:"Access hours and location suggest a useful question to leave open for now.",initiative:{decision:"pause"}},
-    {thought:"The key distinction is between having a cool building and having reliable access to it.",initiative:{decision:"finish",progress:"Access during the hottest hours is part of the refuge itself, not an administrative detail."}},
-    {thought:"A malformed optional update should not replace a completed topic.",initiative:{decision:"switch",focus:"   "}},
-    {thought:"The completed topic remains unchanged when no initiative update is returned."},
-    {thought:"Coastal dunes can reduce erosion by absorbing wave energy, although their protection depends on sediment supply.",initiative:{decision:"switch",focus:"Coastal erosion and dune vegetation",direction:"Consider how dunes absorb wave energy",progress:"Vegetated dunes offer protection only while sediment and space remain available."}},
-    {thought:"Alpha's completed topic remains in its own character state."},
-    {thought:"Libraries can be especially important when heat makes ordinary public spaces unsafe.",expression:{kind:"chat",content:"Public libraries can help during heat waves by providing a reliably cool, accessible place to spend the hottest part of the day."},initiative:{decision:"switch",focus:""}}
-  ];
-  const makeResponse=(request:ChatRequest,content:string):import("../../contracts/src").ChatResponse=>({
-    apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,
-    providerId:"fake.chat",model:request.model,message:{id:request.requestId+":assistant",role:"assistant",content},finishReason:"stop"
-  });
-  const cognitiveStep=new LLMCognitiveStep({
-    runtime:{chat:async request=>{
-      calls.push(request);
-      const payload=responses.shift();
-      if(payload===undefined)throw new Error("Test cognitive response queue is empty.");
-      return makeResponse(request,JSON.stringify(payload));
-    }},
-    getCharacter:async characterId=>({id:characterId,name:characterId==="char-a"?"Alpha":"Beta",description:"Initiative integration fixture",createdAt:"now",updatedAt:"now",enabled:true}),
-    getActiveConversation:async characterId=>conversations.get(characterId),
-    buildContext:async request=>({apiVersion:"1",schemaVersion:"1",characterId:request.characterId,conversationId:request.conversationId,messages:request.messages.filter(message=>message.role!=="system"),includedCandidates:[],omittedCandidates:[],budget:request.budget,estimatedTokens:0}),
-    getContextBudget:()=>({availableContextTokens:1000,reservedOutputTokens:256,systemOverheadTokens:0,safetyMarginTokens:0}),
-    getActiveProviderPresetId:()=>undefined,getChatModel:()=>"fake-model",getChatModelForPreset:async()=>"unused"
-  });
-  const runtime=new MindRuntime({
-    cognitiveStep,
-    schedule:{mode:"fixed",defaultIntervalMs:60_000,minIntervalMs:60_000,maxIntervalMs:60_000,maxRequestsPerHour:30},
-    expressionPublisher:{publish:async expression=>{
-      published.push({content:expression.content,expressionId:expression.expressionId});
-      return {status:"published",messageId:"assistant:"+published.length,conversationId:expression.conversationId};
-    }},
-    isExpressionContextCurrent:()=>true
-  });
-  const waitForRun=(count:number)=>waitFor(()=>((runtime.getState().recentTrace?.length??0)>=count&&runtime.getState().lifecycleState==="waiting"));
-  runtime.setActiveCharacter("char-a");
-  try{
-    await runtime.start();
-    await waitForRun(1);
-    equal(runtime.getState().focus,"Urban tree shade and heat","model can create an initiative and update the existing focus");
-    equal(runtime.getState().initiative,{status:"active",direction:"Separate radiant heat from air temperature",lastProgress:"Canopy shade reduces radiant exposure even before the air cools."},"a new initiative records status, direction and actual progress");
-    runtime.wake("scheduled");await waitForRun(2);
-    const nextContext=calls[1]?.context.messages.find(message=>message.id==="conversation-a:cognition:mind")?.content??"";
-    ok(nextContext.includes("Focus: Urban tree shade and heat"),"next wake includes the current focus in the actual LLM request");
-    ok(nextContext.includes("Initiative status: active"),"next wake includes initiative status in the LLM request");
-    ok(nextContext.includes("Initiative direction: Separate radiant heat from air temperature"),"next wake includes the chosen direction");
-    ok(nextContext.includes("Last meaningful progress: Canopy shade reduces radiant exposure even before the air cools."),"next wake includes the previous meaningful advancement");
-    equal(runtime.getState().focus,"Urban tree shade and heat","continue preserves the current focus");
-    equal(runtime.getState().initiative?.lastProgress,"Cooler surfaces can store less heat and release less of it after sunset.","continue updates substantive progress");
-    equal(runtime.getState().initiative?.status,"active","continue keeps the initiative active");
-    runtime.wake("scheduled");await waitForRun(3);
-    equal(runtime.getState().focus,"Public libraries as heat refuges","switch changes focus to the new substantive topic");
-    equal(runtime.getState().initiative?.direction,"Examine practical access during heat waves","switch replaces the old direction");
-    equal(runtime.getState().initiative?.lastProgress,"A refuge only helps when opening hours and location make it reachable.","switch records progress for the new topic");
-    runtime.wake("scheduled");await waitForRun(4);
-    equal(runtime.getState().focus,"Public libraries as heat refuges","pause retains the topic");
-    equal(runtime.getState().initiative?.status,"paused","pause marks the initiative as paused");
-    runtime.wake("scheduled");await waitForRun(5);
-    equal(runtime.getState().initiative?.status,"completed","finish marks the initiative completed");
-    equal(runtime.getState().initiative?.lastProgress,"Access during the hottest hours is part of the refuge itself, not an administrative detail.","finish may record the final substantive progress");
-    const finishedFocus=runtime.getState().focus;
-    const finishedInitiative=runtime.getState().initiative;
-    runtime.wake("scheduled");await waitForRun(6);
-    equal(runtime.getState().focus,finishedFocus,"invalid optional initiative data does not erase focus");
-    equal(runtime.getState().initiative,finishedInitiative,"invalid optional initiative data does not erase state");
-    equal(runtime.getState().recentTrace?.at(-1)?.result,"success","invalid optional initiative data does not fail the cognitive step");
-    runtime.wake("scheduled");await waitForRun(7);
-    equal(runtime.getState().focus,finishedFocus,"missing optional initiative update preserves focus");
-    equal(runtime.getState().initiative,finishedInitiative,"missing optional initiative update preserves initiative state");
-    runtime.setActiveCharacter("char-b");await waitForRun(8);
-    equal(runtime.getState().focus,"Coastal erosion and dune vegetation","the second character can establish its own focus");
-    equal(runtime.getState().initiative?.lastProgress,"Vegetated dunes offer protection only while sediment and space remain available.","the second character owns its own initiative details");
-    runtime.setActiveCharacter("char-a");
-    equal(runtime.getState().focus,finishedFocus,"switching back restores the first character's focus");
-    equal(runtime.getState().initiative,finishedInitiative,"switching back restores the first character's initiative status");
-    await waitForRun(9);
-    conversationA.messages=[{id:"reactive-user-1",role:"user",content:"How can libraries help during extreme heat?"}];
-    equal(runtime.wakeForUserMessage({characterId:"char-a",conversationId:"conversation-a",userMessageId:"reactive-user-1",turnId:"initiative-reactive-turn"}),true,"Life accepts the current persisted user turn");
-    await waitForRun(10);
-    equal(published.length,1,"the reactive LLM path publishes exactly one Chat answer");
-    equal(published[0]?.content,"Public libraries can help during heat waves by providing a reliably cool, accessible place to spend the hottest part of the day.","Chat receives only the model's separate public expression");
-    equal(runtime.getState().lastThought?.content,"Libraries can be especially important when heat makes ordinary public spaces unsafe.","private Thought remains in the internal Thought history");
-    ok(published[0]?.content!==runtime.getState().lastThought?.content,"private Thought content is never copied into Chat");
-    equal(runtime.getState().focus,finishedFocus,"an invalid optional update does not block a valid reactive answer or change focus");
-    equal(runtime.getState().initiative,finishedInitiative,"an invalid optional update does not block or erase the initiative during reactive Chat");
-    equal(runtime.getState().recentTrace?.at(-1)?.expressionStatus,"published","reactive answer traverses the existing expression publication path");
-  }finally{await runtime.stop();}
+async function reactiveSpeechFailureAndRetryTest(){
+ const fixture=sinkFixture();let reactiveCalls=0;
+ const step:CognitiveStep={async run(context){if(context.userTurn){reactiveCalls++;return {turn:makeTurn(reactiveCalls===1?"":"retry succeeded"),conversationId:context.userTurn.conversationId};}
+  return {turn:makeTurn("background",20),conversationId:"conversation.retry"};}};
+ const runtime=new MindRuntime({cognitiveStep:step,schedule:schedule(),turnSink:fixture.sink});
+ runtime.setActiveCharacter("character.retry");
+ const turn:MindReactiveTurn={characterId:"character.retry",conversationId:"conversation.retry",userMessageId:"user-retry",turnId:"turn-retry"};
+ try{
+  await runtime.start();await waitFor(()=>fixture.committed.length>0&&runtime.getState().lifecycleState==="waiting");
+  ok(runtime.wakeForUserMessage(turn),"reactive request is accepted");
+  await waitFor(()=>fixture.failed.length===1);
+  equal(fixture.failed[0]?.reason,"REACTIVE_SPEECH_REQUIRED","empty required speech surfaces a specific failure");
+  equal(fixture.committed.some(item=>item.context.turnId===turn.turnId),false,"invalid reactive speech is not committed as a successful assistant answer");
+  ok(runtime.wakeForUserMessage(turn),"failed turn remains eligible for retry");
+  await waitFor(()=>fixture.committed.some(item=>item.context.turnId===turn.turnId));
+  equal(fixture.committed.find(item=>item.context.turnId===turn.turnId)?.turn.speech,"retry succeeded","retry commits the corrected reply");
+  equal(reactiveCalls,2,"retry repeats only the failed reactive cognitive request");
+ }finally{await runtime.stop();}
 }
 
-async function autonomousInitiativeStaleResponseTest(){
-  const calls:ChatRequest[]=[];
-  const conversationA:Conversation={apiVersion:"1",schemaVersion:"2",id:"stale-conversation-a",characterId:"char-a",title:"Alpha",messages:[],createdAt:"now",updatedAt:"now"};
-  const conversationB:Conversation={apiVersion:"1",schemaVersion:"2",id:"stale-conversation-b",characterId:"char-b",title:"Beta",messages:[],createdAt:"now",updatedAt:"now"};
-  const conversations=new Map<string,Conversation>([["char-a",conversationA],["char-b",conversationB]]);
-  const makeResponse=(request:ChatRequest,content:string):import("../../contracts/src").ChatResponse=>({
-    apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,
-    providerId:"fake.chat",model:request.model,message:{id:request.requestId+":assistant",role:"assistant",content},finishReason:"stop"
-  });
-  let alphaCalls=0;
-  let deferredStarted=false;
-  let deferredRequest:ChatRequest|undefined;
-  let releaseDeferred:(response:import("../../contracts/src").ChatResponse)=>void=()=>undefined;
-  const deferred=new Promise<import("../../contracts/src").ChatResponse>(resolve=>{releaseDeferred=resolve;});
-  const cognitiveStep=new LLMCognitiveStep({
-    runtime:{chat:async request=>{
-      calls.push(request);
-      const identity=request.context.messages.find(message=>(message.id??"").endsWith(":cognition:identity"))?.content??"";
-      if(identity.includes("Name: Alpha")){
-        alphaCalls+=1;
-        if(alphaCalls===1)return makeResponse(request,JSON.stringify({thought:"Alpha begins with a stable research question.",initiative:{decision:"switch",focus:"Alpha original focus",direction:"Compare causes and effects",progress:"The initial distinction is now explicit."}}));
-        if(alphaCalls===2){deferredStarted=true;deferredRequest=request;return deferred;}
-        return makeResponse(request,JSON.stringify({thought:"Alpha's existing topic remains available after returning.",initiative:{decision:"continue",progress:"The old result was not committed."}}));
-      }
-      return makeResponse(request,JSON.stringify({thought:"Beta considers the way shore vegetation changes erosion.",initiative:{decision:"switch",focus:"Beta independent focus",direction:"Inspect sediment and roots",progress:"Rooted dunes can reduce erosion while the sediment budget remains healthy."}}));
-    }},
-    getCharacter:async characterId=>({id:characterId,name:characterId==="char-a"?"Alpha":"Beta",description:"Stale-result fixture",createdAt:"now",updatedAt:"now",enabled:true}),
-    getActiveConversation:async characterId=>conversations.get(characterId),
-    buildContext:async request=>({apiVersion:"1",schemaVersion:"1",characterId:request.characterId,conversationId:request.conversationId,messages:request.messages.filter(message=>message.role!=="system"),includedCandidates:[],omittedCandidates:[],budget:request.budget,estimatedTokens:0}),
-    getContextBudget:()=>({availableContextTokens:1000,reservedOutputTokens:256,systemOverheadTokens:0,safetyMarginTokens:0}),
-    getActiveProviderPresetId:()=>undefined,getChatModel:()=>"fake-model",getChatModelForPreset:async()=>"unused"
-  });
-  const runtime=new MindRuntime({cognitiveStep,schedule:{mode:"fixed",defaultIntervalMs:60_000,minIntervalMs:60_000,maxIntervalMs:60_000,maxRequestsPerHour:20}});
-  const waitForRun=(count:number)=>waitFor(()=>((runtime.getState().recentTrace?.length??0)>=count&&runtime.getState().lifecycleState==="waiting"));
-  runtime.setActiveCharacter("char-a");
-  try{
-    await runtime.start();await waitForRun(1);
-    equal(runtime.getState().focus,"Alpha original focus","initial initiative is stored for Alpha");
-    runtime.wake("scheduled");await waitFor(()=>deferredStarted);
-    runtime.setActiveCharacter("char-b");
-    await waitForRun(3);
-    equal(runtime.getState().focus,"Beta independent focus","the current character can update initiative after cancellation");
-    ok((runtime.getState().recentTrace??[]).some(entry=>entry.characterId==="char-a"&&entry.wakeReason==="scheduled"&&entry.result==="cancelled"),"switching character cancels the in-flight stale cognitive request");
-    releaseDeferred(makeResponse(deferredRequest!,JSON.stringify({thought:"Late stale Thought",initiative:{decision:"switch",focus:"Stale focus that must not apply"}})));
-    await new Promise(resolve=>setTimeout(resolve,20));
-    runtime.setActiveCharacter("char-a");
-    equal(runtime.getState().focus,"Alpha original focus","late model result cannot change the cancelled character's focus");
-    equal(runtime.getState().initiative?.lastProgress,"The initial distinction is now explicit.","late model result cannot change the cancelled character's initiative progress");
-  }finally{await runtime.stop();}
+async function toolsAndToolResultWakeTest(){
+ const fixture=sinkFixture();let toolExecutions=0;const reasons:string[]=[];let modelCalls=0;
+ const executor:MindToolExecutor={async execute(call,context){toolExecutions++;return {callId:context.callId,name:call.name,status:"success",output:{matches:["real result"]}};}};
+ const step:CognitiveStep={async run(context){modelCalls++;reasons.push(context.wakeReason);return {turn:makeTurn(modelCalls===1?"I will check memory.":"The stored result is available.",20,modelCalls===1?[{name:"read_memory",arguments:{query:"preferences"}}]:[]),conversationId:"conversation.tools"};}};
+ const runtime=new MindRuntime({cognitiveStep:step,schedule:schedule(),turnSink:fixture.sink,toolExecutor:executor});
+ runtime.setActiveCharacter("character.tools");
+ try{await runtime.start();await waitFor(()=>fixture.committed.length>=2);}
+ finally{await runtime.stop();}
+ equal(toolExecutions,1,"registered tool executes exactly once for one stable call id");
+ equal(fixture.committed[0]?.turn.toolResults[0]?.status,"success","actual tool result is included in the saved NovaTurn");
+ equal(fixture.committed[0]?.turn.toolResults[0]?.output,{matches:["real result"]},"tool output is preserved in the technical record");
+ ok(reasons.includes("tool-result"),"a completed tool triggers a tool-result wake");
+ equal(fixture.committed[0]?.context.turnId.startsWith("nova-turn-"),true,"background tool calls are tied to a unique cognitive turn");
 }
 
-async function cognitiveProviderBadRequestRegressionTest(){
-  const calls:ChatRequest[]=[];
-  const chatRuntime={
-    chat:async(request:ChatRequest)=>{
-      calls.push(request);
-      if(request.generation?.responseFormat?.type==="json-schema"){
-        const error=new Error("OpenAI-compatible provider rejected the chat request.") as Error & {chatError:unknown};
-        error.chatError={apiVersion:"1",schemaVersion:"1",code:"PROVIDER_ERROR",message:"OpenAI-compatible provider rejected the chat request.",requestId:request.requestId,providerId:"openai-compatible",retryable:false,details:{category:"bad_request",httpStatus:400,model:request.model}};
-        throw error;
-      }
-      return {apiVersion:"1" as const,schemaVersion:"1",requestId:request.requestId,conversationId:"conv-regression",providerId:"openai-compatible",model:request.model,message:{id:request.requestId+":assistant",role:"assistant" as const,content:"plain cognitive text"},finishReason:"stop" as const};
-    }
-  };
-  const step=new LLMCognitiveStep({
-    runtime:chatRuntime,
-    getCharacter:async()=>({id:"char-regression",name:"Nova",description:"Test",createdAt:"now",updatedAt:"now",enabled:true}),
-    getActiveConversation:async()=>({apiVersion:"1",schemaVersion:"2",id:"conv-regression",characterId:"char-regression",title:"Main",messages:[{id:"user-1",role:"user",content:"Hello"}],createdAt:"now",updatedAt:"now"}),
-    buildContext:async()=>({apiVersion:"1",schemaVersion:"1",characterId:"char-regression",conversationId:"conv-regression",messages:[],includedCandidates:[],omittedCandidates:[],budget:{availableContextTokens:1000,reservedOutputTokens:256,systemOverheadTokens:0,safetyMarginTokens:0},estimatedTokens:0}),
-    getContextBudget:()=>({availableContextTokens:1000,reservedOutputTokens:256,systemOverheadTokens:0,safetyMarginTokens:0}),
-    getActiveProviderPresetId:()=> "preset-regression",
-    getChatModel:()=> "unused",
-    getChatModelForPreset:async()=> "test-model"
-  });
-  const thought=await step.run({characterId:"char-regression",state:{focus:null,initiative:null,lastThought:null,lastThoughtAt:null,recentThoughts:[],lifecycleState:"thinking"},signal:new AbortController().signal,wakeReason:"scheduled"});
-  equal(calls.length,1,"text cognitive request does not trigger structured-output retry path");
-  equal(calls[0]?.generation?.responseFormat?.type,"text","regression request bypasses json-schema");
-  equal(thought.thought.content,"plain cognitive text","plain provider response is parsed as Thought content");
-  equal(thought.nextWakeInMs,undefined,"plain-text response leaves interval unset so Runtime uses the configured default");
+async function lifeOffRejectsLateResponsesTest(){
+ const fixture=sinkFixture();let release:((value:{turn:NovaTurn;conversationId:string})=>void)|undefined;let started=0;
+ const step:CognitiveStep={run:async()=>{started++;return new Promise(resolve=>{release=resolve;});}};
+ const runtime=new MindRuntime({cognitiveStep:step,schedule:schedule(),turnSink:fixture.sink});
+ runtime.setActiveCharacter("character.late");
+ await runtime.start();await waitFor(()=>started===1);
+ await runtime.stop();
+ release?.({turn:makeTurn("late response"),conversationId:"conversation.late"});
+ await new Promise(resolve=>setTimeout(resolve,10));
+ equal(runtime.getState().lifecycleState,"off","stop finishes in the off state");
+ equal(fixture.committed.length,0,"late model output after Life OFF does not change Conversation history");
+ equal(runtime.getState().nextWakeAt,null,"Life OFF leaves no scheduled timer");
 }
 
-function makeThought(characterId:string,id:string,content=id){return {characterId,id,timestamp:new Date().toISOString(),content,expression:"internal" as const};}
-
-async function adaptiveIntervalPolicyTest(){
-  const proposed:unknown[]=[650,40,9999,"invalid",undefined];
-  let calls=0;
-  const runtime=new MindRuntime({
-    cognitiveStep:{run:async({characterId})=>{
-      const nextWakeInMs=proposed[calls++];
-      return {thought:makeThought(characterId,"adaptive:"+calls),nextWakeInMs};
-    }},
-    schedule:{mode:"adaptive",defaultIntervalMs:400,minIntervalMs:200,maxIntervalMs:1000,maxRequestsPerHour:120}
-  });
-  runtime.setActiveCharacter("character.a");
-  try{
-    await runtime.start();
-    await waitFor(()=>Boolean(runtime.getState().recentTrace?.some(entry=>entry.result==="success")));
-    let trace=runtime.getState().recentTrace??[];
-    equal(trace[trace.length-1]?.appliedIntervalMs,650,"adaptive mode applies an in-range model interval");
-    runtime.wake("user-message");
-    await waitFor(()=>runtime.getState().recentThoughts.length>=2);
-    trace=runtime.getState().recentTrace??[];
-    equal(trace[trace.length-1]?.requestedNextWakeInMs,40,"trace records a too-small numeric proposal");
-    equal(trace[trace.length-1]?.appliedIntervalMs,200,"too-small interval is clamped to configured minimum");
-    runtime.wake("user-message");
-    await waitFor(()=>runtime.getState().recentThoughts.length>=3);
-    trace=runtime.getState().recentTrace??[];
-    equal(trace[trace.length-1]?.appliedIntervalMs,1000,"too-large interval is clamped to configured maximum");
-    runtime.wake("user-message");
-    await waitFor(()=>runtime.getState().recentThoughts.length>=4);
-    trace=runtime.getState().recentTrace??[];
-    equal(trace[trace.length-1]?.appliedIntervalMs,400,"invalid interval uses configured default");
-    equal(trace[trace.length-1]?.intervalDecision,"invalid-interval-default","invalid interval decision is traceable");
-    runtime.wake("user-message");
-    await waitFor(()=>runtime.getState().recentThoughts.length>=5);
-    trace=runtime.getState().recentTrace??[];
-    equal(trace[trace.length-1]?.appliedIntervalMs,400,"missing interval uses configured default");
-  }finally{await runtime.stop();}
-}
-
-async function fixedIntervalIgnoresModelTest(){
-  const runtime=new MindRuntime({
-    cognitiveStep:{run:async({characterId})=>({thought:makeThought(characterId,"fixed"),nextWakeInMs:900})},
-    schedule:{mode:"fixed",defaultIntervalMs:300,minIntervalMs:200,maxIntervalMs:1000,maxRequestsPerHour:20}
-  });
-  runtime.setActiveCharacter("character.fixed");
-  try{
-    await runtime.start();
-    await waitFor(()=>Boolean(runtime.getState().recentTrace?.some(entry=>entry.result==="success")));
-    const entry=(runtime.getState().recentTrace??[]).slice(-1)[0];
-    equal(entry?.appliedIntervalMs,300,"fixed mode always applies the configured interval");
-    equal(entry?.intervalDecision,"fixed-mode","trace identifies fixed scheduling");
-  }finally{await runtime.stop();}
-}
-
-async function proactiveExpressionPolicyTest(){
-  let now=1_000_000;
-  let stepNumber=0;
-  const published:string[]=[];
-  const runtime=new MindRuntime({
-    cognitiveStep:{run:async({characterId})=>({
-      thought:makeThought(characterId,"proactive:"+ ++stepNumber,"private thought"),
-      nextWakeInMs:60_000,
-      expression:{kind:"chat",content:"A distinct public expression"},
-      conversationId:"conversation.a"
-    })},
-    schedule:{mode:"fixed",defaultIntervalMs:60_000,minIntervalMs:10_000,maxIntervalMs:60_000,maxRequestsPerHour:120},
-    proactiveChat:{enabled:true,minMessageIntervalMs:10_000,maxMessagesPerHour:1},
-    expressionPublisher:{publish:async expression=>{
-      published.push(expression.expressionId);
-      return {status:"published" as const,messageId:"message:"+expression.expressionId,conversationId:expression.conversationId};
-    }},
-    isExpressionContextCurrent:(characterId,conversationId)=>characterId==="character.a"&&conversationId==="conversation.a",
-    now:()=>now,
-    clock:()=>new Date(now).toISOString()
-  });
-  runtime.setActiveCharacter("character.a");
-  try{
-    await runtime.start();
-    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=1&&runtime.getState().lifecycleState==="waiting");
-    equal(published.length,0,"life-start creates private thought but does not publish");
-    equal(runtime.getState().recentTrace?.at(-1)?.expressionSuppressionReason,"life-start-wake","life-start suppression is traced");
-    runtime.wake("scheduled");
-    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=2&&runtime.getState().lifecycleState==="waiting");
-    equal(published.length,1,"scheduled wake publishes one eligible expression");
-    equal(runtime.getState().recentTrace?.at(-1)?.expressionStatus,"published","published expression appears in trace");
-    runtime.wake("scheduled");
-    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=3&&runtime.getState().lifecycleState==="waiting");
-    equal(runtime.getState().recentTrace?.at(-1)?.expressionSuppressionReason,"cooldown","minimum expression interval is enforced");
-    now+=10_000;
-    runtime.wake("scheduled");
-    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=4&&runtime.getState().lifecycleState==="waiting");
-    equal(runtime.getState().recentTrace?.at(-1)?.expressionSuppressionReason,"hourly-limit","rolling hourly expression limit is enforced");
-    runtime.wake("user-message");
-    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=5&&runtime.getState().lifecycleState==="waiting");
-    equal(runtime.getState().recentTrace?.at(-1)?.expressionSuppressionReason,"user-message-wake","user-message wake is prevented from sending a second answer");
-    runtime.updateProactiveChat({enabled:false,minMessageIntervalMs:10_000,maxMessagesPerHour:1});
-    runtime.wake("scheduled");
-    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=6&&runtime.getState().lifecycleState==="waiting");
-    equal(runtime.getState().recentTrace?.at(-1)?.expressionSuppressionReason,"disabled","disabled proactivity continues thought but suppresses publication");
-    equal(published.length,1,"suppressed expressions never reach the publisher");
-    await runtime.stop();
-    runtime.updateProactiveChat({enabled:true,minMessageIntervalMs:10_000,maxMessagesPerHour:1});
-    await runtime.start();
-    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=7&&runtime.getState().lifecycleState==="waiting");
-    equal(runtime.getState().recentTrace?.at(-1)?.expressionSuppressionReason,"life-start-wake","OFF/ON still suppresses automatic life-start publication");
-    runtime.wake("scheduled");
-    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=8&&runtime.getState().lifecycleState==="waiting");
-    equal(runtime.getState().recentTrace?.at(-1)?.expressionSuppressionReason,"hourly-limit","OFF/ON cannot reset the rolling expression limit");
-    equal(published.length,1,"restarted Life remains inside the existing hourly quota");
-  }finally{await runtime.stop();}
-}
-
-
-async function reactiveTurnBypassesProactiveAndRequestLimitsTest(){
-  let now=2_000_000,steps=0;
-  const publications:import("../../contracts/src").MindExpressionPublication[]=[];
-  const runtime=new MindRuntime({
-    cognitiveStep:{run:async context=>{
-      steps++;const turn=context.userTurn;
-      const expression=turn
-        ?{kind:"chat" as const,content:"A direct answer from Nova Life"}
-        :context.wakeReason==="scheduled"
-          ?{kind:"chat" as const,content:"A preceding unsolicited message"}
-          :{kind:"internal" as const};
-      return {thought:makeThought(context.characterId,"reactive-quota:"+steps,turn?"considering the user's actual question":"private background thought"),
-        expression,conversationId:turn?.conversationId??"conversation.reactive",...(turn?{model:"cognitive-model",providerId:"fake.cognitive",providerPresetId:"preset.cognitive"}:{})};
-    }},
-    schedule:{mode:"fixed",defaultIntervalMs:10_000,minIntervalMs:10_000,maxIntervalMs:10_000,maxRequestsPerHour:2},
-    proactiveChat:{enabled:true,minMessageIntervalMs:10_000,maxMessagesPerHour:1},
-    expressionPublisher:{publish:async expression=>{
-      publications.push(expression);
-      return {status:"published" as const,messageId:"message:"+expression.expressionId,conversationId:expression.conversationId};
-    }},
-    isExpressionContextCurrent:(characterId,conversationId)=>characterId==="character.reactive"&&conversationId==="conversation.reactive",
-    now:()=>now,clock:()=>new Date(now).toISOString()
-  });
-  runtime.setActiveCharacter("character.reactive");
-  try{
-    await runtime.start();
-    await waitFor(()=>Boolean(runtime.getState().recentTrace?.length)&&runtime.getState().lifecycleState==="waiting");
-    equal(steps,1,"startup cognition uses the first background request quota slot");
-    equal(publications.length,0,"life-start remains silent");
-
-    runtime.wake("scheduled");
-    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=2&&runtime.getState().lifecycleState==="waiting");
-    equal(steps,2,"one scheduled proactive step runs before the direct reply");
-    equal(publications.length,1,"the scheduled step uses the only allowed proactive publication");
-    equal(publications[0]?.intent,"proactive","first publication is unsolicited and scheduled");
-    // Both the rolling proactive quota and cooldown are now active. Turn off proactive
-    // output as well, then verify they cannot suppress the correlated user response.
-    runtime.updateProactiveChat({enabled:false,minMessageIntervalMs:10_000,maxMessagesPerHour:1});
-    equal(runtime.wakeForUserMessage({characterId:"character.reactive",conversationId:"conversation.reactive",userMessageId:"persisted-user-1",turnId:"turn-1"}),true,"correlated user message wakes Life");
-    await waitFor(()=>Boolean(runtime.getState().recentTrace?.some(entry=>entry.expressionStatus==="published"&&entry.expressionRequired===true))&&runtime.getState().lifecycleState==="waiting");
-    equal(steps,3,"reactive answer bypasses the exhausted background cognition request quota");
-    equal(publications.length,2,"reactive reply is allowed despite proactive cooldown, hourly quota, and disabled toggle");
-    equal(publications[1]?.intent,"reactive","publisher receives a distinct reactive expression");
-    equal(publications[1]?.userMessageId,"persisted-user-1","publication carries the exact user message id");
-    equal(runtime.getState().recentTrace?.at(-1)?.expressionRequired,true,"trace records required expression");
-    equal(runtime.getState().recentTrace?.at(-1)?.expressionStatus,"published","trace records successful publication");
-
-    now+=3_600_001;
-    runtime.wake("user-message");
-    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=4&&runtime.getState().lifecycleState==="waiting");
-    equal(runtime.getState().recentTrace?.at(-1)?.wakeReason,"user-message","arbitrary user wake is processed as an uncorrelated wake");
-    equal(runtime.getState().recentTrace?.at(-1)?.expressionRequired,undefined,"arbitrary wake cannot impersonate a pending turn");
-    equal(publications.length,2,"uncorrelated user wake cannot publish a second answer");
-  }finally{await runtime.stop();}
-}
-
-async function scheduledExpressionUsesNewProactiveDefaultsTest(){
-  let now=4_000_000,step=0;
-  const published:import("../../contracts/src").MindExpressionPublication[]=[];
-  const runtime=new MindRuntime({
-    cognitiveStep:{run:async context=>{
-      step++;
-      const publicStep=context.wakeReason==="scheduled";
-      return {
-        thought:makeThought(context.characterId,"scheduled-sequence:"+step,"a substantive private continuation"),
-        nextWakeInMs:publicStep?10_000:undefined,
-        expression:publicStep
-          ?{kind:"chat" as const,content:step===2?"First distinct requested message":"Second distinct requested message"}
-          :{kind:"internal" as const},
-        conversationId:"conversation.sequence"
-      };
-    }},
-    schedule:{mode:"adaptive",defaultIntervalMs:10_000,minIntervalMs:10_000,maxIntervalMs:30_000,maxRequestsPerHour:3600},
-    expressionPublisher:{publish:async expression=>{
-      published.push(expression);
-      return {status:"published" as const,messageId:"message:"+expression.expressionId,conversationId:expression.conversationId};
-    }},
-    isExpressionContextCurrent:()=>true,
-    now:()=>now,clock:()=>new Date(now).toISOString()
-  });
-  runtime.setActiveCharacter("character.sequence");
-  try{
-    await runtime.start();
-    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=1&&runtime.getState().lifecycleState==="waiting");
-    equal(published.length,0,"life-start does not produce an unsolicited greeting");
-
-    runtime.wake("scheduled");
-    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=2&&runtime.getState().lifecycleState==="waiting");
-    equal(published.length,1,"first scheduled step can publish one public message");
-    equal(published[0]?.content,"First distinct requested message","scheduled step publishes the current distinct message");
-    equal(runtime.getState().recentTrace?.at(-1)?.appliedIntervalMs,10_000,"adaptive scheduler accepts the model's 10-second next wake");
-
-    runtime.wake("scheduled");
-    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=3&&runtime.getState().lifecycleState==="waiting");
-    equal(runtime.getState().recentTrace?.at(-1)?.expressionSuppressionReason,"cooldown","default proactive minimum prevents an immediate duplicate step");
-    equal(published.length,1,"one LLM step publishes at most one message");
-
-    now+=10_000;
-    runtime.wake("scheduled");
-    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=4&&runtime.getState().lifecycleState==="waiting");
-    equal(published.length,2,"a distinct follow-up is permitted after the 10-second default interval");
-    equal(published.map(expression=>expression.content),["First distinct requested message","Second distinct requested message"],"separate scheduled steps can continue a bounded multi-message request without repeats");
-  }finally{await runtime.stop();}
-}
-async function reactiveRequiredExpressionFailureTest(){
-  let now=3_000_000;
-  let publishCount=0;
-  let failure:{turn:import("../../contracts/src").MindReactiveTurn;reason:string}|undefined;
-  const runtime=new MindRuntime({
-    cognitiveStep:{run:async({characterId,wakeReason})=>({
-      thought:makeThought(characterId,"required-expression-failure","A private Thought that must not be committed without the required answer."),
-      expression:{kind:"internal" as const},
-      initiative:wakeReason==="user-message"?{decision:"switch" as const,focus:"This must not be committed without a required reactive answer"}:undefined,
-      conversationId:"conversation.required"
-    })},
-    schedule:{mode:"fixed",defaultIntervalMs:10_000,minIntervalMs:10_000,maxIntervalMs:10_000,maxRequestsPerHour:20},
-    expressionPublisher:{
-      publish:async expression=>{
-        publishCount++;
-        return {status:"published" as const,messageId:"message:"+expression.expressionId,conversationId:expression.conversationId};
-      },
-      failReactiveTurn:(turn,reason)=>{failure={turn,reason};}
-    },
-    isExpressionContextCurrent:()=>true,
-    now:()=>now,clock:()=>new Date(now).toISOString()
-  });
-  runtime.setActiveCharacter("character.required");
-  try{
-    await runtime.start();
-    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=1&&runtime.getState().lifecycleState==="waiting");
-    const thoughtCount=runtime.getState().recentThoughts.length;
-    equal(runtime.wakeForUserMessage({
-      characterId:"character.required",conversationId:"conversation.required",userMessageId:"persisted-user-required",turnId:"turn-required"
-    }),true,"correlated reactive turn is accepted before cognition");
-    await waitFor(()=>Boolean(runtime.getState().recentTrace?.some(entry=>entry.wakeReason==="user-message"&&entry.expressionRequired===true&&entry.result==="error")));
-    const failedTrace=[...(runtime.getState().recentTrace??[])].reverse().find(entry=>entry.wakeReason==="user-message");
-    equal(failedTrace?.expressionRequired,true,"missing required public output remains visible in the trace");
-    equal(failedTrace?.expressionUserMessageId,"persisted-user-required","failed expression trace identifies the unanswered user turn");
-    equal(failedTrace?.expressionStatus,"failed","missing required expression is traced as failed, not internally completed");
-    equal(publishCount,0,"private Thought is never published as a fallback Chat response");
-    equal(runtime.getState().recentThoughts.length,thoughtCount,"Thought from a malformed required response is not committed");
-    equal(runtime.getState().focus,null,"initiative update from a rejected required reactive response is not applied");
-    equal(runtime.getState().initiative,null,"rejected reactive response cannot create initiative state");
-    equal(failure?.turn.turnId,"turn-required","failed reactive turn is surfaced to the controller for explicit retry");
-  }finally{await runtime.stop();}
-}
-
-async function cancellationDuringExpressionPublicationTest(){
-  let publishCount=0;
-  let notifyPublisherStarted:()=>void=()=>undefined;
-  const publisherStarted=new Promise<void>(resolve=>{notifyPublisherStarted=resolve;});
-  const runtime=new MindRuntime({
-    cognitiveStep:{run:async({characterId})=>({
-      thought:makeThought(characterId,"expression-cancel:"+publishCount,"private thought"),
-      expression:{kind:"chat",content:"public content"},
-      conversationId:"conversation.cancelled"
-    })},
-    schedule:{mode:"fixed",defaultIntervalMs:60_000,minIntervalMs:10_000,maxIntervalMs:60_000,maxRequestsPerHour:120},
-    expressionPublisher:{publish:async()=>{
-      publishCount++;
-      notifyPublisherStarted();
-      return new Promise(()=>{});
-    }},
-    isExpressionContextCurrent:()=>true
-  });
-  runtime.setActiveCharacter("character.cancelled");
-  try{
-    await runtime.start();
-    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=1&&runtime.getState().lifecycleState==="waiting");
-    runtime.wake("scheduled");
-    await publisherStarted;
-    await runtime.stop();
-    equal(runtime.getState().lifecycleState,"off","cancelling a pending expression publisher does not hang Life shutdown");
-    equal(publishCount,1,"cancelled pending expression is not regenerated");
-  }finally{await runtime.stop();}
-}
-
-async function wakeEventsCoalesceTest(){
-  let starts=0;
-  const runtime=new MindRuntime({
-    cognitiveStep:{run:({signal,characterId})=>{
-      starts+=1;
-      if(starts===1)return new Promise((_,reject)=>signal.addEventListener("abort",()=>reject(MindRuntime.createAbortError()),{once:true}));
-      return Promise.resolve(makeThought(characterId,"coalesced:"+starts));
-    }},
-    schedule:{mode:"adaptive",defaultIntervalMs:500,minIntervalMs:200,maxIntervalMs:1000,maxRequestsPerHour:20}
-  });
-  runtime.setActiveCharacter("character.a");
-  try{
-    await runtime.start();await waitFor(()=>starts===1);
-    runtime.wake("user-message");runtime.wake("user-message");runtime.wake("user-message");
-    await waitFor(()=>runtime.getState().recentThoughts.length===1&&starts===2);
-    equal(starts,2,"rapid wake events collapse into a single pending cognitive step");
-    ok((runtime.getState().recentTrace??[]).some(entry=>entry.result==="cancelled"),"superseded step is traced as cancelled");
-  }finally{await runtime.stop();}
-}
-
-async function characterSwitchCancelsOldContextTest(){
-  const seen:string[]=[];
-  const runtime=new MindRuntime({
-    cognitiveStep:{run:({signal,characterId})=>{
-      seen.push(characterId);
-      if(characterId==="character.a")return new Promise((_,reject)=>signal.addEventListener("abort",()=>reject(MindRuntime.createAbortError()),{once:true}));
-      return Promise.resolve(makeThought(characterId,"thought:"+characterId));
-    }},
-    schedule:{mode:"adaptive",defaultIntervalMs:500,minIntervalMs:200,maxIntervalMs:1000,maxRequestsPerHour:20}
-  });
-  runtime.setActiveCharacter("character.a");
-  try{
-    await runtime.start();await waitFor(()=>seen.length===1);
-    runtime.setActiveCharacter("character.b");
-    await waitFor(()=>runtime.getState().lastThought?.characterId==="character.b");
-    equal(runtime.getState().recentThoughts.map(thought=>thought.characterId),["character.b"],"old character result does not enter active history");
-    ok((runtime.getState().recentTrace??[]).some(entry=>entry.characterId==="character.a"&&entry.result==="cancelled"),"old character step is cancelled and traced");
-    equal(seen,["character.a","character.b"],"character switch triggers exactly one fresh step for the current character");
-  }finally{await runtime.stop();}
-}
-
-async function hourlyQuotaDefersBackgroundCallsTest(){
-  let calls=0;
-  const runtime=new MindRuntime({
-    cognitiveStep:{run:async({characterId})=>{calls+=1;return makeThought(characterId,"quota:"+calls)}},
-    schedule:{mode:"adaptive",defaultIntervalMs:150,minIntervalMs:100,maxIntervalMs:500,maxRequestsPerHour:1}
-  });
-  runtime.setActiveCharacter("character.quota");
-  try{
-    await runtime.start();
-    await waitFor(()=>Boolean(runtime.getState().recentTrace?.some(entry=>entry.result==="deferred")),1200);
-    const state=runtime.getState();
-    equal(calls,1,"hourly quota prevents a second provider call");
-    ok((state.recentTrace??[]).some(entry=>entry.result==="deferred"&&entry.intervalDecision==="hourly-limit"),"quota deferral appears in trace");
-    ok(Boolean(state.nextWakeAt)&&new Date(state.nextWakeAt!).getTime()-Date.now()>3_500_000,"next wake is delayed until a quota slot opens");
-  }finally{await runtime.stop();}
-}
-
-async function errorBackoffIncreasesTest(){
-  let calls=0;
-  const runtime=new MindRuntime({
-    cognitiveStep:{run:async({characterId})=>{calls+=1;if(calls<=3)throw new Error("controlled failure");return makeThought(characterId,"recovered")}},
-    schedule:{mode:"adaptive",defaultIntervalMs:100,minIntervalMs:50,maxIntervalMs:400,maxRequestsPerHour:20}
-  });
-  runtime.setActiveCharacter("character.backoff");
-  try{
-    await runtime.start();await waitFor(()=>runtime.getState().recentTrace?.filter(entry=>entry.result==="error").length===1);
-    let errors=(runtime.getState().recentTrace??[]).filter(entry=>entry.result==="error");
-    equal(errors[0]?.appliedIntervalMs,100,"first error uses the default backoff without immediate retry");
-    equal(calls,1,"first failure does not trigger a same-turn retry");
-    await waitFor(()=>runtime.getState().recentTrace?.filter(entry=>entry.result==="error").length===2);
-    errors=(runtime.getState().recentTrace??[]).filter(entry=>entry.result==="error");
-    equal(errors[1]?.appliedIntervalMs,200,"consecutive failure doubles the delay");
-    await waitFor(()=>runtime.getState().recentTrace?.filter(entry=>entry.result==="error").length===3);
-    errors=(runtime.getState().recentTrace??[]).filter(entry=>entry.result==="error");
-    equal(errors[2]?.appliedIntervalMs,400,"error backoff is capped at the configured maximum");
-  }finally{await runtime.stop();}
-}
-
-async function timeoutUsesBackoffTest(){
-  let calls=0;
-  const runtime=new MindRuntime({
-    cognitiveStep:{run:()=>{calls+=1;return new Promise<ReturnType<typeof makeThought>>(()=>undefined)}},
-    stepTimeoutMs:15,
-    schedule:{mode:"adaptive",defaultIntervalMs:120,minIntervalMs:60,maxIntervalMs:400,maxRequestsPerHour:20}
-  });
-  runtime.setActiveCharacter("character.timeout");
-  try{
-    await runtime.start();
-    await waitFor(()=>Boolean(runtime.getState().recentTrace?.some(entry=>entry.result==="error")),500);
-    const entry=(runtime.getState().recentTrace??[]).slice(-1)[0];
-    equal(entry?.errorCode,"STEP_TIMEOUT","finite step timeout is surfaced in trace");
-    equal(entry?.appliedIntervalMs,120,"timeout schedules a bounded retry backoff");
-    equal(calls,1,"timed out step is not immediately repeated");
-  }finally{await runtime.stop();}
-}
-
-async function stopRejectsLateThoughtTest(){
-  let release:((thought:ReturnType<typeof makeThought>)=>void)|undefined;
-  let started=0;
-  const runtime=new MindRuntime({
-    cognitiveStep:{run:({characterId})=>{started+=1;return new Promise<ReturnType<typeof makeThought>>(resolve=>{release=resolve;void characterId;})}},
-    schedule:{mode:"adaptive",defaultIntervalMs:500,minIntervalMs:200,maxIntervalMs:1000,maxRequestsPerHour:20}
-  });
-  runtime.setActiveCharacter("character.late");
-  try{
-    await runtime.start();await waitFor(()=>started===1);
-    await runtime.stop();
-    const startsAfterStop=started;
-    release?.(makeThought("character.late","late"));
-    runtime.wake("scheduled");
-    equal(runtime.wakeForUserMessage({characterId:"character.late",conversationId:"conversation.late",userMessageId:"user-after-off",turnId:"turn-after-off"}),false,"Life OFF rejects reactive wake requests");
-    await new Promise(resolve=>setTimeout(resolve,15));
-    equal(started,startsAfterStop,"Life OFF prevents later scheduled wakes from starting another cognitive step");
-    equal(runtime.getState().lifecycleState,"off","stop leaves Life off");
-    equal(runtime.getState().recentThoughts.length,0,"late result after OFF cannot be saved");
-    equal(runtime.getState().nextWakeAt,null,"OFF has no pending wake timer");
-  }finally{if(runtime.getState().lifecycleState!=="off")await runtime.stop();release?.(makeThought("character.late","late-finally"));}
+async function llmUsesTaggedProtocolAndPreservesContextTest(){
+ const rawPrevious=serializeNovaTurn(makeTurn("previous public speech"));
+ const messages:ChatMessage[]=[
+  {id:"previous-turn",role:"assistant",content:rawPrevious,metadata:{novaTurnVersion:1,novaTurnId:"previous-turn"}},
+  {id:"latest-user",role:"user",content:"What do you remember about my preference?",metadata:{source:"conversation"}}
+ ];
+ const conversation={id:"conversation.llm",characterId:"character.llm",messages} as Conversation;
+ const character={id:"character.llm",name:"Nova",description:"A careful companion"} as Character;
+ const calls:ChatRequest[]=[];let responseContent='<NOVA_TURN version="1"><SITUATION>Use real memory results before concluding.</SITUATION><THOUGHTS>Keep private notes private.</THOUGHTS><EMOTION>Focused.</EMOTION><TOOLS><read_memory>{"query":"user preference"}</read_memory><browser.navigate>{"url":"https://wikipedia.org/"}</browser.navigate></TOOLS><SPEECH>I’ll check what was saved before answering.</SPEECH><NEXT_WAKE_MS>45000</NEXT_WAKE_MS></NOVA_TURN>';
+ const runtime={async chat(request:ChatRequest){calls.push(request);return responseFor(request,responseContent);},getActiveProviderPresetId:()=>undefined,getChatModel:()=>"fake-model",async getChatModelForPreset(){return "unused";}};
+ const budget={availableContextTokens:4096,reservedOutputTokens:1024,systemOverheadTokens:0,safetyMarginTokens:128};
+ const step=new LLMCognitiveStep({
+  runtime,
+  getCharacter:async()=>character,
+  getActiveConversation:async()=>conversation,
+  buildContext:async(request)=>({apiVersion:"1",schemaVersion:"1",characterId:request.characterId,conversationId:request.conversationId,messages:request.messages,includedCandidates:[],omittedCandidates:[],budget:request.budget,estimatedTokens:100} as AssembledContext),
+  getContextBudget:()=>budget,
+  getActiveProviderPresetId:()=>undefined,
+  getChatModel:()=>"fake-model",
+  getChatModelForPreset:async()=>"unused",
+  getCognitiveSchedule:()=>schedule(),
+  getAvailableTools:()=>[{name:"read_memory",description:"Search saved memory",parameters:{type:"object"}},{name:"browser.navigate",description:"Open controlled domain",parameters:{type:"object"}}]
+ });
+ const context:CognitiveStepContext={characterId:"character.llm",state:{lifecycleState:"thinking",nextWakeAt:null,recentTrace:[]},signal:new AbortController().signal,wakeReason:"user-message",userTurn:{characterId:"character.llm",conversationId:"conversation.llm",userMessageId:"latest-user",turnId:"turn-llm"}};
+ const result=await step.run(context);
+ equal(calls.length,1,"all cognitive fields come from exactly one LLM request");
+ equal(calls[0]?.generation?.responseFormat?.type,"text","tagged protocol uses provider-neutral text, not JSON Schema mode");
+ equal(calls[0]?.context.messages.at(-1)?.role,"user","Mistral-compatible synthetic cue is the final user message");
+ ok(calls[0]?.context.messages.at(-1)?.content.includes("SPEECH must be non-empty"),"reactive user cue requires public speech");
+ ok(calls[0]?.context.messages.some(message=>message.content===rawPrevious),"complete prior NovaTurn remains in the model context");
+ ok(!calls[0]?.context.messages.some(message=>message.content.includes("INTERNAL THOUGHT HISTORY")),"retired parallel Thought history is absent");
+ ok(calls[0]?.context.messages.some(message=>message.content.includes("read_memory")&&message.content.includes("browser.navigate")),"prompt lists registered tools and supports multiple calls in one response");
+ equal(result.turn.situation,"Use real memory results before concluding.","situation is parsed independently");
+ equal(result.turn.thoughts,"Keep private notes private.","thoughts are parsed independently");
+ equal(result.turn.emotion,"Focused.","emotion is parsed independently");
+ equal(result.turn.tools.map(call=>call.name),["read_memory","browser.navigate"],"multiple tool calls are parsed independently of speech");
+ equal(result.turn.speech,"I’ll check what was saved before answering.","speech is the ready-to-send public answer");
+ equal(result.turn.nextWakeMs,45000,"model-selected wake interval is an integer field");
+ responseContent="free text must not become speech";
+ const invalidStep=new LLMCognitiveStep({
+  runtime:{...runtime,async chat(request:ChatRequest){return responseFor(request,responseContent);}},
+  getCharacter:async()=>character,getActiveConversation:async()=>conversation,
+  buildContext:async(request)=>({apiVersion:"1",schemaVersion:"1",characterId:request.characterId,conversationId:request.conversationId,messages:request.messages,includedCandidates:[],omittedCandidates:[],budget:request.budget,estimatedTokens:100} as AssembledContext),
+  getContextBudget:()=>budget,getActiveProviderPresetId:()=>undefined,getChatModel:()=>"fake-model",getChatModelForPreset:async()=>"unused"
+ });
+ let rejected=false;try{await invalidStep.run({...context,wakeReason:"scheduled",userTurn:undefined});}catch{rejected=true;}
+ equal(rejected,true,"plain text without a versioned tagged speech block is rejected, never silently converted into a Thought or answer");
 }
 
 async function main(){
-  await startRuntimeTest();
-  await sequentialStepsTest();
-  await historyLimitTest();
-  await stopDuringActiveStepTest();
-  await restartAfterStopTest();
-  await errorDoesNotStopLifeTest();
-  await thoughtSubscriptionTest();
-  await characterScopedThoughtHistoryTest();
-  await llmCognitiveStepTest();
-  await autonomousInitiativeRuntimeIntegrationTest();
-  await autonomousInitiativeStaleResponseTest();
-  await cognitiveProviderBadRequestRegressionTest();
-  await adaptiveIntervalPolicyTest();
-  await fixedIntervalIgnoresModelTest();
-  await proactiveExpressionPolicyTest();
-  await scheduledExpressionUsesNewProactiveDefaultsTest();
-  await reactiveTurnBypassesProactiveAndRequestLimitsTest();
-  await reactiveRequiredExpressionFailureTest();
-  await cancellationDuringExpressionPublicationTest();
-  await wakeEventsCoalesceTest();
-  await characterSwitchCancelsOldContextTest();
-  await hourlyQuotaDefersBackgroundCallsTest();
-  await errorBackoffIncreasesTest();
-  await timeoutUsesBackoffTest();
-  await stopRejectsLateThoughtTest();
-  console.log("PASS Mind Runtime + LLM cognitive tests");
+ await backgroundSchedulingAndSerializationTest();
+ await userPriorityAndStaleCancellationTest();
+ await reactiveSpeechFailureAndRetryTest();
+ await toolsAndToolResultWakeTest();
+ await lifeOffRejectsLateResponsesTest();
+ await llmUsesTaggedProtocolAndPreservesContextTest();
+ console.log("PASS unified NovaTurn runtime + LLM protocol tests");
 }
 void main().catch(error=>{console.error(error);process.exitCode=1;});
