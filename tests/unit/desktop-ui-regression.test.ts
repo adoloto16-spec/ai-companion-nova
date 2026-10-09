@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import {chatDraftKey,readChatDraft,writeChatDraft,clearSubmittedChatDraft} from "../../apps/desktop-ui/src/chat-drafts";
 
 const sourcePath=path.resolve(process.cwd(),"apps/desktop-ui/src/main.tsx");
 const source=fs.readFileSync(sourcePath,"utf8");
@@ -103,6 +104,14 @@ assert.ok(source.includes("shouldRenderNovaTurn(parseResult,showTechnicalData)")
 assert.ok(source.includes("Unrecognized / raw output (bounded)")&&source.includes("slice(0,4000)"),"technical mode shows bounded raw output for malformed turns");
 for(const heading of ["Situation","Thoughts (private)","Emotion","Tool calls","Tool results","Speech","Next wake","Protocol diagnostics"]){assert.ok(source.includes("<strong>"+heading+"</strong>"),"technical mode always supplies the "+heading+" section");}
 assert.ok(source.includes("countVisibleSpeechMessages(conversation.messages)")&&source.includes("stored messages"),"conversation counter distinguishes stored records from visible speech messages");
+assert.ok(app.includes('const [chatDrafts,setChatDrafts]=React.useState<Record<string,string>>({});'),"App owns in-memory Chat drafts");
+assert.ok(app.includes('chatDraftKey(activeCharacter.id,activeConversation.id)'),"draft keys include both character and conversation identity");
+assert.ok(app.includes('<ChatView key={activeChatDraftKey}'),"Chat view identity changes with character/conversation without losing App draft state");
+assert.ok(app.includes('input={activeChatDraftKey?readChatDraft(chatDrafts,activeChatDraftKey):""}'),"Chat renders the current conversation draft");
+assert.ok(app.includes('onClearSubmittedDraft={submitted=>{if(activeChatDraftKey)setChatDrafts(current=>clearSubmittedChatDraft(current,activeChatDraftKey,submitted));}}'),"successful submission clears only the unchanged draft from the submitting conversation");
+assert.equal(source.includes('const [input,setInput]=React.useState("");'),false,"ChatView must not own transient draft state");
+assert.ok(source.includes('if(result.status==="sent")onClearSubmittedDraft(submittedDraft);'),"ordinary Chat clears a draft only after a successful send");
+assert.ok(source.includes('if(result.status==="awaiting-life")onClearSubmittedDraft(submittedDraft);'),"Nova Life clears a draft only after persistence and wake acceptance");
 assert.ok(source.includes("commitNovaTurn"),"Chat persists the canonical NovaTurn record");
 assert.ok(source.includes("setNovaTurnSink"),"UI registers the single canonical turn sink");
 assert.ok(source.includes("subscribeMindState"),"UI must subscribe to runtime mind state rather than own the runtime");
@@ -116,4 +125,21 @@ assert.match(source,/onClick=\{this\.retry\}/);
 assert.match(source,/foundationRef\.current\?\.recordDiagnosticError/);
 assert.equal(source.match(/new ViewErrorBoundary/g)?.length??0,0,"ErrorBoundary should remain a React component, not be instantiated imperatively");
 
+const draftA=chatDraftKey("character-a","conversation-a");
+const draftB=chatDraftKey("character-a","conversation-b");
+const draftOtherCharacter=chatDraftKey("character-b","conversation-a");
+assert.notEqual(draftA,draftB,"separate conversations have separate draft keys");
+assert.notEqual(draftA,draftOtherCharacter,"equal conversation IDs from different characters cannot share drafts");
+let drafts:Record<string,string>={};
+drafts=writeChatDraft(drafts,draftA,"unsent A");
+drafts=writeChatDraft(drafts,draftB,"unsent B");
+drafts=writeChatDraft(drafts,draftOtherCharacter,"unsent other character");
+assert.equal(readChatDraft(drafts,draftA),"unsent A","navigating to other tabs and back restores draft A");
+assert.equal(readChatDraft(drafts,draftB),"unsent B","switching conversations restores that conversation draft");
+assert.equal(readChatDraft(drafts,draftOtherCharacter),"unsent other character","switching characters never transfers a draft");
+const unchangedOnFailure=clearSubmittedChatDraft(drafts,draftA,"different submitted text");
+assert.equal(readChatDraft(unchangedOnFailure,draftA),"unsent A","failed or stale submission does not clear the draft");
+const afterSuccessfulSend=clearSubmittedChatDraft(drafts,draftA,"unsent A");
+assert.equal(readChatDraft(afterSuccessfulSend,draftA),"","successful send clears the matching submitted draft");
+assert.equal(readChatDraft(afterSuccessfulSend,draftB),"unsent B","successful send does not clear another conversation draft");
 console.log("desktop-ui-regression: ok");

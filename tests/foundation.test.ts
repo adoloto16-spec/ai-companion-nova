@@ -22,13 +22,27 @@ async function schemaValidationTest(){
   ok(validator.validate(character,STANDARD_SCHEMAS["character"]!).valid,"valid Character schema");
   ok(!validator.validate({...character,unknownField:true},STANDARD_SCHEMAS["character"]!).valid,"Character schema rejects unknown fields");
   ok(!validator.validate({...character,name:""},STANDARD_SCHEMAS["character"]!).valid,"Character schema rejects empty names");
-  const coreBook={id:"core-book.test.1",characterId:"character.nova.default.v1",title:"Nova identity",content:"Nova is the canonical companion.",tags:["identity"],activation:{kind:"always"},retentionPriority:75,placementWeight:25,mutationPolicy:"locked",enabled:true,source:"user",metadata:{},createdAt:"2026-09-26T02:00:00.000Z",updatedAt:"2026-09-26T02:00:00.000Z"};
+  const coreBook={id:"core-book.test.1",characterId:"character.nova.default.v1",title:"Nova identity",content:"Nova is the canonical companion.",tags:["identity"],activation:{kind:"always"},retentionPriority:75,placementWeight:25,mutationPolicy:"locked",enabled:true,source:"user",role:"user",metadata:{},createdAt:"2026-09-26T02:00:00.000Z",updatedAt:"2026-09-26T02:00:00.000Z"};
   ok(validator.validate(coreBook,STANDARD_SCHEMAS["core-book-entry"]!).valid,"valid Core Book entry schema");
   ok(!validator.validate({...coreBook,characterId:undefined},STANDARD_SCHEMAS["core-book-entry"]!).valid,"Core Book requires characterId");
   ok(!validator.validate({...coreBook,activation:{kind:"unsupported"}},STANDARD_SCHEMAS["core-book-entry"]!).valid,"Core Book rejects invalid activation");
   ok(!validator.validate({...coreBook,mutationPolicy:"future"},STANDARD_SCHEMAS["core-book-entry"]!).valid,"Core Book rejects invalid mutationPolicy");
   ok(!validator.validate({...coreBook,retentionPriority:101},STANDARD_SCHEMAS["core-book-entry"]!).valid,"Core Book rejects out-of-range retentionPriority");
+  ok(!validator.validate({...coreBook,role:"developer"},STANDARD_SCHEMAS["core-book-entry"]!).valid,"Core Book rejects invalid message roles");
   ok(!validator.validate({...coreBook,unknownField:true},STANDARD_SCHEMAS["core-book-entry"]!).valid,"Core Book rejects unknown fields");
+  const source={
+    id:"source:pool:primary",name:"Primary",providerId:"openai-compatible",baseUrl:"https://api.example/v1",model:"test-model",
+    credentialReference:{id:"credential-a",kind:"api-key",provider:"openai-compatible",version:"1"},enabled:true,health:"healthy",failureCount:0,cooldownUntil:null,
+    createdAt:"2026-10-08T00:00:00Z",updatedAt:"2026-10-08T00:00:00Z"
+  };
+  const poolPreset={id:"preset-pool",name:"Pool",type:"pool",sources:[source],activeSourceId:source.id,createdAt:"2026-10-08T00:00:00Z",updatedAt:"2026-10-08T00:00:00Z"};
+  ok(validator.validate(poolPreset,STANDARD_SCHEMAS["provider-preset"]!).valid,"valid pool preset schema");
+  const singlePreset={id:"preset-single",name:"Single",type:"single",sources:[],activeSourceId:null,providerId:"openai-compatible",baseUrl:"https://api.example/v1",model:"test-model",
+    credentialReference:{id:"credential-a",kind:"api-key",provider:"openai-compatible",version:"1"},enabled:true,timeoutMs:30000,createdAt:"2026-10-08T00:00:00Z",updatedAt:"2026-10-08T00:00:00Z"};
+  ok(validator.validate(singlePreset,STANDARD_SCHEMAS["provider-preset"]!).valid,"valid single API preset schema");
+  ok(!validator.validate({...singlePreset,sources:[source]},STANDARD_SCHEMAS["provider-preset"]!).valid,"single preset rejects pool sources");
+  const {credentialReference:_credentialReference,...missingSingleCredential}=singlePreset;
+  ok(!validator.validate(missingSingleCredential,STANDARD_SCHEMAS["provider-preset"]!).valid,"single preset requires a credential reference");
   const contextBudget={availableContextTokens:120,reservedOutputTokens:40,systemOverheadTokens:10,safetyMarginTokens:10};
   ok(validator.validate(contextBudget,STANDARD_SCHEMAS["context-budget"]!).valid,"valid Context Budget schema");
   const contextRequest={apiVersion:"1",schemaVersion:"1",characterId:"character.nova.default.v1",conversationId:"conversation.test",messages:[{role:"user",content:"hello"}],budget:contextBudget};

@@ -7,7 +7,7 @@ import {startFoundationRuntime,testProviderPresetConfiguration,listProviderModel
 import type {FoundationRuntime} from "../../../runtime/bootstrap/src/index";
 import {IpcCredentialStore,InMemoryCredentialStore} from "../../../host/credentials/src/index";
 import {IpcCredentialProfileStore,InMemoryCredentialProfileStore,emptyCredentialProfileState} from "../../../host/credential-profiles/src/index";
-import {IpcProviderPresetStore,InMemoryProviderPresetStore,materializeProviderConfiguration,migrateProviderConfiguration,emptyProviderPresetState,cloneProviderPresetForSaveAsNew,validateProviderPresetCredentialReferences} from "../../../host/provider-presets/src/index";
+import {IpcProviderPresetStore,InMemoryProviderPresetStore,materializeProviderConfiguration,materializeSingleProviderConfiguration,migrateProviderConfiguration,emptyProviderPresetState,cloneProviderPresetForSaveAsNew,validateProviderPresetCredentialReferences} from "../../../host/provider-presets/src/index";
 import {IpcProviderConfigurationStore,loadProviderConfigurationSafely} from "../../../host/config/src/index";
 import {IpcCharacterStore} from "../../../host/characters/src/index";
 import {IpcCoreBookStore,InMemoryCoreBookStore} from "../../../host/core-book/src/index";
@@ -24,6 +24,7 @@ import {
   type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo, type MindState, type MindTurnSink, type MindReactiveTurn
 } from "../../../contracts/src/index";
 import {countVisibleSpeechMessages,shouldRenderNovaTurn} from "./nova-turn-visibility";
+import {chatDraftKey,readChatDraft,writeChatDraft,clearSubmittedChatDraft} from "./chat-drafts";
 import "./styles.css";
 
 const preview:RuntimeDiagnostics={schemaVersion:"1",timestamp:new Date().toISOString(),runtimeStatus:"stopped",coreStatus:"stopped",modules:[],providers:[],recentErrors:[],capabilities:[]};
@@ -135,12 +136,15 @@ function ConversationSwitcher({conversations,activeConversationId,sending,onSele
   </div>;
 }
 
-function ChatView({controller,runtime,character,conversations,activeConversation,onPersist,onClear,onSelectConversation,onCreateConversation,onRenameConversation,onDeleteConversation}:{
+function ChatView({controller,runtime,character,conversations,activeConversation,input,onDraftChange,onClearSubmittedDraft,onPersist,onClear,onSelectConversation,onCreateConversation,onRenameConversation,onDeleteConversation}:{
   controller:ChatSessionController;
   runtime:FoundationRuntime;
   character:Character;
   conversations:readonly Conversation[];
   activeConversation:Conversation;
+  input:string;
+  onDraftChange:(value:string)=>void;
+  onClearSubmittedDraft:(submitted:string)=>void;
   onPersist:()=>Promise<void>;
   onClear:()=>Promise<void>;
   onSelectConversation:(id:string)=>Promise<void>;
@@ -149,7 +153,6 @@ function ChatView({controller,runtime,character,conversations,activeConversation
   onDeleteConversation:(conversation:Conversation)=>Promise<void>;
 }){
   const [snapshot,setSnapshot]=React.useState(()=>controller.getSnapshot());
-  const [input,setInput]=React.useState("");
   const [editingId,setEditingId]=React.useState<string|undefined>();
   const [editingText,setEditingText]=React.useState("");
   const [showTechnicalData,setShowTechnicalData]=React.useState(false);
@@ -173,11 +176,12 @@ function ChatView({controller,runtime,character,conversations,activeConversation
   },[onPersist]);
 
   const send=React.useCallback(async()=>{
+    const submittedDraft=input;
     setPersistenceError("");
     if(runtime.getMindState().lifecycleState!=="off"){
       try{
-        const result=await controller.submitToLife(input,async()=>{await onPersist();},turn=>runtime.wakeMindForUserMessage(turn));
-        if(result.status==="awaiting-life"||result.status==="life-failed")setInput("");
+        const result=await controller.submitToLife(submittedDraft,async()=>{await onPersist();},turn=>runtime.wakeMindForUserMessage(turn));
+        if(result.status==="awaiting-life")onClearSubmittedDraft(submittedDraft);
         if(result.status==="life-failed")setPersistenceError(result.message);
       }catch(error){
         setPersistenceError(error instanceof Error?error.message:"User message could not be saved for Nova Life.");
@@ -185,10 +189,10 @@ function ChatView({controller,runtime,character,conversations,activeConversation
       return;
     }
     controller.clearFailedLifeTurnForOrdinaryChat();
-    const result=await controller.submit(input,runtime.getActiveChatModel());
-    if(result.status!=="rejected")setInput("");
+    const result=await controller.submit(submittedDraft,runtime.getActiveChatModel());
+    if(result.status==="sent")onClearSubmittedDraft(submittedDraft);
     await persistAfterAction(result);
-  },[controller,input,runtime,onPersist,persistAfterAction]);
+  },[controller,input,runtime,onPersist,onClearSubmittedDraft,persistAfterAction]);
 
   const stop=React.useCallback(async()=>{
     setPersistenceError("");
@@ -370,7 +374,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     {snapshot.lifeTurn?.status==="awaiting"&&<p className="chat-hint" role="status">Nova is thinking…</p>}
     {snapshot.lifeTurn?.status==="failed"&&<p className="chat-error" role="alert">Nova Life failed to produce a valid reply. The turn remains failed and can be retried with Retry Nova Life.</p>}
     <form className="chat-composer" onSubmit={event=>{event.preventDefault();if(!chatBusy)void send()}}>
-      <textarea value={input} onChange={event=>setInput(event.target.value)} onKeyDown={onKeyDown} placeholder="Write a message…" aria-label="Chat message" disabled={chatBusy} rows={2}/>
+      <textarea value={input} onChange={event=>onDraftChange(event.target.value)} onKeyDown={onKeyDown} placeholder="Write a message…" aria-label="Chat message" disabled={chatBusy} rows={2}/>
       <button type="submit" disabled={chatBusy||input.trim().length===0}>{snapshot.sending?"Streaming…":lifeTurnBusy?"Nova is thinking…":"Send"}</button>
     </form>
     <p className="chat-hint">Enter to send · Shift+Enter for a new line</p>
@@ -613,12 +617,13 @@ type CoreBookDraft={
   mutationPolicy:"locked"|"suggest"|"auto";
   enabled:boolean;
   source:"user"|"import"|"system"|"other";
+  role:"system"|"user"|"assistant";
 };
 
 const emptyCoreBookDraft=():CoreBookDraft=>({
   title:"",content:"",tags:"",activationKind:"always",keywords:"",matchMode:"any",
   caseSensitive:false,pattern:"",flags:"",retentionPriority:50,placementWeight:50,
-  mutationPolicy:"locked",enabled:true,source:"user"
+  mutationPolicy:"locked",enabled:true,source:"user",role:"user"
 });
 
 function coreBookDraftFromEntry(entry:CoreBookEntry):CoreBookDraft{
@@ -637,7 +642,8 @@ function coreBookDraftFromEntry(entry:CoreBookEntry):CoreBookDraft{
     placementWeight:entry.placementWeight,
     mutationPolicy:entry.mutationPolicy,
     enabled:entry.enabled,
-    source:entry.source
+    source:entry.source,
+    role:entry.role
   };
 }
 
@@ -695,7 +701,7 @@ function CoreBookView({runtime,character}:{runtime:FoundationRuntime;character:C
       const payload={
         title:draft.title,content:draft.content,tags:draft.tags.split(",").map(value=>value.trim()).filter(Boolean),
         activation,retentionPriority:draft.retentionPriority,placementWeight:draft.placementWeight,
-        mutationPolicy:draft.mutationPolicy,enabled:draft.enabled,source:draft.source
+        mutationPolicy:draft.mutationPolicy,enabled:draft.enabled,source:draft.source,role:draft.role
       };
       if(selectedId)await runtime.updateCoreBookEntry(character.id,selectedId,payload);
       else{
@@ -807,6 +813,11 @@ function CoreBookView({runtime,character}:{runtime:FoundationRuntime;character:C
               <option value="user">User</option><option value="import">Import</option><option value="system">System</option><option value="other">Other</option>
             </select>
           </label>
+          <label>Role
+            <select value={draft.role} onChange={event=>updateDraft("role",event.target.value as CoreBookDraft["role"])} disabled={busy}>
+              <option value="system">System</option><option value="user">User</option><option value="assistant">Assistant</option>
+            </select>
+          </label>
           <label className="checkbox"><input type="checkbox" checked={draft.enabled} onChange={event=>updateDraft("enabled",event.target.checked)} disabled={busy}/> Enabled</label>
         </div>
 
@@ -855,10 +866,10 @@ function ProviderPresetsView({
   const defaultPreset=():ProviderPreset=>{
     const now=new Date().toISOString();
     const source=defaultSource(now);
-    return {id:"provider-preset:new-"+Date.now(),name:"",sources:[source],activeSourceId:source.id,createdAt:now,updatedAt:now};
+    return {id:"provider-preset:new-"+Date.now(),name:"",type:"pool",sources:[source],activeSourceId:source.id,createdAt:now,updatedAt:now};
   };
   const [selectedId,setSelectedId]=React.useState<string|undefined>(firstPreset?.id);
-  const [draft,setDraft]=React.useState<ProviderPreset>(()=>firstPreset?{...firstPreset,sources:firstPreset.sources.map(source=>({...source,credentialReference:source.credentialReference?{...source.credentialReference}:null}))}:defaultPreset());
+  const [draft,setDraft]=React.useState<ProviderPreset>(()=>firstPreset?{...firstPreset,type:firstPreset.type??"pool",sources:firstPreset.sources.map(source=>({...source,credentialReference:source.credentialReference?{...source.credentialReference}:null})),...(firstPreset.credentialReference!==undefined?{credentialReference:firstPreset.credentialReference?{...firstPreset.credentialReference}:null}:{})}:defaultPreset());
   const [selectedSourceId,setSelectedSourceId]=React.useState<string|undefined>(()=>draft.activeSourceId??draft.sources[0]?.id);
   const [models,setModels]=React.useState<readonly ModelInfo[]>([]);
   const [busy,setBusy]=React.useState(false);
@@ -873,7 +884,7 @@ function ProviderPresetsView({
     const next=presets.find(p=>p.id===selectedId)??presets[0];
     if(next){
       setSelectedId(next.id);
-      setDraft({...next,sources:next.sources.map(source=>({...source,credentialReference:source.credentialReference?{...source.credentialReference}:null}))});
+      setDraft({...next,type:next.type??"pool",sources:next.sources.map(source=>({...source,credentialReference:source.credentialReference?{...source.credentialReference}:null})),...(next.credentialReference!==undefined?{credentialReference:next.credentialReference?{...next.credentialReference}:null}:{})});
       const sourceId=next.activeSourceId??next.sources[0]?.id;
       setSelectedSourceId(sourceId);
       setAddingCredential(false);
@@ -881,7 +892,39 @@ function ProviderPresetsView({
     }
   },[dirty,presets,selectedId]);
 
-  const selectedSource=draft.sources.find(source=>source.id===selectedSourceId)??draft.sources[0];
+  const selectedSource=draft.type==="single"?undefined:draft.sources.find(source=>source.id===selectedSourceId)??draft.sources[0];
+  const singleProviderId=draft.providerId==="gemini"?"gemini":"openai-compatible";
+  const setPresetType=(type:"pool"|"single")=>{
+    if(type===(draft.type??"pool"))return;
+    const now=new Date().toISOString();
+    if(type==="single"){
+      const source=selectedSource??draft.sources[0];
+      const {sources:_sources,activeSourceId:_activeSourceId,...withoutPool}=draft;
+      updateDraft({
+        ...withoutPool,type:"single",sources:[],activeSourceId:null,
+        providerId:source?.providerId??"openai-compatible",
+        baseUrl:source?.baseUrl??"https://api.openai.com/v1",
+        model:source?.model??"",
+        credentialReference:source?.credentialReference?{...source.credentialReference}:draft.credentialReference??null,
+        enabled:source?.enabled??draft.enabled??true,
+        timeoutMs:source?.timeoutMs??draft.timeoutMs??30000,
+        updatedAt:now
+      });
+      setSelectedSourceId(undefined);
+    }else{
+      const providerId=singleProviderId;
+      const source=defaultSource(now,providerId,"Primary");
+      source.baseUrl=draft.baseUrl??(providerId==="gemini"?"https://generativelanguage.googleapis.com/v1beta":"https://api.openai.com/v1");
+      source.model=draft.model??(providerId==="gemini"?"gemini-2.5-flash":"");
+      source.credentialReference=draft.credentialReference?{...draft.credentialReference}:null;
+      source.enabled=draft.enabled??true;
+      source.timeoutMs=draft.timeoutMs??30000;
+      const {providerId:_providerId,baseUrl:_baseUrl,model:_model,credentialReference:_credentialReference,enabled:_enabled,timeoutMs:_timeoutMs,...withoutSingle}=draft;
+      updateDraft({...withoutSingle,type:"pool",sources:[source],activeSourceId:source.id,updatedAt:now});
+      setSelectedSourceId(source.id);
+    }
+    setAddingCredential(false);setModels([]);
+  };
   React.useEffect(()=>{
     setAddingCredential(false);
     setModels([]);
@@ -903,19 +946,24 @@ function ProviderPresetsView({
     setBusy(true);setMessage("");
     try{
       if(!draft.name.trim())throw new Error("Provider preset name is required.");
-      if(draft.sources.length===0)throw new Error("Provider preset must contain at least one source.");
       validateProviderPresetCredentialReferences(draft,credentialProfiles);
-      const sources=draft.sources.map(source=>({
-        ...source,
-        credentialReference:source.credentialReference?{...source.credentialReference}:null
-      }));
-      const next:ProviderPreset={
-        ...draft,
-        name:draft.name.trim(),
-        sources,
-        activeSourceId:draft.activeSourceId&&sources.some(source=>source.id===draft.activeSourceId)?draft.activeSourceId:sources[0]!.id,
-        updatedAt:new Date().toISOString()
-      };
+      let next:ProviderPreset;
+      if(draft.type==="single"){
+        if(draft.sources.length!==0||draft.activeSourceId!==null)throw new Error("Single presets must not contain pool sources.");
+        if(draft.providerId!=="openai-compatible"&&draft.providerId!=="gemini")throw new Error("Choose a supported provider.");
+        if(!draft.baseUrl?.trim()||!draft.model?.trim())throw new Error("Base URL and model are required for a single preset.");
+        if(!draft.credentialReference)throw new Error("Select or create a saved API credential.");
+        const savedCredential=credentialProfiles.find(profile=>profile.credentialReference.id===draft.credentialReference?.id&&profile.providerId===draft.providerId);
+        if(!savedCredential||!credentialSaved[savedCredential.id])throw new Error("The selected credential is not available in CredentialStore.");
+        const url=new URL(draft.baseUrl);
+        if((url.protocol!=="https:"&&url.protocol!=="http:")||url.username||url.password||url.search||url.hash)throw new Error("Base URL must use HTTP(S) and must not contain credentials, query, or fragment.");
+        next={...draft,name:draft.name.trim(),type:"single",sources:[],activeSourceId:null,providerId:draft.providerId,baseUrl:url.toString().replace(/\/$/,""),model:draft.model.trim(),credentialReference:{...draft.credentialReference},enabled:draft.enabled??true,timeoutMs:draft.timeoutMs??30000,updatedAt:new Date().toISOString()};
+      }else{
+        if(draft.sources.length===0)throw new Error("Pool presets must contain at least one source.");
+        const sources=draft.sources.map(source=>({...source,credentialReference:source.credentialReference?{...source.credentialReference}:null}));
+        const {providerId:_providerId,baseUrl:_baseUrl,model:_model,credentialReference:_credentialReference,enabled:_enabled,timeoutMs:_timeoutMs,...poolFields}=draft;
+        next={...poolFields,name:draft.name.trim(),type:"pool",sources,activeSourceId:draft.activeSourceId&&sources.some(source=>source.id===draft.activeSourceId)?draft.activeSourceId:sources[0]!.id,updatedAt:new Date().toISOString()};
+      }
       await onSavePreset(next,activate);
       setDraft(next);setSelectedId(next.id);setDirty(false);
       setMessage(activate?"Provider preset saved and activated.":"Provider preset saved.");
@@ -927,13 +975,20 @@ function ProviderPresetsView({
     setBusy(true);setMessage("");
     try{
       if(!draft.name.trim())throw new Error("Provider preset name is required.");
-      if(draft.sources.length===0)throw new Error("Provider preset must contain at least one source.");
-      validateProviderPresetCredentialReferences(draft,credentialProfiles);
+      await validateProviderPresetCredentialReferences(draft,credentialProfiles);
+      if(draft.type==="single"){
+        if(draft.sources.length!==0||draft.activeSourceId!==null||!draft.providerId||!draft.baseUrl?.trim()||!draft.model?.trim()||!draft.credentialReference)throw new Error("Single preset requires one complete API configuration and a saved credential reference.");
+        const savedCredential=credentialProfiles.find(profile=>profile.credentialReference.id===draft.credentialReference?.id&&profile.providerId===draft.providerId);
+        if(!savedCredential||!credentialSaved[savedCredential.id])throw new Error("The selected credential is not available in CredentialStore.");
+        const url=new URL(draft.baseUrl);
+        if((url.protocol!=="https:"&&url.protocol!=="http:")||url.username||url.password||url.search||url.hash)throw new Error("Base URL must use HTTP(S) and must not contain credentials, query, or fragment.");
+      }else if(draft.sources.length===0)throw new Error("Pool presets must contain at least one source.");
       const now=new Date().toISOString();
       const newId="provider-preset:"+(draft.name.trim()||"preset").toLowerCase().replace(/[^a-z0-9]+/g,"-")+":"+Date.now();
-      const next=cloneProviderPresetForSaveAsNew(draft,newId,now);
+      let next=cloneProviderPresetForSaveAsNew(draft,newId,now);
+      next={...next,name:draft.name.trim(),type:draft.type??"pool"};
       await onSavePreset(next,false);
-      setDraft(next);setSelectedId(next.id);setSelectedSourceId(current=>next.sources.some(source=>source.id===current)?current:next.activeSourceId??next.sources[0]?.id);setDirty(false);
+      setDraft(next);setSelectedId(next.id);setSelectedSourceId(next.type==="single"?undefined:next.sources.some(source=>source.id===selectedSourceId)?selectedSourceId:next.activeSourceId??next.sources[0]?.id);setDirty(false);
       setMessage("Provider preset saved as new preset.");
     }catch(error){setMessage("Provider preset could not be saved: "+safeErrorMessage(error))}
     finally{setBusy(false)}
@@ -986,10 +1041,10 @@ function ProviderPresetsView({
   };
 
   const refresh=async()=>{
-    if(!selectedSource)return;
+    if(draft.type!=="single"&&!selectedSource)return;
     setBusy(true);setMessage("");
     try{
-      const result=await onRefreshModels(draft,selectedSource.id);
+      const result=await onRefreshModels(draft,draft.type==="single"?"__single__":selectedSource!.id);
       setModels(result);
       setMessage(result.length>0?"Models refreshed.":"Model discovery unavailable; manual model input is active.");
     }catch(error){setModels([]);setMessage("Model discovery failed: "+safeErrorMessage(error))}
@@ -997,22 +1052,25 @@ function ProviderPresetsView({
   };
 
   const test=async()=>{
-    if(!selectedSource)return;
+    if(draft.type!=="single"&&!selectedSource)return;
     setBusy(true);setMessage("");
     try{
-      const result=await onTestPreset(draft,selectedSource.id);
+      const result=await onTestPreset(draft,draft.type==="single"?"__single__":selectedSource!.id);
       setMessage(resultLabel(result)+(result.message?" · "+result.message:""));
     }catch(error){setMessage("Provider test failed: "+safeErrorMessage(error))}
     finally{setBusy(false)}
   };
 
   const createCredential=async()=>{
-    if(!selectedSource)return;
+    const providerId=draft.type==="single"?draft.providerId:selectedSource?.providerId;
+    if(!providerId)return;
     setBusy(true);setMessage("");
     try{
       if(!newCredentialLabel.trim()||!newCredentialSecret)throw new Error("Credential label and API key are required.");
-      const profile=await onCreateCredential(newCredentialLabel.trim(),newCredentialSecret,selectedSource.providerId);
-      updateSource(selectedSource.id,{credentialReference:{...profile.credentialReference}});
+      const profile=await onCreateCredential(newCredentialLabel.trim(),newCredentialSecret,providerId);
+      if(draft.type==="single")updateDraft({...draft,credentialReference:{...profile.credentialReference}});
+      else if(selectedSource)updateSource(selectedSource.id,{credentialReference:{...profile.credentialReference}});
+      else throw new Error("Provider source is not selected.");
       setAddingCredential(false);
       setNewCredentialLabel("");setNewCredentialSecret("");
       setMessage("Credential saved. The API key is no longer displayed.");
@@ -1022,9 +1080,9 @@ function ProviderPresetsView({
 
   const deleteCredential=async(id:string)=>{
     const referenceId=credentialProfiles.find(profile=>profile.id===id)?.credentialReference.id;
-    const used=referenceId?presets.filter(p=>p.sources.some(source=>source.credentialReference?.id===referenceId)):[];
-    const usedByDraft=referenceId?draft.sources.some(source=>source.credentialReference?.id===referenceId):false;
-    if(used.length>0||usedByDraft){setMessage("Credential is used by a provider preset. Reassign the source before deletion.");return;}
+    const used=referenceId?presets.filter(p=>p.type==="single"?p.credentialReference?.id===referenceId:p.sources.some(source=>source.credentialReference?.id===referenceId)):[];
+    const usedByDraft=referenceId?(draft.type==="single"?draft.credentialReference?.id===referenceId:draft.sources.some(source=>source.credentialReference?.id===referenceId)):false;
+    if(used.length>0||usedByDraft){setMessage("Credential is used by a provider preset. Reassign the configuration before deletion.");return;}
     setBusy(true);setMessage("");
     try{await onDeleteCredential(id);setMessage("Credential removed.")}
     catch(error){setMessage("Credential could not be removed: "+safeErrorMessage(error))}
@@ -1034,14 +1092,14 @@ function ProviderPresetsView({
   const setStarter=(name:string,providerId:"openai-compatible"|"gemini",baseUrl:string,model="")=>{
     const now=new Date().toISOString();
     const source=defaultSource(now,providerId,name);
-    updateDraft({...draft,name,sources:[{...source,baseUrl,model}],activeSourceId:source.id,createdAt:draft.createdAt});
+    updateDraft({...draft,type:"pool",name,sources:[{...source,baseUrl,model}],activeSourceId:source.id,createdAt:draft.createdAt,providerId:undefined,baseUrl:undefined,model:undefined,credentialReference:undefined,enabled:undefined,timeoutMs:undefined});
     setSelectedSourceId(source.id);setAddingCredential(false);setModels([]);
   };
 
   return <section className="settings-grid">
     <section>
       <h2>Provider Presets</h2>
-      <p className="chat-subtitle">Each preset is a pool of independent API sources. API secrets remain in the OS credential store.</p>
+      <p className="chat-subtitle">Pool presets retain ordered sources and automatic failover. Single presets use exactly one API. API secrets remain in the existing OS CredentialStore.</p>
       <label>Active preset
         <select value={activePresetId??""} onChange={event=>{if(event.target.value)void onActivatePreset(event.target.value)}} disabled={busy||presets.length===0}>
           {presets.length===0?<option value="">No saved presets</option>:presets.map(p=><option key={p.id} value={p.id}>{p.name||p.id}</option>)}
@@ -1053,6 +1111,13 @@ function ProviderPresetsView({
         </select>
       </label>
       <label>Name<input value={draft.name} onChange={event=>updateDraft({...draft,name:event.target.value})} disabled={busy}/></label>
+      <label>Preset type
+        <select value={draft.type??"pool"} onChange={event=>setPresetType(event.target.value as "pool"|"single")} disabled={busy}>
+          <option value="pool">Pool (automatic failover)</option>
+          <option value="single">Single API (no failover)</option>
+        </select>
+      </label>
+      {draft.type!=="single"&&<>
       <div className="actions">
         <button onClick={()=>void addSource()} disabled={busy}>Add source</button>
         <button onClick={()=>void removeSource()} disabled={busy||!selectedSource}>Delete source</button>
@@ -1122,9 +1187,58 @@ function ProviderPresetsView({
           <span>Active</span><strong>{selectedSource.id===draft.activeSourceId?"yes":"no"}</strong>
         </div>
       </>}
+      </>}
+      {draft.type==="single"&&<div className="provider-single-config">
+        <label>Provider
+          <select value={singleProviderId} onChange={event=>{
+            const providerId=event.target.value as "openai-compatible"|"gemini";
+            updateDraft({...draft,providerId,baseUrl:providerId==="gemini"?"https://generativelanguage.googleapis.com/v1beta":"https://api.openai.com/v1",
+              model:providerId==="gemini"?"gemini-2.5-flash":"",credentialReference:null});
+            setAddingCredential(false);setModels([]);
+          }} disabled={busy}>
+            <option value="openai-compatible">OpenAI-compatible</option>
+            <option value="gemini">Gemini</option>
+          </select>
+        </label>
+        <label>Base URL<input value={draft.baseUrl??""} onChange={event=>updateDraft({...draft,baseUrl:event.target.value})} placeholder="https://api.example.com/v1" disabled={busy}/></label>
+        <label>Saved API credential
+          <select value={draft.credentialReference?.id??""} onChange={event=>{
+            const value=event.target.value;
+            if(value==="__new__"){setAddingCredential(true);return;}
+            setAddingCredential(false);
+            if(!value){updateDraft({...draft,credentialReference:null});return;}
+            const profile=credentialProfiles.find(candidate=>candidate.credentialReference.id===value&&candidate.providerId===singleProviderId);
+            if(!profile){setMessage("Credential profile is unavailable or belongs to a different provider.");return;}
+            updateDraft({...draft,credentialReference:{...profile.credentialReference}});
+          }} disabled={busy}>
+            <option value="">Select a saved credential…</option>
+            {draft.credentialReference&&!credentialProfiles.some(profile=>profile.credentialReference.id===draft.credentialReference?.id)&&
+              <option value={draft.credentialReference.id} disabled>Unavailable credential: {draft.credentialReference.id}</option>}
+            {credentialProfiles.filter(profile=>profile.providerId===singleProviderId).map(profile=><option key={profile.id} value={profile.credentialReference.id}>{profile.label} {credentialSaved[profile.id]?"••••••••":"(not saved)"}</option>)}
+            <option value="__new__">+ Create credential in CredentialStore</option>
+          </select>
+        </label>
+        {addingCredential&&<div className="character-actions">
+          <label>Credential label<input value={newCredentialLabel} onChange={event=>setNewCredentialLabel(event.target.value)} disabled={busy}/></label>
+          <label>API key<input type="password" autoComplete="off" value={newCredentialSecret} onChange={event=>setNewCredentialSecret(event.target.value)} disabled={busy}/></label>
+          <button onClick={()=>void createCredential()} disabled={busy}>Save credential</button>
+        </div>}
+        <label>Model
+          {models.length>0
+            ?<select value={draft.model??""} onChange={event=>updateDraft({...draft,model:event.target.value})} disabled={busy}>
+              {models.map(model=><option key={model.id} value={model.id}>{model.displayName&&model.displayName!==model.id?model.displayName+" · "+model.id:model.id}</option>)}
+            </select>
+            :<input value={draft.model??""} onChange={event=>updateDraft({...draft,model:event.target.value})} placeholder="model-id" disabled={busy}/>}
+        </label>
+        <label className="checkbox">Enabled
+          <input type="checkbox" checked={draft.enabled??true} onChange={event=>updateDraft({...draft,enabled:event.target.checked})} disabled={busy}/>
+        </label>
+        <label>Timeout (ms)<input type="number" min="1" value={draft.timeoutMs??30000} onChange={event=>updateDraft({...draft,timeoutMs:Number(event.target.value)})} disabled={busy}/></label>
+        <p className="hint">Single API requests use only this provider configuration. Network, timeout, authentication, and provider errors return without automatic provider/key failover.</p>
+      </div>}
       <div className="actions">
-        <button onClick={()=>void refresh()} disabled={busy||!selectedSource}>Refresh models</button>
-        <button onClick={()=>void test()} disabled={busy||!selectedSource}>Test source</button>
+        <button onClick={()=>void refresh()} disabled={busy||(draft.type!=="single"&&!selectedSource)}>Refresh models</button>
+        <button onClick={()=>void test()} disabled={busy||(draft.type!=="single"&&!selectedSource)}>Test connection</button>
         <button onClick={()=>void save(false)} disabled={busy||!draft.name.trim()}>Save</button>
         <button onClick={()=>void save(true)} disabled={busy||!draft.name.trim()}>Save &amp; activate</button>
         <button onClick={()=>void saveAsNew()} disabled={busy||!draft.name.trim()}>Save as new preset</button>
@@ -1139,8 +1253,10 @@ function ProviderPresetsView({
       <p className="hint">API keys are never loaded back into this UI.</p>
     </section>
     <section>
-      <h2>Sources</h2>
-      {draft.sources.length===0?<div>No sources in this preset.</div>:draft.sources.map(source=>
+      <h2>{draft.type==="single"?"Single API configuration":"Pool sources"}</h2>
+      {draft.type==="single"
+        ?<p>{draft.providerId??"No provider"} · {draft.model||"no model"} · {draft.baseUrl||"no Base URL"}</p>
+        :draft.sources.length===0?<div>No sources in this preset.</div>:draft.sources.map(source=>
         <div className="row" key={source.id}>
           <span>{source.name} · {source.providerId} · {source.model||"no model"} · {source.baseUrl}</span>
           <span>{source.health}{source.id===draft.activeSourceId?" · active":""}</span>
@@ -1913,6 +2029,10 @@ function materializePresetConfigurations(
   presets:readonly ProviderPreset[]
 ):readonly {presetId:string;configuration:ProviderConfiguration}[]{
   return presets.flatMap(preset=>{
+    if(preset.type==="single"){
+      const configuration=materializeSingleProviderConfiguration(preset);
+      return configuration?[{presetId:preset.id,configuration}]:[];
+    }
     const source=preset.sources.find(candidate=>candidate.id===preset.activeSourceId)??preset.sources[0];
     return source?[{presetId:preset.id,configuration:materializeProviderConfiguration(source)}]:[];
   });
@@ -1939,6 +2059,7 @@ function App(){
   const [chatController,setChatController]=React.useState<ChatSessionController|null>(null);
   const [conversations,setConversations]=React.useState<readonly Conversation[]>([]);
   const [activeConversation,setActiveConversation]=React.useState<Conversation|undefined>();
+  const [chatDrafts,setChatDrafts]=React.useState<Record<string,string>>({});
   const [mindState,setMindState]=React.useState<MindState>({lifecycleState:"off",nextWakeAt:null,recentTrace:[]});
   const mindUnsubscribeRef=React.useRef<(()=>void)|undefined>(undefined);
   const [lifeBusy,setLifeBusy]=React.useState(false);
@@ -2295,8 +2416,10 @@ function App(){
           try{savedMap[profile.id]=await credentialStore.exists(profile.credentialReference)}catch{savedMap[profile.id]=false;}
         }
         const activePreset=presetState.activePresetId?presetState.presets.find(preset=>preset.id===presetState.activePresetId):undefined;
-        const activeSource=activePreset?.sources.find(source=>source.id===activePreset.activeSourceId)??activePreset?.sources[0];
-        const activeConfiguration=activeSource?materializeProviderConfiguration(activeSource):undefined;
+        const activeSource=activePreset?.type==="single"?undefined:activePreset?.sources.find(source=>source.id===activePreset.activeSourceId)??activePreset?.sources[0];
+        const activeConfiguration=activePreset?.type==="single"
+          ?materializeSingleProviderConfiguration(activePreset)
+          :activeSource?materializeProviderConfiguration(activeSource):undefined;
         setCredentialProfiles(credentialState.profiles);
         setCredentialSavedMap(savedMap);
         setProviderPresets(presetState.presets);
@@ -2433,7 +2556,11 @@ function App(){
     if(before?.id===id||before?.id!==nextActive.id)setChatController(loaded.controller);
   },[activeCharacter,chatController,loadActiveConversation,modelProfileStore]);
 
-  const activeSourceForPreset=(preset:ProviderPreset):ProviderPresetSource|undefined=>preset.sources.find(source=>source.id===preset.activeSourceId)??preset.sources[0];
+  const configurationForPreset=(preset:ProviderPreset):ProviderConfiguration|undefined=>{
+    if(preset.type==="single")return materializeSingleProviderConfiguration(preset);
+    const source=preset.sources.find(item=>item.id===preset.activeSourceId)??preset.sources[0];
+    return source?materializeProviderConfiguration(source):undefined;
+  };
 
   const saveProviderPreset=React.useCallback(async(preset:ProviderPreset,activate:boolean)=>{
     const current=providerPresetStateRef.current;
@@ -2449,8 +2576,7 @@ function App(){
     setProviderPresets(nextState.presets);
     setActivePresetId(nextState.activePresetId);
     if(activate||current.activePresetId===preset.id){
-      const source=activeSourceForPreset(preset);
-      await refreshRuntime(source?materializeProviderConfiguration(source):undefined,undefined,nextState,credentialProfileStateRef.current);
+      await refreshRuntime(configurationForPreset(preset),undefined,nextState,credentialProfileStateRef.current);
     }
   },[providerPresetStore,refreshRuntime]);
 
@@ -2462,8 +2588,7 @@ function App(){
     providerPresetStateRef.current=nextState;
     setProviderPresets(nextState.presets);
     setActivePresetId(id);
-    const source=activeSourceForPreset(preset);
-    await refreshRuntime(source?materializeProviderConfiguration(source):undefined,undefined,nextState,credentialProfileStateRef.current);
+    await refreshRuntime(configurationForPreset(preset),undefined,nextState,credentialProfileStateRef.current);
   },[providerPresetStore,refreshRuntime]);
 
   const deleteProviderPreset=React.useCallback(async(id:string)=>{
@@ -2477,8 +2602,7 @@ function App(){
     setActivePresetId(nextActive);
     if(nextActive){
       const preset=remaining.find(item=>item.id===nextActive)!;
-      const source=activeSourceForPreset(preset);
-      await refreshRuntime(source?materializeProviderConfiguration(source):undefined,undefined,nextState,credentialProfileStateRef.current);
+      await refreshRuntime(configurationForPreset(preset),undefined,nextState,credentialProfileStateRef.current);
     }else{
       await refreshRuntime(undefined,undefined,nextState,credentialProfileStateRef.current);
     }
@@ -2509,7 +2633,7 @@ function App(){
   const deleteCredentialProfile=React.useCallback(async(id:string)=>{
     const profile=credentialProfileStateRef.current.profiles.find(item=>item.id===id);
     const referenceId=profile?.credentialReference.id;
-    if(referenceId&&providerPresetStateRef.current.presets.some(preset=>preset.sources.some(source=>source.credentialReference?.id===referenceId))){
+    if(referenceId&&providerPresetStateRef.current.presets.some(preset=>preset.type==="single"?preset.credentialReference?.id===referenceId:preset.sources.some(source=>source.credentialReference?.id===referenceId))){
       throw new Error("Credential is still used by a provider preset source.");
     }
     if(profile)await credentialStore.deleteSecret(profile.credentialReference);
@@ -2521,19 +2645,24 @@ function App(){
   },[credentialProfileStore,credentialStore]);
 
   const refreshPresetModels=React.useCallback(async(preset:ProviderPreset,sourceId:string):Promise<readonly ModelInfo[]>=>{
-    const source=preset.sources.find(item=>item.id===sourceId);
-    if(!source)throw new Error("Provider source was not found.");
-    return listProviderModels(materializeProviderConfiguration(source),credentialStore);
+    const config=preset.type==="single"
+      ?materializeSingleProviderConfiguration(preset)
+      :(()=>{const source=preset.sources.find(item=>item.id===sourceId);return source?materializeProviderConfiguration(source):undefined;})();
+    if(!config)throw new Error(preset.type==="single"?"Single provider preset configuration is incomplete.":"Provider source was not found.");
+    return listProviderModels(preset.type==="single"?{...config,enabled:true}:config,credentialStore);
   },[credentialStore]);
 
   const testPreset=React.useCallback(async(preset:ProviderPreset,sourceId:string):Promise<ProviderConnectionTestResult>=>{
-    const source=preset.sources.find(item=>item.id===sourceId);
-    if(!source)throw new Error("Provider source was not found.");
-    let config=materializeProviderConfiguration(source);
+    const source=preset.type==="single"?undefined:preset.sources.find(item=>item.id===sourceId);
+    let config=preset.type==="single"
+      ?materializeSingleProviderConfiguration(preset)
+      :source?materializeProviderConfiguration(source):undefined;
+    if(!config)throw new Error(preset.type==="single"?"Single provider preset configuration is incomplete.":"Provider source was not found.");
+    if(preset.type==="single")config={...config,enabled:true};
     if(!config.model){
       const models=await listProviderModels(config,credentialStore);
       const first=models[0]?.id;
-      if(!first)return {apiVersion:"1",schemaVersion:"1",status:"configuration_error",providerId:source.providerId,message:"Model discovery is unavailable; choose a model manually."};
+      if(!first)return {apiVersion:"1",schemaVersion:"1",status:"configuration_error",providerId:config.providerId,message:"Model discovery is unavailable; choose a model manually."};
       config={...config,model:first,enabled:true};
     }
     return testProviderPresetConfiguration(config,credentialStore);
@@ -2574,6 +2703,10 @@ function App(){
     }catch(error){setSettingsLoadMessage(error instanceof Error?error.message:"Settings could not be reset.");}
     finally{setSaving(false);}
   },[]);
+
+  const activeChatDraftKey=activeCharacter&&activeConversation
+    ?chatDraftKey(activeCharacter.id,activeConversation.id)
+    :undefined;
 
   return <main className="app-shell">
     <header className="app-header">
@@ -2629,8 +2762,11 @@ function App(){
           <div>{startupError}</div>
         </section>
       :view==="chat"&&activeCharacter&&chatController&&activeConversation
-      ?<ChatView controller={chatController} runtime={foundationRef.current!} character={activeCharacter}
+      ?<ChatView key={activeChatDraftKey} controller={chatController} runtime={foundationRef.current!} character={activeCharacter}
           conversations={conversations} activeConversation={activeConversation}
+          input={activeChatDraftKey?readChatDraft(chatDrafts,activeChatDraftKey):""}
+          onDraftChange={value=>{if(activeChatDraftKey)setChatDrafts(current=>writeChatDraft(current,activeChatDraftKey,value));}}
+          onClearSubmittedDraft={submitted=>{if(activeChatDraftKey)setChatDrafts(current=>clearSubmittedChatDraft(current,activeChatDraftKey,submitted));}}
           onPersist={()=>persistConversation(chatController!)}
           onClear={()=>clearConversation(chatController!)}
           onSelectConversation={selectConversation}

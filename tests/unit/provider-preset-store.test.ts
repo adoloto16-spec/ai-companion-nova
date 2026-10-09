@@ -1,5 +1,5 @@
 import {
-  IpcProviderPresetStore,InMemoryProviderPresetStore,materializeProviderConfiguration,migrateProviderConfiguration,PROVIDER_PRESET_COMMANDS,cloneProviderPresetForSaveAsNew,validateProviderPresetCredentialReferences
+  IpcProviderPresetStore,InMemoryProviderPresetStore,materializeProviderConfiguration,materializeSingleProviderConfiguration,migrateProviderConfiguration,PROVIDER_PRESET_COMMANDS,cloneProviderPresetForSaveAsNew,validateProviderPresetCredentialReferences
 } from "../../host/provider-presets/src";
 import {IpcCredentialProfileStore,InMemoryCredentialProfileStore,CREDENTIAL_PROFILE_COMMANDS} from "../../host/credential-profiles/src";
 import {InMemoryModelProfileStore} from "../../host/model-profiles/src";
@@ -31,7 +31,7 @@ function source(id:string,providerId="openai-compatible",credentialId="credentia
 function preset(id:string):ProviderPreset{
   const main=source("source:"+id+":primary");
   const backup=source("source:"+id+":backup","openai-compatible","credential-b");
-  return {id,name:id,sources:[main,backup],activeSourceId:main.id,createdAt:"2026-10-08T00:00:00Z",updatedAt:"2026-10-08T00:00:00Z"};
+  return {id,name:id,type:"pool",sources:[main,backup],activeSourceId:main.id,createdAt:"2026-10-08T00:00:00Z",updatedAt:"2026-10-08T00:00:00Z"};
 }
 function credential(id:string,label:string,providerId="openai-compatible"):CredentialProfile{
   return {id,label,providerId,credentialReference:{id,kind:"api-key",provider:providerId,version:"1"},createdAt:"2026-10-08T00:00:00Z",updatedAt:"2026-10-08T00:00:00Z"};
@@ -45,9 +45,14 @@ const legacyConfiguration:ProviderConfiguration={
 
 async function main(){
   const inMemory=new InMemoryProviderPresetStore();
-  const state:ProviderPresetStoreState={apiVersion:"1",schemaVersion:"2",presets:[preset("pool-main")],activePresetId:"pool-main"};
+  const legacyPool={...preset("pool-main"),type:undefined} as unknown as ProviderPreset;
+  const state:ProviderPresetStoreState={apiVersion:"1",schemaVersion:"2",presets:[legacyPool],activePresetId:"pool-main"};
   await inMemory.save(state);
-  equal(await inMemory.load(),state,"v2 provider pool survives in-memory persistence");
+  const migratedV2=await inMemory.load();
+  equal(migratedV2?.schemaVersion,"3","v2 provider store migrates to v3");
+  equal(migratedV2?.presets[0]?.type,"pool","legacy preset without discriminator defaults to pool");
+  equal(migratedV2?.presets[0]?.sources.map(item=>item.id),legacyPool.sources.map(item=>item.id),"v2 migration preserves source order and identities");
+  equal(migratedV2?.presets[0]?.activeSourceId,legacyPool.activeSourceId,"v2 migration preserves activeSourceId");
 
   const activeSource=state.presets[0]!.sources[0]!;
   const materialized=materializeProviderConfiguration(activeSource);
@@ -105,6 +110,7 @@ async function main(){
   const uiDraft:ProviderPreset={
     id:"provider-preset:ui",
     name:"UI persistence",
+    type:"pool",
     sources:[
       {...uiSource1,credentialReference:{...createdCredential.credentialReference}},
       {...uiSource2,credentialReference:null}
@@ -177,7 +183,34 @@ async function main(){
   };
   equal(switchedProvider.sources[0]?.credentialReference,null,"changing provider clears the previous credential reference");
 
-    const serialized=JSON.stringify(state);
+  const singlePreset:ProviderPreset={
+    id:"provider-preset:single",name:"Single API",type:"single",sources:[],activeSourceId:null,
+    providerId:"openai-compatible",baseUrl:"https://single.example/v1",model:"single-model",
+    credentialReference:{id:"credential-single",kind:"api-key",provider:"openai-compatible",version:"1"},
+    enabled:true,timeoutMs:45000,createdAt:"2026-10-08T00:00:00Z",updatedAt:"2026-10-08T00:00:00Z"
+  };
+  const singleCredential=credential("credential-single","Single");
+  validateProviderPresetCredentialReferences(singlePreset,[singleCredential]);
+  const singleConfiguration=materializeSingleProviderConfiguration(singlePreset);
+  equal(singleConfiguration?.providerId,"openai-compatible","single preset materializes its one provider");
+  equal(singleConfiguration?.baseUrl,singlePreset.baseUrl,"single preset materializes its Base URL");
+  equal(singleConfiguration?.model,singlePreset.model,"single preset materializes its one model");
+  equal(singleConfiguration?.credentialReference?.id,"credential-single","single preset uses only a CredentialStore reference");
+  equal(singleConfiguration?.timeoutMs,45000,"single preset timeout is preserved");
+  const bothState:ProviderPresetStoreState={apiVersion:"1",schemaVersion:"3",presets:[migratedV2!.presets[0]!,singlePreset],activePresetId:singlePreset.id};
+  await inMemory.save(bothState);
+  const bothLoaded=await inMemory.load();
+  equal(bothLoaded?.presets.map(item=>item.type),["pool","single"],"pool and single share the canonical preset store");
+  equal(bothLoaded?.activePresetId,singlePreset.id,"active preset can select single type");
+  await inMemory.delete(singlePreset.id);
+  equal((await inMemory.load())?.presets.some(item=>item.id===singlePreset.id),false,"single preset can be deleted");
+  let missingSingleCredential=false;
+  try{validateProviderPresetCredentialReferences({...singlePreset,credentialReference:null},[singleCredential]);}catch{missingSingleCredential=true;}
+  ok(missingSingleCredential,"single preset rejects a missing credential reference");
+  let wrongSingleCredential=false;
+  try{validateProviderPresetCredentialReferences({...singlePreset,providerId:"gemini"},[singleCredential]);}catch{wrongSingleCredential=true;}
+  ok(wrongSingleCredential,"single preset rejects a credential linked to another provider");
+  const serialized=JSON.stringify(state);
   ok(!serialized.includes("secret"),"persisted v2 preset state contains no secret value");
   console.log("PASS provider preset v2 store and migration tests");
 }

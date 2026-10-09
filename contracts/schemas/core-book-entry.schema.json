@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.ai-companion-nova.dev/core-book-entry/v1",
-  "title": "AI Companion Nova Core Book Entry v1",
+  "$id": "https://schemas.ai-companion-nova.dev/core-book-entry/v2",
+  "title": "AI Companion Nova Core Book Entry v2",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -16,6 +16,7 @@
     "mutationPolicy",
     "enabled",
     "source",
+    "role",
     "metadata",
     "createdAt",
     "updatedAt"
@@ -185,6 +186,13 @@
     "updatedAt": {
       "type": "string",
       "minLength": 1
+    },
+    "role": {
+      "enum": [
+        "system",
+        "user",
+        "assistant"
+      ]
     }
   }
 }

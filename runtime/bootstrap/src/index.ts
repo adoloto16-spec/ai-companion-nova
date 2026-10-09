@@ -200,8 +200,17 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const conversationManager=new ConversationManager(conversationStore,{characterExists:async characterId=>Boolean(await characterManager.getCharacter(characterId)),events,clock:{now:()=>new Date().toISOString()}});
   const credentialStore=options.credentialStore??options.openAICompatible?.credentialStore??new InMemoryCredentialStore();
   let providerPresetConfigurations=new Map((options.providerPresetConfigurations??[]).map(item=>[item.presetId,item.configuration]));
-  let providerPresetPools=new Map((options.providerPresetPools??[]).map(preset=>[preset.id,preset]));
-  let activeProviderPresetId=options.activeProviderPresetId??options.providerPresetPools?.[0]?.id??options.providerPresetConfigurations?.[0]?.presetId;
+  const initialPresets=options.providerPresetPools??[];
+  for(const preset of initialPresets){
+    if(preset.type!=="single"||!preset.providerId||!preset.baseUrl||!preset.model||preset.enabled===undefined||preset.enabled===null)continue;
+    providerPresetConfigurations.set(preset.id,{
+      apiVersion:"1",schemaVersion:"1",providerId:preset.providerId,baseUrl:preset.baseUrl,model:preset.model,
+      enabled:preset.enabled,credentialReference:preset.credentialReference?{...preset.credentialReference}:null,
+      ...(preset.timeoutMs==null?{}:{timeoutMs:preset.timeoutMs})
+    });
+  }
+  let providerPresetPools=new Map(initialPresets.filter(preset=>preset.type!=="single").map(preset=>[preset.id,preset]));
+  let activeProviderPresetId=options.activeProviderPresetId??initialPresets[0]?.id??options.providerPresetConfigurations?.[0]?.presetId;
   let providerConfiguration=options.providerConfiguration;
   const audit=new InMemoryAuditService();
   let retrievalDegraded=false;
@@ -285,7 +294,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   });
   const getPoolProvider=(providerPresetId:string):ProviderPoolChatProvider|undefined=>{
     const preset=providerPresetPools.get(providerPresetId);
-    if(!preset)return undefined;
+    if(!preset||preset.type==="single")return undefined;
     const existing=providerPoolProviders.get(providerPresetId);
     if(existing)return existing;
     const created=createPoolProvider(preset);
@@ -728,13 +737,29 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     clearChatTraces:()=>traceStore.clear(),
     setProviderPresetConfigurations:(configurations,activePresetId)=>{providerPresetConfigurations=new Map(configurations.map(item=>[item.presetId,item.configuration])); activeProviderPresetId=activePresetId??configurations[0]?.presetId;},
     setProviderPresetPools:(presets,activePresetId)=>{
-      const next=new Map(presets.map(preset=>[preset.id,preset]));
-      for(const id of providerPoolProviders.keys())if(!next.has(id))providerPoolProviders.delete(id);
+      const nextConfigurations=new Map(providerPresetConfigurations);
       for(const preset of presets){
-        providerPresetPools.set(preset.id,preset);
-        providerPoolProviders.delete(preset.id);
+        if(preset.type==="single"&&preset.providerId&&preset.baseUrl&&preset.model&&preset.enabled!==undefined&&preset.enabled!==null){
+          nextConfigurations.set(preset.id,{
+            apiVersion:"1",schemaVersion:"1",providerId:preset.providerId,baseUrl:preset.baseUrl,model:preset.model,
+            enabled:preset.enabled,credentialReference:preset.credentialReference?{...preset.credentialReference}:null,
+            ...(preset.timeoutMs==null?{}:{timeoutMs:preset.timeoutMs})
+          });
+        }else if(preset.type!=="single"){
+          const source=preset.sources.find(item=>item.id===preset.activeSourceId)??preset.sources[0];
+          if(source)nextConfigurations.set(preset.id,{
+            apiVersion:"1",schemaVersion:"1",providerId:source.providerId,baseUrl:source.baseUrl,model:source.model,
+            enabled:source.enabled&&source.model.trim().length>0,
+            credentialReference:source.credentialReference?{...source.credentialReference}:null,
+            ...(source.timeoutMs===undefined?{}:{timeoutMs:source.timeoutMs})
+          });
+        }
       }
+      const next=new Map(presets.filter(preset=>preset.type!=="single").map(preset=>[preset.id,preset]));
+      for(const id of providerPoolProviders.keys())if(!next.has(id))providerPoolProviders.delete(id);
+      for(const preset of next.values())providerPoolProviders.delete(preset.id);
       providerPresetPools=next;
+      providerPresetConfigurations=nextConfigurations;
       activeProviderPresetId=activePresetId??presets[0]?.id??activeProviderPresetId;
     },
     listCharacters:()=>characterManager.listCharacters(),

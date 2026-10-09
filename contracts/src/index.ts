@@ -47,7 +47,7 @@ export interface CredentialProfileStore{
 }
 
 export const PROVIDER_PRESET_API_VERSION:ApiVersion="1";
-export const PROVIDER_PRESET_SCHEMA_VERSION="2";
+export const PROVIDER_PRESET_SCHEMA_VERSION="3";
 export type ProviderSourceHealth="healthy"|"cooldown"|"unavailable";
 export interface ProviderPresetSource{
   id:string;
@@ -64,11 +64,20 @@ export interface ProviderPresetSource{
   createdAt:string;
   updatedAt:string;
 }
+export type ProviderPresetType="pool"|"single";
 export interface ProviderPreset{
   id:string;
   name:string;
+  /** Missing only in pre-v3 persisted data; migration treats it as a pool. */
+  type:ProviderPresetType;
   sources:readonly ProviderPresetSource[];
   activeSourceId:string|null;
+  providerId?:string|null;
+  baseUrl?:string|null;
+  model?:string|null;
+  credentialReference?:CredentialReference|null;
+  enabled?:boolean|null;
+  timeoutMs?:number|null;
   createdAt:string;
   updatedAt:string;
 }
@@ -174,9 +183,10 @@ export function defaultModelProfile(characterId:CharacterId,now=new Date().toISO
 }
 export type CoreBookEntryId=string;
 export const CORE_BOOK_API_VERSION:ApiVersion="1";
-export const CORE_BOOK_SCHEMA_VERSION="1";
+export const CORE_BOOK_SCHEMA_VERSION="2";
 export type CoreBookMutationPolicy="locked"|"suggest"|"auto";
 export type CoreBookEntrySource="user"|"import"|"system"|"other";
+export type CoreBookRole="system"|"user"|"assistant";
 export type CoreBookActivation=
   | {kind:"always"}
   | {kind:"keyword";keywords:readonly string[];matchMode:"any"|"all";caseSensitive:boolean}
@@ -195,6 +205,7 @@ export interface CoreBookEntry{
   mutationPolicy:CoreBookMutationPolicy;
   enabled:boolean;
   source:CoreBookEntrySource;
+  role:CoreBookRole;
   metadata:Record<string,unknown>;
   createdAt:string;
   updatedAt:string;

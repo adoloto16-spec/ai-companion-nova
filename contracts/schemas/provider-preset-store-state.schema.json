@@ -1,14 +1,33 @@
 {
-  "$schema":"https://json-schema.org/draft/2020-12/schema",
-  "$id":"https://schemas.ai-companion-nova.dev/provider-preset-store-state/v2",
-  "title":"AI Companion Nova Provider Preset Store State v2",
-  "type":"object",
-  "additionalProperties":false,
-  "required":["apiVersion","schemaVersion","presets","activePresetId"],
-  "properties":{
-    "apiVersion":{"const":"1"},
-    "schemaVersion":{"const":"2"},
-    "presets":{"type":"array","items":{"$ref":"https://schemas.ai-companion-nova.dev/provider-preset/v2"}},
-    "activePresetId":{"type":["string","null"]}
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/provider-preset-store-state/v3",
+  "title": "AI Companion Nova Provider Preset Store State v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "schemaVersion",
+    "presets",
+    "activePresetId"
+  ],
+  "properties": {
+    "apiVersion": {
+      "const": "1"
+    },
+    "schemaVersion": {
+      "const": "3"
+    },
+    "presets": {
+      "type": "array",
+      "items": {
+        "$ref": "https://schemas.ai-companion-nova.dev/provider-preset/v3"
+      }
+    },
+    "activePresetId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
   }
 }

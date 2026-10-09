@@ -26,6 +26,7 @@ function entry(overrides:Partial<CoreBookEntry>):CoreBookEntry{
     mutationPolicy:overrides.mutationPolicy??"locked",
     enabled:overrides.enabled??true,
     source:overrides.source??"user",
+    role:overrides.role??"user",
     metadata:overrides.metadata??{},
     createdAt:overrides.createdAt??"2026-09-26T12:00:00.000Z",
     updatedAt:overrides.updatedAt??"2026-09-26T12:00:00.000Z"
@@ -82,6 +83,16 @@ async function main(){
     return aEntries.filter(item=>item.characterId===characterId||item.id==="other-character");
   }};
   const source=new CoreBookCandidateSource(reader);
+  const roleSource=new CoreBookCandidateSource({async listCoreBookEntries(){return [
+    entry({id:"role-system",role:"system",source:"user",content:"system role"}),
+    entry({id:"role-user",role:"user",source:"system",content:"user role"}),
+    entry({id:"role-assistant",role:"assistant",source:"import",content:"assistant role"})
+  ];}});
+  const roleEngine=new DeterministicContextEngine([roleSource]);
+  const roleBuilt=await roleEngine.build(request({messages:[],budget:{availableContextTokens:100,reservedOutputTokens:0,systemOverheadTokens:0,safetyMarginTokens:0}}));
+  equal(roleBuilt.messages.find(message=>message.content==="system role")?.role,"system","Core Book system role survives candidate-to-ChatMessage conversion independently of source");
+  equal(roleBuilt.messages.find(message=>message.content==="user role")?.role,"user","Core Book user role survives candidate-to-ChatMessage conversion independently of source");
+  equal(roleBuilt.messages.find(message=>message.content==="assistant role")?.role,"assistant","Core Book assistant role survives candidate-to-ChatMessage conversion independently of source");
   const built=await new DeterministicContextEngine([
     new ConversationCandidateSource(({
       estimate(text:string){return Math.max(1,text.length);}
