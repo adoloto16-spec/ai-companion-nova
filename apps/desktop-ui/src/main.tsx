@@ -865,10 +865,10 @@ function ProviderPresetsView({
   const defaultPreset=():ProviderPreset=>{
     const now=new Date().toISOString();
     const source=defaultSource(now);
-    return {id:"provider-preset:new-"+Date.now(),name:"",sources:[source],activeSourceId:source.id,createdAt:now,updatedAt:now};
+    return {id:"provider-preset:new-"+Date.now(),name:"",type:"pool",sources:[source],activeSourceId:source.id,createdAt:now,updatedAt:now};
   };
   const [selectedId,setSelectedId]=React.useState<string|undefined>(firstPreset?.id);
-  const [draft,setDraft]=React.useState<ProviderPreset>(()=>firstPreset?{...firstPreset,sources:firstPreset.sources.map(source=>({...source,credentialReference:source.credentialReference?{...source.credentialReference}:null}))}:defaultPreset());
+  const [draft,setDraft]=React.useState<ProviderPreset>(()=>firstPreset?{...firstPreset,type:firstPreset.type??"pool",sources:firstPreset.sources.map(source=>({...source,credentialReference:source.credentialReference?{...source.credentialReference}:null})),...(firstPreset.credentialReference!==undefined?{credentialReference:firstPreset.credentialReference?{...firstPreset.credentialReference}:null}:{})}:defaultPreset());
   const [selectedSourceId,setSelectedSourceId]=React.useState<string|undefined>(()=>draft.activeSourceId??draft.sources[0]?.id);
   const [models,setModels]=React.useState<readonly ModelInfo[]>([]);
   const [busy,setBusy]=React.useState(false);
@@ -883,7 +883,7 @@ function ProviderPresetsView({
     const next=presets.find(p=>p.id===selectedId)??presets[0];
     if(next){
       setSelectedId(next.id);
-      setDraft({...next,sources:next.sources.map(source=>({...source,credentialReference:source.credentialReference?{...source.credentialReference}:null}))});
+      setDraft({...next,type:next.type??"pool",sources:next.sources.map(source=>({...source,credentialReference:source.credentialReference?{...source.credentialReference}:null})),...(next.credentialReference!==undefined?{credentialReference:next.credentialReference?{...next.credentialReference}:null}:{})});
       const sourceId=next.activeSourceId??next.sources[0]?.id;
       setSelectedSourceId(sourceId);
       setAddingCredential(false);
@@ -891,7 +891,39 @@ function ProviderPresetsView({
     }
   },[dirty,presets,selectedId]);
 
-  const selectedSource=draft.sources.find(source=>source.id===selectedSourceId)??draft.sources[0];
+  const selectedSource=draft.type==="single"?undefined:draft.sources.find(source=>source.id===selectedSourceId)??draft.sources[0];
+  const singleProviderId=draft.providerId==="gemini"?"gemini":"openai-compatible";
+  const setPresetType=(type:"pool"|"single")=>{
+    if(type===(draft.type??"pool"))return;
+    const now=new Date().toISOString();
+    if(type==="single"){
+      const source=selectedSource??draft.sources[0];
+      const {sources:_sources,activeSourceId:_activeSourceId,...withoutPool}=draft;
+      updateDraft({
+        ...withoutPool,type:"single",sources:[],activeSourceId:null,
+        providerId:source?.providerId??"openai-compatible",
+        baseUrl:source?.baseUrl??"https://api.openai.com/v1",
+        model:source?.model??"",
+        credentialReference:source?.credentialReference?{...source.credentialReference}:draft.credentialReference??null,
+        enabled:source?.enabled??draft.enabled??true,
+        timeoutMs:source?.timeoutMs??draft.timeoutMs??30000,
+        updatedAt:now
+      });
+      setSelectedSourceId(undefined);
+    }else{
+      const providerId=singleProviderId;
+      const source=defaultSource(now,providerId,"Primary");
+      source.baseUrl=draft.baseUrl??(providerId==="gemini"?"https://generativelanguage.googleapis.com/v1beta":"https://api.openai.com/v1");
+      source.model=draft.model??(providerId==="gemini"?"gemini-2.5-flash":"");
+      source.credentialReference=draft.credentialReference?{...draft.credentialReference}:null;
+      source.enabled=draft.enabled??true;
+      source.timeoutMs=draft.timeoutMs??30000;
+      const {providerId:_providerId,baseUrl:_baseUrl,model:_model,credentialReference:_credentialReference,enabled:_enabled,timeoutMs:_timeoutMs,...withoutSingle}=draft;
+      updateDraft({...withoutSingle,type:"pool",sources:[source],activeSourceId:source.id,updatedAt:now});
+      setSelectedSourceId(source.id);
+    }
+    setAddingCredential(false);setModels([]);
+  };
   React.useEffect(()=>{
     setAddingCredential(false);
     setModels([]);
@@ -996,10 +1028,10 @@ function ProviderPresetsView({
   };
 
   const refresh=async()=>{
-    if(!selectedSource)return;
+    if(draft.type!=="single"&&!selectedSource)return;
     setBusy(true);setMessage("");
     try{
-      const result=await onRefreshModels(draft,selectedSource.id);
+      const result=await onRefreshModels(draft,draft.type==="single"?"__single__":selectedSource!.id);
       setModels(result);
       setMessage(result.length>0?"Models refreshed.":"Model discovery unavailable; manual model input is active.");
     }catch(error){setModels([]);setMessage("Model discovery failed: "+safeErrorMessage(error))}
@@ -1007,22 +1039,25 @@ function ProviderPresetsView({
   };
 
   const test=async()=>{
-    if(!selectedSource)return;
+    if(draft.type!=="single"&&!selectedSource)return;
     setBusy(true);setMessage("");
     try{
-      const result=await onTestPreset(draft,selectedSource.id);
+      const result=await onTestPreset(draft,draft.type==="single"?"__single__":selectedSource!.id);
       setMessage(resultLabel(result)+(result.message?" · "+result.message:""));
     }catch(error){setMessage("Provider test failed: "+safeErrorMessage(error))}
     finally{setBusy(false)}
   };
 
   const createCredential=async()=>{
-    if(!selectedSource)return;
+    const providerId=draft.type==="single"?draft.providerId:selectedSource?.providerId;
+    if(!providerId)return;
     setBusy(true);setMessage("");
     try{
       if(!newCredentialLabel.trim()||!newCredentialSecret)throw new Error("Credential label and API key are required.");
-      const profile=await onCreateCredential(newCredentialLabel.trim(),newCredentialSecret,selectedSource.providerId);
-      updateSource(selectedSource.id,{credentialReference:{...profile.credentialReference}});
+      const profile=await onCreateCredential(newCredentialLabel.trim(),newCredentialSecret,providerId);
+      if(draft.type==="single")updateDraft({...draft,credentialReference:{...profile.credentialReference}});
+      else if(selectedSource)updateSource(selectedSource.id,{credentialReference:{...profile.credentialReference}});
+      else throw new Error("Provider source is not selected.");
       setAddingCredential(false);
       setNewCredentialLabel("");setNewCredentialSecret("");
       setMessage("Credential saved. The API key is no longer displayed.");
@@ -1032,9 +1067,9 @@ function ProviderPresetsView({
 
   const deleteCredential=async(id:string)=>{
     const referenceId=credentialProfiles.find(profile=>profile.id===id)?.credentialReference.id;
-    const used=referenceId?presets.filter(p=>p.sources.some(source=>source.credentialReference?.id===referenceId)):[];
-    const usedByDraft=referenceId?draft.sources.some(source=>source.credentialReference?.id===referenceId):false;
-    if(used.length>0||usedByDraft){setMessage("Credential is used by a provider preset. Reassign the source before deletion.");return;}
+    const used=referenceId?presets.filter(p=>p.type==="single"?p.credentialReference?.id===referenceId:p.sources.some(source=>source.credentialReference?.id===referenceId)):[];
+    const usedByDraft=referenceId?(draft.type==="single"?draft.credentialReference?.id===referenceId:draft.sources.some(source=>source.credentialReference?.id===referenceId)):false;
+    if(used.length>0||usedByDraft){setMessage("Credential is used by a provider preset. Reassign the configuration before deletion.");return;}
     setBusy(true);setMessage("");
     try{await onDeleteCredential(id);setMessage("Credential removed.")}
     catch(error){setMessage("Credential could not be removed: "+safeErrorMessage(error))}
@@ -1044,7 +1079,7 @@ function ProviderPresetsView({
   const setStarter=(name:string,providerId:"openai-compatible"|"gemini",baseUrl:string,model="")=>{
     const now=new Date().toISOString();
     const source=defaultSource(now,providerId,name);
-    updateDraft({...draft,name,sources:[{...source,baseUrl,model}],activeSourceId:source.id,createdAt:draft.createdAt});
+    updateDraft({...draft,type:"pool",name,sources:[{...source,baseUrl,model}],activeSourceId:source.id,createdAt:draft.createdAt,providerId:undefined,baseUrl:undefined,model:undefined,credentialReference:undefined,enabled:undefined,timeoutMs:undefined});
     setSelectedSourceId(source.id);setAddingCredential(false);setModels([]);
   };
 
