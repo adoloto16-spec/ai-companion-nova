@@ -53,7 +53,7 @@ async function main(){
 
   const legacyStore=new InMemoryCoreBookStore();
   const {role:_oldRole,...legacyEntry}=({...a,source:"system" as const});
-  await legacyStore.save({apiVersion:"1",schemaVersion:"1",characterId:"character.legacy",entries:[legacyEntry as typeof a] as any});
+  await legacyStore.save({apiVersion:"1",schemaVersion:"1",characterId:"character.legacy",entries:[legacyEntry as unknown as typeof a] as any});
   const legacyManager=new CoreBookManager(legacyStore,{clock,idFactory:()=>`legacy.${++ids}`,characterExists:async id=>id==="character.legacy"});
   const migrated=(await legacyManager.listCoreBookEntries("character.legacy"))[0]!;
   equal(migrated.role,"system","legacy system source migrates to system role");
