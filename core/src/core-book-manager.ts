@@ -28,6 +28,7 @@ export interface CoreBookUpdateInput{
   mutationPolicy?:CoreBookMutationPolicy;
   enabled?:boolean;
   source?:CoreBookEntrySource;
+  role?:CoreBookRole;
   metadata?:Record<string,unknown>;
 }
 
