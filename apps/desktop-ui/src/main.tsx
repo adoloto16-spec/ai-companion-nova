@@ -975,18 +975,24 @@ function ProviderPresetsView({
       let next:ProviderPreset;
       if(draft.type==="single"){
         if(draft.sources.length!==0||draft.activeSourceId!==null)throw new Error("Single presets must not contain pool sources.");
-        if(draft.providerId!=="openai-compatible"&&draft.providerId!=="gemini")throw new Error("Choose a supported provider.");
+        if(draft.providerId!=="openai-compatible"&&draft.providerId!=="gemini"&&draft.providerId!=="ollama")throw new Error("Choose a supported provider.");
         if(!draft.baseUrl?.trim()||!draft.model?.trim())throw new Error("Base URL and model are required for a single preset.");
-        if(!draft.credentialReference)throw new Error("Select or create a saved API credential.");
-        const savedCredential=credentialProfiles.find(profile=>profile.credentialReference.id===draft.credentialReference?.id&&profile.providerId===draft.providerId);
-        if(!savedCredential||!credentialSaved[savedCredential.id])throw new Error("The selected credential is not available in CredentialStore.");
+        if(draft.providerId==="ollama"){
+          if(draft.credentialReference)throw new Error("Ollama does not use an API key.");
+          const ollamaErrors=validateOllamaBaseUrl(draft.baseUrl);
+          if(ollamaErrors.length)throw new Error(ollamaErrors.join(" "));
+        }else{
+          if(!draft.credentialReference)throw new Error("Select or create a saved API credential.");
+          const savedCredential=credentialProfiles.find(profile=>profile.credentialReference.id===draft.credentialReference?.id&&profile.providerId===draft.providerId);
+          if(!savedCredential||!credentialSaved[savedCredential.id])throw new Error("The selected credential is not available in CredentialStore.");
+        }
         const url=new URL(draft.baseUrl);
         if((url.protocol!=="https:"&&url.protocol!=="http:")||url.username||url.password||url.search||url.hash)throw new Error("Base URL must use HTTP(S) and must not contain credentials, query, or fragment.");
-        next={...draft,name:draft.name.trim(),type:"single",sources:[],activeSourceId:null,providerId:draft.providerId,baseUrl:url.toString().replace(/\/$/,""),model:draft.model.trim(),credentialReference:{...draft.credentialReference},enabled:draft.enabled??true,timeoutMs:draft.timeoutMs??30000,updatedAt:new Date().toISOString()};
+        next={...draft,name:draft.name.trim(),type:"single",sources:[],activeSourceId:null,providerId:draft.providerId,baseUrl:url.toString().replace(/\/$/,""),model:draft.model.trim(),credentialReference:draft.credentialReference?{...draft.credentialReference}:null,enabled:draft.enabled??true,timeoutMs:draft.timeoutMs??30000,updatedAt:new Date().toISOString()};
       }else{
         if(draft.sources.length===0)throw new Error("Pool presets must contain at least one source.");
         const sources=draft.sources.map(source=>({...source,credentialReference:source.credentialReference?{...source.credentialReference}:null}));
-        const {providerId:_providerId,baseUrl:_baseUrl,model:_model,credentialReference:_credentialReference,enabled:_enabled,timeoutMs:_timeoutMs,...poolFields}=draft;
+        const {providerId:_providerId,baseUrl:_baseUrl,model:_model,credentialReference:_credentialReference,enabled:_enabled,timeoutMs:_timeoutMs,numCtx:_numCtx,numPredict:_numPredict,keepAlive:_keepAlive,...poolFields}=draft;
         next={...poolFields,name:draft.name.trim(),type:"pool",sources,activeSourceId:draft.activeSourceId&&sources.some(source=>source.id===draft.activeSourceId)?draft.activeSourceId:sources[0]!.id,updatedAt:new Date().toISOString()};
       }
       await onSavePreset(next,activate);
@@ -1173,7 +1179,6 @@ function ProviderPresetsView({
             <option value="openai-compatible">OpenAI-compatible</option>
             <option value="gemini">Gemini</option>
             <option value="ollama">Ollama (local)</option>
-            <option value="ollama">Ollama (local)</option>
           </select>
         </label>
         <label>Base URL<input value={selectedSource.baseUrl} onChange={event=>updateSource(selectedSource.id,{baseUrl:event.target.value})} disabled={busy}/></label>
@@ -1240,6 +1245,7 @@ function ProviderPresetsView({
           }} disabled={busy}>
             <option value="openai-compatible">OpenAI-compatible</option>
             <option value="gemini">Gemini</option>
+            <option value="ollama">Ollama (local)</option>
           </select>
         </label>
         <label>Base URL<input value={draft.baseUrl??""} onChange={event=>updateDraft({...draft,baseUrl:event.target.value})} placeholder="https://api.example.com/v1" disabled={busy}/></label>
