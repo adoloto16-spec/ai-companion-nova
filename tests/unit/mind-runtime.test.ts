@@ -509,6 +509,46 @@ async function scheduledExpressionUsesNewProactiveDefaultsTest(){
     equal(published.map(expression=>expression.content),["First distinct requested message","Second distinct requested message"],"separate scheduled steps can continue a bounded multi-message request without repeats");
   }finally{await runtime.stop();}
 }
+async function reactiveRequiredExpressionFailureTest(){
+  let now=3_000_000;
+  let publishCount=0;
+  let failure:{turn:import("../../contracts/src").MindReactiveTurn;reason:string}|undefined;
+  const runtime=new MindRuntime({
+    cognitiveStep:{run:async({characterId})=>({
+      thought:makeThought(characterId,"required-expression-failure","A private Thought that must not be committed without the required answer."),
+      expression:{kind:"internal" as const},
+      conversationId:"conversation.required"
+    })},
+    schedule:{mode:"fixed",defaultIntervalMs:10_000,minIntervalMs:10_000,maxIntervalMs:10_000,maxRequestsPerHour:20},
+    expressionPublisher:{
+      publish:async expression=>{
+        publishCount++;
+        return {status:"published" as const,messageId:"message:"+expression.expressionId,conversationId:expression.conversationId};
+      },
+      failReactiveTurn:(turn,reason)=>{failure={turn,reason};}
+    },
+    isExpressionContextCurrent:()=>true,
+    now:()=>now,clock:()=>new Date(now).toISOString()
+  });
+  runtime.setActiveCharacter("character.required");
+  try{
+    await runtime.start();
+    await waitFor(()=>(runtime.getState().recentTrace?.length??0)>=1&&runtime.getState().lifecycleState==="waiting");
+    const thoughtCount=runtime.getState().recentThoughts.length;
+    equal(runtime.wakeForUserMessage({
+      characterId:"character.required",conversationId:"conversation.required",userMessageId:"persisted-user-required",turnId:"turn-required"
+    }),true,"correlated reactive turn is accepted before cognition");
+    await waitFor(()=>Boolean(runtime.getState().recentTrace?.some(entry=>entry.wakeReason==="user-message"&&entry.expressionRequired===true&&entry.result==="error")));
+    const failedTrace=[...(runtime.getState().recentTrace??[])].reverse().find(entry=>entry.wakeReason==="user-message");
+    equal(failedTrace?.expressionRequired,true,"missing required public output remains visible in the trace");
+    equal(failedTrace?.expressionUserMessageId,"persisted-user-required","failed expression trace identifies the unanswered user turn");
+    equal(failedTrace?.expressionStatus,"failed","missing required expression is traced as failed, not internally completed");
+    equal(publishCount,0,"private Thought is never published as a fallback Chat response");
+    equal(runtime.getState().recentThoughts.length,thoughtCount,"Thought from a malformed required response is not committed");
+    equal(failure?.turn.turnId,"turn-required","failed reactive turn is surfaced to the controller for explicit retry");
+  }finally{await runtime.stop();}
+}
+
 async function cancellationDuringExpressionPublicationTest(){
   let publishCount=0;
   let notifyPublisherStarted:()=>void=()=>undefined;
@@ -671,6 +711,7 @@ async function main(){
   await proactiveExpressionPolicyTest();
   await scheduledExpressionUsesNewProactiveDefaultsTest();
   await reactiveTurnBypassesProactiveAndRequestLimitsTest();
+  await reactiveRequiredExpressionFailureTest();
   await cancellationDuringExpressionPublicationTest();
   await wakeEventsCoalesceTest();
   await characterSwitchCancelsOldContextTest();
