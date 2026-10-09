@@ -135,12 +135,15 @@ function ConversationSwitcher({conversations,activeConversationId,sending,onSele
   </div>;
 }
 
-function ChatView({controller,runtime,character,conversations,activeConversation,onPersist,onClear,onSelectConversation,onCreateConversation,onRenameConversation,onDeleteConversation}:{
+function ChatView({controller,runtime,character,conversations,activeConversation,input,onDraftChange,onClearSubmittedDraft,onPersist,onClear,onSelectConversation,onCreateConversation,onRenameConversation,onDeleteConversation}:{
   controller:ChatSessionController;
   runtime:FoundationRuntime;
   character:Character;
   conversations:readonly Conversation[];
   activeConversation:Conversation;
+  input:string;
+  onDraftChange:(value:string)=>void;
+  onClearSubmittedDraft:(submitted:string)=>void;
   onPersist:()=>Promise<void>;
   onClear:()=>Promise<void>;
   onSelectConversation:(id:string)=>Promise<void>;
@@ -149,7 +152,6 @@ function ChatView({controller,runtime,character,conversations,activeConversation
   onDeleteConversation:(conversation:Conversation)=>Promise<void>;
 }){
   const [snapshot,setSnapshot]=React.useState(()=>controller.getSnapshot());
-  const [input,setInput]=React.useState("");
   const [editingId,setEditingId]=React.useState<string|undefined>();
   const [editingText,setEditingText]=React.useState("");
   const [showTechnicalData,setShowTechnicalData]=React.useState(false);
@@ -173,11 +175,12 @@ function ChatView({controller,runtime,character,conversations,activeConversation
   },[onPersist]);
 
   const send=React.useCallback(async()=>{
+    const submittedDraft=input;
     setPersistenceError("");
     if(runtime.getMindState().lifecycleState!=="off"){
       try{
-        const result=await controller.submitToLife(input,async()=>{await onPersist();},turn=>runtime.wakeMindForUserMessage(turn));
-        if(result.status==="awaiting-life"||result.status==="life-failed")setInput("");
+        const result=await controller.submitToLife(submittedDraft,async()=>{await onPersist();},turn=>runtime.wakeMindForUserMessage(turn));
+        if(result.status==="awaiting-life")onClearSubmittedDraft(submittedDraft);
         if(result.status==="life-failed")setPersistenceError(result.message);
       }catch(error){
         setPersistenceError(error instanceof Error?error.message:"User message could not be saved for Nova Life.");
@@ -185,10 +188,10 @@ function ChatView({controller,runtime,character,conversations,activeConversation
       return;
     }
     controller.clearFailedLifeTurnForOrdinaryChat();
-    const result=await controller.submit(input,runtime.getActiveChatModel());
-    if(result.status!=="rejected")setInput("");
+    const result=await controller.submit(submittedDraft,runtime.getActiveChatModel());
+    if(result.status==="sent")onClearSubmittedDraft(submittedDraft);
     await persistAfterAction(result);
-  },[controller,input,runtime,onPersist,persistAfterAction]);
+  },[controller,input,runtime,onPersist,onClearSubmittedDraft,persistAfterAction]);
 
   const stop=React.useCallback(async()=>{
     setPersistenceError("");
@@ -370,7 +373,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     {snapshot.lifeTurn?.status==="awaiting"&&<p className="chat-hint" role="status">Nova is thinking…</p>}
     {snapshot.lifeTurn?.status==="failed"&&<p className="chat-error" role="alert">Nova Life failed to produce a valid reply. The turn remains failed and can be retried with Retry Nova Life.</p>}
     <form className="chat-composer" onSubmit={event=>{event.preventDefault();if(!chatBusy)void send()}}>
-      <textarea value={input} onChange={event=>setInput(event.target.value)} onKeyDown={onKeyDown} placeholder="Write a message…" aria-label="Chat message" disabled={chatBusy} rows={2}/>
+      <textarea value={input} onChange={event=>onDraftChange(event.target.value)} onKeyDown={onKeyDown} placeholder="Write a message…" aria-label="Chat message" disabled={chatBusy} rows={2}/>
       <button type="submit" disabled={chatBusy||input.trim().length===0}>{snapshot.sending?"Streaming…":lifeTurnBusy?"Nova is thinking…":"Send"}</button>
     </form>
     <p className="chat-hint">Enter to send · Shift+Enter for a new line</p>
@@ -1946,6 +1949,7 @@ function App(){
   const [chatController,setChatController]=React.useState<ChatSessionController|null>(null);
   const [conversations,setConversations]=React.useState<readonly Conversation[]>([]);
   const [activeConversation,setActiveConversation]=React.useState<Conversation|undefined>();
+  const [chatDrafts,setChatDrafts]=React.useState<Record<string,string>>({});
   const [mindState,setMindState]=React.useState<MindState>({lifecycleState:"off",nextWakeAt:null,recentTrace:[]});
   const mindUnsubscribeRef=React.useRef<(()=>void)|undefined>(undefined);
   const [lifeBusy,setLifeBusy]=React.useState(false);
@@ -2582,6 +2586,10 @@ function App(){
     finally{setSaving(false);}
   },[]);
 
+  const activeChatDraftKey=activeCharacter&&activeConversation
+    ?JSON.stringify([activeCharacter.id,activeConversation.id])
+    :undefined;
+
   return <main className="app-shell">
     <header className="app-header">
       <div><h1>Nova</h1><p>AI Companion</p></div>
@@ -2636,8 +2644,11 @@ function App(){
           <div>{startupError}</div>
         </section>
       :view==="chat"&&activeCharacter&&chatController&&activeConversation
-      ?<ChatView controller={chatController} runtime={foundationRef.current!} character={activeCharacter}
+      ?<ChatView key={activeChatDraftKey} controller={chatController} runtime={foundationRef.current!} character={activeCharacter}
           conversations={conversations} activeConversation={activeConversation}
+          input={activeChatDraftKey?chatDrafts[activeChatDraftKey]??"":""}
+          onDraftChange={value=>{if(activeChatDraftKey)setChatDrafts(current=>({...current,[activeChatDraftKey]:value}));}}
+          onClearSubmittedDraft={submitted=>{if(activeChatDraftKey)setChatDrafts(current=>current[activeChatDraftKey]===submitted?({...current,[activeChatDraftKey]:""}):current);}}
           onPersist={()=>persistConversation(chatController!)}
           onClear={()=>clearConversation(chatController!)}
           onSelectConversation={selectConversation}
