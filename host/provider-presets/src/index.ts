@@ -10,7 +10,11 @@ function cloneSource(source:ProviderPresetSource):ProviderPresetSource{
   };
 }
 function clonePreset(preset:ProviderPreset):ProviderPreset{
-  return {...preset,sources:preset.sources.map(cloneSource)};
+  return {
+    ...preset,
+    sources:preset.sources.map(cloneSource),
+    ...(preset.credentialReference!==undefined?{credentialReference:preset.credentialReference?{...preset.credentialReference}:null}:{})
+  };
 }
 
 export function cloneProviderPresetForSaveAsNew(preset:ProviderPreset,id:string,now=new Date().toISOString()):ProviderPreset{
@@ -22,28 +26,46 @@ export function validateProviderPresetCredentialReferences(
   preset:ProviderPreset,
   profiles:readonly CredentialProfile[]
 ):void{
-  for(const source of preset.sources){
+  const configurations=preset.type==="single"
+    ?[{name:preset.name,providerId:preset.providerId??"",credentialReference:preset.credentialReference??null}]
+    :preset.sources.map(source=>({name:source.name,providerId:source.providerId,credentialReference:source.credentialReference}));
+  for(const source of configurations){
     const reference=source.credentialReference;
     if(!reference)continue;
     const profile=profiles.find(candidate=>candidate.credentialReference.id===reference.id);
     if(!profile){
-      throw new Error(`Credential reference "${reference.id}" for source "${source.name}" is unavailable. Re-select or recreate the credential before saving.`);
+      throw new Error(`Credential reference "${reference.id}" for "${source.name}" is unavailable. Re-select or recreate the credential before saving.`);
     }
     if(profile.providerId!==source.providerId||profile.credentialReference.provider!==reference.provider){
       throw new Error(`Credential reference "${reference.id}" does not belong to provider "${source.providerId}". Re-select the credential before saving.`);
     }
   }
 }
+
 function cloneState(state:ProviderPresetStoreState):ProviderPresetStoreState{
   return {...state,presets:state.presets.map(clonePreset)};
 }
 
 export function emptyProviderPresetState():ProviderPresetStoreState{
-  return {apiVersion:"1",schemaVersion:"2",presets:[],activePresetId:null};
+  return {apiVersion:"1",schemaVersion:"3",presets:[],activePresetId:null};
 }
 
 export function credentialReferenceForProfile(profile:CredentialProfile|undefined):CredentialReference|null{
   return profile?{...profile.credentialReference}:null;
+}
+
+export function materializeSingleProviderConfiguration(preset:ProviderPreset):ProviderConfiguration|undefined{
+  if(preset.type!=="single"||!preset.providerId||!preset.baseUrl||!preset.model||preset.enabled===undefined)return undefined;
+  return {
+    apiVersion:"1",
+    schemaVersion:"1",
+    providerId:preset.providerId,
+    enabled:preset.enabled,
+    baseUrl:preset.baseUrl,
+    model:preset.model,
+    credentialReference:preset.credentialReference?{...preset.credentialReference}:null,
+    ...(preset.timeoutMs===undefined?{}:{timeoutMs:preset.timeoutMs})
+  };
 }
 
 export function materializeProviderConfiguration(source:ProviderPresetSource):ProviderConfiguration{
@@ -107,6 +129,7 @@ export function migrateProviderConfiguration(
     preset:{
       id:presetId,
       name:"Migrated Provider",
+      type:"pool",
       sources:[source],
       activeSourceId:source.id,
       createdAt:now,
