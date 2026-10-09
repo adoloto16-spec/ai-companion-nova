@@ -305,8 +305,8 @@ async function main(){
   equal(failedRetry.status,"error","provider failure enters error state");
   equal(retrySession.getMessages().filter(message=>message.role==="user").length,1,"failed request keeps one user message");
   equal(retrySession.getMessages().filter(message=>message.role==="assistant").length,0,"provider error without partial keeps no assistant history");
-  const retried=await retryController.retry("fake-streaming-chat");
-  equal(retried.status,"sent","Retry succeeds");
+  const retriedChat=await retryController.retry("fake-streaming-chat");
+  equal(retriedChat.status,"sent","Retry succeeds");
   equal(retrySession.getMessages().filter(message=>message.role==="user").length,1,"Retry does not duplicate user message");
   equal(retrySession.getMessages().filter(message=>message.role==="assistant").length,1,"Retry creates one assistant response");
 
@@ -458,7 +458,7 @@ async function main(){
   equal(memoryRequests[0]?.assistantMessage.content,"A separate public reply","Automatic Memory receives only the public speech projection");
   equal(memoryRequests[0]?.model,"cognitive-model","memory receives actual cognitive model provenance");
   ok(!JSON.stringify(memoryRequests[0]).includes("private thoughts live only"),"Automatic Memory never receives private NovaTurn thoughts");
-  ok(!JSON.stringify(memoryRequests[0]).includes("Earlier public statement")||JSON.stringify(memoryRequests[0]).includes("Earlier public statement"),"memory input remains serializable");
+  ok(Boolean(priorProjected),"prior NovaTurn is present in the bounded memory context projection");
   const priorProjected=memoryRequests[0]?.contextMessages.find(message=>message.id==="nova-turn:background-turn");
   equal(priorProjected?.content,"Earlier public statement","prior NovaTurn context is projected to speech before Automatic Memory");
   ok(!JSON.stringify(priorProjected).includes("private internal detail"),"prior private thoughts are filtered from Automatic Memory");

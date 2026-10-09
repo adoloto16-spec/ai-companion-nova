@@ -1,5 +1,5 @@
 import {LLMCognitiveStep,MindRuntime,type CognitiveStep,type CognitiveStepContext} from "../../core/src";
-import type {AssembledContext,Character,ChatMessage,ChatRequest,ChatResponse,Conversation,MindReactiveTurn,MindTraceEntry,MindTurnExecutionContext,MindTurnSink,MindToolExecutor,NovaToolResult,NovaTurn} from "../../contracts/src";
+import type {AssembledContext,Character,ChatMessage,ChatRequest,ChatResponse,Conversation,MindReactiveTurn,MindTraceEntry,MindTurnExecutionContext,MindTurnSink,MindToolExecutor,NovaTurn} from "../../contracts/src";
 import {serializeNovaTurn} from "../../contracts/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error(label+" expected "+JSON.stringify(expected)+" got "+JSON.stringify(actual));}
