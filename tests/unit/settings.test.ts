@@ -120,13 +120,15 @@ async function main(){
   const migratedV6=migrateAppSettings(v6);
   equal(migratedV6.memoryAgent.providerPresetId,"preset.legacy","schema v6 to v7 migration preserves Memory Agent binding");
   equal(migratedV6.memoryAgent.prompt,"old prompt","schema v6 to v7 migration preserves Memory Agent prompt");
-  const currentSettings={...defaultAppSettings(),memoryAgent:{...defaultAppSettings().memoryAgent,enabled:false,providerPresetId:"preset.memory",model:"ministral-3b-2512",outputMode:"plain" as const,prompt:"custom prompt",promptBackup:"previous prompt",defaultPromptVersion:"7"}};
+  const currentSettings={...defaultAppSettings(),chat:{...defaultAppSettings().chat,automaticLongTermMemory:false,responseMode:"plain" as const},memoryAgent:{...defaultAppSettings().memoryAgent,enabled:false,providerPresetId:"preset.memory",model:"ministral-3b-2512",outputMode:"plain" as const,prompt:"custom prompt",promptBackup:"previous prompt",defaultPromptVersion:"7"}};
   await manager.set(currentSettings);
   const reloadedManager=new SettingsManager(store,validator);
   const reloaded=await reloadedManager.initialize();
   equal(reloaded.memoryAgent.providerPresetId,"preset.memory","SettingsManager reload preserves provider preset");
   equal(reloaded.memoryAgent.model,"ministral-3b-2512","SettingsManager reload preserves model");
   equal(reloaded.cognitiveSchedule.mode,"adaptive","SettingsManager reload preserves default schedule");
+  equal(reloaded.chat.responseMode,"plain","SettingsManager reload preserves Chat response mode");
+  equal(reloaded.chat.automaticLongTermMemory,false,"SettingsManager reload preserves automatic long-term memory");
   const reset=await manager.reset();
   equal(reset,defaultAppSettings(),"reset restores defaults");
   let rejected=false;
