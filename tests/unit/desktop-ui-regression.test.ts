@@ -120,12 +120,12 @@ assert.equal(foundationSource.includes("clearCurrentThoughts"),false,"Thought-on
 assert.equal(foundationSource.includes("clearAllThoughts"),false,"Thought-only clear-all API is removed");
 assert.equal(source.includes("publishExpression"),false,"old expression publisher is removed from UI");
 assert.equal(foundationSource.includes("setMindExpressionPublisher"),false,"old expression publisher is removed from runtime API");
-assert.ok(source.includes("Show technical data"),"Chat exposes a technical data switch");
+assert.equal(source.includes("Show technical data"),false,"Chat does not expose a switch for private NovaTurn fields");
 assert.ok(source.includes("parsedTurn.speech"),"NovaTurn messages render only public speech");
-assert.ok(source.includes("parseResult?.fields.thoughts")&&source.includes("isNovaTurn&&showTechnicalData"),"private thoughts are only rendered in technical mode");
-assert.ok(source.includes("shouldRenderNovaTurn(parseResult,showTechnicalData)"),"a persisted NovaTurn is hidden only when technical mode is off and no safe speech exists");
-assert.ok(source.includes("Unrecognized / raw output (bounded)")&&source.includes("slice(0,4000)"),"technical mode shows bounded raw output for malformed turns");
-for(const heading of ["Situation","Thoughts (private)","Emotion","Tool calls","Tool results","Speech","Next wake","Protocol diagnostics"]){assert.ok(source.includes("<strong>"+heading+"</strong>"),"technical mode always supplies the "+heading+" section");}
+assert.equal(source.includes("parseResult?.fields.thoughts"),false,"private thoughts are never rendered in Chat");
+assert.ok(source.includes("shouldRenderNovaTurn(parseResult,false)"),"the chat rendering path never asks the UI to reveal private NovaTurn fields");
+assert.equal(source.includes("Unrecognized / raw output (bounded)"),false,"raw provider output is never exposed to users");
+for(const heading of ["Thoughts (private)","Tool results","Protocol diagnostics"]){assert.equal(source.includes("<strong>"+heading+"</strong>"),false,"Chat does not expose the "+heading+" field");}
 assert.ok(source.includes("countVisibleSpeechMessages(conversation.messages)")&&source.includes("stored messages"),"conversation counter distinguishes stored records from visible speech messages");
 assert.ok(app.includes('const [chatDrafts,setChatDrafts]=React.useState<Record<string,string>>({});'),"App owns in-memory Chat drafts");
 assert.ok(app.includes('chatDraftKey(activeCharacter.id,activeConversation.id)'),"draft keys include both character and conversation identity");
