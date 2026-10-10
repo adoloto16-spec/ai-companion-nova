@@ -3,7 +3,7 @@ import {
   applyPromptOverride,defaultAppSettings,migrateAppSettings,resolvePromptText,restoreAllPromptDefaults,
   restorePromptDefault,validateAppSettings
 } from "../../contracts/src";
-import type {AppSettings,PromptId} from "../../contracts/src";
+import type {AppSettings} from "../../contracts/src";
 import {SettingsManager} from "../../core/src";
 import {InMemorySettingsStore} from "../../host/settings/src";
 
