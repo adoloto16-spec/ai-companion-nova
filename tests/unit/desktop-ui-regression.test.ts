@@ -120,12 +120,16 @@ assert.equal(foundationSource.includes("clearCurrentThoughts"),false,"Thought-on
 assert.equal(foundationSource.includes("clearAllThoughts"),false,"Thought-only clear-all API is removed");
 assert.equal(source.includes("publishExpression"),false,"old expression publisher is removed from UI");
 assert.equal(foundationSource.includes("setMindExpressionPublisher"),false,"old expression publisher is removed from runtime API");
-assert.equal(source.includes("Show technical data"),false,"Chat does not expose a switch for private NovaTurn fields");
-assert.ok(source.includes("parsedTurn.speech"),"NovaTurn messages render only public speech");
-assert.equal(source.includes("parseResult?.fields.thoughts"),false,"private thoughts are never rendered in Chat");
-assert.ok(source.includes("shouldRenderNovaTurn(parseResult,false)"),"the chat rendering path never asks the UI to reveal private NovaTurn fields");
-assert.equal(source.includes("Unrecognized / raw output (bounded)"),false,"raw provider output is never exposed to users");
-for(const heading of ["Thoughts (private)","Tool results","Protocol diagnostics"]){assert.equal(source.includes("<strong>"+heading+"</strong>"),false,"Chat does not expose the "+heading+" field");}
+assert.ok(source.includes("Show technical data"),"Chat restores the technical-data switch");
+assert.ok(source.includes("checked={showTechnicalData}")&&source.includes("setShowTechnicalData(event.target.checked)"),"the technical-data switch is stateful and controls the rendered panel");
+assert.ok(source.includes("resolveNovaTurnMessagePresentation(message,showTechnicalData)"),"Chat uses the shared parser/visibility resolver for persisted message content");
+assert.ok(source.includes("presentation.text"),"the normal chat bubble renders only the resolved user-facing speech");
+assert.ok(source.includes('{isNovaTurn&&showTechnicalData&&<section className="nova-turn-technical"'),"technical data is displayed only behind the explicit switch");
+for(const heading of ["Situation","Thoughts (private)","Emotion","Tool calls","Tool results","Speech","Long-term memory","Next wake","Protocol diagnostics","Unrecognized / raw output (bounded)"]){
+  assert.ok(source.includes("<strong>"+heading+"</strong>"),"NovaTurn technical panel exposes "+heading);
+}
+assert.ok(source.includes("message.content.length>4000")&&source.includes("slice(0,4000)")&&source.includes("[truncated at 4000 characters]"),"raw technical content is capped at 4000 characters with a truncation marker");
+assert.ok(source.includes('message.role==="assistant"&&!isNovaTurn'),"recognized NovaTurn internals cannot be edited as ordinary raw messages");
 assert.ok(source.includes("countVisibleSpeechMessages(conversation.messages)")&&source.includes("stored messages"),"conversation counter distinguishes stored records from visible speech messages");
 assert.ok(app.includes('const [chatDrafts,setChatDrafts]=React.useState<Record<string,string>>({});'),"App owns in-memory Chat drafts");
 assert.ok(app.includes('chatDraftKey(activeCharacter.id,activeConversation.id)'),"draft keys include both character and conversation identity");
