@@ -156,8 +156,8 @@ export function validateOllamaProviderConfig(config: OllamaProviderConfig, optio
   if (config.numCtx !== undefined && (!Number.isInteger(config.numCtx) || config.numCtx < 1)) errors.push("Ollama num_ctx must be a positive integer.");
   if (config.numPredict !== undefined && (!Number.isInteger(config.numPredict) || config.numPredict < 1)) errors.push("Ollama num_predict must be a positive integer.");
   if (config.keepAlive !== undefined && !(typeof config.keepAlive === "string" && config.keepAlive.trim().length > 0) &&
-    !(typeof config.keepAlive === "number" && Number.isFinite(config.keepAlive) && config.keepAlive >= 0)) {
-    errors.push("Ollama keep_alive must be a non-empty duration or a non-negative number.");
+    !(typeof config.keepAlive === "number" && Number.isFinite(config.keepAlive) && (config.keepAlive >= 0 || config.keepAlive === -1))) {
+    errors.push("Ollama keep_alive must be a non-empty duration, -1, or a non-negative number.");
   }
   return errors;
 }
