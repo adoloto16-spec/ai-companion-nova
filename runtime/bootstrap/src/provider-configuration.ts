@@ -93,6 +93,8 @@ export function validateProviderConfiguration(configuration:ProviderConfiguratio
       model:configuration.model,
       credential:configuration.credentialReference,
       timeoutMs:configuration.timeoutMs,
+      temperature:configuration.temperature,
+      topP:configuration.topP,
       numCtx:configuration.numCtx,
       numPredict:configuration.numPredict,
       keepAlive:configuration.keepAlive
