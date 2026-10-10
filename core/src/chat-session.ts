@@ -254,6 +254,15 @@ export class ChatSessionController{
 
   updateNovaTurnStream(event:import("../../contracts/src/index").MindTurnSpeechEvent):void{
     if(event.characterId!==this.session.characterId||event.conversationId!==this.session.conversationId)return;
+    // Terminal cleanup must work after the life-turn state has already become failed/cancelled,
+    // while the matching turn ID prevents cleanup from an old request clearing a newer stream.
+    if(event.type==="clear"){
+      if(this.novaStreamingSpeech&&this.novaStreamingSpeech.turnId===event.turnId&&
+        this.novaStreamingSpeech.characterId===event.characterId&&this.novaStreamingSpeech.conversationId===event.conversationId){
+        this.novaStreamingSpeech=undefined;this.notify();
+      }
+      return;
+    }
     if(event.userMessageId){
       if(!this.lifeTurn||this.lifeTurn.status!=="awaiting"||this.lifeTurn.turnId!==event.turnId||
         this.lifeTurn.userMessageId!==event.userMessageId||this.lifeTurn.characterId!==event.characterId||
@@ -275,7 +284,6 @@ export class ChatSessionController{
     if(event.type==="reset"){
       this.novaStreamingSpeech={...this.novaStreamingSpeech,text:""};this.notify();return;
     }
-    if(event.type==="clear"){this.novaStreamingSpeech=undefined;this.notify();}
   }
 
   clearNovaTurnStream():void{
