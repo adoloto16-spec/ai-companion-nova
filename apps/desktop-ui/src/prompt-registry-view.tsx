@@ -46,7 +46,7 @@ export function PromptRegistryView({settings,saving,message,onSavePrompt,onResto
         {PROMPT_REGISTRY.filter(prompt=>prompt.category===category).map(prompt=>{
           const draft=drafts[prompt.id]??current(prompt.id);
           const customized=draft!==current(prompt.id);
-          const overridden=Object.prototype.hasOwnProperty.call(settings.prompts.overrides,prompt.id);
+          const overridden=typeof settings.prompts.overrides[prompt.id]==="string"&&settings.prompts.overrides[prompt.id]!.trim().length>0;
           return <article className="prompt-card" key={prompt.id}>
             <div className="prompt-card-heading">
               <div><h4>{prompt.title}</h4><p>{prompt.purpose}</p></div>
