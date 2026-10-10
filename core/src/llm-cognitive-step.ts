@@ -79,13 +79,13 @@ export class LLMCognitiveStep implements CognitiveStep {
       "Default next wake interval: "+schedule.defaultIntervalMs+" ms",
       "Allowed next wake interval: "+schedule.minIntervalMs+" to "+schedule.maxIntervalMs+" ms",
       outputMode==="structured"
-        ?"Return NEXT_WAKE_MS as a positive integer in these bounds. Runtime enforces the bounds."
-        :"The runtime uses the configured default interval, clamped to these bounds. Do not output scheduling metadata.",
+        ?promptText("nova-schedule-structured")
+        :promptText("nova-schedule-plain"),
       "[/COGNITIVE SCHEDULE]",
     ].join("\n"):"";
     const toolDefinitions=outputMode==="structured"?(this.options.getAvailableTools?.()??[]):[];
     const toolContext=outputMode==="structured"
-      ?["[REGISTERED TOOLS]",JSON.stringify(toolDefinitions),"Only these registered tools may be requested.","[/REGISTERED TOOLS]"].join("\n")
+      ?["[REGISTERED TOOLS]",JSON.stringify(toolDefinitions),promptText("nova-tools-allowlist"),"[/REGISTERED TOOLS]"].join("\n")
       :"";
     const identity=["[IDENTITY / CHARACTER]","Name: "+character.name,"Description: "+character.description,"[/IDENTITY / CHARACTER]"].join("\n");
     const messages=assembled.messages.map(message=>cloneMessage(message));
