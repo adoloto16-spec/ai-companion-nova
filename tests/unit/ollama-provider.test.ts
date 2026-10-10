@@ -40,15 +40,6 @@ async function rejects(
   }
   throw new Error(label + " did not reject");
 }
-async function delay(ms: number): Promise<void> {
-  await new Promise(resolve => setTimeout(resolve, ms));
-}
-
-const credentialReference: CredentialReference = {
-  id: "ollama-test-credential",
-  kind: "api-key",
-  provider: "ollama"
-};
 
 class EmptyCredentialStore implements CredentialStore {
   async getSecret(_reference: CredentialReference): Promise<string | undefined> { return undefined; }
