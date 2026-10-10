@@ -8,6 +8,7 @@ export const CHAT_API_VERSION:ApiVersion="1";
 export const CHAT_SCHEMA_VERSION="1";
 export * from "./chat-stream";
 export * from "./settings";
+export * from "./prompts";
 
 export type ModuleType="service"|"adapter"|"worker"|"ui";
 export type ModuleRuntime="typescript"|"rust";
