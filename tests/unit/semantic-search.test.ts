@@ -11,7 +11,10 @@ class TestEmbeddings implements EmbeddingProvider{
  capabilities():ProviderCapabilities{return {embeddings:true}} dimensions(){return this.version===1?3:4}
  async embed(texts:string[]):Promise<number[][]>{
   this.calls.push([...texts]);if(this.fail)throw new Error("intentional provider failure");
+  if(texts.length>4)throw new Error("simulated batch size limit");
+
   return texts.map(text=>{const v=text.toLocaleLowerCase("ru-RU");
+   if(/квантов|затмен/.test(v))return this.version===1?[1,1,1]:[1,1,1,1];
    if(/сосед/.test(v))return this.version===1?[.8,.6,0]:[.8,.6,0,0];
    if(/крыша|ремонт/.test(v))return this.version===1?[0,1,0]:[0,1,0,0];
    if(/риг|прожива|город|lease|rental|home|квартир|жиль|дом|адрес|съём|аренд/.test(v))return this.version===1?[1,0,0]:[1,0,0,0];
@@ -30,8 +33,10 @@ function conv(id:string,c:CharacterId,messages:Conversation["messages"]):Convers
 function makeSettings():AppSettings{const s=defaultAppSettings();s.retrieval.semanticSearchEnabled=true;s.retrieval.semanticSimilarityThreshold=.7;s.retrieval.semanticResultLimit=10;return s}
 async function main(){
  const a="character.a",b="character.b";
- const fullTurn='<NOVA_TURN version="1"><SITUATION>Continuation.</SITUATION><THOUGHTS>The saved note says the user has a long-term rental in Riga.</THOUGHTS><EMOTION>Calm</EMOTION><TOOLS></TOOLS><TOOL_RESULTS></TOOL_RESULTS><SPEECH>Everything is fine.</SPEECH><LONGMEMORY>Apartment lease in Riga.</LONGMEMORY><NEXT_WAKE_MS>30000</NEXT_WAKE_MS></NOVA_TURN>';
+ const longThoughts="The saved note says the user has a long-term rental in Riga. ".repeat(70);
+ const fullTurn='<NOVA_TURN version="1"><SITUATION>Continuation.</SITUATION><THOUGHTS>'+longThoughts+'</THOUGHTS><EMOTION>Calm</EMOTION><TOOLS></TOOLS><TOOL_RESULTS></TOOL_RESULTS><SPEECH>Everything is fine.</SPEECH><LONGMEMORY>Apartment lease in Riga.</LONGMEMORY><NEXT_WAKE_MS>30000</NEXT_WAKE_MS></NOVA_TURN>';
  const books=[book("home",a,"Home","Пользователь постоянно проживает в Риге."),book("roof",a,"Repair","Ремонт крыши в соседнем доме."),book("partial",a,"Neighbour","Новый дом по соседству."),book("other",b,"Other","The user rents a house in Riga.")];
+ for(let i=0;i<18;i++)books.push(book("batch-"+i,a,"Batch document","Notes about astronomy and public events "+i));
  const memories=[memory("memory-home",a,"Пользователь возвращается домой в Ригу по выходным."),memory("archived",a,"Пользователь снимал жильё в Риге.","archived"),memory("memory-other",b,"Пользователь живёт в Риге.")];
  const conversations=[conv("old-chat",a,[{id:"old-user",role:"user",content:"Я ищу жильё на длительный срок."},{id:"old-nova",role:"assistant",content:fullTurn}]),conv("other-chat",b,[{id:"other-user",role:"user",content:"I rent in Riga."}])];
  const index=new InMemoryMemorySemanticIndexStore();
@@ -46,6 +51,7 @@ async function main(){
  const service=makeService();service.start();await service.rebuildAll();
  equal(service.getStatus().status,"ready","initial index status");equal(service.getStatus().processed,9,"every current source document is processed");
  ok((await index.load(a))?.records.some(r=>r.memoryId==="memory-home"),"semantic indexing preserves the existing memory-dedup vector");
+ ok(provider.calls.some(call=>call.length>4),"oversized embedding batches were split and recovered");
  const calls=provider.calls.length;await service.rebuildAll();equal(provider.calls.length,calls,"unchanged documents are not embedded again");
  const hits=await service.search({characterId:a,query:"Где найти квартиру для себя?",limit:10,threshold:.7});
  ok(hits.some(h=>h.source==="core_book"&&h.sourceId==="home"),"Russian semantic search retrieves Core Book without exact phrases");
@@ -61,6 +67,7 @@ async function main(){
  const strict=await service.search({characterId:a,query:"Где найти квартиру для себя?",limit:10,threshold:.99});
  equal(strict.some(h=>h.sourceId==="partial"),false,"cosine threshold excludes a weaker vector match");
  equal(await service.search({characterId:a,query:"   "}),[],"empty query returns empty results");
+ equal(await service.search({characterId:a,query:"Расскажи о квантовой механике",limit:10,threshold:.99}),[],"unrelated Russian semantic query has no above-threshold matches");
  memories[memories.findIndex(m=>m.id==="memory-home")!]=memory("memory-home",a,"Пользователь обсуждает протекающую крышу.");
  await events.publish({id:"update",type:"MemoryUpdated",timestamp:stamp,source:"test",schemaVersion:"1",payload:{characterId:a,memoryId:"memory-home",status:"active",updatedAt:stamp}});
  await service.rebuildAll();
