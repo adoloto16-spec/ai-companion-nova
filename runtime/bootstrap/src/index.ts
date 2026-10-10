@@ -293,6 +293,11 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
           model:source.model,
           credentialReference:source.credentialReference?{...source.credentialReference}:null,
           ...(source.timeoutMs===undefined?{}:{timeoutMs:source.timeoutMs})
+          ...(source.temperature===undefined?{}:{temperature:source.temperature}),
+          ...(source.topP===undefined?{}:{topP:source.topP}),
+          ...(source.numCtx===undefined?{}:{numCtx:source.numCtx}),
+          ...(source.numPredict===undefined?{}:{numPredict:source.numPredict}),
+          ...(source.keepAlive===undefined?{}:{keepAlive:source.keepAlive})
         });
       }
       await options.onProviderPresetPoolStateChange?.(updated);
@@ -750,6 +755,11 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
             apiVersion:"1",schemaVersion:"1",providerId:preset.providerId,baseUrl:preset.baseUrl,model:preset.model,
             enabled:preset.enabled,credentialReference:preset.credentialReference?{...preset.credentialReference}:null,
             ...(preset.timeoutMs==null?{}:{timeoutMs:preset.timeoutMs})
+            ...(preset.temperature==null?{}:{temperature:preset.temperature}),
+            ...(preset.topP==null?{}:{topP:preset.topP}),
+            ...(preset.numCtx==null?{}:{numCtx:preset.numCtx}),
+            ...(preset.numPredict==null?{}:{numPredict:preset.numPredict}),
+            ...(preset.keepAlive==null?{}:{keepAlive:preset.keepAlive})
           });
         }else if(preset.type!=="single"){
           const source=preset.sources.find(item=>item.id===preset.activeSourceId)??preset.sources[0];
@@ -758,6 +768,11 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
             enabled:source.enabled&&source.model.trim().length>0,
             credentialReference:source.credentialReference?{...source.credentialReference}:null,
             ...(source.timeoutMs===undefined?{}:{timeoutMs:source.timeoutMs})
+            ...(source.temperature===undefined?{}:{temperature:source.temperature}),
+            ...(source.topP===undefined?{}:{topP:source.topP}),
+            ...(source.numCtx===undefined?{}:{numCtx:source.numCtx}),
+            ...(source.numPredict===undefined?{}:{numPredict:source.numPredict}),
+            ...(source.keepAlive===undefined?{}:{keepAlive:source.keepAlive})
           });
         }
       }
