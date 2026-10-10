@@ -137,7 +137,7 @@ export class LLMCognitiveStep implements CognitiveStep {
       const system=format==="plain"?NOVA_PLAIN_TEXT_SYSTEM_PROMPT:format==="tagged"?NOVA_TURN_SYSTEM_PROMPT:NOVA_TURN_JSON_SYSTEM_PROMPT;
       const finalMessages=contextMessages.map((message,index)=>{
         if(index===0)return {...message,content:system};
-        if(index===contextMessages.length-1&&message.id===conversation.id+":nova-turn:cue")return {...message,content:cueFor(format)};
+        if(index===contextMessages.length-1&&message.id===conversation.id+":nova-turn:user-cue")return {...message,content:cueFor(format)};
         if(format==="tagged"&&index<contextMessages.length-1&&message.role==="user")return {...message,content:escapeUntrustedUserText(message.content)};
         return message;
       });
