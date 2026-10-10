@@ -156,6 +156,16 @@ fn client(timeout: Duration) -> Result<reqwest::Client, String> {
         .map_err(|_| "Failed to initialize the local Ollama HTTP transport.".to_string())
 }
 
+fn streaming_client(idle_timeout: Duration) -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .connect_timeout(idle_timeout)
+        .read_timeout(idle_timeout)
+        .build()
+        .map_err(|_| "Failed to initialize the local Ollama HTTP transport.".to_string())
+}
+
 async fn wait_for_cancel(token: Arc<AtomicBool>) {
     while !token.load(Ordering::Acquire) {
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -242,7 +252,7 @@ pub async fn ollama_http_stream(
     let body = body.ok_or_else(|| "Ollama chat body is required.".to_string())?;
     let token = state.register(&request_id)?;
     let result = async {
-        let client = client(timeout)?;
+        let client = streaming_client(timeout)?;
         let response = tokio::select! {
             response = client.post(url)
                 .header(reqwest::header::ACCEPT, "application/x-ndjson")
