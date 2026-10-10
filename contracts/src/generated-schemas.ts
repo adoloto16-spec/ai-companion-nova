@@ -78,7 +78,7 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       }
     }
   },
-    "app-settings": {
+  "app-settings": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://schemas.ai-companion-nova.dev/app-settings/v12",
     "title": "AI Companion Nova App Settings v12",
