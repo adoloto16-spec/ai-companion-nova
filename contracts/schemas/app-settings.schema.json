@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.ai-companion-nova.dev/app-settings/v11",
-  "title": "AI Companion Nova App Settings v11",
+  "$id": "https://schemas.ai-companion-nova.dev/app-settings/v12",
+  "title": "AI Companion Nova App Settings v12",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -14,14 +14,15 @@
     "retrieval",
     "diagnostics",
     "ui",
-    "semanticDedup"
+    "semanticDedup",
+    "prompts"
   ],
   "properties": {
     "apiVersion": {
       "const": "1"
     },
     "schemaVersion": {
-      "const": "11"
+      "const": "12"
     },
     "chat": {
       "type": "object",
@@ -291,6 +292,61 @@
               "type": "null"
             }
           ]
+        }
+      }
+    },
+    "prompts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "overrides"
+      ],
+      "properties": {
+        "overrides": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "nova-system-json": {
+              "type": "string",
+              "maxLength": 12000
+            },
+            "nova-system-tagged": {
+              "type": "string",
+              "maxLength": 12000
+            },
+            "nova-system-plain": {
+              "type": "string",
+              "maxLength": 12000
+            },
+            "nova-cue-reactive-json": {
+              "type": "string",
+              "maxLength": 12000
+            },
+            "nova-cue-background-json": {
+              "type": "string",
+              "maxLength": 12000
+            },
+            "nova-cue-reactive-tagged": {
+              "type": "string",
+              "maxLength": 12000
+            },
+            "nova-cue-background-tagged": {
+              "type": "string",
+              "maxLength": 12000
+            },
+            "nova-cue-reactive-plain": {
+              "type": "string",
+              "maxLength": 12000
+            },
+            "nova-cue-background-plain": {
+              "type": "string",
+              "maxLength": 12000
+            },
+            "memory-judge.system": {
+              "type": "string",
+              "maxLength": 12000
+            }
+          }
         }
       }
     }
