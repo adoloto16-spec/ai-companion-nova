@@ -438,6 +438,12 @@ async function main(){
   equal(lifeController.getSnapshot().lifeStreamingSpeech?.text,"Live public speech","stream events from another character are ignored");
   lifeController.updateNovaTurnStream({type:"delta",...transientStream,conversationId:"conversation.other",text:"must not cross conversations"});
   equal(lifeController.getSnapshot().lifeStreamingSpeech?.text,"Live public speech","stream events from another conversation are ignored");
+  lifeController.failLifeTurn(transientStream.userMessageId,"life-off");
+  lifeController.updateNovaTurnStream({type:"clear",...transientStream});
+  equal(lifeController.getSnapshot().lifeStreamingSpeech,undefined,"cancelled Life turns clear provisional speech even after status changes");
+  equal(lifeController.retryLife(()=>true).status,"awaiting-life","cancelled streamed turn remains retryable");
+  lifeController.updateNovaTurnStream({type:"start",...transientStream});
+  lifeController.updateNovaTurnStream({type:"delta",...transientStream,text:"Live public speech"});
 
   const turn={
     version:1 as const,situation:"Comparing the request with prior context",thoughts:"private thoughts live only in the tagged record",
