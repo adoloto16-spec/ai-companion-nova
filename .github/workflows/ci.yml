@@ -82,6 +82,7 @@ jobs:
       - run: cargo test -p nova-desktop-host --all-features model_profiles::tests
       - run: cargo test -p nova-desktop-host --all-features credential_profiles::tests
       - run: cargo test -p nova-desktop-host --all-features provider_presets::tests
+      - run: cargo test -p nova-desktop-host --all-features settings::tests
       - run: cargo test -p nova-desktop-host --all-features core_book::migration_tests
 
   windows-installer:
