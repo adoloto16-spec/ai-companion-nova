@@ -2865,7 +2865,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           "string",
           "number"
         ],
-        "minLength": 1
+        "minLength": 1,
+        "minimum": -1
       },
       "temperature": {
         "type": "number",
@@ -2980,7 +2981,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           "string",
           "number"
         ],
-        "minLength": 1
+        "minLength": 1,
+        "minimum": -1
       },
       "temperature": {
         "type": "number",
@@ -3154,7 +3156,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           "number",
           "null"
         ],
-        "minLength": 1
+        "minLength": 1,
+        "minimum": -1
       },
       "temperature": {
         "type": [
@@ -3391,7 +3394,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
                 "number",
                 "null"
               ],
-              "minLength": 1
+              "minLength": 1,
+              "minimum": -1
             },
             "temperature": {
               "type": [
@@ -3598,7 +3602,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
               "number",
               "null"
             ],
-            "minLength": 1
+            "minLength": 1,
+            "minimum": -1
           },
           "temperature": {
             "type": [
