@@ -819,7 +819,55 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     deleteCoreBookEntry:(characterId,entryId)=>coreBookManager.deleteCoreBookEntry(characterId,entryId),
     setCoreBookEntryEnabled:(characterId,entryId,enabled)=>coreBookManager.setCoreBookEntryEnabled(characterId,entryId,enabled),
     buildContext:request=>contextEngine.build(request),
-    extractMemory:async request=>{const item=await automaticMemoryAgent.process(request);return item?[item]:[]},
+    extractMemory:async request=>{
+      if(request.assistantMessage.metadata?.novaTurnLongMemoryCandidate===true){
+        const candidate=request.assistantMessage.content.normalize("NFKC").trim();
+        const signal=request.assistantMessage.metadata?.longMemoryAbortSignal as AbortSignal|undefined;
+        const source="nova-life-longmemory";
+        if(!candidate||signal?.aborted)return [];
+        const containsSecret=/authorization\s*:\s*bearer\s+\S+|\bbearer\s+[A-Za-z0-9._-]{16,}\b|\bsk-[A-Za-z0-9_-]{16,}\b|api[_ -]?key\s*[:=]\s*\S+|password\s*[:=]\s*\S+|secret\s*[:=]\s*\S+/i.test(candidate);
+        if(containsSecret){
+          diagnosticsStore.recordError(source,"SECRET_REJECTED","LONGMEMORY candidate was rejected because it contained sensitive material.",{characterId:request.characterId,conversationId:request.conversationId,turnId:request.turnId});
+          return [];
+        }
+        if(candidate.length>32768){
+          diagnosticsStore.recordError(source,"CANDIDATE_TOO_LARGE","LONGMEMORY candidate exceeded the existing memory content limit.",{characterId:request.characterId,conversationId:request.conversationId,turnId:request.turnId});
+          return [];
+        }
+        try{
+          const existing=await memoryBroker.list(request.characterId);
+          if(signal?.aborted)return [];
+          const normalized=candidate.toLocaleLowerCase().replace(/\s+/g," ").trim();
+          const duplicate=existing.find(item=>item.status==="active"&&item.content.normalize("NFKC").toLocaleLowerCase().replace(/\s+/g," ").trim()===normalized);
+          if(duplicate){
+            diagnosticsStore.recordError(source,"DUPLICATE_SKIPPED","LONGMEMORY candidate matched existing active character memory.",{characterId:request.characterId,conversationId:request.conversationId,turnId:request.turnId,memoryId:duplicate.id});
+            return [];
+          }
+          if(signal?.aborted)return [];
+          const authority:MemoryMutationAuthority={actorId:"nova-life-longmemory",actorType:"system",trusted:true,capabilities:["memory.create","memory.write.auto"],moduleId:"nova-life"};
+          const item=await memoryBroker.create(request.characterId,{
+            originConversationId:request.conversationId,
+            type:"observation",
+            content:candidate,
+            tags:[],
+            importance:70,
+            confidence:80,
+            source:"conversation",
+            sourceReference:request.turnId,
+            mutationPolicy:"auto",
+            metadata:{origin:"nova-life-longmemory",turnId:request.turnId}
+          },authority);
+          diagnosticsStore.recordError(source,"CANDIDATE_CREATED","LONGMEMORY candidate was passed to the existing MemoryBroker.",{characterId:request.characterId,conversationId:request.conversationId,turnId:request.turnId,memoryId:item.id});
+          // MemoryBroker publishes MemoryCreated; the existing Memory Judge/dedup subscriber owns review.
+          return [item];
+        }catch(error){
+          diagnosticsStore.recordError(source,"PERSIST_FAILED","LONGMEMORY candidate could not be stored.",{characterId:request.characterId,conversationId:request.conversationId,turnId:request.turnId,reason:error instanceof Error?error.message:"Unknown memory persistence error"});
+          return [];
+        }
+      }
+      const item=await automaticMemoryAgent.process(request);
+      return item?[item]:[];
+    },
     getMemory:(characterId,memoryOrConversationId,memoryId?)=>memoryId===undefined?memoryBroker.get(characterId,memoryOrConversationId):memoryBroker.get(characterId,memoryOrConversationId as MemoryItemId,memoryId as MemoryItemId),
     searchMemory:query=>memoryBroker.search(query),
     listMemory:characterId=>memoryBroker.list(characterId),
