@@ -258,10 +258,29 @@ fn migrate_memory_judge_default_prompt(root:&mut serde_json::Map<String,Value>)-
     true
 }
 
+fn legacy_memory_agent_enabled(root:&serde_json::Map<String,Value>)->bool{
+    root.get("chat").and_then(Value::as_object)
+        .and_then(|chat|chat.get("automaticLongTermMemory")).and_then(Value::as_bool).unwrap_or(true)
+}
+fn legacy_memory_agent_value(enabled:bool)->Value{
+    serde_json::json!({
+        "enabled":enabled,
+        "providerPresetId":null,
+        "model":"",
+        "outputMode":"auto",
+        "prompt":DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS,
+        "promptBackup":null,
+        "defaultPromptVersion":DEFAULT_MEMORY_AGENT_PROMPT_VERSION
+    })
+}
 fn migrate_memory_agent_object(root:&mut serde_json::Map<String,Value>){
     if let Some(memory_agent)=root.get_mut("memoryAgent").and_then(Value::as_object_mut){
         if memory_agent.get("prompt").is_none(){
-            if let Some(instructions)=memory_agent.remove("instructions"){memory_agent.insert("prompt".into(),instructions);}
+            if let Some(instructions)=memory_agent.remove("instructions"){
+                memory_agent.insert("prompt".into(),instructions);
+            }else{
+                memory_agent.insert("prompt".into(),Value::String(DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS.into()));
+            }
         }else{memory_agent.remove("instructions");}
         memory_agent.entry("promptBackup").or_insert(Value::Null);
         memory_agent.entry("defaultPromptVersion").or_insert_with(||Value::String(DEFAULT_MEMORY_AGENT_PROMPT_VERSION.into()));
@@ -272,6 +291,24 @@ fn migrate_memory_agent_object(root:&mut serde_json::Map<String,Value>){
 fn migrate(value:Value)->Result<(AppSettings,bool),String>{
     let schema=value.get("schemaVersion").and_then(Value::as_str);
     let legacy=schema.map(|v|v==LEGACY_SCHEMA_VERSION).unwrap_or(true);
+    if schema==Some("1"){
+        let defaults=default_settings();
+        let mut normalized=value.clone();
+        if let Some(root)=normalized.as_object_mut(){
+            root.insert("schemaVersion".into(),Value::String(SCHEMA_VERSION.into()));
+            root.entry("semanticDedup".into()).or_insert(serde_json::to_value(&defaults.semantic_dedup).map_err(|e|format!("failed to encode semantic dedup defaults: {e}"))?);
+            root.entry("cognitiveSchedule".into()).or_insert(serde_json::to_value(&defaults.cognitive_schedule).map_err(|e|format!("failed to encode cognitive schedule defaults: {e}"))?);
+            if root.get("memoryAgent").is_none(){
+                root.insert("memoryAgent".into(),legacy_memory_agent_value(legacy_memory_agent_enabled(root)));
+            }else{
+                migrate_memory_agent_object(root);
+            }
+            root.entry("prompts".into()).or_insert_with(||serde_json::json!({"overrides":{}}));
+        }
+        let settings:AppSettings=serde_json::from_value(normalized).map_err(|e|format!("invalid AppSettings schema v1: {e}"))?;
+        validate(&settings)?;
+        return Ok((settings,true));
+    }
     if schema==Some("4"){
         let mut normalized=value.clone();
         if let Some(root)=normalized.as_object_mut(){
@@ -287,6 +324,9 @@ fn migrate(value:Value)->Result<(AppSettings,bool),String>{
         if let Some(root)=normalized.as_object_mut(){
             root.insert("schemaVersion".into(),Value::String(SCHEMA_VERSION.into()));
             migrate_memory_agent_object(root);
+            if !root.contains_key("semanticDedup"){
+                root.insert("semanticDedup".into(),serde_json::to_value(&default_settings().semantic_dedup).map_err(|e|format!("failed to encode semantic dedup defaults: {e}"))?);
+            }
         }
         let settings:AppSettings=serde_json::from_value(normalized).map_err(|e|format!("invalid AppSettings schema v3: {e}"))?;
         validate(&settings)?;
@@ -298,17 +338,13 @@ fn migrate(value:Value)->Result<(AppSettings,bool),String>{
         if let Some(root)=normalized.as_object_mut(){
             root.insert("schemaVersion".into(),Value::String(SCHEMA_VERSION.into()));
             if root.get("memoryAgent").is_none(){
-                root.insert("memoryAgent".into(),serde_json::json!({
-                    "enabled": true,
-                    "providerPresetId": null,
-                    "model": "",
-                    "outputMode": "auto",
-                    "prompt": DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS,
-                    "promptBackup": null,
-                    "defaultPromptVersion": DEFAULT_MEMORY_AGENT_PROMPT_VERSION
-                }));
+                let enabled=legacy_memory_agent_enabled(root);
+                root.insert("memoryAgent".into(),legacy_memory_agent_value(enabled));
             }else{
                 migrate_memory_agent_object(root);
+            }
+            if !root.contains_key("semanticDedup"){
+                root.insert("semanticDedup".into(),serde_json::to_value(&defaults.semantic_dedup).map_err(|e|format!("failed to encode semantic dedup defaults: {e}"))?);
             }
         }
         let mut settings:AppSettings=serde_json::from_value(normalized).map_err(|e|format!("invalid AppSettings legacy schema: {e}"))?;
