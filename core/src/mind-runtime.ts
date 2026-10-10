@@ -4,7 +4,6 @@ import type {MindReactiveTurn, MindState, MindTraceEntry, MindWakeReason, MindRu
 import type {NovaToolResult, NovaTurn} from "../../contracts/src/nova-turn";
 import {MindScheduler} from "./mind-scheduler";
 
-const DEFAULT_STEP_TIMEOUT_MS = 60_000;
 const MAX_TRACE_ENTRIES = 100;
 const MAX_TOOL_RESULT_CHARS = 4_000;
 const HOUR_MS = 3_600_000;
@@ -58,12 +57,18 @@ function cloneState(state: MindState): MindState {
   return {...state, nextWakeAt: state.nextWakeAt ?? null, recentTrace: (state.recentTrace ?? []).map(entry => ({...entry, ...(entry.protocolDiagnostics ? {protocolDiagnostics:[...entry.protocolDiagnostics]} : {})}))};
 }
 
+export interface CognitiveStepSpeechEvent {
+  type:"start"|"delta"|"reset";
+  conversationId:string;
+  text?:string;
+}
 export interface CognitiveStepContext {
   characterId: string;
   state: Readonly<MindState>;
   signal: AbortSignal;
   wakeReason: MindWakeReason;
   userTurn?: MindReactiveTurn;
+  onSpeechEvent?:(event:CognitiveStepSpeechEvent)=>void;
 }
 export interface CognitiveStepResult {
   turn: NovaTurn;
@@ -88,7 +93,7 @@ export interface MindRuntimeOptions {
 }
 export class MindRuntime {
   private readonly cognitiveStep: CognitiveStep;
-  private readonly stepTimeoutMs: number;
+  private readonly stepTimeoutMs?: number;
   private readonly onError?: MindRuntimeOptions["onError"];
   private readonly onDiagnostic?: MindRuntimeOptions["onDiagnostic"];
   private readonly clock: () => string;
@@ -120,7 +125,7 @@ export class MindRuntime {
     if (options.stepTimeoutMs !== undefined && (!Number.isSafeInteger(options.stepTimeoutMs) || options.stepTimeoutMs < 1)) throw new Error("Mind Runtime step timeout must be a positive integer.");
     this.cognitiveStep = options.cognitiveStep;
     this.scheduleSettings = normalizeSchedule(options.schedule);
-    this.stepTimeoutMs = options.stepTimeoutMs ?? DEFAULT_STEP_TIMEOUT_MS;
+    this.stepTimeoutMs = options.stepTimeoutMs;
     this.onError = options.onError;
     this.onDiagnostic = options.onDiagnostic;
     this.clock = options.clock ?? (() => new Date().toISOString());
@@ -242,6 +247,8 @@ export class MindRuntime {
     let protocolDiagnostics: readonly string[] = [];
     let cancellation: CancellationKind | undefined;
     let timeout: ReturnType<typeof setTimeout> | undefined;
+    let streamedConversationId:string|undefined;
+    const speechTurnId=reactiveTurn?.turnId??runId;
     const finishTrace = (result: MindTraceEntry["result"], extra: Partial<MindTraceEntry> = {}) => {
       const entry: MindTraceEntry = {
         runId, characterId, wakeReason: reason, startedAt, finishedAt: this.clock(), durationMs: Math.max(0, this.now() - startedMs), result,
@@ -274,7 +281,7 @@ export class MindRuntime {
       this.cancelActiveStep = kind => { if (cancellation === undefined) { cancellation = kind; stepController.abort(); } };
       const onLifeAbort = () => this.cancelActiveStep?.("cancelled");
       life.signal.addEventListener("abort", onLifeAbort, {once:true});
-      timeout = setTimeout(() => this.cancelActiveStep?.("timeout"), this.stepTimeoutMs);
+      if(this.stepTimeoutMs!==undefined)timeout = setTimeout(() => this.cancelActiveStep?.("timeout"), this.stepTimeoutMs);
       let result: CognitiveStepResult;
       try {
         const abortPromise = new Promise<never>((_, reject) => {
@@ -286,7 +293,20 @@ export class MindRuntime {
           if (stepController.signal.aborted) rejectAbort();
           else stepController.signal.addEventListener("abort", rejectAbort, {once:true});
         });
-        result = await Promise.race([this.cognitiveStep.run({characterId, state:this.getState(), signal:stepController.signal, wakeReason:reason, ...(reactiveTurn ? {userTurn:reactiveTurn} : {})}), abortPromise]);
+        result = await Promise.race([this.cognitiveStep.run({
+          characterId,state:this.getState(),signal:stepController.signal,wakeReason:reason,
+          ...(reactiveTurn ? {userTurn:reactiveTurn} : {}),
+          onSpeechEvent:event=>{
+            streamedConversationId=event.conversationId;
+            if(stepController.signal.aborted||life.signal.aborted||contextVersion!==this.contextVersion||
+              characterId!==this.activeCharacterId||(reactiveTurn&&!this.isReactiveTurnCurrent(reactiveTurn)))return;
+            this.turnSink?.streamSpeech?.({
+              type:event.type,characterId,conversationId:event.conversationId,turnId:speechTurnId,
+              ...(reactiveTurn?{userMessageId:reactiveTurn.userMessageId}:{}),
+              ...(event.text!==undefined?{text:event.text}:{})
+            });
+          }
+        }), abortPromise]);
       } finally {
         life.signal.removeEventListener("abort", onLifeAbort);
       }
@@ -368,6 +388,12 @@ export class MindRuntime {
       finishTrace("error", {errorCode});
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
+      if(streamedConversationId){
+        this.turnSink?.streamSpeech?.({
+          type:"clear",characterId,conversationId:streamedConversationId,turnId:speechTurnId,
+          ...(reactiveTurn?{userMessageId:reactiveTurn.userMessageId}:{})
+        });
+      }
       this.stepController = undefined; this.cancelActiveStep = undefined; this.stepActive = false;
       const lifeNow = this.lifeController;
       if (lifeNow && !lifeNow.signal.aborted && this.state.lifecycleState !== "stopping") {
