@@ -408,10 +408,19 @@ export class OllamaChatProvider implements ChatProvider {
   }
 
   private mapMessages(messages: readonly ChatMessage[], request: ChatRequest): OllamaMessage[] {
-    return messages.map(message => {
+    const mapped: OllamaMessage[] = messages.map(message => {
       if (message.role === "tool") throw this.failure(request, "UNSUPPORTED", "Ollama provider does not support tool messages in this version.", "unsupported_message_role");
       return { role: message.role, content: message.content };
     });
+    const systemMessages = mapped.filter(message => message.role === "system" && message.content.trim().length > 0);
+    const conversationMessages = mapped.filter(message => message.role !== "system");
+    if (systemMessages.length === 0) return conversationMessages;
+
+    const mergedSystemMessage: OllamaMessage = {
+      role: "system",
+      content: systemMessages.map(message => message.content).join("\n\n---\n\n")
+    };
+    return [mergedSystemMessage, ...conversationMessages];
   }
 
   private mapRequest(request: ChatRequest, messages: readonly OllamaMessage[], stream: boolean) {

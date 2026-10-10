@@ -176,8 +176,63 @@ async function ordinaryRequestMappingTest(): Promise<void> {
   deepEqual(body.options, {temperature: 0.35, top_p: 0.75, num_predict: 120}, "generation parameters map without invented context window");
   equal(body.model, "llama3.2:latest", "model tag preserved");
   const sentMessages = body.messages as Array<{role: string; content: string}>;
-  deepEqual(sentMessages.map(message => message.role), ["system", "user"], "chat roles are preserved");
+  deepEqual(sentMessages, [
+    {role: "system", content: "Keep responses accurate."},
+    {role: "user", content: "Hello."}
+  ], "single system message content and ordinary user message are preserved in the actual request body");
   equal(req.headers.Authorization, undefined, "local requests do not carry credentials");
+}
+
+async function multipleSystemMessagesAreNormalizedInWireBodyTest(): Promise<void> {
+  const http = new FakeOllamaHttpClient();
+  await provider(http).chat(chatRequest({
+    context: {
+      conversationId: "ollama-multiple-system-conversation",
+      messages: [
+        {role: "system", content: "Base instruction."},
+        {role: "user", content: "First question."},
+        {role: "assistant", content: "Earlier answer."},
+        {role: "system", content: "Memory: user prefers concise answers."},
+        {role: "user", content: "Follow-up question."},
+        {role: "system", content: "Core Book: use metric units."},
+        {role: "system", content: "   "}
+      ]
+    }
+  }));
+
+  const request = http.requests[0]!;
+  equal(request.url, "http://127.0.0.1:11434/api/chat", "normalization is verified on the actual /api/chat request");
+  const body = JSON.parse(request.body!) as {messages: Array<{role: string; content: string}>};
+  deepEqual(body.messages, [
+    {role: "system", content: "Base instruction.\n\n---\n\nMemory: user prefers concise answers.\n\n---\n\nCore Book: use metric units."},
+    {role: "user", content: "First question."},
+    {role: "assistant", content: "Earlier answer."},
+    {role: "user", content: "Follow-up question."}
+  ], "all non-empty system content is merged in source order and user/assistant order is preserved in the wire JSON");
+  equal(body.messages.filter(message => message.role === "system").length, 1, "wire JSON contains exactly one system message");
+}
+
+async function requestWithoutSystemMessageStaysSystemFreeTest(): Promise<void> {
+  const http = new FakeOllamaHttpClient();
+  await provider(http).chat(chatRequest({
+    context: {
+      conversationId: "ollama-no-system-conversation",
+      messages: [
+        {role: "user", content: "First question."},
+        {role: "assistant", content: "Earlier answer."},
+        {role: "user", content: "Follow-up question."}
+      ]
+    }
+  }));
+
+  const request = http.requests[0]!;
+  const body = JSON.parse(request.body!) as {messages: Array<{role: string; content: string}>};
+  deepEqual(body.messages, [
+    {role: "user", content: "First question."},
+    {role: "assistant", content: "Earlier answer."},
+    {role: "user", content: "Follow-up question."}
+  ], "no system instruction is invented and original conversation order is preserved in the wire JSON");
+  equal(body.messages.some(message => message.role === "system"), false, "wire JSON remains system-free when input has no non-empty system messages");
 }
 
 async function configuredOptionsTest(): Promise<void> {
@@ -359,7 +414,9 @@ async function main(): Promise<void> {
   const tests: Array<[string, () => Promise<void>]> = [
     ["Loopback URL restrictions", loopbackValidationTest],
     ["Model discovery and no API key", modelDiscoveryAndNoKeyTest],
-    ["Ordinary request mapping", ordinaryRequestMappingTest],
+    ["Ordinary request mapping and single system preservation", ordinaryRequestMappingTest],
+    ["Multiple system messages normalized in wire JSON", multipleSystemMessagesAreNormalizedInWireBodyTest],
+    ["Request without system messages stays system-free", requestWithoutSystemMessageStaysSystemFreeTest],
     ["Optional generation parameters", configuredOptionsTest],
     ["JSON and JSON Schema mode", jsonModeAndSchemaMappingTest],
     ["Invalid JSON and schema violations", invalidJsonAndSchemaViolationTest],
