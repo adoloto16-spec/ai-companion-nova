@@ -1,10 +1,11 @@
 use serde::{Deserialize,Serialize};
+use std::collections::BTreeMap;
 use serde_json::Value;
 use std::{fs,io::Write,path::{Path,PathBuf}};
 use tauri::Manager;
 
 const API_VERSION:&str="1";
-const SCHEMA_VERSION:&str="5";
+const SCHEMA_VERSION:&str="12";
 const FILE_NAME:&str="app-settings-v1.json";
 const LEGACY_SCHEMA_VERSION:&str="0";
 const PREVIOUS_SCHEMA_VERSION:&str="3";
@@ -66,6 +67,15 @@ pub struct MemoryAgentSettings{
     pub prompt_backup:Option<String>,
     #[serde(rename="defaultPromptVersion")]
     pub default_prompt_version:String
+}
+fn default_memory_agent_settings()->MemoryAgentSettings{
+    MemoryAgentSettings{enabled:true,provider_preset_id:None,model:String::new(),output_mode:"auto".into(),prompt:DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS.to_string(),prompt_backup:None,default_prompt_version:DEFAULT_MEMORY_AGENT_PROMPT_VERSION.into()}
+}
+#[derive(Debug,Deserialize,Serialize,Clone,Default)]
+#[serde(deny_unknown_fields)]
+pub struct PromptSettings{
+    #[serde(default)]
+    pub overrides:BTreeMap<String,String>
 }
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(deny_unknown_fields)]
@@ -152,8 +162,10 @@ pub struct AppSettings{
     #[serde(rename="cognitiveSchedule",default="default_cognitive_schedule")]
     pub cognitive_schedule:CognitiveScheduleSettings,
     pub chat:ChatSettings,
-    #[serde(rename="memoryAgent")]
+    #[serde(rename="memoryAgent",default="default_memory_agent_settings")]
     pub memory_agent:MemoryAgentSettings,
+    #[serde(default)]
+    pub prompts:PromptSettings,
     #[serde(rename="semanticDedup")]
     pub semantic_dedup:SemanticDedupSettings,
     pub context:ContextSettings,
@@ -168,6 +180,7 @@ fn default_settings()->AppSettings{
         api_version:API_VERSION.into(),schema_version:SCHEMA_VERSION.into(),
         cognitive_schedule:default_cognitive_schedule(),
         chat:ChatSettings{automatic_long_term_memory:true,response_mode:default_response_mode()},
+        prompts:PromptSettings::default(),
         memory_agent:MemoryAgentSettings{enabled:true,provider_preset_id:None,model:String::new(),output_mode:"auto".into(),prompt:DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS.to_string(),prompt_backup:None,default_prompt_version:DEFAULT_MEMORY_AGENT_PROMPT_VERSION.into()},
         semantic_dedup:SemanticDedupSettings{
             enabled:false,embedding_provider_preset_id:None,embedding_model:String::new(),
@@ -196,7 +209,7 @@ fn valid_integer(value:i64,min:i64,max:i64,label:&str)->Result<(),String>{
     Ok(())
 }
 fn validate(settings:&AppSettings)->Result<(),String>{
-    if settings.api_version!=API_VERSION||!(settings.schema_version==SCHEMA_VERSION||settings.schema_version=="10"){return Err("unsupported AppSettings version".into());}
+    if settings.api_version!=API_VERSION||!(settings.schema_version==SCHEMA_VERSION||matches!(settings.schema_version.as_str(),"5"|"6"|"7"|"8"|"9"|"10"|"11")){return Err("unsupported AppSettings version".into());}
     if !matches!(settings.cognitive_schedule.mode.as_str(),"adaptive"|"fixed"){return Err("Unsupported cognitive schedule mode.".into());}
     valid_integer(settings.cognitive_schedule.default_interval_ms,1000,3_600_000,"Cognitive schedule interval")?;
     valid_integer(settings.cognitive_schedule.min_interval_ms,1000,3_600_000,"Minimum cognitive interval")?;
@@ -219,6 +232,11 @@ fn validate(settings:&AppSettings)->Result<(),String>{
     if settings.semantic_dedup.judge.prompt.len()>MAX_SEMANTIC_PROMPT{return Err("Memory Judge prompt exceeds the 12000 character limit.".into());}
     if settings.semantic_dedup.judge.prompt_backup.as_ref().map(|value|value.len()>MAX_SEMANTIC_PROMPT).unwrap_or(false){return Err("Memory Judge prompt backup exceeds the 12000 character limit.".into());}
     if settings.semantic_dedup.judge.default_prompt_version.trim().is_empty(){return Err("Memory Judge default prompt version must not be empty.".into());}
+    const PROMPT_IDS:[&str;10]=["nova-system-json","nova-system-tagged","nova-system-plain","nova-cue-reactive-json","nova-cue-background-json","nova-cue-reactive-tagged","nova-cue-background-tagged","nova-cue-reactive-plain","nova-cue-background-plain","memory-judge.system"];
+    for (id,prompt) in &settings.prompts.overrides{
+        if !PROMPT_IDS.contains(&id.as_str()){return Err(format!("Unsupported prompt id: {id}."));}
+        if prompt.len()>MAX_SEMANTIC_PROMPT{return Err(format!("Prompt override {id} exceeds the 12000 character limit."));}
+    }
     if !matches!(settings.diagnostics.log_level.as_str(),"off"|"errors"|"normal"|"verbose"|"debug"){return Err("Unsupported diagnostics log level".into());}
     valid_integer(settings.diagnostics.keep_recent_entries,1,MAX_DIAGNOSTICS_ENTRIES,"Recent diagnostic entries")?;
     if !matches!(settings.memory_agent.output_mode.as_str(),"auto"|"structured"|"plain"){return Err("Unsupported Automatic Memory Agent output mode".into());}
@@ -303,6 +321,32 @@ fn migrate(value:Value)->Result<(AppSettings,bool),String>{
         let mut migrated=false;
         if let Some(root)=normalized.as_object_mut(){
             migrated=migrate_memory_judge_default_prompt(root);
+            let old_schema=root.get("schemaVersion").and_then(Value::as_str).unwrap_or_default().to_string();
+            if old_schema!=SCHEMA_VERSION && matches!(old_schema.as_str(),"5"|"6"|"7"|"8"|"9"|"10"|"11"){
+                root.insert("schemaVersion".into(),Value::String(SCHEMA_VERSION.to_string()));
+                migrated=true;
+            }
+            let custom_judge_prompt=root.get("semanticDedup").and_then(Value::as_object)
+                .and_then(|semantic|semantic.get("judge")).and_then(Value::as_object)
+                .and_then(|judge|judge.get("prompt")).and_then(Value::as_str).map(str::to_string);
+            if !root.contains_key("prompts"){
+                let mut overrides=serde_json::Map::new();
+                if let Some(prompt)=custom_judge_prompt.as_deref(){
+                    if !prompt.trim().is_empty() && prompt!=DEFAULT_MEMORY_JUDGE_INSTRUCTIONS && prompt!=LEGACY_MEMORY_JUDGE_INSTRUCTIONS{
+                        overrides.insert("memory-judge.system".into(),Value::String(prompt.into()));
+                    }
+                }
+                root.insert("prompts".into(),serde_json::json!({"overrides":overrides}));
+                migrated=true;
+            }
+            if let Some(prompt)=root.get("prompts").and_then(Value::as_object)
+                .and_then(|prompts|prompts.get("overrides")).and_then(Value::as_object)
+                .and_then(|overrides|overrides.get("memory-judge.system")).and_then(Value::as_str){
+                if let Some(judge)=root.get_mut("semanticDedup").and_then(Value::as_object_mut)
+                    .and_then(|semantic|semantic.get_mut("judge")).and_then(Value::as_object_mut){
+                    judge.insert("prompt".into(),Value::String(prompt.to_string()));
+                }
+            }
         }
         let settings:AppSettings=serde_json::from_value(normalized).map_err(|e|format!("invalid AppSettings: {e}"))?;
         validate(&settings)?;
