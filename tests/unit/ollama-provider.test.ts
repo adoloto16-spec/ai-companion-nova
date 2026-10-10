@@ -92,6 +92,9 @@ async function* chunks(parts: readonly string[]): AsyncIterable<string> {
     yield part;
   }
 }
+async function* delayedChunks(parts:readonly string[],delayMs:number):AsyncIterable<string>{
+  for(const part of parts){await new Promise(resolve=>setTimeout(resolve,delayMs));yield part;}
+}
 
 function chatRequest(overrides: Partial<ChatRequest> = {}): ChatRequest {
   return {
@@ -412,6 +415,19 @@ async function* chunksWithAbort(signal?: AbortSignal, emitFirstDelta = true): As
   });
 }
 
+async function streamTimeoutIsInactivityDeadlineTest():Promise<void>{
+  const http=new FakeOllamaHttpClient();
+  http.streamHandler=async()=>({status:200,body:delayedChunks([
+    JSON.stringify({model:"llama3.2:latest",message:{role:"assistant",content:"slow "},done:false})+"\\n",
+    JSON.stringify({model:"llama3.2:latest",message:{role:"assistant",content:"but alive"},done:false})+"\\n",
+    JSON.stringify({model:"llama3.2:latest",done:true,done_reason:"stop"})+"\\n"
+  ],20)});
+  const events:string[]=[];
+  const response=await provider(http,{timeoutMs:35}).stream(chatRequest(),{onEvent:event=>{events.push(event.type);}});
+  equal(response.message.content,"slow but alive","Ollama stream stays alive when chunks keep arriving beyond total timeout");
+  ok(events.includes("completed"),"active stream completes after configured total duration");
+}
+
 async function apiErrorTest(): Promise<void> {
   const http = new FakeOllamaHttpClient();
   http.requestHandler = async () => ({status: 404, body: JSON.stringify({error: "model 'llama3.2:latest' not found, try pulling it first"})});
@@ -458,6 +474,7 @@ async function main(): Promise<void> {
     ["Thinking data is not assistant content", thinkingIsNotAssistantContentTest],
     ["Streaming schema violation", streamSchemaViolationTest],
     ["Cancellation and timeouts", cancellationAndTimeoutTest],
+    ["Stream timeout is an inactivity deadline", streamTimeoutIsInactivityDeadlineTest],
     ["API and missing model errors", apiErrorTest],
     ["Connection test runtime path", connectionTestUsesNativeTransport]
   ];
