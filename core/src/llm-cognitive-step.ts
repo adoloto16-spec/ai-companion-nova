@@ -49,6 +49,8 @@ const NOVA_TURN_SYSTEM_PROMPT=[
 ].join("\n");
 const REACTIVE_CUE="Answer the latest persisted user message now. This is a response-required turn: NOVA_TURN.SPEECH must be non-empty and directly answer the user. Use context and registered tools as needed. Preserve the required protocol exactly.";
 const BACKGROUND_CUE="Continue Nova's cognition from the actual conversation context. Speaking is optional; if there is nothing useful to tell the user, leave SPEECH empty. Use the single NovaTurn format. Do not narrate internal processing.";
+const REACTIVE_JSON_CUE="Answer the latest persisted user message now. Return a non-empty public answer in the JSON speech field and include all required NovaTurn v1 fields.";
+const BACKGROUND_JSON_CUE="Continue Nova's cognition from the actual conversation context. Return the required NovaTurn v1 JSON object; speech may be empty when there is nothing useful to say.";
 const NOVA_PLAIN_TEXT_SYSTEM_PROMPT=[
   "You are Nova, a conversational companion. Reply only with the user-facing message in ordinary plain text.",
   "Do not produce a structured protocol, XML-like control tags, JSON tool calls, private thoughts, internal analysis, emotion labels, or scheduling instructions.",
