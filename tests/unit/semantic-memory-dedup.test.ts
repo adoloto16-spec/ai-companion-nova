@@ -356,34 +356,15 @@ async function judgeModelFallsBackToPresetTest(){
 }
 
 async function settingsV5PersistenceTest(){
-  const validator=new StandardContractValidator();
-  const store=new InMemorySettingsStore(validator);
-  const manager=new SettingsManager(store,validator);
-  await manager.initialize();
-  const settings=defaultAppSettings();
-  settings.memoryAgent={
-    ...settings.memoryAgent,
-    enabled:false,
-    providerPresetId:"preset.memory",
-    model:"ministral-3b-2512",
-    outputMode:"plain",
-    prompt:"custom prompt",
-    promptBackup:"previous prompt",
-    defaultPromptVersion:"7"
-  };
-  const migrated=migrateAppSettings(JSON.parse(JSON.stringify(settings)));
-  equal(migrated.memoryAgent.providerPresetId,"preset.memory","schema v5 migration preserves provider preset");
-  equal(migrated.memoryAgent.model,"ministral-3b-2512","schema v5 migration preserves model");
-  equal(migrated.memoryAgent.enabled,false,"schema v5 migration preserves enabled flag");
-  equal(migrated.memoryAgent.outputMode,"plain","schema v5 migration preserves output mode");
-  equal(migrated.memoryAgent.prompt,"custom prompt","schema v5 migration preserves prompt");
-  equal(migrated.memoryAgent.promptBackup,"previous prompt","schema v5 migration preserves prompt backup");
-  equal(migrated.memoryAgent.defaultPromptVersion,"7","schema v5 migration preserves prompt version");
-  await manager.set(settings);
-  const reloadedManager=new SettingsManager(store,validator);
-  const reloaded=await reloadedManager.initialize();
-  equal(reloaded.memoryAgent.providerPresetId,"preset.memory","SettingsManager save/reload preserves provider preset");
-  equal(reloaded.memoryAgent.model,"ministral-3b-2512","SettingsManager save/reload preserves model");
+  const migrated=migrateAppSettings({
+    schemaVersion:"10",
+    chat:{automaticLongTermMemory:false,responseMode:"plain"},
+    memoryAgent:{enabled:true,providerPresetId:"legacy-agent",model:"legacy-model",outputMode:"plain",prompt:"legacy prompt",promptBackup:"backup",defaultPromptVersion:"9"}
+  });
+  equal(migrated.schemaVersion,"11","legacy saved settings migrate to AppSettings v11");
+  equal(migrated.chat.automaticLongTermMemory,false,"LONGMEMORY persistence setting remains intentional and preserved");
+  equal(migrated.chat.responseMode,"plain","response mode remains preserved during settings migration");
+  equal(Object.prototype.hasOwnProperty.call(migrated,"memoryAgent"),false,"legacy Automatic Memory Agent settings are ignored and not restored");
 }
 
 async function legacySettingsMigrationTest(){
