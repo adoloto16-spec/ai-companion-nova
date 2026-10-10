@@ -17,7 +17,7 @@ export * from "./context-engine";
 
 export * from "./memory-broker";
 export * from "./memory-retriever";
-export * from "./memory-extraction";
+export * from "./automatic-memory-agent";
 export * from "./retrieval-indexer";
 export * from "./settings";
 
