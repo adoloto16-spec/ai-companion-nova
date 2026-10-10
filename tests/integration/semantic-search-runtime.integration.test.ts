@@ -46,6 +46,7 @@ async function main(){
   const action=await runtime.invoke({id:"memory-search.integration",schemaVersion:"1",tool:"MEMORY_SEARCH",
    arguments:{query:"Где найти квартиру для себя?"},metadata:{characterId:character.id,conversationId:active.id,turnId:"tool-turn",callId:"tool-call"}});
   eq(action.status,"success","MEMORY_SEARCH dispatched through the production Tool Registry and Action Broker");
+  if(action.status!=="success")throw new Error("MEMORY_SEARCH action failed: "+action.error.code);
   const output=JSON.stringify(action.output);
   ok(output.includes("old-turn.integration")&&output.includes(oldTurn.slice(0,60)),"MEMORY_SEARCH returns historical NOVA_TURN with source provenance");
   ok(output.includes("core_book")&&output.includes("memory")&&output.includes("conversation"),"MEMORY_SEARCH returns results across the three source families");
