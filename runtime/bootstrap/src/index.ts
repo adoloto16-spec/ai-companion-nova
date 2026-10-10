@@ -207,6 +207,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       apiVersion:"1",schemaVersion:"1",providerId:preset.providerId,baseUrl:preset.baseUrl,model:preset.model,
       enabled:preset.enabled,credentialReference:preset.credentialReference?{...preset.credentialReference}:null,
       ...(preset.timeoutMs==null?{}:{timeoutMs:preset.timeoutMs}),
+      ...(preset.temperature==null?{}:{temperature:preset.temperature}),
+      ...(preset.topP==null?{}:{topP:preset.topP}),
       ...(preset.numCtx==null?{}:{numCtx:preset.numCtx}),
       ...(preset.numPredict==null?{}:{numPredict:preset.numPredict}),
       ...(preset.keepAlive==null?{}:{keepAlive:preset.keepAlive})
