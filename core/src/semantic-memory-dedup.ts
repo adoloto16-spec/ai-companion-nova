@@ -402,7 +402,7 @@ export class MemorySemanticDeduplicator{
         context:{
           conversationId:"memory-judge:"+memoryId,
           messages:[
-            {role:"system",content:resolvePromptText(settings.prompts,"memory-judge.system")},
+            {role:"system",content:resolvePromptText(this.options.settings().prompts,"memory-judge.system")},
             {role:"user",content:buildJudgeInput(newMemory,selected)}
           ]
         }
