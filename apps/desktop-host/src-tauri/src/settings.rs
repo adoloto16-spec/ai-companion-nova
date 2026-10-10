@@ -232,7 +232,7 @@ fn validate(settings:&AppSettings)->Result<(),String>{
     if settings.semantic_dedup.judge.prompt.chars().count()>MAX_SEMANTIC_PROMPT{return Err("Memory Judge prompt exceeds the 12000 character limit.".into());}
     if settings.semantic_dedup.judge.prompt_backup.as_ref().map(|value|value.chars().count()>MAX_SEMANTIC_PROMPT).unwrap_or(false){return Err("Memory Judge prompt backup exceeds the 12000 character limit.".into());}
     if settings.semantic_dedup.judge.default_prompt_version.trim().is_empty(){return Err("Memory Judge default prompt version must not be empty.".into());}
-    const PROMPT_IDS:[&str;10]=["nova-system-json","nova-system-tagged","nova-system-plain","nova-cue-reactive-json","nova-cue-background-json","nova-cue-reactive-tagged","nova-cue-background-tagged","nova-cue-reactive-plain","nova-cue-background-plain","memory-judge.system"];
+    const PROMPT_IDS:[&str;13]=["nova-system-json","nova-system-tagged","nova-system-plain","nova-cue-reactive-json","nova-cue-background-json","nova-cue-reactive-tagged","nova-cue-background-tagged","nova-cue-reactive-plain","nova-cue-background-plain","nova-schedule-structured","nova-schedule-plain","nova-tools-allowlist","memory-judge.system"];
     for (id,prompt) in &settings.prompts.overrides{
         if !PROMPT_IDS.contains(&id.as_str()){return Err(format!("Unsupported prompt id: {id}."));}
         if prompt.chars().count()>MAX_SEMANTIC_PROMPT{return Err(format!("Prompt override {id} exceeds the 12000 character limit."));}
