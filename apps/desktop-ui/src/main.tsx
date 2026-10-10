@@ -992,6 +992,13 @@ function ProviderPresetsView({
       }else{
         if(draft.sources.length===0)throw new Error("Pool presets must contain at least one source.");
         const sources=draft.sources.map(source=>({...source,credentialReference:source.credentialReference?{...source.credentialReference}:null}));
+        for(const source of sources){
+          if(source.providerId==="ollama"){
+            if(source.credentialReference)throw new Error("Ollama does not use an API key.");
+            const ollamaErrors=validateOllamaBaseUrl(source.baseUrl);
+            if(ollamaErrors.length)throw new Error(ollamaErrors.join(" "));
+          }
+        }
         const {providerId:_providerId,baseUrl:_baseUrl,model:_model,credentialReference:_credentialReference,enabled:_enabled,timeoutMs:_timeoutMs,numCtx:_numCtx,numPredict:_numPredict,keepAlive:_keepAlive,...poolFields}=draft;
         next={...poolFields,name:draft.name.trim(),type:"pool",sources,activeSourceId:draft.activeSourceId&&sources.some(source=>source.id===draft.activeSourceId)?draft.activeSourceId:sources[0]!.id,updatedAt:new Date().toISOString()};
       }
@@ -1020,7 +1027,16 @@ function ProviderPresetsView({
         }
         const url=new URL(draft.baseUrl);
         if((url.protocol!=="https:"&&url.protocol!=="http:")||url.username||url.password||url.search||url.hash)throw new Error("Base URL must use HTTP(S) and must not contain credentials, query, or fragment.");
-      }else if(draft.sources.length===0)throw new Error("Pool presets must contain at least one source.");
+      }else{
+        if(draft.sources.length===0)throw new Error("Pool presets must contain at least one source.");
+        for(const source of draft.sources){
+          if(source.providerId==="ollama"){
+            if(source.credentialReference)throw new Error("Ollama does not use an API key.");
+            const ollamaErrors=validateOllamaBaseUrl(source.baseUrl);
+            if(ollamaErrors.length)throw new Error(ollamaErrors.join(" "));
+          }
+        }
+      }
       const now=new Date().toISOString();
       const newId="provider-preset:"+(draft.name.trim()||"preset").toLowerCase().replace(/[^a-z0-9]+/g,"-")+":"+Date.now();
       let next=cloneProviderPresetForSaveAsNew(draft,newId,now);
