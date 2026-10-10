@@ -35,7 +35,6 @@ async function main(){
     diagnostics:{...defaults.diagnostics,logLevel:"verbose" as const,keepRecentEntries:25},
     chat:{...defaults.chat,automaticLongTermMemory:false,responseMode:"plain" as const},
     cognitiveSchedule:{mode:"fixed" as const,defaultIntervalMs:60000,minIntervalMs:10000,maxIntervalMs:300000,maxRequestsPerHour:60},
-    memoryAgent:{...defaults.memoryAgent,enabled:true,providerPresetId:"preset.memory",model:"memory-model",outputMode:"structured" as const,prompt:"Custom full prompt",promptBackup:"Previous prompt",defaultPromptVersion:"1"},
     semanticDedup:{
       ...defaults.semanticDedup,
       enabled:true,
@@ -64,11 +63,6 @@ async function main(){
   equal((await manager.get()).chat.automaticLongTermMemory,false,"custom extraction toggle persists");
   equal((await manager.get()).chat.responseMode,"plain","Chat response mode persists");
   equal(persistedIpcSettings?.chat.responseMode,"plain","IPC settings store persists Chat response mode");
-  equal((await manager.get()).memoryAgent.providerPresetId,"preset.memory","agent provider preset persists");
-  equal((await manager.get()).memoryAgent.model,"memory-model","agent model persists");
-  equal((await manager.get()).memoryAgent.outputMode,"structured","agent output mode persists");
-  equal((await manager.get()).memoryAgent.prompt,"Custom full prompt","full agent prompt persists");
-  equal((await manager.get()).memoryAgent.promptBackup,"Previous prompt","agent prompt backup persists");
   equal((await manager.get()).semanticDedup.candidateSimilarityThreshold,0.91,"semantic candidate threshold persists");
   equal((await manager.get()).semanticDedup.candidateLimit,7,"semantic candidate limit persists");
   equal((await manager.get()).semanticDedup.embeddingModel,"mistral-embed","semantic embedding model persists");
@@ -78,16 +72,13 @@ async function main(){
   // Schema v5 had no cognitiveSchedule; migration keeps its existing fields and supplies the v6 defaults.
   const v5=JSON.parse(JSON.stringify(defaultAppSettings())) as Record<string,unknown>;
   delete v5.cognitiveSchedule;v5.schemaVersion="5";
-  v5.memoryAgent={...defaultAppSettings().memoryAgent,enabled:false,providerPresetId:"preset.memory",model:"ministral-3b-2512",outputMode:"plain",prompt:"custom prompt",promptBackup:"previous prompt",defaultPromptVersion:"7"};
+  v5.memoryAgent={enabled:false,providerPresetId:"preset.memory",model:"ministral-3b-2512",outputMode:"plain",prompt:"custom prompt",promptBackup:"previous prompt",defaultPromptVersion:"7"};
+  v5.chat={automaticLongTermMemory:false,responseMode:"structured"};
   const migratedV5=migrateAppSettings(v5);
   equal(migratedV5.cognitiveSchedule,DEFAULT_APP_SETTINGS.cognitiveSchedule,"schema v5 migration inserts cognitive defaults");
-  equal(migratedV5.memoryAgent.providerPresetId,"preset.memory","schema v5 migration preserves provider preset");
-  equal(migratedV5.memoryAgent.model,"ministral-3b-2512","schema v5 migration preserves model");
-  equal(migratedV5.memoryAgent.enabled,false,"schema v5 migration preserves enabled");
-  equal(migratedV5.memoryAgent.outputMode,"plain","schema v5 migration preserves output mode");
-  equal(migratedV5.memoryAgent.prompt,"custom prompt","schema v5 migration preserves prompt");
-  equal(migratedV5.memoryAgent.promptBackup,"previous prompt","schema v5 migration preserves prompt backup");
-  equal(migratedV5.memoryAgent.defaultPromptVersion,"7","schema v5 migration preserves prompt version");
+  equal(migratedV5.schemaVersion,"11","legacy AppSettings migrate to the current schema");
+  equal(migratedV5.chat.automaticLongTermMemory,false,"legacy automatic memory setting remains a save gate");
+  equal(Object.prototype.hasOwnProperty.call(migratedV5,"memoryAgent"),false,"legacy Memory Agent settings are dropped during migration");
   const oldDefaultV8=JSON.parse(JSON.stringify(defaultAppSettings())) as Record<string,any>;
   oldDefaultV8.schemaVersion="8";
   oldDefaultV8.cognitiveSchedule={...defaultAppSettings().cognitiveSchedule,minIntervalMs:10000,maxIntervalMs:900000,maxRequestsPerHour:120};
@@ -111,21 +102,22 @@ async function main(){
   equal(migratedV9.chat.automaticLongTermMemory,false,"schema v9 migration preserves automatic long-term memory");
   equal(migratedV9.chat.responseMode,"structured","legacy Chat settings migrate to structured output mode");
   equal(migratedV9.cognitiveSchedule.maxRequestsPerHour,null,"schema v9 default quota migrates to disabled");
-  const v10={...v9,schemaVersion:"10",chat:{automaticLongTermMemory:false,responseMode:"plain"}};
-  equal(migrateAppSettings(v10).chat.responseMode,"plain","schema v10 persists the selected Chat response mode");
-  equal(migrateAppSettings(v10).cognitiveSchedule.maxRequestsPerHour,120,"explicit quota in the new schema is preserved");
+  const v10={...v9,schemaVersion:"10",chat:{automaticLongTermMemory:false,responseMode:"plain"},memoryAgent:{enabled:true,providerPresetId:"old-agent-preset",model:"legacy-model",outputMode:"plain",prompt:"old prompt",promptBackup:"backup",defaultPromptVersion:"9"}};
+  const migratedV10=migrateAppSettings(v10);
+  equal(migratedV10.chat.responseMode,"plain","schema v10 persists the selected Chat response mode");
+  equal(migratedV10.cognitiveSchedule.maxRequestsPerHour,120,"explicit quota in the old schema is preserved");
+  equal(migratedV10.schemaVersion,"11","schema v10 upgrades to schema v11");
+  equal(Object.prototype.hasOwnProperty.call(migratedV10,"memoryAgent"),false,"schema v10 Memory Agent configuration is removed safely");
   const v6=JSON.parse(JSON.stringify(defaultAppSettings())) as Record<string,unknown>;
   v6.schemaVersion="6";
-  v6.memoryAgent={...defaultAppSettings().memoryAgent,enabled:false,providerPresetId:"preset.legacy",model:"legacy-model",outputMode:"plain",prompt:"old prompt",promptBackup:"backup",defaultPromptVersion:"9"};
+  v6.memoryAgent={enabled:false,providerPresetId:"preset.legacy",model:"legacy-model",outputMode:"plain",prompt:"old prompt",promptBackup:"backup",defaultPromptVersion:"9"};
   const migratedV6=migrateAppSettings(v6);
-  equal(migratedV6.memoryAgent.providerPresetId,"preset.legacy","schema v6 to v7 migration preserves Memory Agent binding");
-  equal(migratedV6.memoryAgent.prompt,"old prompt","schema v6 to v7 migration preserves Memory Agent prompt");
-  const currentSettings={...defaultAppSettings(),chat:{...defaultAppSettings().chat,automaticLongTermMemory:false,responseMode:"plain" as const},memoryAgent:{...defaultAppSettings().memoryAgent,enabled:false,providerPresetId:"preset.memory",model:"ministral-3b-2512",outputMode:"plain" as const,prompt:"custom prompt",promptBackup:"previous prompt",defaultPromptVersion:"7"}};
+  equal(migratedV6.schemaVersion,"11","older settings schemas migrate to current AppSettings");
+  equal(Object.prototype.hasOwnProperty.call(migratedV6,"memoryAgent"),false,"legacy Memory Agent bindings do not return through migration");
+  const currentSettings={...defaultAppSettings(),chat:{...defaultAppSettings().chat,automaticLongTermMemory:false,responseMode:"plain" as const}};
   await manager.set(currentSettings);
   const reloadedManager=new SettingsManager(store,validator);
   const reloaded=await reloadedManager.initialize();
-  equal(reloaded.memoryAgent.providerPresetId,"preset.memory","SettingsManager reload preserves provider preset");
-  equal(reloaded.memoryAgent.model,"ministral-3b-2512","SettingsManager reload preserves model");
   equal(reloaded.cognitiveSchedule.mode,"adaptive","SettingsManager reload preserves default schedule");
   equal(reloaded.chat.responseMode,"plain","SettingsManager reload preserves Chat response mode");
   equal(reloaded.chat.automaticLongTermMemory,false,"SettingsManager reload preserves automatic long-term memory");
