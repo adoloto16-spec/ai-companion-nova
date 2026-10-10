@@ -101,5 +101,5 @@ assert.equal(resolveNovaTurnMessagePresentation(reloadedMessages[3]!,false).text
 const technicalEmpty=resolveNovaTurnMessagePresentation({id:"empty",role:"assistant",content:empty,metadata:{novaTurnVersion:1}},true);
 assert.equal(technicalEmpty.render,true,"technical mode preserves empty turns");
 assert.equal(technicalEmpty.text,"The model returned no valid speech.","empty records never promote serialized fields to ordinary text");
-assert.equal(technicalEmpty.parseResult?.fields.situation.status,"empty","technical mode retains field statuses");
+assert.equal(technicalEmpty.parseResult?.fields.situation.status,"valid","technical mode retains field statuses for non-empty private fields");
 console.log("nova-turn-visibility: ok");
