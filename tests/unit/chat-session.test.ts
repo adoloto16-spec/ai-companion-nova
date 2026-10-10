@@ -470,6 +470,40 @@ async function main(){
   equal(persistenceWrites,1,"repeated turn commit is idempotent and does not persist twice");
   equal(lifeController.getSnapshot().messages.length,persistedMessages.length,"repeated commit does not duplicate the assistant record");
 
+  const noCandidateSession=new ConversationSession("life-no-candidate","character.life-no-candidate");
+  let emptyCandidateWrites=0;
+  const noCandidateController=new ChatSessionController(noCandidateSession,{async chat(request){return responseFor(request)}},{
+    requestIdFactory:()=>"life-no-candidate-turn",
+    memoryExtractor:{extract:async()=>{emptyCandidateWrites++;return [];}}
+  });
+  await noCandidateController.submitToLife("Answer without a durable fact",async()=>{},()=>true);
+  const noCandidateContext:import("../../contracts/src").MindTurnExecutionContext={
+    characterId:"character.life-no-candidate",conversationId:"life-no-candidate",turnId:"life-no-candidate-turn",userMessageId:"life-no-candidate-turn:user",signal:new AbortController().signal
+  };
+  await noCandidateController.commitNovaTurn({...turn,longMemory:""},noCandidateContext,async()=>{});
+  await new Promise(resolve=>setTimeout(resolve,0));
+  equal(emptyCandidateWrites,0,"empty LONGMEMORY does not invoke any memory persistence path");
+
+  const cancelledCommitSession=new ConversationSession("life-cancelled-commit","character.life-cancelled-commit");
+  let cancelledCandidateWrites=0;
+  const cancelledCommitController=new ChatSessionController(cancelledCommitSession,{async chat(request){return responseFor(request)}},{
+    requestIdFactory:()=>"life-cancelled-turn",
+    memoryExtractor:{extract:async()=>{cancelledCandidateWrites++;return [];}}
+  });
+  await cancelledCommitController.submitToLife("This reply is cancelled during persistence",async()=>{},()=>true);
+  const commitAbort=new AbortController();
+  const cancelledCommitContext:import("../../contracts/src").MindTurnExecutionContext={
+    characterId:"character.life-cancelled-commit",conversationId:"life-cancelled-commit",turnId:"life-cancelled-turn",userMessageId:"life-cancelled-turn:user",signal:commitAbort.signal
+  };
+  let cancelledCommitRejected=false;
+  try{
+    await cancelledCommitController.commitNovaTurn({...turn,longMemory:"Must never be stored."},cancelledCommitContext,async(_snapshot,rollback)=>{if(!rollback)commitAbort.abort();});
+  }catch{cancelledCommitRejected=true;}
+  equal(cancelledCommitRejected,true,"a turn cancelled during persistence is rejected");
+  await new Promise(resolve=>setTimeout(resolve,0));
+  equal(cancelledCandidateWrites,0,"cancelled NovaTurn never dispatches LONGMEMORY to persistence");
+  equal(cancelledCommitController.getSnapshot().messages.some(message=>message.role==="assistant"),false,"cancelled NovaTurn is not exposed as a committed assistant message");
+
   const failedSession=new ConversationSession("life-failed-conversation","character.life-failed");
   const failedController=new ChatSessionController(failedSession,{async chat(request){return responseFor(request);}}, {requestIdFactory:()=>"failed-life-1"});
   const failedSubmit=await failedController.submitToLife("Persist before reply",async()=>{},()=>true);
