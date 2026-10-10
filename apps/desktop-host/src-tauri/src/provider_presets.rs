@@ -246,14 +246,27 @@ fn validate_credential_links(
 )->Result<(),String>{
     for preset in &state.presets{
         let references:Vec<(&CredentialReference,&str)>=if preset.preset_type=="single"{
-            match (&preset.credential_reference,preset.provider_id.as_deref()){
-                (Some(reference),Some(provider))=>vec![(reference,provider)],
-                _=>return Err("single preset credential reference is missing".to_string())
+            let provider=preset.provider_id.as_deref()
+                .ok_or_else(||"single preset providerId is required".to_string())?;
+            if provider=="ollama"{
+                if preset.credential_reference.is_some(){
+                    return Err("Ollama provider preset must not store an API credential".to_string());
+                }
+                // Local Ollama needs no CredentialStore profile.
+                vec![]
+            }else{
+                match preset.credential_reference.as_ref(){
+                    Some(reference)=>vec![(reference,provider)],
+                    None=>return Err("single preset credential reference is missing".to_string())
+                }
             }
         }else{
             preset.sources.iter().filter_map(|source|source.credential_reference.as_ref().map(|reference|(reference,source.provider_id.as_str()))).collect()
         };
         for (reference,provider) in references{
+            if provider=="ollama"{
+                return Err("Ollama provider must not store an API credential".to_string());
+            }
             let profiles=credential_state.ok_or_else(||"provider preset credential profile store is unavailable".to_string())?;
             let profile=profiles.profiles.iter().find(|profile|profile.credential_reference.id==reference.id)
                 .ok_or_else(||format!("provider preset credential reference \"{}\" does not exist in CredentialStore metadata",reference.id))?;
@@ -266,6 +279,16 @@ fn validate_credential_links(
         }
     }
     Ok(())
+}
+
+fn save_with_credential_links(
+    path:&Path,
+    state:&ProviderPresetStoreState,
+    credential_state:Option<&super::credential_profiles::CredentialProfileStoreState>
+)->Result<(),String>{
+    validate_state(state)?;
+    validate_credential_links(state,credential_state)?;
+    save_to_path(path,state)
 }
 
 fn validate_state(state:&ProviderPresetStoreState)->Result<(),String>{
@@ -437,10 +460,8 @@ pub fn load(app:&tauri::AppHandle)->Result<Option<ProviderPresetStoreState>,Stri
     load_from_path(&config_path(app)?,credential_state.as_ref())
 }
 pub fn save(app:&tauri::AppHandle,state:&ProviderPresetStoreState)->Result<(),String>{
-    validate_state(state)?;
     let credential_state=super::credential_profiles::load(app)?;
-    validate_credential_links(state,credential_state.as_ref())?;
-    save_to_path(&config_path(app)?,state)
+    save_with_credential_links(&config_path(app)?,state,credential_state.as_ref())
 }
 pub fn delete(app:&tauri::AppHandle,id:&str)->Result<(),String>{
     if id.trim().is_empty(){return Err("provider preset id must not be empty".to_string());}
@@ -480,6 +501,7 @@ fn source(id:&str)->ProviderPresetSource{ProviderPresetSource{id:id.to_string(),
 fn preset(id:&str)->ProviderPreset{let source_id=format!("source:{}:primary",id);ProviderPreset{id:id.to_string(),name:id.to_string(),preset_type:"pool".to_string(),sources:vec![source(&source_id)],active_source_id:Some(source_id),provider_id:None,base_url:None,model:None,credential_reference:None,enabled:None,timeout_ms:None,temperature:None,top_p:None,num_ctx:None,num_predict:None,keep_alive:None,created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
 fn state()->ProviderPresetStoreState{ProviderPresetStoreState{api_version:API_VERSION.to_string(),schema_version:SCHEMA_VERSION.to_string(),presets:vec![preset("preset-a")],active_preset_id:Some("preset-a".to_string())}}
 fn single_preset(id:&str)->ProviderPreset{ProviderPreset{id:id.to_string(),name:id.to_string(),preset_type:"single".to_string(),sources:vec![],active_source_id:None,provider_id:Some("openai-compatible".to_string()),base_url:Some("https://single.example/v1".to_string()),model:Some("single-model".to_string()),credential_reference:Some(reference("single-credential","openai-compatible")),enabled:Some(true),timeout_ms:Some(15000.0),temperature:None,top_p:None,num_ctx:None,num_predict:None,keep_alive:None,created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
+fn single_ollama_preset(id:&str)->ProviderPreset{ProviderPreset{id:id.to_string(),name:id.to_string(),preset_type:"single".to_string(),sources:vec![],active_source_id:None,provider_id:Some("ollama".to_string()),base_url:Some("http://127.0.0.1:11434".to_string()),model:Some("llama3.2:latest".to_string()),credential_reference:None,enabled:Some(true),timeout_ms:Some(30000.0),temperature:Some(0.4),top_p:Some(0.85),num_ctx:Some(8192),num_predict:Some(512),keep_alive:Some(serde_json::json!("5m")),created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
 
 #[test]fn rejects_unknown_fields(){
  let value=serde_json::json!({"id":"x","name":"X","sources":[],"activeSourceId":null,"createdAt":"x","updatedAt":"x","secret":"bad"});
@@ -531,6 +553,60 @@ fn single_preset(id:&str)->ProviderPreset{ProviderPreset{id:id.to_string(),name:
  let saved:serde_json::Value=serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
  assert_eq!(saved["schemaVersion"],"3");
  assert_eq!(saved["presets"][0]["type"],"pool");
+ fs::remove_dir_all(path.parent().unwrap()).unwrap();
+}
+#[test]fn saves_and_reloads_ollama_single_preset_without_credential_store(){
+ let path=temp("ollama-single-no-credentials");
+ let mut s=state();s.presets=vec![single_ollama_preset("ollama-a")];s.active_preset_id=Some("ollama-a".to_string());
+ // This exercises the same validation-and-write path used by save_provider_presets
+ // when CredentialStore metadata is absent or contains no profiles.
+ save_with_credential_links(&path,&s,None).unwrap();
+ let loaded=load_from_path(&path,None).unwrap().unwrap();
+ let saved=&loaded.presets[0];
+ assert_eq!(saved.provider_id.as_deref(),Some("ollama"));
+ assert_eq!(saved.base_url.as_deref(),Some("http://127.0.0.1:11434"));
+ assert_eq!(saved.model.as_deref(),Some("llama3.2:latest"));
+ assert_eq!(saved.temperature,Some(0.4));
+ assert_eq!(saved.top_p,Some(0.85));
+ assert_eq!(saved.num_ctx,Some(8192));
+ assert_eq!(saved.num_predict,Some(512));
+ assert_eq!(saved.keep_alive.as_ref(),Some(&serde_json::json!("5m")));
+ let raw:serde_json::Value=serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+ assert_eq!(raw["presets"][0]["providerId"],"ollama");
+ assert_eq!(raw["presets"][0]["credentialReference"],serde_json::Value::Null);
+ assert_eq!(raw["presets"][0]["temperature"],0.4);
+ assert_eq!(raw["presets"][0]["topP"],0.85);
+ assert_eq!(raw["presets"][0]["numCtx"],8192);
+ assert_eq!(raw["presets"][0]["numPredict"],512);
+ assert_eq!(raw["presets"][0]["keepAlive"],"5m");
+ fs::remove_dir_all(path.parent().unwrap()).unwrap();
+}
+#[test]fn rejects_ollama_single_preset_with_credential_reference(){
+ let mut s=state();let mut ollama=single_ollama_preset("ollama-with-key");
+ ollama.credential_reference=Some(reference("ollama-key","ollama"));
+ s.presets=vec![ollama];s.active_preset_id=Some("ollama-with-key".to_string());
+ assert!(validate_state(&s).is_err());
+ assert!(validate_credential_links(&s,None).is_err());
+ let path=temp("ollama-with-key");
+ assert!(save_with_credential_links(&path,&s,None).is_err());
+ assert!(!path.exists());
+ fs::remove_dir_all(path.parent().unwrap()).unwrap();
+}
+#[test]fn single_api_provider_still_requires_valid_saved_credentials(){
+ let mut s=state();s.presets=vec![single_preset("single-api")];s.active_preset_id=Some("single-api".to_string());
+ assert!(validate_credential_links(&s,None).is_err());
+ let mut wrong_provider=credential_state();
+ wrong_provider.profiles[0].credential_reference.id="single-credential".to_string();
+ wrong_provider.profiles[0].provider_id="gemini".to_string();
+ wrong_provider.profiles[0].credential_reference.provider=Some("gemini".to_string());
+ assert!(validate_credential_links(&s,Some(&wrong_provider)).is_err());
+ let mut matching=credential_state();
+ matching.profiles[0].credential_reference.id="single-credential".to_string();
+ assert!(validate_credential_links(&s,Some(&matching)).is_ok());
+ let path=temp("single-api-credentials");
+ save_with_credential_links(&path,&s,Some(&matching)).unwrap();
+ let loaded=load_from_path(&path,None).unwrap().unwrap();
+ assert_eq!(loaded.presets[0].credential_reference.as_ref().unwrap().id,"single-credential");
  fs::remove_dir_all(path.parent().unwrap()).unwrap();
 }
 #[test]fn validates_single_credential_reference_against_saved_profile(){
