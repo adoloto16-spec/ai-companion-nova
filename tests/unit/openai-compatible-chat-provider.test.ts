@@ -83,6 +83,9 @@ async function* streamChunks(parts:readonly string[]):AsyncIterable<string>{
     yield part;
   }
 }
+async function* delayedStreamChunks(parts:readonly string[],delayMs:number):AsyncIterable<string>{
+  for(const part of parts){await new Promise(resolve=>setTimeout(resolve,delayMs));yield part;}
+}
 
 function request(overrides:Partial<ChatRequest>={}):ChatRequest{
   return {
@@ -515,6 +518,18 @@ async function streamingTimeoutStageTest(){
   equal(timeoutDiagnostic?.metadata?.timeoutMs,25,"stream timeout diagnostic records configured timeout");
 }
 
+async function streamingTimeoutIsInactivityDeadlineTest(){
+  const http=new FakeHttpClient();
+  const frames=[
+    "data: "+JSON.stringify({choices:[{delta:{content:"still "},finish_reason:null}]})+"\\n\\n",
+    "data: "+JSON.stringify({choices:[{delta:{content:"streaming "},finish_reason:null}]})+"\\n\\n",
+    "data: "+JSON.stringify({choices:[{delta:{content:"after thirty seconds in total"},finish_reason:"stop"}]})+"\\n\\n",
+    "data: [DONE]\\n\\n"
+  ];
+  http.streamNext={status:200,headers:{"content-type":"text/event-stream"},body:delayedStreamChunks(frames,15)};
+  const response=await provider(http,new FakeCredentialStore(),25).stream(request(),{onEvent:()=>{}});
+  equal(response.message.content,"still streaming after thirty seconds in total","OpenAI-compatible stream survives total duration exceeding the configured inactivity window");
+}
 async function streamingUsageTest(){
   const http=new FakeHttpClient();
   http.streamNext={
@@ -689,6 +704,7 @@ void (async()=>{
     ["Secret safety",secretSafetyTest],
     ["Streaming",streamingTest],
     ["Streaming timeout stage",streamingTimeoutStageTest],
+    ["Streaming timeout is an inactivity deadline",streamingTimeoutIsInactivityDeadlineTest],
     ["Streaming usage",streamingUsageTest],
     ["Malformed streaming event",malformedStreamingEventTest],
     ["Streaming abort",streamingAbortTest],
