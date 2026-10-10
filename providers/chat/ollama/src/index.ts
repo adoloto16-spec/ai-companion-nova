@@ -97,6 +97,8 @@ export interface OllamaProviderConfig {
   model: string;
   credential?: CredentialReference | null;
   timeoutMs?: number;
+  temperature?: number;
+  topP?: number;
   numCtx?: number;
   numPredict?: number;
   keepAlive?: string | number;
@@ -149,6 +151,8 @@ export function validateOllamaProviderConfig(config: OllamaProviderConfig, optio
   if (!options.allowEmptyModel && (!config.model || config.model.trim().length === 0)) errors.push("Ollama model is not configured.");
   if (config.model !== undefined && config.model !== config.model.trim()) errors.push("Ollama model must not have surrounding whitespace.");
   if (config.timeoutMs !== undefined && (!Number.isFinite(config.timeoutMs) || config.timeoutMs < 100)) errors.push("Ollama timeout must be at least 100 milliseconds.");
+  if (config.temperature !== undefined && (!Number.isFinite(config.temperature) || config.temperature < 0 || config.temperature > 2)) errors.push("Ollama temperature must be between 0 and 2.");
+  if (config.topP !== undefined && (!Number.isFinite(config.topP) || config.topP < 0 || config.topP > 1)) errors.push("Ollama top_p must be between 0 and 1.");
   if (config.numCtx !== undefined && (!Number.isInteger(config.numCtx) || config.numCtx < 1)) errors.push("Ollama num_ctx must be a positive integer.");
   if (config.numPredict !== undefined && (!Number.isInteger(config.numPredict) || config.numPredict < 1)) errors.push("Ollama num_predict must be a positive integer.");
   if (config.keepAlive !== undefined && !(typeof config.keepAlive === "string" && config.keepAlive.trim().length > 0) &&
@@ -413,8 +417,10 @@ export class OllamaChatProvider implements ChatProvider {
   private mapRequest(request: ChatRequest, messages: readonly OllamaMessage[], stream: boolean) {
     const generation = request.generation;
     const options: Record<string, number> = {};
-    if (generation?.temperature !== undefined) options.temperature = generation.temperature;
-    if (generation?.topP !== undefined) options.top_p = generation.topP;
+    const temperature = generation?.temperature ?? this.config.temperature;
+    const topP = generation?.topP ?? this.config.topP;
+    if (temperature !== undefined) options.temperature = temperature;
+    if (topP !== undefined) options.top_p = topP;
     const numPredict = generation?.maxTokens ?? this.config.numPredict;
     if (numPredict !== undefined) options.num_predict = numPredict;
     if (this.config.numCtx !== undefined) options.num_ctx = this.config.numCtx;
