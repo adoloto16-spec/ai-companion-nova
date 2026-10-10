@@ -527,8 +527,10 @@ async function streamingTimeoutIsInactivityDeadlineTest(){
     "data: [DONE]\n\n"
   ];
   http.streamNext={status:200,headers:{"content-type":"text/event-stream"},body:delayedStreamChunks(frames,15)};
-  const response=await provider(http,new FakeCredentialStore(),25).stream(request(),{onEvent:()=>{}});
-  equal(response.message.content,"still streaming after thirty seconds in total","OpenAI-compatible stream survives total duration exceeding the configured inactivity window");
+  let streamed="";
+  const response=await provider(http,new FakeCredentialStore(),25).stream(request(),{onEvent:event=>{if(event.type==="delta")streamed+=event.text;}});
+  equal(streamed,"still streaming after thirty seconds in total","OpenAI-compatible stream emits all speech across multiple inactivity windows");
+  equal(response.message.content,"","stream adapter preserves its existing contract of delivering content through deltas");
 }
 async function streamingUsageTest(){
   const http=new FakeHttpClient();
