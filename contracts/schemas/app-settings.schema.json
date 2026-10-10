@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.ai-companion-nova.dev/app-settings/v10",
-  "title": "AI Companion Nova App Settings v10",
+  "$id": "https://schemas.ai-companion-nova.dev/app-settings/v11",
+  "title": "AI Companion Nova App Settings v11",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -14,15 +14,14 @@
     "retrieval",
     "diagnostics",
     "ui",
-    "semanticDedup",
-    "memoryAgent"
+    "semanticDedup"
   ],
   "properties": {
     "apiVersion": {
       "const": "1"
     },
     "schemaVersion": {
-      "const": "10"
+      "const": "11"
     },
     "chat": {
       "type": "object",
@@ -154,58 +153,6 @@
       "properties": {
         "showDiagnosticsInChat": {
           "type": "boolean"
-        }
-      }
-    },
-    "memoryAgent": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "enabled",
-        "providerPresetId",
-        "model",
-        "outputMode",
-        "prompt",
-        "promptBackup",
-        "defaultPromptVersion"
-      ],
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "providerPresetId": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "maxLength": 200
-        },
-        "model": {
-          "type": "string",
-          "maxLength": 200
-        },
-        "outputMode": {
-          "enum": [
-            "auto",
-            "structured",
-            "plain"
-          ]
-        },
-        "prompt": {
-          "type": "string",
-          "maxLength": 12000
-        },
-        "promptBackup": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "maxLength": 12000
-        },
-        "defaultPromptVersion": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 32
         }
       }
     },
