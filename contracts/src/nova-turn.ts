@@ -208,7 +208,7 @@ function parseNativeJsonNovaTurn(content:string):NovaTurnParseResult{
   const invalidFields:NovaTurnParseFields={
     situation:{status:"invalid"},thoughts:{status:"invalid"},emotion:{status:"invalid"},
     tools:{status:"invalid"},toolResults:{status:"missing"},speech:{status:"invalid"},
-    longMemory:{status:"missing"},nextWakeMs:{status:"invalid"}
+    longMemory:{status:"invalid"},nextWakeMs:{status:"invalid"}
   };
   const invalidJson=(diagnostic:string):NovaTurnParseResult=>({
     complete:false,diagnostics:[diagnostic],fields:invalidFields
