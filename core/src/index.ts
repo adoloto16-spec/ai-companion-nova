@@ -27,3 +27,5 @@ export * from "./semantic-memory-dedup";
 export * from "./mind-runtime";
 export * from "./llm-cognitive-step";
 export * from "./mind-scheduler";
+export * from "./semantic-index-lock";
+export * from "./semantic-search";
