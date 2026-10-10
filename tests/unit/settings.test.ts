@@ -76,7 +76,7 @@ async function main(){
   v5.chat={automaticLongTermMemory:false,responseMode:"structured"};
   const migratedV5=migrateAppSettings(v5);
   equal(migratedV5.cognitiveSchedule,DEFAULT_APP_SETTINGS.cognitiveSchedule,"schema v5 migration inserts cognitive defaults");
-  equal(migratedV5.schemaVersion,"11","legacy AppSettings migrate to the current schema");
+  equal(migratedV5.schemaVersion,"12","legacy AppSettings migrate to the current schema");
   equal(migratedV5.chat.automaticLongTermMemory,false,"legacy automatic memory setting remains a save gate");
   equal(Object.prototype.hasOwnProperty.call(migratedV5,"memoryAgent"),false,"legacy Memory Agent settings are dropped during migration");
   const oldDefaultV8=JSON.parse(JSON.stringify(defaultAppSettings())) as Record<string,any>;
@@ -106,13 +106,13 @@ async function main(){
   const migratedV10=migrateAppSettings(v10);
   equal(migratedV10.chat.responseMode,"plain","schema v10 persists the selected Chat response mode");
   equal(migratedV10.cognitiveSchedule.maxRequestsPerHour,120,"explicit quota in the old schema is preserved");
-  equal(migratedV10.schemaVersion,"11","schema v10 upgrades to schema v11");
+  equal(migratedV10.schemaVersion,"12","schema v10 upgrades to schema v12");
   equal(Object.prototype.hasOwnProperty.call(migratedV10,"memoryAgent"),false,"schema v10 Memory Agent configuration is removed safely");
   const v6=JSON.parse(JSON.stringify(defaultAppSettings())) as Record<string,unknown>;
   v6.schemaVersion="6";
   v6.memoryAgent={enabled:false,providerPresetId:"preset.legacy",model:"legacy-model",outputMode:"plain",prompt:"old prompt",promptBackup:"backup",defaultPromptVersion:"9"};
   const migratedV6=migrateAppSettings(v6);
-  equal(migratedV6.schemaVersion,"11","older settings schemas migrate to current AppSettings");
+  equal(migratedV6.schemaVersion,"12","older settings schemas migrate to current AppSettings");
   equal(Object.prototype.hasOwnProperty.call(migratedV6,"memoryAgent"),false,"legacy Memory Agent bindings do not return through migration");
   const currentSettings={...defaultAppSettings(),chat:{...defaultAppSettings().chat,automaticLongTermMemory:false,responseMode:"plain" as const}};
   await manager.set(currentSettings);

@@ -12,7 +12,7 @@ import {
 import type {
   AppSettings,ChatRequest,ChatResponse,EmbeddingProvider,HealthStatus,MemoryItem,ProviderCapabilities
 } from "../../contracts/src";
-import {StandardContractValidator,STANDARD_SCHEMAS,defaultAppSettings,defaultModelProfile,migrateAppSettings} from "../../contracts/src";
+import {StandardContractValidator,STANDARD_SCHEMAS,defaultAppSettings,defaultModelProfile,migrateAppSettings,applyPromptOverride} from "../../contracts/src";
 import {ChatSessionController,ConversationSession,InMemoryAuditService,InMemoryDiagnosticsStore,InMemoryEventBus,MemoryBrokerImpl,SettingsManager} from "../../core/src";
 import {createFoundationRuntime} from "../../runtime/bootstrap/src/index";
 import type {HttpClient} from "../../providers/chat/openai-compatible/src/index";
@@ -74,7 +74,7 @@ function memory(id:string,content:string,characterId="character.a",status:"activ
     archiveReason:status==="archived"?"manual":null,metadata:{}
   };
 }
-async function fixture(output:(request:ChatRequest)=>string,vectorFor?:(text:string)=>readonly number[],withEmbeddings=true){
+async function fixture(output:(request:ChatRequest)=>string,vectorFor?:(text:string)=>readonly number[],withEmbeddings=true,customSettings?:AppSettings){
   const store=new InMemoryMemoryStore();
   const audit=new InMemoryAuditService();
   const events=new InMemoryEventBus();
@@ -86,7 +86,7 @@ async function fixture(output:(request:ChatRequest)=>string,vectorFor?:(text:str
   });
   const embeddings=new FakeEmbeddingProvider(vectorFor??(text=>text.includes("aviation")?[0,1,0]:text.includes("programming")?[0.8,0.6,0]:text.includes("dark-blue")?[0.98,0.2,0]:[1,0,0]));
   const judge=new FakeJudgeRuntime(output);
-  const settings=baseSettings("structured");
+  const settings=customSettings??baseSettings("structured");
   const indexStore=new InMemoryMemorySemanticIndexStore();
   const service=new MemorySemanticDeduplicator({
     settings:()=>settings,
@@ -317,6 +317,8 @@ async function subsetDirectionTest(){
 }
 
 async function manualLikeSequentialScenarioTest(){
+  const editedJudgePrompt="Custom editable Memory Judge instructions for this integration test.";
+  const customized=applyPromptOverride(baseSettings("structured"),"memory-judge.system",editedJudgePrompt);
   const f=await fixture(request=>{
     const input=request.context.messages[1]?.content??"";
     const lines=input.split(/\r?\n/gu);
@@ -332,7 +334,7 @@ async function manualLikeSequentialScenarioTest(){
       return [];
     });
     return JSON.stringify({archive});
-  });
+  },undefined,true,customized);
   await f.broker.create("character.a",{id:"real-memory-1",type:"fact",content:"Пользователь живет в Берлине.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
   equal((await f.broker.list("character.a")).filter(item=>item.status==="active").map(item=>item.id),["real-memory-1"],"after step 1 one record is active");
   await f.broker.create("character.a",{id:"real-memory-2",type:"fact",content:"Пользователь живет в Берлине и увлекается программированием.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
@@ -342,7 +344,8 @@ async function manualLikeSequentialScenarioTest(){
   equal((await f.broker.list("character.a")).filter(item=>item.status==="active").map(item=>item.id),["real-memory-3"],"after step 3 the most complete record is active");
   equal((await f.broker.get("character.a","real-memory-2"))?.status,"archived","after step 3 real memory 2 is archived");
   equal((await f.broker.get("character.a","real-memory-1"))?.status,"archived","after step 3 real memory 1 stays archived");
-  ok(f.judge.calls.every(call=>call.context.messages.some(message=>message.role==="system"&&message.content===baseSettings().semanticDedup.judge.prompt)),"Fake Judge uses the production Judge prompt");
+  ok(f.judge.calls.length>0,"production semantic deduplication invoked the Judge");
+  ok(f.judge.calls.every(call=>call.context.messages.some(message=>message.role==="system"&&message.content===editedJudgePrompt)),"edited prompt from the centralized registry is sent to each real Memory Judge request");
 }
 
 
@@ -361,7 +364,7 @@ async function settingsV5PersistenceTest(){
     chat:{automaticLongTermMemory:false,responseMode:"plain"},
     memoryAgent:{enabled:true,providerPresetId:"legacy-agent",model:"legacy-model",outputMode:"plain",prompt:"legacy prompt",promptBackup:"backup",defaultPromptVersion:"9"}
   });
-  equal(migrated.schemaVersion,"11","legacy saved settings migrate to AppSettings v11");
+  equal(migrated.schemaVersion,"12","legacy saved settings migrate to AppSettings v12");
   equal(migrated.chat.automaticLongTermMemory,false,"LONGMEMORY persistence setting remains intentional and preserved");
   equal(migrated.chat.responseMode,"plain","response mode remains preserved during settings migration");
   equal(Object.prototype.hasOwnProperty.call(migrated,"memoryAgent"),false,"legacy Automatic Memory Agent settings are ignored and not restored");

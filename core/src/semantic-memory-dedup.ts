@@ -1,3 +1,4 @@
+import {resolvePromptText} from "../../contracts/src";
 import type {
   AgentOutputMode,AppSettings,CharacterId,ChatRequest,ChatResponse,Clock,DiagnosticsStore,EmbeddingProvider,EventBus,
   MemoryBroker,MemoryItem,MemorySemanticIndexState,MemorySemanticIndexStore,MemorySemanticVectorRecord,SchemaValidator,JsonSchema
@@ -401,7 +402,7 @@ export class MemorySemanticDeduplicator{
         context:{
           conversationId:"memory-judge:"+memoryId,
           messages:[
-            {role:"system",content:judge.prompt.trim()},
+            {role:"system",content:resolvePromptText(this.options.settings().prompts,"memory-judge.system")},
             {role:"user",content:buildJudgeInput(newMemory,selected)}
           ]
         }

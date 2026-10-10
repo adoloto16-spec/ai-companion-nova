@@ -6,6 +6,7 @@ function cloneSettings(settings:AppSettings):AppSettings{
     ...settings,
     cognitiveSchedule:{...settings.cognitiveSchedule},
     chat:{...settings.chat},
+    prompts:{overrides:{...settings.prompts.overrides}},
     context:{...settings.context},
     memory:{...settings.memory},
     semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge}},

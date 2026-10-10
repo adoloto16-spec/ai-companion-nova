@@ -1,4 +1,5 @@
 import React from "react";
+import PromptRegistryView from "./prompt-registry-view";
 import {createRoot} from "react-dom/client";
 import {invoke} from "@tauri-apps/api/core";
 import {NovaHttpClient} from "./ollama-http-client";
@@ -23,7 +24,7 @@ import {
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
   type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem, type ErrorDiagnostic,
-  defaultAppSettings, validateAppSettings, StandardContractValidator,
+  defaultAppSettings, validateAppSettings, StandardContractValidator, applyPromptOverride, restorePromptDefault, restoreAllPromptDefaults, type PromptId,
   type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo, type MindState, type MindTurnSink, type MindReactiveTurn
 } from "../../../contracts/src/index";
 import {countVisibleSpeechMessages,resolveNovaTurnMessagePresentation} from "./nova-turn-visibility";
@@ -1655,18 +1656,28 @@ function AppSettingsView({
       </label>
       <label>Judge Prompt
         <textarea value={settings.semanticDedup.judge.prompt}
-          onChange={event=>onChange({...settings,semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,prompt:event.target.value}}})}
+          onChange={event=>{
+            const prompt=event.currentTarget.value;
+            onChange({
+              ...settings,
+              prompts:{overrides:{...settings.prompts.overrides,"memory-judge.system":prompt}},
+              semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,prompt}}
+            });
+          }}
           rows={10} maxLength={12000} disabled={saving}/>
-        <small>{settings.semanticDedup.judge.prompt===defaults.semanticDedup.judge.prompt?"Default prompt":"Custom prompt"} · default version {settings.semanticDedup.judge.defaultPromptVersion}</small>
+        <small>{settings.semanticDedup.judge.prompt===defaults.semanticDedup.judge.prompt?"Default prompt":"Custom prompt"} · default version {settings.semanticDedup.judge.defaultPromptVersion}. This setting is synchronized with the Prompts tab.</small>
       </label>
       <div className="actions">
         <button type="button" onClick={()=>{
           const previous=settings.semanticDedup.judge.prompt===defaults.semanticDedup.judge.prompt?settings.semanticDedup.judge.promptBackup:settings.semanticDedup.judge.prompt;
-          onChange({...settings,semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,prompt:defaults.semanticDedup.judge.prompt,promptBackup:previous||settings.semanticDedup.judge.promptBackup}}});
+          const reset=restorePromptDefault(settings,"memory-judge.system");
+          onChange({...reset,semanticDedup:{...reset.semanticDedup,judge:{...reset.semanticDedup.judge,promptBackup:previous||settings.semanticDedup.judge.promptBackup}}});
         }} disabled={saving}>Reset to Default</button>
         <button type="button" onClick={()=>{
           if(settings.semanticDedup.judge.promptBackup){
-            onChange({...settings,semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,prompt:settings.semanticDedup.judge.promptBackup,promptBackup:settings.semanticDedup.judge.prompt}}});
+            const previous=settings.semanticDedup.judge.prompt;
+            const restored=applyPromptOverride(settings,"memory-judge.system",settings.semanticDedup.judge.promptBackup);
+            onChange({...restored,semanticDedup:{...restored.semanticDedup,judge:{...restored.semanticDedup.judge,promptBackup:previous}}});
           }
         }} disabled={saving||!settings.semanticDedup.judge.promptBackup}>Restore Previous</button>
         <button type="button" onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save"}</button>
@@ -2085,7 +2096,7 @@ function credentialSavedEntries(
 }
 
 function App(){
-  const [view,setView]=React.useState<"chat"|"characters"|"memory"|"core-book"|"model-profile"|"settings"|"diagnostics">("chat");
+  const [view,setView]=React.useState<"chat"|"characters"|"memory"|"core-book"|"model-profile"|"prompts"|"settings"|"diagnostics">("chat");
   const [runtime,setRuntime]=React.useState<RuntimeDiagnostics>(preview);
   const [saving,setSaving]=React.useState(false);
   const [startupStatus,setStartupStatus]=React.useState<"initializing"|"ready"|"error">("initializing");
@@ -2747,6 +2758,36 @@ function App(){
     finally{setSaving(false);}
   },[]);
 
+  const savePromptOverride=React.useCallback(async(id:PromptId,text:string)=>{
+    const foundation=foundationRef.current;
+    if(!foundation){setSettingsLoadMessage("Settings runtime is not available.");return;}
+    const nextSettings=applyPromptOverride(appSettings,id,text);
+    const errors=validateAppSettings(nextSettings);
+    if(errors.length){setSettingsLoadMessage(errors.join(" "));return;}
+    setSaving(true);setSettingsLoadMessage("");
+    try{
+      const next=await foundation.updateSettings(nextSettings);
+      setAppSettings(next);
+      setSettingsLoadMessage(text.trim().length>0?"Prompt saved and applied.":"Factory prompt restored and applied.");
+    }catch(error){setSettingsLoadMessage(error instanceof Error?error.message:"Prompt could not be saved.");}
+    finally{setSaving(false);}
+  },[appSettings]);
+
+  const restoreAllPromptOverrides=React.useCallback(async()=>{
+    const foundation=foundationRef.current;
+    if(!foundation){setSettingsLoadMessage("Settings runtime is not available.");return;}
+    const nextSettings=restoreAllPromptDefaults(appSettings);
+    const errors=validateAppSettings(nextSettings);
+    if(errors.length){setSettingsLoadMessage(errors.join(" "));return;}
+    setSaving(true);setSettingsLoadMessage("");
+    try{
+      const next=await foundation.updateSettings(nextSettings);
+      setAppSettings(next);
+      setSettingsLoadMessage("All factory prompts restored and applied.");
+    }catch(error){setSettingsLoadMessage(error instanceof Error?error.message:"Prompts could not be restored.");}
+    finally{setSaving(false);}
+  },[appSettings]);
+
   const activeChatDraftKey=activeCharacter&&activeConversation
     ?chatDraftKey(activeCharacter.id,activeConversation.id)
     :undefined;
@@ -2759,6 +2800,7 @@ function App(){
         <button className={view==="characters"?"nav-button active":"nav-button"} onClick={()=>setView("characters")}>Characters</button>
         <button className={view==="memory"?"nav-button active":"nav-button"} onClick={()=>setView("memory")}>Character Memory</button>
         <button className={view==="core-book"?"nav-button active":"nav-button"} onClick={()=>setView("core-book")}>Core Book</button>
+        <button className={view==="prompts"?"nav-button active":"nav-button"} onClick={()=>setView("prompts")}>Промты</button>
         <button className={view==="model-profile"?"nav-button active":"nav-button"} onClick={()=>setView("model-profile")}>Model Profile</button>
         <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Settings</button>
         {appSettings.ui.showDiagnosticsInChat&&<button className={view==="diagnostics"?"nav-button active":"nav-button"} onClick={()=>setView("diagnostics")}>Diagnostics</button>}
@@ -2776,6 +2818,9 @@ function App(){
     <ViewErrorBoundary key={view} view={view} onError={reportViewError}>
     {view==="model-profile"&&activeCharacter&&activeModelProfile
       ?<ModelProfileView profile={activeModelProfile} runtime={runtime} presets={providerPresets} activePresetId={activePresetId} onSave={saveModelProfile}/>
+      :view==="prompts"
+      ?<PromptRegistryView settings={appSettings} saving={saving} message={settingsLoadMessage}
+          onSavePrompt={savePromptOverride} onRestoreAll={restoreAllPromptOverrides}/>
       :view==="settings"
       ?<SettingsContainerView
           appSettings={appSettings}

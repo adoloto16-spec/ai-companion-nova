@@ -7,7 +7,7 @@ button:disabled{opacity:.55;cursor:default}
 .app-shell{max-width:1120px;margin:0 auto;min-height:100vh;padding:24px}
 .app-header{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:18px}
 .app-header h1{margin:0;font-size:28px}.app-header p{margin:3px 0 0;opacity:.68}
-.app-nav{display:flex;gap:8px}
+.app-nav{display:flex;gap:8px;flex-wrap:wrap}
 .nav-button{background:transparent;border-color:#2d3744}.nav-button.active{background:#243242}
 .chat-panel{display:flex;flex-direction:column;height:calc(100vh - 110px);min-height:520px;margin:0;border:1px solid #2a3441;border-radius:12px;background:#151c25;overflow:hidden}
 .chat-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 18px;border-bottom:1px solid #27313d}.chat-toolbar-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.message-status{margin-top:6px;font-size:11px;opacity:.55;text-transform:uppercase;letter-spacing:.04em}
@@ -90,3 +90,21 @@ input,select{padding:9px;border:1px solid #394655;border-radius:7px;background:#
 .nova-turn-technical{margin-top:10px;padding:10px;border:1px solid #394655;border-radius:8px;background:#111820;display:grid;gap:10px;font-size:12px}
 .nova-turn-technical p{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
 .nova-turn-technical pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:5px 0 0;padding:8px;border-radius:5px;background:#0b1016}
+
+.prompt-registry-panel{display:grid;gap:18px}
+.prompt-registry-header{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:18px;border:1px solid #2a3441;border-radius:12px;background:#151c25}
+.prompt-registry-header h2{margin:0}
+.prompt-reset-all{flex:0 0 auto}
+.prompt-category{display:grid;gap:12px}
+.prompt-category>h3{margin:0;font-size:17px}
+.prompt-list{display:grid;gap:14px}
+.prompt-card{padding:16px;border:1px solid #2a3441;border-radius:10px;background:#171e27}
+.prompt-card-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
+.prompt-card-heading h4{margin:0}.prompt-card-heading p{margin:6px 0 0;opacity:.72;font-size:13px;line-height:1.4}
+.prompt-status{font-size:11px;white-space:nowrap;border:1px solid #394655;border-radius:999px;padding:4px 8px;opacity:.8}
+.prompt-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.prompt-fields label{min-width:0}
+.prompt-fields textarea{width:100%;min-height:110px;resize:vertical;padding:10px;border:1px solid #394655;border-radius:7px;background:#0f141b;color:#e9eef5;line-height:1.4;font-family:Consolas,monospace;font-size:12px;white-space:pre-wrap}
+.prompt-fields textarea[readonly]{opacity:.68}
+.prompt-card .actions{align-items:center}
+@media (max-width:900px){.prompt-registry-header{flex-direction:column}.prompt-fields{grid-template-columns:1fr}}

@@ -2,6 +2,7 @@ import {LLMCognitiveStep} from "../../core/src/llm-cognitive-step";
 import type {CognitiveStepContext} from "../../core/src/mind-runtime";
 import type {AssembledContext,Character,ChatMessage,ChatRequest,ChatResponse,ChatStreamHandlers,ChatStreamOptions,Conversation} from "../../contracts/src";
 import {serializeNovaTurn} from "../../contracts/src";
+import type {PromptId} from "../../contracts/src";
 import type {NovaTurn} from "../../contracts/src/nova-turn";
 
 function equal(actual:unknown,expected:unknown,label:string):void{
@@ -20,7 +21,7 @@ function context(onSpeechEvent:CognitiveStepContext["onSpeechEvent"]):CognitiveS
   return {characterId:character.id,state:{lifecycleState:"thinking",nextWakeAt:null,recentTrace:[]},signal:new AbortController().signal,wakeReason:"user-message",
     userTurn:{characterId:character.id,conversationId:conversation.id,userMessageId:userMessage.id!,turnId:"turn.stream"},onSpeechEvent};
 }
-function createStep(runtime:unknown,mode:"structured"|"plain"="structured"):LLMCognitiveStep{
+function createStep(runtime:unknown,mode:"structured"|"plain"="structured",getPrompt?:(id:PromptId)=>string):LLMCognitiveStep{
   return new LLMCognitiveStep({
     runtime:runtime as never,
     getCharacter:async()=>character,
@@ -32,6 +33,7 @@ function createStep(runtime:unknown,mode:"structured"|"plain"="structured"):LLMC
     getChatModelForPreset:async()=>"unused",
     getCognitiveSchedule:()=>schedule,
     getOutputMode:()=>mode,
+    ...(getPrompt?{getPrompt}:{}),
     getAvailableTools:()=>[{name:"read_memory",description:"Search saved character memory",parameters:{type:"object"}}]
   });
 }
@@ -71,7 +73,7 @@ async function nativeSchemaStreamsBeforeCompletion():Promise<void>{
     }
   };
   let visible="";
-  const run=createStep(runtime).run(context(event=>{if(event.type==="delta")visible+=event.text??"";}));
+  const run=createStep(runtime,"structured",id=>"CUSTOM PROMPT: "+id).run(context(event=>{if(event.type==="delta")visible+=event.text??"";}));
   await firstChunk;
   ok(visible.length>0,"public speech is visible before stream completion");
   ok(visible.length<payload.length,"raw JSON was not sent as visible text");
@@ -79,6 +81,11 @@ async function nativeSchemaStreamsBeforeCompletion():Promise<void>{
   const format=calls[0]?.generation?.responseFormat;
   if(!format||format.type!=="json-schema")throw new Error("structured mode must send native JSON Schema");
   equal(format.name,"nova_turn_v1","native schema uses a stable name");
+  equal(calls[0]?.context.messages.find(message=>message.role==="system")?.content,"CUSTOM PROMPT: nova-system-json","native JSON request receives the edited JSON system prompt");
+  equal(calls[0]?.context.messages.find(message=>message.id?.endsWith(":user-cue"))?.content,"CUSTOM PROMPT: nova-cue-reactive-json","native JSON request receives the edited reactive JSON cue");
+  const structuredContext=calls[0]?.context.messages.find(message=>message.id?.endsWith(":schedule"))?.content??"";
+  ok(structuredContext.includes("CUSTOM PROMPT: nova-schedule-structured"),"native JSON request receives the edited schedule instruction");
+  ok(structuredContext.includes("CUSTOM PROMPT: nova-tools-allowlist"),"native JSON request receives the edited registered-tools instruction");
   ok(Boolean(format.schema.properties?.speech),"schema defines the canonical speech field");
   resume();
   const result=await run;
@@ -107,10 +114,12 @@ async function explicitUnsupportedUsesOnlyOneTaggedFallback():Promise<void>{
     }
   };
   let visible="";
-  const result=await createStep(runtime).run(context(event=>{if(event.type==="delta")visible+=event.text??"";}));
+  const result=await createStep(runtime,"structured",id=>"CUSTOM PROMPT: "+id).run(context(event=>{if(event.type==="delta")visible+=event.text??"";}));
   equal(calls.length,2,"explicit unsupported schema causes one and only one tagged retry");
   equal(calls[0]?.generation?.responseFormat?.type,"json-schema","first request uses native JSON Schema");
   equal(calls[1]?.generation?.responseFormat?.type,"text","fallback request uses tagged text protocol");
+  equal(calls[1]?.context.messages.find(message=>message.role==="system")?.content,"CUSTOM PROMPT: nova-system-tagged","tagged fallback uses the edited tagged system prompt");
+  equal(calls[1]?.context.messages.find(message=>message.id?.endsWith(":user-cue"))?.content,"CUSTOM PROMPT: nova-cue-reactive-tagged","tagged fallback uses the edited reactive tagged cue");
   equal(result.turn.speech,"Fallback speech is streamed, not parsed as JSON.","tag fallback validates final protocol");
   equal(visible,result.turn.speech,"tag fallback streams only speech without final duplication");
 }
@@ -151,16 +160,47 @@ async function plainModeIsOrdinaryText():Promise<void>{
       calls.push(request);await handlers.onEvent(delta(request,text));return responseFor(request,text);
     }
   };
-  const result=await createStep(runtime,"plain").run(context(()=>{}));
+  const result=await createStep(runtime,"plain",id=>"CUSTOM PROMPT: "+id).run(context(()=>{}));
   equal(calls.length,1,"plain mode uses one request");
   equal(calls[0]?.generation?.responseFormat,undefined,"plain mode sends no JSON Schema or mandatory text format");
+  equal(calls[0]?.context.messages.find(message=>message.role==="system")?.content,"CUSTOM PROMPT: nova-system-plain","plain mode uses the edited plain system prompt");
+  equal(calls[0]?.context.messages.find(message=>message.id?.endsWith(":user-cue"))?.content,"CUSTOM PROMPT: nova-cue-reactive-plain","plain mode uses the edited reactive plain cue");
+  const plainContext=calls[0]?.context.messages.find(message=>message.id?.endsWith(":schedule"))?.content??"";
+  ok(plainContext.includes("CUSTOM PROMPT: nova-schedule-plain"),"plain mode receives its edited schedule instruction");
+  ok(!plainContext.includes("CUSTOM PROMPT: nova-tools-allowlist"),"plain mode keeps the tool instruction out of the no-tools context");
   equal(result.turn.speech,text,"plain mode displays response as-is without protocol parsing");
 }
+async function backgroundTurnsUseBackgroundPromptIds():Promise<void>{
+  for(const variant of ["json","tagged","plain"] as const){
+    const calls:ChatRequest[]=[];
+    const content=variant==="json"?turnJson("Background response"):variant==="tagged"?taggedTurn("Background response"):"Background response";
+    const runtime={
+      getChatProviderCapabilities:()=>({structuredOutput:variant!=="tagged",streaming:true}),
+      getActiveProviderPresetId:()=>undefined,getChatModel:()=>"fake-model",
+      async getChatModelForPreset(){return "unused";},
+      async chat(request:ChatRequest){calls.push(request);return responseFor(request,content);},
+      async stream(request:ChatRequest,handlers:ChatStreamHandlers,_options?:ChatStreamOptions){
+        calls.push(request);await handlers.onEvent(delta(request,content));return responseFor(request,content);
+      }
+    };
+    const base=context(()=>{});
+    const background={characterId:base.characterId,state:base.state,signal:base.signal,wakeReason:"life-start" as const};
+    const mode=variant==="plain"?"plain":"structured";
+    await createStep(runtime,mode,id=>"CUSTOM PROMPT: "+id).run(background);
+    const format=variant==="plain"?"plain":variant==="tagged"?"tagged":"native-json";
+    const expectedSystem=variant==="plain"?"nova-system-plain":variant==="tagged"?"nova-system-tagged":"nova-system-json";
+    const expectedCue=variant==="plain"?"nova-cue-background-plain":variant==="tagged"?"nova-cue-background-tagged":"nova-cue-background-json";
+    equal(calls[0]?.context.messages.find(message=>message.role==="system")?.content,"CUSTOM PROMPT: "+expectedSystem,format+" background generation uses its editable system prompt");
+    equal(calls[0]?.context.messages.find(message=>message.id?.endsWith(":user-cue"))?.content,"CUSTOM PROMPT: "+expectedCue,format+" background generation uses its editable cue");
+  }
+}
+
 async function main():Promise<void>{
   await nativeSchemaStreamsBeforeCompletion();
   await explicitUnsupportedUsesOnlyOneTaggedFallback();
   await ordinaryErrorsAndMalformedJsonNeverFallback();
   await plainModeIsOrdinaryText();
+  await backgroundTurnsUseBackgroundPromptIds();
   console.log("PASS native JSON Schema, fallback, and streaming cognitive-step tests");
 }
 void main().catch(error=>{console.error(error);process.exitCode=1;});
