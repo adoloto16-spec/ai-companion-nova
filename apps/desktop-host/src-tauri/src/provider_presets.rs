@@ -458,7 +458,7 @@ use super::*;
 use std::{fs,time::{SystemTime,UNIX_EPOCH}};
 
 fn reference(id:&str,provider:&str)->CredentialReference{CredentialReference{id:id.to_string(),kind:"api-key".to_string(),provider:Some(provider.to_string()),version:Some("1".to_string())}}
-fn legacy_preset(id:&str)->LegacyProviderPreset{LegacyProviderPreset{id:id.to_string(),name:id.to_string(),provider_id:"openai-compatible".to_string(),base_url:"https://api.example.test/v1".to_string(),credential_profile_id:Some("credential-profile:a".to_string()),model:Some("model".to_string()),timeout_ms:Some(30000.0),temperature:None,top_p:None,num_ctx:None,num_predict:None,keep_alive:None,created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
+fn legacy_preset(id:&str)->LegacyProviderPreset{LegacyProviderPreset{id:id.to_string(),name:id.to_string(),provider_id:"openai-compatible".to_string(),base_url:"https://api.example.test/v1".to_string(),credential_profile_id:Some("credential-profile:a".to_string()),model:Some("model".to_string()),timeout_ms:Some(30000.0),created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
 fn legacy_state()->LegacyProviderPresetStoreState{LegacyProviderPresetStoreState{api_version:API_VERSION.to_string(),schema_version:LEGACY_SCHEMA_VERSION.to_string(),presets:vec![legacy_preset("preset-a")],active_preset_id:Some("preset-a".to_string())}}
 fn credential_state()->super::super::credential_profiles::CredentialProfileStoreState{
     super::super::credential_profiles::CredentialProfileStoreState{
