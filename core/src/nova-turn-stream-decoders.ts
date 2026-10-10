@@ -118,49 +118,83 @@ function unescapeProtocolEntities(value:string):string{
     switch(name){case "lt":return "<";case "gt":return ">";case "amp":return "&";case "quot":return '"';case "apos":return "'";default:return _match;}
   });
 }
-/** Emits the SPEECH tag body while retaining any delimiter/entity that crosses a chunk boundary. */
+/** Emits only a top-level NOVA_TURN/SPEECH field, never tag-like content from private fields or TOOLS. */
 export class NovaTurnTaggedSpeechStreamDecoder{
   private beforeSpeech="";
   private inSpeech=false;
   private afterSpeech="";
   private pendingEntity="";
   private done=false;
+  private failed=false;
+  private readonly tagStack:string[]=[];
+  private rootSeen=false;
   private static readonly OPEN="<SPEECH>";
   private static readonly CLOSE="</SPEECH>";
   push(chunk:string):string{
-    if(!chunk||this.done)return "";
-    if(!this.inSpeech){
-      this.beforeSpeech+=chunk;
-      const index=this.beforeSpeech.indexOf(NovaTurnTaggedSpeechStreamDecoder.OPEN);
-      if(index<0){
-        this.beforeSpeech=this.beforeSpeech.slice(-(NovaTurnTaggedSpeechStreamDecoder.OPEN.length-1));
-        return "";
+    if(!chunk||this.done||this.failed)return "";
+    if(this.inSpeech){
+      this.afterSpeech+=chunk;
+      return this.readSpeechBody(false);
+    }
+    this.beforeSpeech+=chunk;
+    while(this.beforeSpeech.length>0&&!this.inSpeech&&!this.failed){
+      const open=this.beforeSpeech.indexOf("<");
+      if(open<0){this.beforeSpeech="";break;}
+      if(open>0)this.beforeSpeech=this.beforeSpeech.slice(open);
+      const close=this.beforeSpeech.indexOf(">");
+      if(close<0)break;
+      const tag=this.beforeSpeech.slice(0,close+1);
+      this.beforeSpeech=this.beforeSpeech.slice(close+1);
+      const closing=tag.match(/^<\\s*\\/\\s*([A-Za-z_][A-Za-z0-9_.-]*)\\s*>$/);
+      const opening=tag.match(/^<\\s*([A-Za-z_][A-Za-z0-9_.-]*)(?:\\s+[^<>]*)?\\s*>$/);
+      if(closing){
+        const name=closing[1]!;
+        if(!this.tagStack.length||this.tagStack[this.tagStack.length-1]!==name){this.failed=true;this.beforeSpeech="";break;}
+        this.tagStack.pop();
+        if(name==="NOVA_TURN"&&this.tagStack.length===0){this.failed=true;this.beforeSpeech="";break;}
+        continue;
       }
-      this.inSpeech=true;
-      this.afterSpeech=this.beforeSpeech.slice(index+NovaTurnTaggedSpeechStreamDecoder.OPEN.length);
-      this.beforeSpeech="";
-    }else this.afterSpeech+=chunk;
+      if(!opening){this.failed=true;this.beforeSpeech="";break;}
+      const name=opening[1]!;
+      if(!this.rootSeen){
+        if(name!=="NOVA_TURN"){this.failed=true;this.beforeSpeech="";break;}
+        this.rootSeen=true;this.tagStack.push(name);continue;
+      }
+      if(this.tagStack.length===1&&this.tagStack[0]==="NOVA_TURN"&&name==="SPEECH"){
+        this.inSpeech=true;
+        this.afterSpeech=this.beforeSpeech;
+        this.beforeSpeech="";
+        return this.readSpeechBody(false);
+      }
+      this.tagStack.push(name);
+    }
+    return "";
+  }
+  reset():void{
+    this.beforeSpeech="";this.inSpeech=false;this.afterSpeech="";this.pendingEntity="";
+    this.done=false;this.failed=false;this.tagStack.length=0;this.rootSeen=false;
+  }
+  private readSpeechBody(final:boolean):string{
     const closeIndex=this.afterSpeech.indexOf(NovaTurnTaggedSpeechStreamDecoder.CLOSE);
+    let raw:string;
     if(closeIndex>=0){
-      const body=this.afterSpeech.slice(0,closeIndex);
+      raw=this.afterSpeech.slice(0,closeIndex);
       this.afterSpeech="";
       this.done=true;
-      return this.decodeEntities(body,true);
+    }else{
+      const safeLength=this.afterSpeech.length-(NovaTurnTaggedSpeechStreamDecoder.CLOSE.length-1);
+      if(safeLength<=0)return "";
+      raw=this.afterSpeech.slice(0,safeLength);
+      this.afterSpeech=this.afterSpeech.slice(safeLength);
     }
-    const safeLength=this.afterSpeech.length-(NovaTurnTaggedSpeechStreamDecoder.CLOSE.length-1);
-    if(safeLength<=0)return "";
-    const ready=this.afterSpeech.slice(0,safeLength);
-    this.afterSpeech=this.afterSpeech.slice(safeLength);
-    return this.decodeEntities(ready,false);
+    return this.decodeEntities(raw,final||this.done);
   }
-  reset():void{this.beforeSpeech="";this.inSpeech=false;this.afterSpeech="";this.pendingEntity="";this.done=false;}
   private decodeEntities(input:string,final:boolean):string{
     const source=this.pendingEntity+input;
     let cut=source.length;
     const amp=source.lastIndexOf("&");
     if(amp>=0&&source.indexOf(";",amp)<0&&source.length-amp<=10&&!final)cut=amp;
-    this.pendingEntity=source.slice(cut);
-    if(final)this.pendingEntity="";
-    return unescapeProtocolEntities(source.slice(0,cut)+(final?source.slice(cut):""));
+    this.pendingEntity=final?"":source.slice(cut);
+    return unescapeProtocolEntities(final?source:source.slice(0,cut));
   }
 }
