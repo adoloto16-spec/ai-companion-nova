@@ -286,7 +286,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     let timer:ReturnType<typeof setTimeout>|undefined;
     const resetIdleTimeout=()=>{
       if(timer)clearTimeout(timer);
-      resetIdleTimeout();
+      timer=setTimeout(()=>{timedOut=true;controller.abort();},this.timeoutMs());
     };
     let stage:"awaiting_http_response"|"stream_body"="awaiting_http_response";
     let httpStatus:number|undefined;
@@ -299,7 +299,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       if(callerSignal.aborted)throw createAbortError();
       callerSignal.addEventListener("abort",callerAbort,{once:true});
     }
-    timer=setTimeout(()=>{timedOut=true;controller.abort();},this.timeoutMs());
+    resetIdleTimeout();
 
     try{
       if(!this.httpClient.stream)throw this.failure({
