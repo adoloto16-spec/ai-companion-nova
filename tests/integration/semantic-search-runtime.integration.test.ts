@@ -35,7 +35,7 @@ async function main(){
   const controller=new ChatSessionController(new ConversationSession(active.id,character.id),{async chat(request){captured=request;return runtime.chat(request)}},
    {requestIdFactory:()=>"semantic-context-test",contextBuilder:{buildContext:request=>runtime.buildContext(request)},
     contextBudget:{availableContextTokens:2048,reservedOutputTokens:256,systemOverheadTokens:0,safetyMarginTokens:64}});
-  eq((await controller.submit("Где найти квартиру для себя? Что известно о long-term lease in Riga?",runtime.getActiveChatModel())).status,"sent","real ChatSessionController submits successfully");
+  eq((await controller.submit("Где найти квартиру для себя?",runtime.getActiveChatModel())).status,"sent","real ChatSessionController submits successfully");
   ok(captured,"final ChatRequest was captured");
   const semantic=captured!.context.messages.filter(m=>m.metadata?.contextSource==="semantic_search");
   ok(semantic.length>0,"semantic search results are present in final ChatRequest");
