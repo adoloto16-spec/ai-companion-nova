@@ -69,7 +69,10 @@ export class LLMCognitiveStep implements CognitiveStep {
     });
     throwIfAborted(context.signal);
     const outputMode=this.options.getOutputMode?.()??"structured";
-    const promptText=(id:PromptId)=>this.options.getPrompt?.(id)??resolvePromptText(undefined,id);
+    const promptText=(id:PromptId)=>{
+      const configured=this.options.getPrompt?.(id);
+      return typeof configured==="string"&&configured.trim().length>0?configured:resolvePromptText(undefined,id);
+    };
     const schedule=this.options.getCognitiveSchedule?.();
     const scheduleContext=schedule?[
       "[COGNITIVE SCHEDULE]",
