@@ -21,7 +21,7 @@ assert.equal(roundTrip.turn?.longMemory,"The user is comparing options.","non-em
 assert.ok(serialized.indexOf("<LONGMEMORY>")>serialized.indexOf("</SPEECH>"),"LONGMEMORY follows SPEECH");
 assert.ok(serialized.indexOf("<NEXT_WAKE_MS>")>serialized.indexOf("</LONGMEMORY>"),"NEXT_WAKE_MS follows LONGMEMORY");
 
-const legacyWithoutLongMemory=serialized.replace(/<LONGMEMORY>[\\s\\S]*?<\\/LONGMEMORY>\\n?/,"");
+const legacyWithoutLongMemory=serialized.replace(/<LONGMEMORY>[\s\S]*?<\/LONGMEMORY>\n?/,"");
 const legacyParsed=parseNovaTurn(legacyWithoutLongMemory);
 assert.equal(legacyParsed.complete,true,"old NovaTurn responses without LONGMEMORY remain valid");
 assert.equal(legacyParsed.turn?.longMemory,"","missing LONGMEMORY defaults to empty");
@@ -32,7 +32,7 @@ assert.equal(explicitEmptyLongMemory.complete,true,"empty LONGMEMORY remains val
 assert.equal(explicitEmptyLongMemory.turn?.longMemory,"","empty LONGMEMORY does not create a candidate");
 assert.equal(explicitEmptyLongMemory.fields.longMemory.status,"empty");
 
-const malformedLongMemory=parseNovaTurn(serialized.replace(/<LONGMEMORY>[\\s\\S]*?<\\/LONGMEMORY>/,"<LONGMEMORY>incomplete candidate"));
+const malformedLongMemory=parseNovaTurn(serialized.replace(/<LONGMEMORY>[\s\S]*?<\/LONGMEMORY>/,"<LONGMEMORY>incomplete candidate"));
 assert.equal(malformedLongMemory.complete,false,"malformed LONGMEMORY makes the protocol incomplete");
 assert.equal(malformedLongMemory.turn?.longMemory,"","malformed turns do not carry a memory candidate");
 assert.equal(malformedLongMemory.fields.longMemory.status,"invalid");
