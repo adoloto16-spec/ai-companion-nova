@@ -418,9 +418,9 @@ async function* chunksWithAbort(signal?: AbortSignal, emitFirstDelta = true): As
 async function streamTimeoutIsInactivityDeadlineTest():Promise<void>{
   const http=new FakeOllamaHttpClient();
   http.streamHandler=async()=>({status:200,body:delayedChunks([
-    JSON.stringify({model:"llama3.2:latest",message:{role:"assistant",content:"slow "},done:false})+"\\n",
-    JSON.stringify({model:"llama3.2:latest",message:{role:"assistant",content:"but alive"},done:false})+"\\n",
-    JSON.stringify({model:"llama3.2:latest",done:true,done_reason:"stop"})+"\\n"
+    JSON.stringify({model:"llama3.2:latest",message:{role:"assistant",content:"slow "},done:false})+"\n",
+    JSON.stringify({model:"llama3.2:latest",message:{role:"assistant",content:"but alive"},done:false})+"\n",
+    JSON.stringify({model:"llama3.2:latest",done:true,done_reason:"stop"})+"\n"
   ],20)});
   const events:string[]=[];
   const response=await provider(http,{timeoutMs:35}).stream(chatRequest(),{onEvent:event=>{events.push(event.type);}});
