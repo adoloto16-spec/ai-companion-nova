@@ -62,7 +62,7 @@ export function PromptRegistryView({settings,saving,message,onSavePrompt,onResto
             </div>
             <div className="actions">
               <button type="button" disabled={saving||!customized} onClick={()=>void onSavePrompt(prompt.id,draft)}>Сохранить промт</button>
-              <button type="button" disabled={saving||!overridden} onClick={()=>void onSavePrompt(prompt.id,"")}>Восстановить заводской</button>
+              <button type="button" disabled={saving||!overridden} onClick={()=>{setDrafts(previous=>({...previous,[prompt.id]:prompt.defaultText}));void onSavePrompt(prompt.id,"");}}>Восстановить заводской</button>
               {customized&&<span className="hint">Есть несохранённые изменения</span>}
             </div>
           </article>;
