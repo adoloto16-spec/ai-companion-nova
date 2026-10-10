@@ -148,8 +148,10 @@ export class SemanticSearchCandidateSource implements ContextCandidateSource {
         const rankingScore=Math.round((hit.similarity+1)*50);
         return {
           id:"semantic_search:"+hit.source+":"+hit.sourceId+":"+(hit.conversationId??""),
-          source:"semantic_search" as const,referenceId:hit.sourceId,characterId:hit.characterId,content,role:"system" as const,
+          source:"semantic_search" as const,referenceId:hit.sourceId,characterId:hit.characterId,content,
+          role:hit.source==="core_book"?(hit.role??"system"):"system",
           metadata:{semanticSearch:true,semanticSource:hit.source,semanticSourceId:hit.sourceId,
+            ...(hit.activation?{semanticActivationKind:hit.activation.kind}:{}),...(hit.role?{sourceRole:hit.role}:{}),
             ...(hit.conversationId?{conversationId:hit.conversationId}:{}),title:hit.title,updatedAt:hit.updatedAt,
             ...(hit.status?{status:hit.status}:{}),...(hit.type?{type:hit.type}:{}),tags:[...hit.tags],cosineSimilarity:hit.similarity},
           eligible:true,reason:"semantic vector retrieval; raw cosine similarity="+hit.similarity.toFixed(4)+" (not a percentage)",
@@ -419,7 +421,7 @@ export class DeterministicContextEngine implements ContextEngineContract {
     const collected=await Promise.all(this.sources.map(source=>source.collect(request)));
     const rawCandidates=collected.flat();
     const canonicalKey=(source:string,sourceId:string,conversationId?:string)=>source+":"+sourceId+(source==="conversation"?":"+((conversationId??request.conversationId)):"");
-    const ordinaryReferences=new Set(rawCandidates.filter(candidate=>candidate.source!=="semantic_search")
+    const ordinaryReferences=new Set(rawCandidates.filter(candidate=>candidate.source!=="semantic_search"&&candidate.eligible)
       .map(candidate=>canonicalKey(candidate.source,candidate.referenceId)));
     const semanticReferences=new Set<string>();
     const distinctCandidates=rawCandidates.filter(candidate=>{
@@ -429,8 +431,12 @@ export class DeterministicContextEngine implements ContextEngineContract {
       const sourceId=typeof metadata.semanticSourceId==="string"?metadata.semanticSourceId:candidate.referenceId;
       const conversationId=typeof metadata.conversationId==="string"?metadata.conversationId:undefined;
       const key=canonicalKey(source,sourceId,conversationId);
+      const ordinary=rawCandidates.find(item=>item.source===source&&item.referenceId===sourceId&&item.source!=="semantic_search");
+      const activation=typeof metadata.semanticActivationKind==="string"?metadata.semanticActivationKind:"";
       if(ordinaryReferences.has(key)||semanticReferences.has(key))return false;
       semanticReferences.add(key);
+      if(source==="core_book"&&activation==="model_search")return false;
+      if(source==="core_book"&&activation!=="semantic"&&ordinary&&!ordinary.eligible)return false;
       return true;
     });
     const candidates=distinctCandidates.map((candidate,index)=>({candidate,index}));

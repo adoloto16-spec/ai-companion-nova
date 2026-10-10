@@ -10,7 +10,7 @@ export type SemanticSearchSource="core_book"|"memory"|"conversation";
 export interface SemanticSearchDocument{
   id:string; characterId:CharacterId; source:SemanticSearchSource; sourceId:string;
   conversationId?:string; title:string; content:string; tags:readonly string[]; status?:string; type?:string;
-  role?:"user"|"assistant"; updatedAt:string;
+  role?:"system"|"user"|"assistant"; activation?:CoreBookEntry["activation"]; updatedAt:string;
 }
 export interface SemanticSearchHit extends SemanticSearchDocument{similarity:number}
 export interface SemanticEmbeddingConfiguration{provider:EmbeddingProvider;model:string}
@@ -32,6 +32,20 @@ const MAX_EMBEDDING_CHARS=2400, EMBEDDING_OVERLAP_CHARS=120, EMBEDDING_BATCH_SIZ
 const DEFAULT_COSINE_THRESHOLD=0.35, MAX_QUERY_INPUT_CHARS=48_000;
 function emptyIndex(characterId:CharacterId):MemorySemanticIndexState{return{apiVersion:MEMORY_SEMANTIC_INDEX_API_VERSION,schemaVersion:MEMORY_SEMANTIC_INDEX_SCHEMA_VERSION,characterId,records:[]}}
 function isVector(value:unknown):value is readonly number[]{return Array.isArray(value)&&value.length>0&&value.every(item=>typeof item==="number"&&Number.isFinite(item))}
+function isCoreBookSearchAvailable(entry:CoreBookEntry,query:string):boolean{
+  const activation=entry.activation;
+  if(activation.kind==="always"||activation.kind==="semantic")return true;
+  if(activation.kind==="model_search")return false;
+  if(activation.kind==="keyword"){
+    const text=activation.caseSensitive?query:query.toLowerCase();
+    const matches=activation.keywords.map(keyword=>text.includes(activation.caseSensitive?keyword:keyword.toLowerCase()));
+    return activation.matchMode==="all"?matches.every(Boolean):matches.some(Boolean);
+  }
+  if(activation.kind==="regex"){
+    try{return new RegExp(activation.pattern,activation.flags).test(query)}catch{return false}
+  }
+  return false;
+}
 function validCurrentMemory(memory:MemoryItem,now:number):boolean{
   if(memory.status!=="active"||!memory.content.trim())return false;
   if(memory.validFrom){const from=Date.parse(memory.validFrom);if(Number.isFinite(from)&&from>now)return false}
@@ -179,6 +193,13 @@ export class SemanticSearchService{
       const records=new Map(state.records.filter(record=>record.memoryId.startsWith(SEMANTIC_SEARCH_RECORD_PREFIX)).map(record=>[record.memoryId,record] as const));
       const hits:SemanticSearchHit[]=[];
       for(const document of documents){
+        if(document.source==="core_book"&&!isCoreBookSearchAvailable(
+          {id:document.sourceId as CoreBookEntry["id"],characterId:document.characterId,title:document.title,content:document.content,
+            tags:document.tags,activation:document.activation??{kind:"always"},retentionPriority:0,placementWeight:0,mutationPolicy:"locked",
+            enabled:document.status==="enabled",source:"user",role:document.role==="system"||document.role==="assistant"||document.role==="user"?document.role:"user",
+            metadata:{},createdAt:document.updatedAt,updatedAt:document.updatedAt},
+          query
+        ))continue;
         const record=records.get(recordId(document));
         if(!record||!isActiveDocument(record,document,configuration.provider,configuration.model)||record.dimensions!==queryVector.length)continue;
         const similarity=cosineSimilarity(queryVector,record.vector);
@@ -262,7 +283,8 @@ export class SemanticSearchService{
     const documents:SemanticSearchDocument[]=[];
     for(const entry of entries){
       if(entry.characterId!==characterId||!entry.enabled||!entry.content.trim())continue;
-      documents.push({id:"core_book:"+entry.id,characterId,source:"core_book",sourceId:entry.id,title:entry.title,content:entry.content,tags:[...entry.tags],status:"enabled",updatedAt:entry.updatedAt});
+      documents.push({id:"core_book:"+entry.id,characterId,source:"core_book",sourceId:entry.id,title:entry.title,content:entry.content,
+        tags:[...entry.tags],status:"enabled",role:entry.role,activation:entry.activation,updatedAt:entry.updatedAt});
     }
     const now=Date.now();
     for(const item of memories){
