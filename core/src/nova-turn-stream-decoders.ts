@@ -145,8 +145,8 @@ export class NovaTurnTaggedSpeechStreamDecoder{
       if(close<0)break;
       const tag=this.beforeSpeech.slice(0,close+1);
       this.beforeSpeech=this.beforeSpeech.slice(close+1);
-      const closing=tag.match(/^<\\s*\\/\\s*([A-Za-z_][A-Za-z0-9_.-]*)\\s*>$/);
-      const opening=tag.match(/^<\\s*([A-Za-z_][A-Za-z0-9_.-]*)(?:\\s+[^<>]*)?\\s*>$/);
+      const closing=tag.match(/^<\s*\/\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*>$/);
+      const opening=tag.match(/^<\s*([A-Za-z_][A-Za-z0-9_.-]*)(?:\s+[^<>]*)?\s*>$/);
       if(closing){
         const name=closing[1]!;
         if(!this.tagStack.length||this.tagStack[this.tagStack.length-1]!==name){this.failed=true;this.beforeSpeech="";break;}
