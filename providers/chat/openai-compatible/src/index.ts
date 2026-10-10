@@ -18,7 +18,7 @@ import type {
 } from "../../../../contracts/src/index";
 
 export const OPENAI_COMPATIBLE_PROVIDER_ID="openai-compatible";
-const DEFAULT_TIMEOUT_MS=30000;
+const DEFAULT_TIMEOUT_MS=600000;
 
 const MAX_PROVIDER_RESPONSE_CHARS=4000;
 const MAX_PROVIDER_RESPONSE_VALUE_CHARS=2000;
