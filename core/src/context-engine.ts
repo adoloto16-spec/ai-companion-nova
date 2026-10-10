@@ -139,7 +139,7 @@ export class SemanticSearchCandidateSource implements ContextCandidateSource {
     if(recent.length===0)return [];
     const query=recent.map(message=>"["+message.role+"]\n"+message.content).join("\n\n");
     try{
-      const hits=await this.searcher.search({characterId:request.characterId,query,limit:settings.semanticResultLimit,threshold:settings.semanticSimilarityThreshold});
+      const hits=await this.searcher.search({characterId:request.characterId,query,limit:20,threshold:settings.semanticSimilarityThreshold,respectCoreBookActivation:true});
       return hits.map(hit=>{
         const title=hit.title.trim()||hit.source+" record "+hit.sourceId;
         const content="[Semantic retrieval result]\nSource: "+hit.source+"\nRecord ID: "+hit.sourceId+

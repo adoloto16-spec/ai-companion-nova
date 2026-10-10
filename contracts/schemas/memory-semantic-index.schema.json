@@ -1,86 +1,30 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.ai-companion-nova.dev/memory-semantic-index/v1",
-  "title": "AI Companion Nova Derived Memory Semantic Index v1",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "apiVersion",
-    "schemaVersion",
-    "characterId",
-    "records"
-  ],
-  "properties": {
-    "apiVersion": {
-      "const": "1"
-    },
-    "schemaVersion": {
-      "const": "1"
-    },
-    "characterId": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 200
-    },
-    "records": {
-      "type": "array",
-      "maxItems": 100000,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "memoryId",
-          "characterId",
-          "contentHash",
-          "embeddingProviderId",
-          "embeddingModel",
-          "dimensions",
-          "vector",
-          "updatedAt"
-        ],
-        "properties": {
-          "memoryId": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200
-          },
-          "characterId": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200
-          },
-          "contentHash": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 64
-          },
-          "embeddingProviderId": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200
-          },
-          "embeddingModel": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200
-          },
-          "dimensions": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 10000
-          },
-          "vector": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 10000,
-            "items": {
-              "type": "number"
-            }
-          },
-          "updatedAt": {
-            "type": "string",
-            "minLength": 1
-          }
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://schemas.ai-companion-nova.dev/memory-semantic-index/v1",
+  "title":"AI Companion Nova Derived Memory Semantic Index v1",
+  "type":"object",
+  "additionalProperties":false,
+  "required":["apiVersion","schemaVersion","characterId","records"],
+  "properties":{
+    "apiVersion":{"const":"1"},
+    "schemaVersion":{"const":"1"},
+    "characterId":{"type":"string","minLength":1,"maxLength":200},
+    "records":{
+      "type":"array",
+      "maxItems":100000,
+      "items":{
+        "type":"object",
+        "additionalProperties":false,
+        "required":["memoryId","characterId","contentHash","embeddingProviderId","embeddingModel","dimensions","vector","updatedAt"],
+        "properties":{
+          "memoryId":{"type":"string","minLength":1,"maxLength":200},
+          "characterId":{"type":"string","minLength":1,"maxLength":200},
+          "contentHash":{"type":"string","minLength":1,"maxLength":64},
+          "embeddingProviderId":{"type":"string","minLength":1,"maxLength":200},
+          "embeddingModel":{"type":"string","minLength":1,"maxLength":200},
+          "dimensions":{"type":"integer","minimum":1,"maximum":10000},
+          "vector":{"type":"array","minItems":1,"maxItems":10000,"items":{"type":"number"}},
+          "updatedAt":{"type":"string","minLength":1}
         }
       }
     }

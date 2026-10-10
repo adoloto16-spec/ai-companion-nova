@@ -27,6 +27,7 @@ async function main(){
   const old=await runtime.createConversation(character.id,{id:"old-chat.integration",title:"Old chat"});
   await runtime.updateConversation(character.id,old.id,{messages:[{id:"old-user.integration",role:"user",content:"My previous housing search."},{id:"old-turn.integration",role:"assistant",content:oldTurn}]});
   const home=await runtime.createCoreBookEntry(character.id,{title:"Home city",content:"Пользователь постоянно проживает в Риге.",activation:{kind:"semantic"},source:"user",role:"system"});
+  const modelSearch=await runtime.createCoreBookEntry(character.id,{title:"Tool-only retrieval",content:"Пользователь проживает в Риге в съёмной квартире.",activation:{kind:"model_search"},source:"user",role:"user"});
   const mem=await runtime.createMemory(character.id,{id:"memory.integration.home",conversationId:active.id,type:"fact",content:"Пользователь возвращается домой в Ригу.",tags:["home"],importance:90,confidence:90,source:"user",mutationPolicy:"locked"});
   await runtime.rebuildSemanticSearchIndex();eq(runtime.getSemanticSearchStatus().status,"ready","live runtime exposes indexing status");
   let captured:ChatRequest|undefined;
@@ -38,6 +39,7 @@ async function main(){
   const semantic=captured!.context.messages.filter(m=>m.metadata?.contextSource==="semantic_search");
   ok(semantic.length>0,"semantic search results are present in final ChatRequest");
   ok(semantic.some(m=>m.content.includes(home.content)),"semantic Core Book activation is materialized into ChatRequest");
+  ok(!semantic.some(m=>m.content.includes(modelSearch.content)),"automatic context preserves model_search activation rules");
   ok(semantic.some(m=>m.content.includes(mem.content)),"Character Memory payload is materialized into ChatRequest");
   ok(semantic.some(m=>m.content.includes(oldTurn)),"whole NOVA_TURN from an old conversation is materialized into ChatRequest");
   ok(semantic.some(m=>m.metadata?.contextReferenceId==="old-turn.integration"),"provenance survives into ChatRequest");
@@ -47,6 +49,7 @@ async function main(){
   const output=JSON.stringify(action.output);
   ok(output.includes("old-turn.integration")&&output.includes(oldTurn.slice(0,60)),"MEMORY_SEARCH returns historical NOVA_TURN with source provenance");
   ok(output.includes("core_book")&&output.includes("memory")&&output.includes("conversation"),"MEMORY_SEARCH returns results across the three source families");
+  ok(output.includes(modelSearch.id),"explicit MEMORY_SEARCH can find model_search Core Book entries");
  }finally{await runtime.stop()}
  console.log("semantic search runtime integration tests passed");
 }

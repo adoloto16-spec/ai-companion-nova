@@ -18,7 +18,7 @@ export interface SemanticSearchStatus{
   status:"idle"|"indexing"|"ready"|"degraded"|"unconfigured";
   model:string; processed:number; total:number; pending:number; failed:number; updatedAt:string;
 }
-export interface SemanticSearchRequest{characterId:CharacterId;query:string;limit?:number;threshold?:number}
+export interface SemanticSearchRequest{characterId:CharacterId;query:string;limit?:number;threshold?:number;respectCoreBookActivation?:boolean}
 export interface SemanticSearchOptions{
   settings:()=>AppSettings; indexStore:MemorySemanticIndexStore;
   embeddingConfiguration:()=>Promise<SemanticEmbeddingConfiguration|undefined>;
@@ -192,7 +192,7 @@ export class SemanticSearchService{
       const records=new Map(state.records.filter(record=>record.memoryId.startsWith(SEMANTIC_SEARCH_RECORD_PREFIX)).map(record=>[record.memoryId,record] as const));
       const hits:SemanticSearchHit[]=[];
       for(const document of documents){
-        if(document.source==="core_book"&&!isCoreBookSearchAvailable(document.activation??{kind:"always"},query))continue;
+        if(request.respectCoreBookActivation&&document.source==="core_book"&&!isCoreBookSearchAvailable(document.activation??{kind:"always"},query))continue;
         const record=records.get(recordId(document));
         if(!record||!isActiveDocument(record,document,configuration.provider,configuration.model)||record.dimensions!==queryVector.length)continue;
         const similarity=cosineSimilarity(queryVector,record.vector);
