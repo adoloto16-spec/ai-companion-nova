@@ -292,7 +292,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
           baseUrl:source.baseUrl,
           model:source.model,
           credentialReference:source.credentialReference?{...source.credentialReference}:null,
-          ...(source.timeoutMs===undefined?{}:{timeoutMs:source.timeoutMs})
+          ...(source.timeoutMs===undefined?{}:{timeoutMs:source.timeoutMs}),
           ...(source.temperature===undefined?{}:{temperature:source.temperature}),
           ...(source.topP===undefined?{}:{topP:source.topP}),
           ...(source.numCtx===undefined?{}:{numCtx:source.numCtx}),
@@ -754,7 +754,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
           nextConfigurations.set(preset.id,{
             apiVersion:"1",schemaVersion:"1",providerId:preset.providerId,baseUrl:preset.baseUrl,model:preset.model,
             enabled:preset.enabled,credentialReference:preset.credentialReference?{...preset.credentialReference}:null,
-            ...(preset.timeoutMs==null?{}:{timeoutMs:preset.timeoutMs})
+            ...(preset.timeoutMs==null?{}:{timeoutMs:preset.timeoutMs}),
             ...(preset.temperature==null?{}:{temperature:preset.temperature}),
             ...(preset.topP==null?{}:{topP:preset.topP}),
             ...(preset.numCtx==null?{}:{numCtx:preset.numCtx}),
@@ -767,7 +767,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
             apiVersion:"1",schemaVersion:"1",providerId:source.providerId,baseUrl:source.baseUrl,model:source.model,
             enabled:source.enabled&&source.model.trim().length>0,
             credentialReference:source.credentialReference?{...source.credentialReference}:null,
-            ...(source.timeoutMs===undefined?{}:{timeoutMs:source.timeoutMs})
+            ...(source.timeoutMs===undefined?{}:{timeoutMs:source.timeoutMs}),
             ...(source.temperature===undefined?{}:{temperature:source.temperature}),
             ...(source.topP===undefined?{}:{topP:source.topP}),
             ...(source.numCtx===undefined?{}:{numCtx:source.numCtx}),
