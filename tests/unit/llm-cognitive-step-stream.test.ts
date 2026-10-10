@@ -18,7 +18,7 @@ const budget={availableContextTokens:4096,reservedOutputTokens:1024,systemOverhe
 const schedule={mode:"adaptive" as const,defaultIntervalMs:30000,minIntervalMs:3000,maxIntervalMs:300000,maxRequestsPerHour:null};
 function context(onSpeechEvent:CognitiveStepContext["onSpeechEvent"]):CognitiveStepContext{
   return {characterId:character.id,state:{lifecycleState:"thinking",nextWakeAt:null,recentTrace:[]},signal:new AbortController().signal,wakeReason:"user-message",
-    userTurn:{characterId:character.id,conversationId:conversation.id,userMessageId:userMessage.id,turnId:"turn.stream"},onSpeechEvent};
+    userTurn:{characterId:character.id,conversationId:conversation.id,userMessageId:userMessage.id!,turnId:"turn.stream"},onSpeechEvent};
 }
 function createStep(runtime:unknown,mode:"structured"|"plain"="structured"):LLMCognitiveStep{
   return new LLMCognitiveStep({
