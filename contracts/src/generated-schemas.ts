@@ -2223,6 +2223,29 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "description": "Validated at runtime by the JSON-RPC boundary. Request, response and notification share the jsonrpc marker."
   },
+  "memory-agent-decision": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.ai-companion-nova.dev/memory-agent-decision/v1",
+    "title": "AI Companion Nova Memory Agent Decision v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "decision",
+      "content"
+    ],
+    "properties": {
+      "decision": {
+        "enum": [
+          "remember",
+          "no_memory"
+        ]
+      },
+      "content": {
+        "type": "string",
+        "maxLength": 32768
+      }
+    }
+  },
   "memory-candidate": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://schemas.ai-companion-nova.dev/memory-candidate/v1",
@@ -2447,25 +2470,6 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
               "additionalProperties": true
             }
           }
-        }
-      }
-    }
-  },
-  "memory-extraction-result": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/memory-extraction-result/v1",
-    "title": "AI Companion Nova Memory Extraction Result v1",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "memories"
-    ],
-    "properties": {
-      "memories": {
-        "type": "array",
-        "maxItems": 12,
-        "items": {
-          "$ref": "https://schemas.ai-companion-nova.dev/memory-candidate/v1"
         }
       }
     }
