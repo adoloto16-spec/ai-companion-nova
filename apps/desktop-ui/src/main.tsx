@@ -328,7 +328,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
         const isEditing=editingId===message.id;
         const parseResult=isNovaTurn?parseNovaTurn(message.content):undefined;
         const parsedTurn=parseResult?.turn;
-        if(isNovaTurn&&parseResult&&!shouldRenderNovaTurn(parseResult,showTechnicalData))return null;
+        if(isNovaTurn&&parseResult&&!shouldRenderNovaTurn(parseResult,false))return null;
         const messageKey=message.id??"message-"+index;
         const statusText=(field:{status:string;value?:unknown}|undefined):string=>{
           if(!field)return "missing";
