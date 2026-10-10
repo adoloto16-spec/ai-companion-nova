@@ -5,16 +5,19 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "speech",
     "version",
     "situation",
     "thoughts",
     "emotion",
     "tools",
-    "speech",
-    "longMemory",
     "nextWakeMs"
   ],
   "properties": {
+    "speech": {
+      "type": "string",
+      "maxLength": 4000
+    },
     "version": {
       "type": "integer",
       "enum": [
@@ -55,10 +58,6 @@
           }
         }
       }
-    },
-    "speech": {
-      "type": "string",
-      "maxLength": 4000
     },
     "longMemory": {
       "type": "string",
