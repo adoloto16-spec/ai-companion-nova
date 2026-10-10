@@ -9,7 +9,7 @@ function equal(actual:unknown,expected:unknown,label:string):void{
 }
 function ok(value:unknown,label:string):void{if(!value)throw new Error(label);}
 function responseFor(request:ChatRequest,content:string):ChatResponse{
-  return {apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.stream",model:request.model,message:{role:"assistant",content},finishReason:"stop"};
+  return {apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.stream",model:request.model??"fake-model",message:{role:"assistant",content},finishReason:"stop"};
 }
 const character={id:"character.stream",name:"Nova",description:"Test character"} as Character;
 const userMessage:ChatMessage={id:"user-message",role:"user",content:"Remember my preference.",metadata:{source:"conversation"}};
@@ -77,9 +77,9 @@ async function nativeSchemaStreamsBeforeCompletion():Promise<void>{
   ok(visible.length<payload.length,"raw JSON was not sent as visible text");
   equal(returned,false,"provider stream has not returned when partial speech appears");
   const format=calls[0]?.generation?.responseFormat;
-  ok(format?.type==="json-schema","structured mode sends JSON Schema to primary provider");
-  equal(format.type==="json-schema"?format.name:undefined,"nova_turn_v1","native schema uses a stable name");
-  if(format?.type==="json-schema")ok(Boolean(format.schema.properties?.speech),"schema defines the canonical speech field");
+  if(!format||format.type!=="json-schema")throw new Error("structured mode must send native JSON Schema");
+  equal(format.name,"nova_turn_v1","native schema uses a stable name");
+  ok(Boolean(format.schema.properties?.speech),"schema defines the canonical speech field");
   resume();
   const result=await run;
   equal(visible,"The answer is arriving while the model is still generating the rest.","streamed native output is only SPEECH and has no duplicated final text");
