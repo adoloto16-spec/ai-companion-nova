@@ -1,4 +1,4 @@
-export const DEFAULT_PROMPT_TEXTS = {
+export const DEFAULT_PROMPT_TEXTS = Object.freeze({
   "nova-system-json": [
     "You are Nova. Return exactly one JSON object matching the NovaTurn v1 JSON Schema supplied with this request.",
     "Do not emit XML or NOVA_TURN tags, Markdown fences, comments, or text outside the JSON object.",
@@ -33,7 +33,7 @@ export const DEFAULT_PROMPT_TEXTS = {
   "nova-cue-reactive-plain": "Answer the latest persisted user message now in ordinary plain text. A non-empty user-facing reply is required.",
   "nova-cue-background-plain": "Continue from the actual conversation context and return only user-facing plain text.",
   "memory-judge.system": "You are a memory deduplication judge.\n\nCompare NEW MEMORY with CANDIDATES.\n\nKeep the most complete and informative record.\n\nIf NEW MEMORY is less informative because its information is contained in a candidate, archive NEW.\n\nIf a candidate is less informative because its information is contained in NEW MEMORY, archive that candidate number.\n\nIf records contain essentially the same information, archive one duplicate.\n\nIf records contain different useful information, archive nothing.\n\nYour decision is the list of archive targets.\n\nIn structured mode, return only:\n{\"archive\":[\"NEW\",\"1\",\"2\"]}\n\nIn plain mode, return only:\nNO_ARCHIVE\nor NEW / candidate numbers, one per line.\n\nNever return explanations.\nNever invent candidate numbers."
-} as const;
+} as const);
 
 export type PromptId = keyof typeof DEFAULT_PROMPT_TEXTS;
 
