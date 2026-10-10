@@ -26,7 +26,7 @@ import type {CoreBookCreateInput,CoreBookUpdateInput} from "../../../core/src/co
 import {activeProviderId,buildConfiguredProvider,buildEmbeddingProviderForPreset,buildProviderForDiscovery,buildProviderForPreset,buildChatProviderForSource,testProviderConfiguration} from "./provider-configuration";
 import {ProviderPoolChatProvider} from "./provider-pool";
 import {RetrievalEventIndexer} from "../../../core/src/retrieval-indexer";
-import {SemanticSearchService,type SemanticEmbeddingConfiguration} from "../../../core/src/semantic-search";
+import {SemanticSearchService,type SemanticEmbeddingConfiguration,type SemanticSearchStatus} from "../../../core/src/semantic-search";
 
 
 export interface OpenAICompatibleRuntimeConfig{
@@ -91,6 +91,10 @@ export interface FoundationRuntime{
   applyProviderConfiguration(configuration:ProviderConfiguration|undefined):Promise<void>;
   testConfiguredProvider():Promise<import("../../../contracts/src/index").ProviderConnectionTestResult>;
   getSettings():AppSettings;
+  /** Current background semantic-index state; only counts and model identity are returned. */
+  getSemanticSearchStatus():SemanticSearchStatus;
+  /** Retry the idempotent full indexing pass and stale-record cleanup. */
+  rebuildSemanticSearchIndex():Promise<void>;
   updateSettings(settings:AppSettings):Promise<AppSettings>;
   resetSettings():Promise<AppSettings>;
   getChatTraceStore():ChatTraceStore;
@@ -785,6 +789,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     getChatModelForPreset,
     applyProviderConfiguration:async(configuration)=>{await applyProvider(configuration);},
     getSettings:()=>settingsManager.get(),
+    getSemanticSearchStatus:()=>semanticSearch.getStatus(),
+    rebuildSemanticSearchIndex:()=>semanticSearch.rebuildAll(),
     updateSettings:async(settings)=>{
       const next=await settingsManager.set(settings);
       mindRuntime.updateSchedule(next.cognitiveSchedule);
