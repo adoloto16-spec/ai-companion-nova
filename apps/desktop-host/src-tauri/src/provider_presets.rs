@@ -75,6 +75,10 @@ pub struct ProviderPreset{
     pub enabled:Option<bool>,
     #[serde(rename="timeoutMs",default,skip_serializing_if="Option::is_none")]
     pub timeout_ms:Option<f64>,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub temperature:Option<f64>,
+    #[serde(rename="topP",default,skip_serializing_if="Option::is_none")]
+    pub top_p:Option<f64>,
     #[serde(rename="numCtx",default,skip_serializing_if="Option::is_none")]
     pub num_ctx:Option<u32>,
     #[serde(rename="numPredict",default,skip_serializing_if="Option::is_none")]
@@ -319,6 +323,11 @@ fn migrate_legacy_state(
             failure_count:0,
             cooldown_until:None,
             timeout_ms:preset.timeout_ms,
+            temperature:None,
+            top_p:None,
+            num_ctx:None,
+            num_predict:None,
+            keep_alive:None,
             created_at:preset.created_at.clone(),
             updated_at:preset.updated_at.clone(),
         };
@@ -334,6 +343,11 @@ fn migrate_legacy_state(
             credential_reference:None,
             enabled:None,
             timeout_ms:None,
+            temperature:None,
+            top_p:None,
+            num_ctx:None,
+            num_predict:None,
+            keep_alive:None,
             created_at:preset.created_at,
             updated_at:preset.updated_at,
         }
@@ -444,7 +458,7 @@ use super::*;
 use std::{fs,time::{SystemTime,UNIX_EPOCH}};
 
 fn reference(id:&str,provider:&str)->CredentialReference{CredentialReference{id:id.to_string(),kind:"api-key".to_string(),provider:Some(provider.to_string()),version:Some("1".to_string())}}
-fn legacy_preset(id:&str)->LegacyProviderPreset{LegacyProviderPreset{id:id.to_string(),name:id.to_string(),provider_id:"openai-compatible".to_string(),base_url:"https://api.example.test/v1".to_string(),credential_profile_id:Some("credential-profile:a".to_string()),model:Some("model".to_string()),timeout_ms:Some(30000.0),created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
+fn legacy_preset(id:&str)->LegacyProviderPreset{LegacyProviderPreset{id:id.to_string(),name:id.to_string(),provider_id:"openai-compatible".to_string(),base_url:"https://api.example.test/v1".to_string(),credential_profile_id:Some("credential-profile:a".to_string()),model:Some("model".to_string()),timeout_ms:Some(30000.0),temperature:None,top_p:None,num_ctx:None,num_predict:None,keep_alive:None,created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
 fn legacy_state()->LegacyProviderPresetStoreState{LegacyProviderPresetStoreState{api_version:API_VERSION.to_string(),schema_version:LEGACY_SCHEMA_VERSION.to_string(),presets:vec![legacy_preset("preset-a")],active_preset_id:Some("preset-a".to_string())}}
 fn credential_state()->super::super::credential_profiles::CredentialProfileStoreState{
     super::super::credential_profiles::CredentialProfileStoreState{
@@ -463,9 +477,9 @@ fn credential_state()->super::super::credential_profiles::CredentialProfileStore
     }
 }
 fn source(id:&str)->ProviderPresetSource{ProviderPresetSource{id:id.to_string(),name:"Main".to_string(),provider_id:"openai-compatible".to_string(),base_url:"https://api.example.test/v1".to_string(),model:"model".to_string(),credential_reference:Some(reference("credential-a","openai-compatible")),enabled:true,health:"healthy".to_string(),failure_count:0,cooldown_until:None,timeout_ms:Some(30000.0),created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
-fn preset(id:&str)->ProviderPreset{let source_id=format!("source:{}:primary",id);ProviderPreset{id:id.to_string(),name:id.to_string(),preset_type:"pool".to_string(),sources:vec![source(&source_id)],active_source_id:Some(source_id),provider_id:None,base_url:None,model:None,credential_reference:None,enabled:None,timeout_ms:None,created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
+fn preset(id:&str)->ProviderPreset{let source_id=format!("source:{}:primary",id);ProviderPreset{id:id.to_string(),name:id.to_string(),preset_type:"pool".to_string(),sources:vec![source(&source_id)],active_source_id:Some(source_id),provider_id:None,base_url:None,model:None,credential_reference:None,enabled:None,timeout_ms:None,temperature:None,top_p:None,num_ctx:None,num_predict:None,keep_alive:None,created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
 fn state()->ProviderPresetStoreState{ProviderPresetStoreState{api_version:API_VERSION.to_string(),schema_version:SCHEMA_VERSION.to_string(),presets:vec![preset("preset-a")],active_preset_id:Some("preset-a".to_string())}}
-fn single_preset(id:&str)->ProviderPreset{ProviderPreset{id:id.to_string(),name:id.to_string(),preset_type:"single".to_string(),sources:vec![],active_source_id:None,provider_id:Some("openai-compatible".to_string()),base_url:Some("https://single.example/v1".to_string()),model:Some("single-model".to_string()),credential_reference:Some(reference("single-credential","openai-compatible")),enabled:Some(true),timeout_ms:Some(15000.0),created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
+fn single_preset(id:&str)->ProviderPreset{ProviderPreset{id:id.to_string(),name:id.to_string(),preset_type:"single".to_string(),sources:vec![],active_source_id:None,provider_id:Some("openai-compatible".to_string()),base_url:Some("https://single.example/v1".to_string()),model:Some("single-model".to_string()),credential_reference:Some(reference("single-credential","openai-compatible")),enabled:Some(true),timeout_ms:Some(15000.0),temperature:None,top_p:None,num_ctx:None,num_predict:None,keep_alive:None,created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
 
 #[test]fn rejects_unknown_fields(){
  let value=serde_json::json!({"id":"x","name":"X","sources":[],"activeSourceId":null,"createdAt":"x","updatedAt":"x","secret":"bad"});
