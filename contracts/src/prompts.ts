@@ -32,6 +32,9 @@ export const DEFAULT_PROMPT_TEXTS = Object.freeze({
   "nova-cue-background-tagged": "Continue Nova's cognition from the actual conversation context. Speaking is optional; if there is nothing useful to tell the user, leave SPEECH empty. Use the single NovaTurn format. Do not narrate internal processing.",
   "nova-cue-reactive-plain": "Answer the latest persisted user message now in ordinary plain text. A non-empty user-facing reply is required.",
   "nova-cue-background-plain": "Continue from the actual conversation context and return only user-facing plain text.",
+  "nova-schedule-structured": "Return NEXT_WAKE_MS as a positive integer in these bounds. Runtime enforces the bounds.",
+  "nova-schedule-plain": "The runtime uses the configured default interval, clamped to these bounds. Do not output scheduling metadata.",
+  "nova-tools-allowlist": "Only these registered tools may be requested.",
   "memory-judge.system": "You are a memory deduplication judge.\n\nCompare NEW MEMORY with CANDIDATES.\n\nKeep the most complete and informative record.\n\nIf NEW MEMORY is less informative because its information is contained in a candidate, archive NEW.\n\nIf a candidate is less informative because its information is contained in NEW MEMORY, archive that candidate number.\n\nIf records contain essentially the same information, archive one duplicate.\n\nIf records contain different useful information, archive nothing.\n\nYour decision is the list of archive targets.\n\nIn structured mode, return only:\n{\"archive\":[\"NEW\",\"1\",\"2\"]}\n\nIn plain mode, return only:\nNO_ARCHIVE\nor NEW / candidate numbers, one per line.\n\nNever return explanations.\nNever invent candidate numbers."
 } as const);
 
@@ -55,6 +58,9 @@ export const PROMPT_REGISTRY = [
   { id: "nova-system-plain", category: "Когнитивный шаг · plain-text", title: "Системная инструкция — plain text", purpose: "Основная инструкция для обычного текста без структурного протокола.", defaultText: DEFAULT_PROMPT_TEXTS["nova-system-plain"] },
   { id: "nova-cue-reactive-plain", category: "Когнитивный шаг · plain-text", title: "Cue — реактивный ответ plain text", purpose: "Инструкция дать непустой пользовательский ответ обычным текстом.", defaultText: DEFAULT_PROMPT_TEXTS["nova-cue-reactive-plain"] },
   { id: "nova-cue-background-plain", category: "Когнитивный шаг · plain-text", title: "Cue — фоновый ход plain text", purpose: "Инструкция фонового хода, возвращающего только пользовательский текст.", defaultText: DEFAULT_PROMPT_TEXTS["nova-cue-background-plain"] },
+  { id: "nova-schedule-structured", category: "Когнитивный шаг · дополнительные инструкции", title: "Инструкция расписания — structured", purpose: "Текстовое правило о поле NEXT_WAKE_MS для обоих структурированных протоколов; сами границы расписания остаются динамическими.", defaultText: DEFAULT_PROMPT_TEXTS["nova-schedule-structured"] },
+  { id: "nova-schedule-plain", category: "Когнитивный шаг · дополнительные инструкции", title: "Инструкция расписания — plain text", purpose: "Текстовое правило для plain-text режима; само расписание и его пределы не редактируются здесь.", defaultText: DEFAULT_PROMPT_TEXTS["nova-schedule-plain"] },
+  { id: "nova-tools-allowlist", category: "Когнитивный шаг · дополнительные инструкции", title: "Инструкция списка инструментов", purpose: "Инструкция, сопровождающая динамический список зарегистрированных tools. Проверка разрешений остаётся в коде.", defaultText: DEFAULT_PROMPT_TEXTS["nova-tools-allowlist"] },
   { id: "memory-judge.system", category: "Память · Memory Judge", title: "Системная инструкция — Memory Judge", purpose: "Инструкция вспомогательной LLM, выбирающей безопасные цели дедупликации памяти; результат дополнительно валидируется кодом.", defaultText: DEFAULT_PROMPT_TEXTS["memory-judge.system"] }
 ] as const satisfies readonly PromptDefinition[];
 
