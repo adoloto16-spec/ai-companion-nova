@@ -305,7 +305,7 @@ export class OllamaChatProvider implements ChatProvider {
     if (callerSignal?.aborted) throw abortError();
     callerSignal?.addEventListener("abort", forwardAbort, { once: true });
     let timedOut = false;
-    let timer:ReturnType<typeof setTimeout>;
+    let timer:ReturnType<typeof setTimeout>|undefined;
     const resetIdleTimeout=()=>{
       clearTimeout(timer);
       timer=setTimeout(()=>{timedOut=true;controller.abort();},this.timeoutMs());
