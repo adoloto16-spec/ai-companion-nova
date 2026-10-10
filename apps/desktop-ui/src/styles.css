@@ -7,7 +7,7 @@ button:disabled{opacity:.55;cursor:default}
 .app-shell{max-width:1120px;margin:0 auto;min-height:100vh;padding:24px}
 .app-header{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:18px}
 .app-header h1{margin:0;font-size:28px}.app-header p{margin:3px 0 0;opacity:.68}
-.app-nav{display:flex;gap:8px}
+.app-nav{display:flex;gap:8px;flex-wrap:wrap}
 .nav-button{background:transparent;border-color:#2d3744}.nav-button.active{background:#243242}
 .chat-panel{display:flex;flex-direction:column;height:calc(100vh - 110px);min-height:520px;margin:0;border:1px solid #2a3441;border-radius:12px;background:#151c25;overflow:hidden}
 .chat-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 18px;border-bottom:1px solid #27313d}.chat-toolbar-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.message-status{margin-top:6px;font-size:11px;opacity:.55;text-transform:uppercase;letter-spacing:.04em}
