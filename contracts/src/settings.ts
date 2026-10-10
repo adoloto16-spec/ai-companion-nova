@@ -171,6 +171,11 @@ export function validateAppSettings(settings:AppSettings):string[]{
     if(Number.isInteger(schedule.minIntervalMs)&&Number.isInteger(schedule.maxIntervalMs)&&schedule.minIntervalMs>schedule.maxIntervalMs)errors.push("Cognitive minimum interval must not exceed the maximum interval.");
     if(Number.isInteger(schedule.defaultIntervalMs)&&Number.isInteger(schedule.maxIntervalMs)&&schedule.defaultIntervalMs>schedule.maxIntervalMs)errors.push("Cognitive default interval must not exceed the maximum interval.");
   }
+  if(!settings.prompts||typeof settings.prompts!=="object"||!settings.prompts.overrides||typeof settings.prompts.overrides!=="object"||Array.isArray(settings.prompts.overrides))errors.push("Prompt overrides must be an object.");
+  else for(const [id,text] of Object.entries(settings.prompts.overrides)){
+    if(!PROMPT_REGISTRY.some(definition=>definition.id===id))errors.push("Unsupported prompt id: "+id+".");
+    if(typeof text!=="string"||text.length>12000)errors.push("Prompt overrides must contain strings up to 12000 characters.");
+  }
   if(typeof settings.semanticDedup.enabled!=="boolean")errors.push("Semantic Memory Deduplication enabled must be boolean.");
   if(settings.semanticDedup.embeddingProviderPresetId!==null&&(typeof settings.semanticDedup.embeddingProviderPresetId!=="string"||settings.semanticDedup.embeddingProviderPresetId.trim().length===0))errors.push("Semantic embedding provider preset must be empty or a non-empty string.");
   if(typeof settings.semanticDedup.embeddingModel!=="string"||settings.semanticDedup.embeddingModel.length>200)errors.push("Semantic embedding model must be a string up to 200 characters.");
