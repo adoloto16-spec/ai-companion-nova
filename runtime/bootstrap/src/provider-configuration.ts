@@ -187,6 +187,8 @@ export function buildChatProviderForSource(
     model:source.model,
     credentialReference:source.credentialReference?{...source.credentialReference}:null,
     ...(source.timeoutMs===undefined?{}:{timeoutMs:source.timeoutMs}),
+    ...(source.temperature===undefined?{}:{temperature:source.temperature}),
+    ...(source.topP===undefined?{}:{topP:source.topP}),
     ...(source.numCtx===undefined?{}:{numCtx:source.numCtx}),
     ...(source.numPredict===undefined?{}:{numPredict:source.numPredict}),
     ...(source.keepAlive===undefined?{}:{keepAlive:source.keepAlive})
@@ -200,6 +202,8 @@ export function buildChatProviderForSource(
       model:configuration.model,
       credential:configuration.credentialReference,
       timeoutMs:configuration.timeoutMs,
+      temperature:configuration.temperature,
+      topP:configuration.topP,
       numCtx:configuration.numCtx,
       numPredict:configuration.numPredict,
       keepAlive:configuration.keepAlive,
@@ -242,6 +246,8 @@ export function buildProviderForPreset(
       model:configuration.model,
       credential:configuration.credentialReference,
       timeoutMs:configuration.timeoutMs,
+      temperature:configuration.temperature,
+      topP:configuration.topP,
       numCtx:configuration.numCtx,
       numPredict:configuration.numPredict,
       keepAlive:configuration.keepAlive,
@@ -294,12 +300,16 @@ export function buildProviderForDiscovery(configuration:ProviderConfiguration,cr
       model:configuration.model,
       credential:configuration.credentialReference,
       timeoutMs:configuration.timeoutMs,
+      temperature:configuration.temperature,
+      topP:configuration.topP,
       numCtx:configuration.numCtx,
       numPredict:configuration.numPredict,
       keepAlive:configuration.keepAlive
     },{allowEmptyModel:true}).length>0)return undefined;
     return new OllamaChatProvider({
       ...common,
+      temperature:configuration.temperature,
+      topP:configuration.topP,
       numCtx:configuration.numCtx,
       numPredict:configuration.numPredict,
       keepAlive:configuration.keepAlive
