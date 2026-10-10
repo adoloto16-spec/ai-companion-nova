@@ -3035,6 +3035,79 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       }
     }
   },
+  "nova-turn": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.ai-companion-nova.dev/nova-turn/v1",
+    "title": "AI Companion Nova NovaTurn v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "version",
+      "situation",
+      "thoughts",
+      "emotion",
+      "tools",
+      "speech",
+      "longMemory",
+      "nextWakeMs"
+    ],
+    "properties": {
+      "version": {
+        "type": "integer",
+        "enum": [
+          1
+        ]
+      },
+      "situation": {
+        "type": "string",
+        "maxLength": 4000
+      },
+      "thoughts": {
+        "type": "string",
+        "maxLength": 8000
+      },
+      "emotion": {
+        "type": "string",
+        "maxLength": 500
+      },
+      "tools": {
+        "type": "array",
+        "maxItems": 12,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "arguments"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "arguments": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        }
+      },
+      "speech": {
+        "type": "string",
+        "maxLength": 4000
+      },
+      "longMemory": {
+        "type": "string",
+        "maxLength": 8000
+      },
+      "nextWakeMs": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 3600000
+      }
+    }
+  },
   "permission": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
