@@ -329,14 +329,24 @@ fn migrate(value:Value)->Result<(AppSettings,bool),String>{
             let custom_judge_prompt=root.get("semanticDedup").and_then(Value::as_object)
                 .and_then(|semantic|semantic.get("judge")).and_then(Value::as_object)
                 .and_then(|judge|judge.get("prompt")).and_then(Value::as_str).map(str::to_string);
-            if !root.contains_key("prompts"){
-                let mut overrides=serde_json::Map::new();
+            let has_judge_override=root.get("prompts").and_then(Value::as_object)
+                .and_then(|prompts|prompts.get("overrides")).and_then(Value::as_object)
+                .map(|overrides|overrides.contains_key("memory-judge.system")).unwrap_or(false);
+            if !has_judge_override {
                 if let Some(prompt)=custom_judge_prompt.as_deref(){
                     if !prompt.trim().is_empty() && prompt!=DEFAULT_MEMORY_JUDGE_INSTRUCTIONS && prompt!=LEGACY_MEMORY_JUDGE_INSTRUCTIONS{
-                        overrides.insert("memory-judge.system".into(),Value::String(prompt.into()));
+                        let prompts=root.entry("prompts").or_insert_with(||serde_json::json!({"overrides":{}}));
+                        if !prompts.is_object(){*prompts=serde_json::json!({"overrides":{}});}
+                        let prompt_settings=prompts.as_object_mut().expect("prompt settings object");
+                        let overrides=prompt_settings.entry("overrides").or_insert_with(||Value::Object(serde_json::Map::new()));
+                        if !overrides.is_object(){*overrides=Value::Object(serde_json::Map::new());}
+                        overrides.as_object_mut().expect("prompt overrides object").insert("memory-judge.system".into(),Value::String(prompt.into()));
+                        migrated=true;
                     }
                 }
-                root.insert("prompts".into(),serde_json::json!({"overrides":overrides}));
+            }
+            if !root.contains_key("prompts"){
+                root.insert("prompts".into(),serde_json::json!({"overrides":{}}));
                 migrated=true;
             }
             let effective_judge_prompt=root.get("prompts").and_then(Value::as_object)
