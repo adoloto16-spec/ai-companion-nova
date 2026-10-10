@@ -284,6 +284,10 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     const controller=new AbortController();
     let timedOut=false;
     let timer:ReturnType<typeof setTimeout>|undefined;
+    const resetIdleTimeout=()=>{
+      if(timer)clearTimeout(timer);
+      resetIdleTimeout();
+    };
     let stage:"awaiting_http_response"|"stream_body"="awaiting_http_response";
     let httpStatus:number|undefined;
     let firstStreamEventObserved=false;
@@ -481,6 +485,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
             throw error;
           }
           if(next.done)break;
+          resetIdleTimeout();
           buffer+=next.value;
           while(true){
             const match=/\r\n\r\n|\n\n|\r\r/.exec(buffer);
