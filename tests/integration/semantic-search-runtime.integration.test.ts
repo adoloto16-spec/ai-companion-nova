@@ -14,7 +14,7 @@ class Embeddings implements EmbeddingProvider{
  async health():Promise<HealthStatus>{return {status:"healthy",capabilities:["embeddings"]}}
 }
 async function main(){
- const s:AppSettings=defaultAppSettings();s.retrieval.semanticSearchEnabled=true;s.retrieval.semanticSimilarityThreshold=.7;s.retrieval.semanticResultLimit=5;
+ const s:AppSettings=defaultAppSettings();s.retrieval.semanticSearchEnabled=true;s.retrieval.semanticSimilarityThreshold=.7;s.retrieval.semanticResultLimit=10;
  const settingsStore=new InMemorySettingsStore(new StandardContractValidator());await settingsStore.save(s);
  const characterStore=new InMemoryCharacterStore(),coreBookStore=new InMemoryCoreBookStore(),memoryStore=new InMemoryMemoryStore();
  const conversationStore=new InMemoryConversationStore(),semanticIndexStore=new InMemoryMemorySemanticIndexStore();
