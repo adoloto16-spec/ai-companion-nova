@@ -25,6 +25,8 @@
     "allow-save-core-book-entries",
     "allow-get-memory-state",
     "allow-save-memory-state",
+    "allow-get-memory-semantic-index",
+    "allow-save-memory-semantic-index",
     "allow-supersede-memory",
     "allow-search-retrieval-index",
     "allow-rebuild-retrieval-index",
@@ -47,6 +49,11 @@
     "allow-delete-conversation",
     "allow-set-active-conversation",
     "allow-get-active-conversation",
-    "allow-clear-conversation"
+    "allow-clear-conversation",
+    "allow-get-app-settings",
+    "allow-save-app-settings",
+    "allow-ollama-http-request",
+    "allow-ollama-http-stream",
+    "allow-ollama-http-cancel"
   ]
 }

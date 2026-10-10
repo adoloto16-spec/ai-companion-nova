@@ -16,4 +16,14 @@ export * from "./core-book-manager";
 export * from "./context-engine";
 
 export * from "./memory-broker";
+export * from "./memory-retriever";
 export * from "./retrieval-indexer";
+export * from "./settings";
+
+export * from "./agent-output";
+export * from "./semantic-memory-dedup";
+export * from "./mind-runtime";
+export * from "./llm-cognitive-step";
+export * from "./mind-scheduler";
+export * from "./semantic-index-lock";
+export * from "./semantic-search";

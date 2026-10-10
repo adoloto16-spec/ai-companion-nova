@@ -1,0 +1,298 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion-nova.dev/app-settings/v11",
+  "title": "AI Companion Nova App Settings v11",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "schemaVersion",
+    "cognitiveSchedule",
+    "chat",
+    "context",
+    "memory",
+    "retrieval",
+    "diagnostics",
+    "ui",
+    "semanticDedup"
+  ],
+  "properties": {
+    "apiVersion": {
+      "const": "1"
+    },
+    "schemaVersion": {
+      "const": "11"
+    },
+    "chat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "automaticLongTermMemory",
+        "responseMode"
+      ],
+      "properties": {
+        "automaticLongTermMemory": {
+          "type": "boolean"
+        },
+        "responseMode": {
+          "type": "string",
+          "enum": [
+            "structured",
+            "plain"
+          ]
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "availableContextTokens",
+        "reservedOutputTokens",
+        "safetyMarginTokens",
+        "recentConversationMessages"
+      ],
+      "properties": {
+        "availableContextTokens": {
+          "type": "integer",
+          "minimum": 256,
+          "maximum": 32768
+        },
+        "reservedOutputTokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16384
+        },
+        "safetyMarginTokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4096
+        },
+        "recentConversationMessages": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    },
+    "memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateLimit"
+      ],
+      "properties": {
+        "candidateLimit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    },
+    "retrieval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateLimit"
+      ],
+      "properties": {
+        "candidateLimit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "semanticSearchEnabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "semanticSimilarityThreshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.35,
+          "description": "Raw cosine similarity threshold, not a percentage."
+        },
+        "semanticResultLimit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20,
+          "default": 5
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "logLevel",
+        "keepRecentEntries"
+      ],
+      "properties": {
+        "logLevel": {
+          "enum": [
+            "off",
+            "errors",
+            "normal",
+            "verbose",
+            "debug"
+          ]
+        },
+        "keepRecentEntries": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        }
+      }
+    },
+    "ui": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "showDiagnosticsInChat"
+      ],
+      "properties": {
+        "showDiagnosticsInChat": {
+          "type": "boolean"
+        }
+      }
+    },
+    "semanticDedup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "embeddingProviderPresetId",
+        "embeddingModel",
+        "candidateSimilarityThreshold",
+        "candidateLimit",
+        "judge"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "embeddingProviderPresetId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "embeddingModel": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "candidateSimilarityThreshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "candidateLimit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "judge": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "providerPresetId",
+            "model",
+            "outputMode",
+            "prompt",
+            "promptBackup",
+            "defaultPromptVersion"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "providerPresetId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "model": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "outputMode": {
+              "enum": [
+                "auto",
+                "structured",
+                "plain"
+              ]
+            },
+            "prompt": {
+              "type": "string",
+              "maxLength": 12000
+            },
+            "promptBackup": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 12000
+            },
+            "defaultPromptVersion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32
+            }
+          }
+        }
+      }
+    },
+    "cognitiveSchedule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "defaultIntervalMs",
+        "minIntervalMs",
+        "maxIntervalMs",
+        "maxRequestsPerHour"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "adaptive",
+            "fixed"
+          ]
+        },
+        "defaultIntervalMs": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 3600000
+        },
+        "minIntervalMs": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 3600000
+        },
+        "maxIntervalMs": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 3600000
+        },
+        "maxRequestsPerHour": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3600
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -4,7 +4,8 @@ use std::{collections::HashSet,fs,io::Write,path::PathBuf};
 use tauri::Manager;
 
 const API_VERSION:&str="1";
-const SCHEMA_VERSION:&str="1";
+const SCHEMA_VERSION:&str="2";
+const LEGACY_SCHEMA_VERSION:&str="1";
 
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(tag="kind",deny_unknown_fields)]
@@ -32,6 +33,10 @@ pub enum CoreBookActivation{
 pub enum MutationPolicy{Locked,Suggest,Auto}
 
 #[derive(Debug,Deserialize,Serialize,Clone)]
+#[serde(rename_all="lowercase",deny_unknown_fields)]
+pub enum EntryRole{System,User,Assistant}
+
+#[derive(Debug,Deserialize,Serialize,Clone)]
 pub enum EntrySource{#[serde(rename="user")] User,#[serde(rename="import")] Import,#[serde(rename="system")] System,#[serde(rename="other")] Other}
 
 #[derive(Debug,Deserialize,Serialize,Clone)]
@@ -52,6 +57,7 @@ pub struct CoreBookEntry{
     pub mutation_policy:MutationPolicy,
     pub enabled:bool,
     pub source:EntrySource,
+    pub role:EntryRole,
     pub metadata:Map<String,Value>,
     #[serde(rename="createdAt")]
     pub created_at:String,
@@ -122,12 +128,34 @@ fn validate(state:&CoreBookStoreState,character_id:&str)->Result<(),String>{
     Ok(())
 }
 
+fn migrate_legacy_roles(value:&mut Value)->Result<(),String>{
+    value["schemaVersion"]=Value::String(SCHEMA_VERSION.to_string());
+    let entries=value.get_mut("entries").and_then(Value::as_array_mut)
+        .ok_or_else(||"invalid core book storage: entries must be an array".to_string())?;
+    for entry in entries{
+        let object=entry.as_object_mut().ok_or_else(||"invalid core book storage: entry must be an object".to_string())?;
+        if !object.contains_key("role"){
+            let role=if object.get("source").and_then(Value::as_str)==Some("system"){"system"}else{"user"};
+            object.insert("role".to_string(),Value::String(role.to_string()));
+        }
+    }
+    Ok(())
+}
+
 pub fn load(app:&tauri::AppHandle,character_id:&str)->Result<Option<CoreBookStoreState>,String>{
     let path=config_path(app,character_id)?;
     if !path.exists(){return Ok(None);}
     let bytes=fs::read(&path).map_err(|e|format!("failed to read core book storage: {e}"))?;
-    let state:CoreBookStoreState=serde_json::from_slice(&bytes).map_err(|e|format!("invalid core book storage file: {e}"))?;
+    let mut value:Value=serde_json::from_slice(&bytes).map_err(|e|format!("invalid core book storage file: {e}"))?;
+    let stored_version=value.get("schemaVersion").and_then(Value::as_str).unwrap_or_default();
+    let migrated=if stored_version==LEGACY_SCHEMA_VERSION{
+        migrate_legacy_roles(&mut value)?;
+        true
+    }else if stored_version==SCHEMA_VERSION{false}
+    else{return Err("unsupported core book storage version".to_string());};
+    let state:CoreBookStoreState=serde_json::from_value(value).map_err(|e|format!("invalid core book storage file: {e}"))?;
     validate(&state,character_id)?;
+    if migrated{save(app,&state)?;}
     Ok(Some(state))
 }
 
@@ -144,3 +172,38 @@ pub fn save(app:&tauri::AppHandle,state:&CoreBookStoreState)->Result<(),String>{
     fs::rename(&tmp,&path).map_err(|e|format!("failed to commit core book storage: {e}"))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod migration_tests{
+    use super::*;
+    #[test]
+    fn legacy_roles_are_migrated_without_changing_other_entry_fields(){
+        let mut value=serde_json::json!({
+            "apiVersion":"1","schemaVersion":"1","characterId":"character-a",
+            "entries":[
+                {"id":"entry-system","characterId":"character-a","title":"System","content":"keep system","tags":["keep"],"activation":{"kind":"always"},"retentionPriority":40,"placementWeight":60,"mutationPolicy":"locked","enabled":false,"source":"system","metadata":{"flag":true},"createdAt":"created","updatedAt":"updated"},
+                {"id":"entry-user","characterId":"character-a","title":"User","content":"keep user","tags":["user"],"activation":{"kind":"always"},"retentionPriority":41,"placementWeight":61,"mutationPolicy":"suggest","enabled":true,"source":"user","metadata":{},"createdAt":"created2","updatedAt":"updated2"},
+                {"id":"entry-import","characterId":"character-a","title":"Import","content":"keep import","tags":[],"activation":{"kind":"always"},"retentionPriority":42,"placementWeight":62,"mutationPolicy":"auto","enabled":true,"source":"import","metadata":{},"createdAt":"created3","updatedAt":"updated3"},
+                {"id":"entry-other","characterId":"character-a","title":"Other","content":"keep other","tags":[],"activation":{"kind":"always"},"retentionPriority":43,"placementWeight":63,"mutationPolicy":"locked","enabled":true,"source":"other","metadata":{},"createdAt":"created4","updatedAt":"updated4"}
+            ]
+        });
+        migrate_legacy_roles(&mut value).unwrap();
+        assert_eq!(value["schemaVersion"],"2");
+        assert_eq!(value["entries"][0]["role"],"system");
+        assert_eq!(value["entries"][1]["role"],"user");
+        assert_eq!(value["entries"][2]["role"],"user");
+        assert_eq!(value["entries"][3]["role"],"user");
+        assert_eq!(value["entries"][0]["id"],"entry-system");
+        assert_eq!(value["entries"][0]["content"],"keep system");
+        assert_eq!(value["entries"][0]["tags"][0],"keep");
+        assert_eq!(value["entries"][0]["enabled"],false);
+        assert_eq!(value["entries"][0]["source"],"system");
+        assert_eq!(value["entries"][0]["metadata"]["flag"],true);
+        assert_eq!(value["entries"][0]["createdAt"],"created");
+        assert_eq!(value["entries"][0]["updatedAt"],"updated");
+        assert_eq!(value["entries"][0]["retentionPriority"],40);
+        assert_eq!(value["entries"][0]["placementWeight"],60);
+        assert_eq!(value["entries"][0]["mutationPolicy"],"locked");
+    }
+}
+

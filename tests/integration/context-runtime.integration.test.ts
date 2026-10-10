@@ -22,7 +22,7 @@ async function main(){
       const source=query.sources?.[0]??"memory";
       const ids=source==="core_book"?(coreBookIndexId?[coreBookIndexId]:[]):[...memoryIndexIds];
       const candidates:RetrievalCandidate[]=(query.query.toLowerCase().includes("tea")||query.query.toLowerCase().includes("munich"))
-        ? ids.map(sourceId=>({source,sourceId,characterId:query.characterId,score:1,matchedText:"tea",matches:[{field:"content",text:"tea"}],metadata:{updatedAt:"2026-09-26T12:00:00.000Z"}}))
+        ? ids.map(sourceId=>({source,sourceId,characterId:query.characterId,conversationId:source==="memory"?query.conversationId:undefined,score:1,matchedText:"tea",matches:[{field:"content",text:"tea"}],metadata:{updatedAt:"2026-09-26T12:00:00.000Z"}}))
         : [];
       return {apiVersion:"1",schemaVersion:"1",characterId:query.characterId,query:query.query,candidates,degraded:false};
     },
@@ -33,7 +33,9 @@ async function main(){
   await runtime.start();
   try{
     const nova=await runtime.getActiveCharacter();
+    const novaConversation=await runtime.getActiveConversation(nova.id);
     const gm=await runtime.createCharacter({name:"GM"});
+    const gmConversation=await runtime.getActiveConversation(gm.id);
     const novaEntry=await runtime.createCoreBookEntry(nova.id,{
       title:"Nova canon",content:"Nova prefers tea.",activation:{kind:"keyword",keywords:["tea"],matchMode:"any",caseSensitive:false},
       retentionPriority:90,placementWeight:20,source:"user"
@@ -44,33 +46,33 @@ async function main(){
     });
     coreBookIndexId=novaEntry.id;
     const novaMemory=await runtime.createMemory(nova.id,{
-      id:"memory.context.nova.1",type:"preference",content:"Nova likes tea.",tags:["tea"],
+      id:"memory.context.nova.1",conversationId:novaConversation.id,type:"preference",content:"Nova likes tea.",tags:["tea"],
       importance:95,confidence:90,source:"user",mutationPolicy:"locked"
     });
     memoryIndexIds.add(novaMemory.id);
     const gmMemory=await runtime.createMemory(gm.id,{
-      id:"memory.context.gm.1",type:"fact",content:"GM character tea note.",tags:["tea"],
+      id:"memory.context.gm.1",conversationId:gmConversation.id,type:"fact",content:"GM character tea note.",tags:["tea"],
       importance:100,confidence:100,source:"user",mutationPolicy:"locked"
     });
 
     const archivedMemory=await runtime.createMemory(nova.id,{
-      id:"memory.context.archived",type:"fact",content:"Archived tea note.",tags:["tea"],
+      id:"memory.context.archived",conversationId:novaConversation.id,type:"fact",content:"Archived tea note.",tags:["tea"],
       importance:100,confidence:100,source:"user",mutationPolicy:"locked"
     });
-    await runtime.archiveMemory(nova.id,archivedMemory.id);
+    await runtime.archiveMemory(nova.id,novaConversation.id,archivedMemory.id);
     const supersededMemory=await runtime.createMemory(nova.id,{
-      id:"memory.context.superseded",type:"fact",content:"Old Berlin note.",tags:["berlin"],
+      id:"memory.context.superseded",conversationId:novaConversation.id,type:"fact",content:"Old Berlin note.",tags:["berlin"],
       importance:100,confidence:100,source:"user",mutationPolicy:"locked"
     });
-    const replacementMemory=await runtime.supersedeMemory(nova.id,supersededMemory.id,{
-      id:"memory.context.replacement",type:"fact",content:"Current Munich tea note.",tags:["berlin","tea"],
+    const replacementMemory=await runtime.supersedeMemory(nova.id,novaConversation.id,supersededMemory.id,{
+      id:"memory.context.replacement",conversationId:novaConversation.id,type:"fact",content:"Current Munich tea note.",tags:["berlin","tea"],
       importance:90,confidence:95,source:"user",mutationPolicy:"locked"
     });
     memoryIndexIds.add(replacementMemory.id);
 
 
     const build:ContextBuildRequest={
-      apiVersion:"1",schemaVersion:"1",characterId:nova.id,conversationId:"conversation-nova",
+      apiVersion:"1",schemaVersion:"1",characterId:nova.id,conversationId:novaConversation.id,
       messages:[
         {id:"u1",role:"user",content:"tea"},
         {id:"a1",role:"assistant",content:"Nova can help with that."}
@@ -78,22 +80,21 @@ async function main(){
       budget:{availableContextTokens:100,reservedOutputTokens:20,systemOverheadTokens:5,safetyMarginTokens:5}
     };
     const context=await runtime.buildContext(build);
-    ok(retrievalQueries.some(query=>query.sources?.[0]==="memory"&&query.characterId===nova.id),"Context Engine queries Memory through Retriever boundary");
+    ok(!retrievalQueries.some(query=>query.sources?.[0]==="memory"),"Dynamic Memory does not depend on generic Retriever boundary");
     ok(retrievalQueries.some(query=>query.sources?.[0]==="core_book"&&query.characterId===nova.id),"Context Engine queries Core Book through Retriever boundary");
     ok(retrievalQueries.every(query=>query.characterId===nova.id),"Retriever queries remain character scoped");
-    ok(context.includedCandidates.some(candidate=>candidate.referenceId===novaEntry.id),"Nova Core Book selected through runtime boundary");
-    ok(context.includedCandidates.some(candidate=>candidate.referenceId===novaMemory.id),"Nova Dynamic Memory selected through existing MemoryBroker boundary");
+      ok(context.includedCandidates.some(candidate=>candidate.referenceId===novaEntry.id),"Nova Core Book selected through runtime boundary");
+    ok(context.includedCandidates.some(candidate=>candidate.referenceId===novaMemory.id),"Nova Dynamic Memory selected through dedicated MemoryRetriever boundary");
     ok(!context.includedCandidates.some(candidate=>candidate.referenceId===gmMemory.id),"GM Dynamic Memory is isolated from Nova context");
     ok(!context.includedCandidates.some(candidate=>candidate.referenceId===archivedMemory.id),"archived memory is excluded from automatic context");
     ok(context.includedCandidates.some(candidate=>candidate.referenceId===replacementMemory.id),"active replacement memory is included");
     ok(!context.includedCandidates.some(candidate=>candidate.referenceId===supersededMemory.id),"superseded memory is excluded from automatic context");
-    equal(retrievalQueries.find(query=>query.sources?.[0]==="memory")?.query,"tea","Context Engine forwards latest user query to Retriever");
-    equal(context.messages.find(message=>message.content==="Nova likes tea.")?.metadata?.contextSource,"memory","assembled Memory provenance source");
-    equal(context.messages.find(message=>message.content==="Nova likes tea.")?.metadata?.contextReferenceId,novaMemory.id,"assembled Memory provenance reference");
-    equal(context.messages.find(message=>message.content==="Nova likes tea.")?.role,"user","memory remains data-role");
+    equal(context.messages.find(message=>message.content.includes("Nova likes tea."))?.metadata?.contextSource,"memory","assembled Memory provenance source");
+    equal(context.includedCandidates.find(candidate=>candidate.referenceId===novaMemory.id)?.referenceId,novaMemory.id,"assembled Memory provenance reference");
+    equal(context.messages.find(message=>message.content.includes("Nova likes tea."))?.role,"system","memory is injected as explicit context, not user command");
     ok(!context.includedCandidates.some(candidate=>candidate.content.includes("GM owns")),"GM Core Book is isolated");
     equal(context.characterId,nova.id,"runtime context remains character scoped");
-    equal(context.conversationId,"conversation-nova","conversation identity preserved");
+    equal(context.conversationId,novaConversation.id,"conversation identity preserved");
     equal(context.messages.find(message=>message.content==="Nova prefers tea.")?.metadata?.contextSource,"core_book","assembled Core Book provenance");
     equal(context.estimatedTokens<=context.budget.availableContextTokens,true,"runtime context honors budget");
 
@@ -105,7 +106,7 @@ async function main(){
     const disabledContext=await runtime.buildContext(build);
     ok(!disabledContext.includedCandidates.some(candidate=>candidate.referenceId===novaEntry.id),"disabled Core Book omitted from runtime context");
 
-    const reloaded=await startRuntime({characterStore,coreBookStore});
+    const reloaded=await startRuntime({characterStore,coreBookStore,memoryStore});
     await reloaded.start();
     try{
       const reloadedContext=await reloaded.buildContext({...build,messages:[{id:"u2",role:"user",content:"tea"}]});

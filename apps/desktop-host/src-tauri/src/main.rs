@@ -1,6 +1,8 @@
 #[cfg(feature="tauri-app")]
 mod config;
 #[cfg(feature="tauri-app")]
+mod settings;
+#[cfg(feature="tauri-app")]
 mod characters;
 #[cfg(feature="tauri-app")]
 mod core_book;
@@ -16,6 +18,8 @@ mod model_profiles;
 mod credential_profiles;
 #[cfg(feature="tauri-app")]
 mod provider_presets;
+#[cfg(feature="tauri-app")]
+mod ollama_http;
 mod windows_credentials;
 
 use serde::Serialize;
@@ -42,10 +46,12 @@ fn get_host_diagnostics()->HostDiagnostics{
             "credential-store",
             "provider-configuration",
             "provider-presets",
+            "settings-storage",
             "credential-profiles",
             "character-storage",
             "core-book-storage",
-            "dynamic-memory-storage"
+            "dynamic-memory-storage",
+            "dynamic-memory-semantic-index"
         ],
     }
 }
@@ -95,6 +101,14 @@ fn delete_credential(reference:CredentialReference)->Result<(),String>{
 fn credential_exists(reference:CredentialReference)->Result<bool,String>{
     WindowsCredentialStore.exists(&reference)
 }
+
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn get_app_settings(app:tauri::AppHandle)->Result<Option<settings::AppSettings>,String>{settings::load(&app)}
+
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn save_app_settings(app:tauri::AppHandle,settings:settings::AppSettings)->Result<(),String>{settings::save(&app,&settings)}
 
 #[cfg(feature="tauri-app")]
 #[tauri::command]
@@ -176,6 +190,18 @@ fn save_memory_state(app:tauri::AppHandle,state_value:memory::MemoryStoreState,s
 
 #[cfg(feature="tauri-app")]
 #[tauri::command]
+fn get_memory_semantic_index(app:tauri::AppHandle,character_id:String,state:tauri::State<'_,memory::MemoryWriteLock>)->Result<Option<memory::MemorySemanticIndexState>,String>{
+    memory::load_semantic_index(&app,&character_id,&state)
+}
+
+#[cfg(feature="tauri-app")]
+#[tauri::command]
+fn save_memory_semantic_index(app:tauri::AppHandle,state_value:memory::MemorySemanticIndexState,state:tauri::State<'_,memory::MemoryWriteLock>)->Result<(),String>{
+    memory::save_semantic_index(&app,&state_value,&state)
+}
+
+#[cfg(feature="tauri-app")]
+#[tauri::command]
 fn supersede_memory(
     app:tauri::AppHandle,
     character_id:String,
@@ -200,7 +226,7 @@ fn rebuild_all_retrieval_index(app:tauri::AppHandle,retrieval_state:tauri::State
 fn upsert_retrieval_document(app:tauri::AppHandle,document:retrieval::RetrievalIndexDocument,state:tauri::State<'_,retrieval::RetrievalIndexLock>)->Result<(),String>{retrieval::upsert(&app,&document,&state)}
 #[cfg(feature="tauri-app")]
 #[tauri::command]
-fn remove_retrieval_document(app:tauri::AppHandle,character_id:String,source:retrieval::RetrievalSource,source_id:String,state:tauri::State<'_,retrieval::RetrievalIndexLock>)->Result<(),String>{retrieval::remove(&app,&character_id,&source,&source_id,&state)}
+fn remove_retrieval_document(app:tauri::AppHandle,character_id:String,source:retrieval::RetrievalSource,source_id:String,conversation_id:Option<String>,state:tauri::State<'_,retrieval::RetrievalIndexLock>)->Result<(),String>{retrieval::remove(&app,&character_id,&source,&source_id,conversation_id.as_deref(),&state)}
 #[cfg(feature="tauri-app")]
 #[tauri::command]
 fn remove_retrieval_character(app:tauri::AppHandle,character_id:String,state:tauri::State<'_,retrieval::RetrievalIndexLock>)->Result<(),String>{retrieval::remove_character(&app,&character_id,&state)}
@@ -244,6 +270,7 @@ struct RuntimeDiagnosticsState(Mutex<Option<Value>>);
 fn main(){
     tauri::Builder::default()
         .manage(RuntimeDiagnosticsState::default())
+        .manage(ollama_http::OllamaHttpState::default())
         .manage(memory::MemoryWriteLock::default())
         .manage(retrieval::RetrievalIndexLock::default())
         .invoke_handler(tauri::generate_handler![
@@ -257,12 +284,16 @@ fn main(){
             get_provider_configuration,
             save_provider_configuration,
             delete_provider_configuration,
+            get_app_settings,
+            save_app_settings,
             get_characters,
             save_characters,
             get_core_book_entries,
             save_core_book_entries,
             get_memory_state,
             save_memory_state,
+            get_memory_semantic_index,
+            save_memory_semantic_index,
             supersede_memory,
             search_retrieval_index,
             rebuild_retrieval_index,
@@ -285,7 +316,10 @@ fn main(){
             delete_credential_profile,
             get_provider_presets,
             save_provider_presets,
-            delete_provider_preset
+            delete_provider_preset,
+            ollama_http::ollama_http_request,
+            ollama_http::ollama_http_stream,
+            ollama_http::ollama_http_cancel
         ])
         .run(tauri::generate_context!())
         .expect("Tauri runtime failed");

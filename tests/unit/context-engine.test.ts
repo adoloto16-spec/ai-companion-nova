@@ -6,7 +6,7 @@ import {
   MemoryCandidateSource,
   calculateContextBudget
 } from "../../core/src";
-import type {ContextBuildRequest,CoreBookEntry,MemoryItem,MemorySearchQuery} from "../../contracts/src";
+import type {ContextBuildRequest,CoreBookEntry,MemoryItem,MemoryRetrievalResult} from "../../contracts/src";
 import type {TokenEstimator} from "../../core/src";
 
 function equal(actual:unknown,expected:unknown,label:string){
@@ -26,6 +26,7 @@ function entry(overrides:Partial<CoreBookEntry>):CoreBookEntry{
     mutationPolicy:overrides.mutationPolicy??"locked",
     enabled:overrides.enabled??true,
     source:overrides.source??"user",
+    role:overrides.role??"user",
     metadata:overrides.metadata??{},
     createdAt:overrides.createdAt??"2026-09-26T12:00:00.000Z",
     updatedAt:overrides.updatedAt??"2026-09-26T12:00:00.000Z"
@@ -40,6 +41,21 @@ function request(overrides:Partial<ContextBuildRequest>):ContextBuildRequest{
   };
 }
 
+
+async function assistantOnlyUnderPressureRegressionTest(){
+  const engine=new DeterministicContextEngine([
+    new ConversationCandidateSource(({estimate(text:string){return text.length;}} as TokenEstimator))
+  ]);
+  const built=await engine.build(request({
+    messages:[
+      {id:"user-1",role:"user",content:"user"},
+      {id:"assistant-1",role:"assistant",content:"a"}
+    ],
+    budget:{availableContextTokens:4,reservedOutputTokens:0,systemOverheadTokens:0,safetyMarginTokens:0}
+  }));
+  equal(built.messages.map(message=>message.role),["user"],"context pressure must not leave an orphan assistant message");
+  equal(built.messages.map(message=>message.id),["user-1"],"the user turn must survive when assistant-only context would result");
+}
 async function main(){
   const budget=calculateContextBudget(100,10,5,5);
   equal(budget.availableContextTokens,80,"budget calculation");
@@ -67,6 +83,16 @@ async function main(){
     return aEntries.filter(item=>item.characterId===characterId||item.id==="other-character");
   }};
   const source=new CoreBookCandidateSource(reader);
+  const roleSource=new CoreBookCandidateSource({async listCoreBookEntries(){return [
+    entry({id:"role-system",role:"system",source:"user",content:"system role"}),
+    entry({id:"role-user",role:"user",source:"system",content:"user role"}),
+    entry({id:"role-assistant",role:"assistant",source:"import",content:"assistant role"})
+  ];}});
+  const roleEngine=new DeterministicContextEngine([roleSource]);
+  const roleBuilt=await roleEngine.build(request({messages:[],budget:{availableContextTokens:100,reservedOutputTokens:0,systemOverheadTokens:0,safetyMarginTokens:0}}));
+  equal(roleBuilt.messages.find(message=>message.content==="system role")?.role,"system","Core Book system role survives candidate-to-ChatMessage conversion independently of source");
+  equal(roleBuilt.messages.find(message=>message.content==="user role")?.role,"user","Core Book user role survives candidate-to-ChatMessage conversion independently of source");
+  equal(roleBuilt.messages.find(message=>message.content==="assistant role")?.role,"assistant","Core Book assistant role survives candidate-to-ChatMessage conversion independently of source");
   const built=await new DeterministicContextEngine([
     new ConversationCandidateSource(({
       estimate(text:string){return Math.max(1,text.length);}
@@ -100,37 +126,41 @@ async function main(){
   let memorySearchCalls=0;
   const memoryItems:MemoryItem[]=[
     {
-      id:"memory-low",characterId:"character.a",type:"fact",content:"low value memory",tags:["tea"],importance:0,confidence:0,
+      id:"memory-low",characterId:"character.a",originConversationId:"conversation.a",type:"fact",content:"low value memory",tags:["tea"],importance:0,confidence:0,
       createdAt:"2026-09-26T12:00:00.000Z",updatedAt:"2026-09-26T12:00:00.000Z",
-      validFrom:null,validUntil:null,source:"user",sourceReference:null,mutationPolicy:"locked",status:"active",metadata:{}
+      validFrom:null,validUntil:null,source:"user",sourceReference:null,mutationPolicy:"locked",status:"active",archiveReason:null,metadata:{}
     },
     {
-      id:"memory-high",characterId:"character.a",type:"preference",content:"high value memory",tags:["tea"],importance:100,confidence:100,
+      id:"memory-high",characterId:"character.a",originConversationId:"conversation.a",type:"preference",content:"high value memory",tags:["tea"],importance:100,confidence:100,
       createdAt:"2026-09-26T12:00:00.000Z",updatedAt:"2026-09-26T12:00:00.000Z",
-      validFrom:null,validUntil:null,source:"user",sourceReference:null,mutationPolicy:"locked",status:"active",metadata:{}
+      validFrom:null,validUntil:null,source:"user",sourceReference:null,mutationPolicy:"locked",status:"active",archiveReason:null,metadata:{}
     },
     {
-      id:"memory-archived",characterId:"character.a",type:"fact",content:"archived memory",tags:["tea"],importance:100,confidence:100,
+      id:"memory-archived",characterId:"character.a",originConversationId:"conversation.a",type:"fact",content:"archived memory",tags:["tea"],importance:100,confidence:100,
       createdAt:"2026-09-26T12:00:00.000Z",updatedAt:"2026-09-26T12:00:00.000Z",
-      validFrom:null,validUntil:null,source:"user",sourceReference:null,mutationPolicy:"locked",status:"archived",metadata:{}
+      validFrom:null,validUntil:null,source:"user",sourceReference:null,mutationPolicy:"locked",status:"archived",archiveReason:null,metadata:{}
     },
     {
-      id:"memory-other-character",characterId:"character.b",type:"fact",content:"other character memory",tags:["tea"],importance:100,confidence:100,
+      id:"memory-other-character",characterId:"character.b",originConversationId:"conversation.b",type:"fact",content:"other character memory",tags:["tea"],importance:100,confidence:100,
       createdAt:"2026-09-26T12:00:00.000Z",updatedAt:"2026-09-26T12:00:00.000Z",
-      validFrom:null,validUntil:null,source:"user",sourceReference:null,mutationPolicy:"locked",status:"active",metadata:{}
+      validFrom:null,validUntil:null,source:"user",sourceReference:null,mutationPolicy:"locked",status:"active",archiveReason:null,metadata:{}
     }
   ];
   const memoryReader={
-    async search(query:MemorySearchQuery){
+    async list(){return memoryItems;},
+    async get(_characterId:string,id:string){return memoryItems.find(item=>item.id===id);}
+  };
+  const memoryRetriever={
+    async search(query:any):Promise<MemoryRetrievalResult>{
       memorySearchCalls+=1;
       capturedMemoryQuery=query.query;
-      equal(query.characterId,"character.a","memory query is character scoped");
+      equal(query.characterId,"character.a","memory retrieval is character scoped");
       equal(query.status,"active","automatic memory context searches active status only");
       equal(query.limit,8,"memory source uses one bounded deterministic search");
-      return memoryItems;
+      return {characterId:query.characterId,query:query.query,candidates:memoryItems.map(item=>({memoryId:item.id,score:item.importance+item.confidence,lexicalRelevance:50,phraseRelevance:0,tagRelevance:20}))};
     }
   };
-  const memorySource=new MemoryCandidateSource(memoryReader);
+  const memorySource=new MemoryCandidateSource(memoryReader,memoryRetriever);
   const memoryBuilt=await new DeterministicContextEngine([memorySource]).build(request({
     messages:[
       {id:"old-user",role:"user",content:"old topic"},
@@ -147,18 +177,20 @@ async function main(){
   const memoryCandidate=memoryBuilt.includedCandidates.find(candidate=>candidate.referenceId==="memory-high");
   equal(memoryCandidate?.source,"memory","memory provenance source");
   equal(memoryCandidate?.zone,"retrieved_memory","memory placement zone");
-  equal(memoryCandidate?.role,"user","memory remains data-role");
+  equal(memoryCandidate?.role,"system","memory is rendered as explicit system context");
   equal(memoryCandidate?.placementWeight,0,"memory does not use placementWeight");
 
   let noUserSearchCalls=0;
-  const noUserReader={async search(){noUserSearchCalls+=1;return memoryItems;}};
-  const noUserEngine=new DeterministicContextEngine([new MemoryCandidateSource(noUserReader)]);
+  const noUserReader={async list(){noUserSearchCalls+=1;return memoryItems;},async get(_characterId:string,id:string){return memoryItems.find(item=>item.id===id);}};
+  const noUserRetriever={async search(){noUserSearchCalls+=1;return {characterId:"character.a",query:"",candidates:[]};}};
+  const noUserEngine=new DeterministicContextEngine([new MemoryCandidateSource(noUserReader,noUserRetriever)]);
   await noUserEngine.build(request({messages:[{id:"a1",role:"assistant",content:"no user query"}]}));
   equal(noUserSearchCalls,0,"no user message skips memory search");
 
   const memoryPressure=await new DeterministicContextEngine([new MemoryCandidateSource({
-    async search(){return [memoryItems[0]!,memoryItems[1]!];}
-  },({estimate(){return 1}} as TokenEstimator))]).build(request({
+    async list(){return [memoryItems[0]!,memoryItems[1]!];},
+    async get(_characterId:string,id:string){return [memoryItems[0]!,memoryItems[1]!].find(item=>item.id===id);}
+  },{async search(query:any){return {characterId:query.characterId,query:query.query,candidates:[{memoryId:"memory-high",score:120,lexicalRelevance:100,phraseRelevance:0,tagRelevance:0},{memoryId:"memory-low",score:1,lexicalRelevance:100,phraseRelevance:0,tagRelevance:0}]}}},({estimate(){return 1}} as TokenEstimator))]).build(request({
     messages:[{id:"latest",role:"user",content:"tea"}],
     budget:{availableContextTokens:1,reservedOutputTokens:0,systemOverheadTokens:0,safetyMarginTokens:0}
   }));
@@ -192,7 +224,8 @@ async function main(){
     messages:manyMessages,
     budget:{availableContextTokens:5,reservedOutputTokens:0,systemOverheadTokens:0,safetyMarginTokens:0}
   }));
-  ok(pressured.includedCandidates.some(candidate=>candidate.referenceId==="m9"),"latest conversation turn preserved");
+  ok(pressured.includedCandidates.some(candidate=>candidate.referenceId==="m8"),"latest user turn survives when its assistant reply cannot fit as a pair");
+  ok(!pressured.includedCandidates.some(candidate=>candidate.referenceId==="m9"),"context pressure must not retain an orphan assistant reply");
   ok(!pressured.includedCandidates.some(candidate=>candidate.referenceId==="m0"),"older conversation may be removed");
   equal(pressured.estimatedTokens<=5,true,"assembly stays within budget");
   ok(pressured.omittedCandidates.some(candidate=>candidate.referenceId==="core-heavy"),"context pressure explains omitted Core Book");
@@ -204,6 +237,7 @@ async function main(){
   equal(noBudget.includedCandidates.length,0,"insufficient budget omits candidates");
   ok(noBudget.omittedCandidates.length>0,"insufficient budget is explainable");
 
+  await assistantOnlyUnderPressureRegressionTest();
   console.log("PASS Context Engine unit tests");
 }
 void main().catch(error=>{console.error(error);process.exitCode=1;});

@@ -43,6 +43,7 @@ class FakeCredentialStore implements CredentialStore{
 class FakeHttpClient implements HttpClient{
   requests:HttpClientRequest[]=[];
   lastStreamSignal?:AbortSignal;
+  lastRequestSignal?:AbortSignal;
   next:HttpClientResponse|Error|(()=>Promise<HttpClientResponse>)={
     status:200,
     body:JSON.stringify({
@@ -63,6 +64,7 @@ class FakeHttpClient implements HttpClient{
   };
   async request(request:HttpClientRequest):Promise<HttpClientResponse>{
     this.requests.push(request);
+    this.lastRequestSignal=request.signal;
     if(this.next instanceof Error)throw this.next;
     if(typeof this.next==="function")return this.next();
     return this.next;
@@ -80,6 +82,9 @@ async function* streamChunks(parts:readonly string[]):AsyncIterable<string>{
     await Promise.resolve();
     yield part;
   }
+}
+async function* delayedStreamChunks(parts:readonly string[],delayMs:number):AsyncIterable<string>{
+  for(const part of parts){await new Promise(resolve=>setTimeout(resolve,delayMs));yield part;}
 }
 
 function request(overrides:Partial<ChatRequest>={}):ChatRequest{
@@ -124,7 +129,7 @@ async function metadataAndCapabilitiesTest(){
   const capabilities=p.capabilities();
   equal(capabilities.streaming,true,"streaming capability");
   equal(capabilities.toolCalling,false,"tool calling capability");
-  equal(capabilities.structuredOutput,false,"structured output capability");
+  equal(capabilities.structuredOutput,true,"structured output adapter capability");
   equal(capabilities.reasoning,false,"reasoning capability");
 }
 
@@ -162,6 +167,125 @@ async function requestMappingTest(){
   equal(sent.messages[3]!.content,"second user message","message ordering");
 }
 
+async function cognitionAssistantRoleRegressionTest(){
+  const http=new FakeHttpClient();
+  const p=provider(http);
+  await p.chat({
+    ...request(),
+    context:{
+      conversationId:"cognition-role-regression",
+      messages:[
+        {id:"system-1",role:"system",content:"cognition system"},
+        {id:"user-1",role:"user",content:"hello"},
+        {id:"assistant-1",role:"assistant",content:"previous reply"}
+      ]
+    }
+  });
+  const body=http.requests[0]?.body;
+  if(body===undefined)throw new Error("expected cognition role regression body");
+  const sent=JSON.parse(body) as {messages:Array<{role:string;content:string}>};
+  equal(sent.messages.map(message=>message.role).join("|"),"system|user|assistant","OpenAI-compatible adapter preserves system user assistant roles");
+  equal(sent.messages.map(message=>message.content).join("|"),"cognition system|hello|previous reply","OpenAI-compatible adapter preserves cognition message order");
+}
+async function structuredRequestMappingTest(){
+  const http=new FakeHttpClient();
+  const p=provider(http);
+  const schema={
+    type:"object",
+    additionalProperties:false,
+    properties:{decision:{enum:["remember","no_memory"]},content:{type:"string"}},
+    required:["decision","content"]
+  };
+  await p.chat({...request(),generation:{responseFormat:{type:"json-schema",schema,name:"memory_agent_decision",strict:true}}});
+  const body=http.requests[0]?.body;
+  if(body===undefined)throw new Error("expected structured request body");
+  const sent=JSON.parse(body) as {model:string;stream:boolean;response_format?:{type:string;json_schema?:{name:string;strict:boolean;schema:unknown}}};
+  equal(sent.model,"openai-compatible-test-model","structured model mapping");
+  equal(sent.stream,false,"structured request is non-streaming");
+  equal(sent.response_format?.type,"json_schema","structured response_format type");
+  equal(sent.response_format?.json_schema?.name,"memory_agent_decision","structured schema name");
+  equal(sent.response_format?.json_schema?.strict,true,"structured schema strict");
+  equal(JSON.stringify(sent.response_format?.json_schema?.schema),JSON.stringify(schema),"structured schema mapping");
+}
+async function structuredMistralLikeSuccessTest(){
+  const http=new FakeHttpClient();
+  http.next={
+    status:200,
+    body:JSON.stringify({
+      model:"codestral-latest",
+      choices:[{
+        message:{
+          role:"assistant",
+          content:"{\"archive\":[\"2\"]}"
+        },
+        finish_reason:"stop"
+      }]
+    })
+  };
+  const schema={
+    type:"object",
+    additionalProperties:false,
+    properties:{archive:{type:"array",items:{type:"string"}}},
+    required:["archive"]
+  };
+  const response=await provider(http).chat({
+    ...request(),
+    model:"codestral-latest",
+    generation:{responseFormat:{type:"json-schema",name:"memory-judge-decision",strict:true,schema}}
+  });
+  equal(response.model,"codestral-latest","structured response model");
+  equal(response.message.content,'{"archive":["2"]}',"structured response content reaches caller");
+}
+
+async function plainRequestOmitsResponseFormatTest(){
+  const http=new FakeHttpClient();
+  await provider(http).chat({...request(),generation:{temperature:0.2,responseFormat:{type:"text"}}});
+  const body=http.requests[0]?.body;
+  if(body===undefined)throw new Error("expected plain request body");
+  const sent=JSON.parse(body) as {response_format?:unknown};
+  equal(sent.response_format,undefined,"plain request has no response_format");
+}
+async function http400ResponseBodyPropagationTest(){
+  const http=new FakeHttpClient();
+  http.next={
+    status:400,
+    body:JSON.stringify({
+      message:"Invalid JSON schema: keyword pattern is not supported",
+      type:"invalid_request",
+      code:"invalid_request_json_schema",
+      param:"response_format",
+      internalSecret:"unit-test-secret-value"
+    })
+  };
+  await throwsAsync(
+    ()=>provider(http).chat({...request(),generation:{responseFormat:{type:"json-schema",schema:{type:"object",properties:{value:{type:"string"}},required:["value"],additionalProperties:false}}}}),
+    error=>{
+      if(!(error instanceof OpenAICompatibleProviderError))return false;
+      const details=error.chatError.details;
+      const response=details?.providerResponse;
+      return error.chatError.code==="UNSUPPORTED"&&
+        details?.category==="capability"&&
+        details?.httpStatus===400&&
+        typeof details?.durationMs==="number"&&
+        !!response&&
+        JSON.stringify(response).includes("invalid_request_json_schema")&&
+        JSON.stringify(response).includes("pattern is not supported")&&
+        !JSON.stringify(response).includes("unit-test-secret-value")&&
+        !JSON.stringify(response).includes("internalSecret");
+    },
+    "HTTP 400 preserves safe provider response details"
+  );
+}
+
+async function structuredUnsupportedClassificationTest(){
+  const http=new FakeHttpClient();
+  http.next={status:400,body:'{"error":{"message":"response_format json_schema is not supported"}}'};
+  await throwsAsync(
+    ()=>provider(http).chat({...request(),generation:{responseFormat:{type:"json-schema",schema:{type:"object"}}}}),
+    error=>error instanceof OpenAICompatibleProviderError&&error.chatError.code==="UNSUPPORTED"&&error.chatError.details?.category==="capability",
+    "structured unsupported is classified as capability"
+  );
+}
 async function successResponseMappingTest(){
   const http=new FakeHttpClient();
   const p=provider(http);
@@ -244,6 +368,23 @@ async function httpStatusTest(){
   }
 }
 
+async function chatAbortTest(){
+  const http=new FakeHttpClient();
+  http.next=()=>new Promise<HttpClientResponse>(()=>{});
+  const signalController=new AbortController();
+  const pending=provider(http).chat(request(),{signal:signalController.signal});
+  for(let attempt=0;attempt<30&&http.lastRequestSignal===undefined;attempt++)await new Promise(resolve=>setTimeout(resolve,1));
+  const httpSignal=http.lastRequestSignal;
+  if(!httpSignal)throw new Error("provider must pass a caller-cancellable AbortSignal to HTTP chat transport");
+  signalController.abort();
+  await throwsAsync(
+    ()=>pending,
+    error=>error instanceof Error&&error.name==="AbortError",
+    "caller abort cancels HTTP chat generation"
+  );
+  equal(httpSignal.aborted,true,"caller cancellation reaches the HTTP request signal");
+}
+
 async function timeoutAndConnectionTest(){
   const timeoutHttp=new FakeHttpClient();
   timeoutHttp.next=()=>new Promise<HttpClientResponse>(()=>{});
@@ -283,11 +424,11 @@ async function credentialAndUnsupportedTest(){
     "unsupported tool message"
   );
 
-  await throwsAsync(
-    ()=>provider(new FakeHttpClient()).chat({...request(),generation:{responseFormat:{type:"json",schema:{type:"object"}}}}),
-    error=>error instanceof OpenAICompatibleProviderError&&error.chatError.code==="UNSUPPORTED",
-    "unsupported structured output"
-  );
+  const jsonModeHttp=new FakeHttpClient();
+  await provider(jsonModeHttp).chat({...request(),generation:{responseFormat:{type:"json",schema:{type:"object"}}}});
+  const jsonModeBody=jsonModeHttp.requests[0]?.body;
+  if(jsonModeBody===undefined)throw new Error("JSON mode request body missing");
+  equal((JSON.parse(jsonModeBody) as {response_format?:{type:string}}).response_format?.type,"json_object","legacy JSON mode mapping");
 }
 
 async function secretSafetyTest(){
@@ -337,6 +478,60 @@ async function streamingTest(){
   equal((JSON.parse(body) as {stream:boolean}).stream,true,"stream request body sets stream=true");
 }
 
+
+async function streamingTimeoutStageTest(){
+  const http=new FakeHttpClient();
+  http.streamNext={
+    status:200,
+    headers:{"content-type":"text/event-stream"},
+    body:{
+      async *[Symbol.asyncIterator](){
+        await new Promise<void>(()=>{});
+      }
+    }
+  };
+  const diagnostics=new InMemoryDiagnosticsStore();
+  const providerInstance=new OpenAICompatibleChatProvider({
+    baseUrl:"https://provider.example.test/v1",
+    model:"openai-compatible-test-model",
+    credential:credentialReference,
+    timeoutMs:25,
+    diagnostics,
+    providerPresetId:"preset.main"
+  },new FakeCredentialStore(),http);
+  const started=Date.now();
+  await throwsAsync(
+    ()=>providerInstance.stream(request(),{onEvent:()=>{}}),
+    error=>error instanceof OpenAICompatibleProviderError&&
+      error.chatError.details?.category==="timeout"&&
+      error.chatError.details?.stage==="stream_body"&&
+      error.chatError.details?.timeoutMs===25&&
+      typeof error.chatError.details?.durationMs==="number"&&
+      error.chatError.details?.durationMs>=20,
+    "stream body timeout exposes stage and configured timeout"
+  );
+  ok(Date.now()-started<500,"stream body timeout is bounded");
+  const timeoutDiagnostic=diagnostics.recentErrors().find(entry=>entry.code==="CHAT_PROVIDER_TIMEOUT");
+  ok(timeoutDiagnostic,"stream timeout diagnostic is recorded");
+  equal(timeoutDiagnostic?.metadata?.providerPresetId,"preset.main","stream timeout diagnostic records provider preset");
+  equal(timeoutDiagnostic?.metadata?.stage,"stream_body","stream timeout diagnostic records body stage");
+  equal(timeoutDiagnostic?.metadata?.timeoutMs,25,"stream timeout diagnostic records configured timeout");
+}
+
+async function streamingTimeoutIsInactivityDeadlineTest(){
+  const http=new FakeHttpClient();
+  const frames=[
+    "data: "+JSON.stringify({choices:[{delta:{content:"still "},finish_reason:null}]})+"\n\n",
+    "data: "+JSON.stringify({choices:[{delta:{content:"streaming "},finish_reason:null}]})+"\n\n",
+    "data: "+JSON.stringify({choices:[{delta:{content:"after thirty seconds in total"},finish_reason:"stop"}]})+"\n\n",
+    "data: [DONE]\n\n"
+  ];
+  http.streamNext={status:200,headers:{"content-type":"text/event-stream"},body:delayedStreamChunks(frames,15)};
+  let streamed="";
+  const response=await provider(http,new FakeCredentialStore(),25).stream(request(),{onEvent:event=>{if(event.type==="delta")streamed+=event.text;}});
+  equal(streamed,"still streaming after thirty seconds in total","OpenAI-compatible stream emits all speech across multiple inactivity windows");
+  equal(response.message.content,"","stream adapter preserves its existing contract of delivering content through deltas");
+}
 async function streamingUsageTest(){
   const http=new FakeHttpClient();
   http.streamNext={
@@ -495,14 +690,23 @@ void (async()=>{
   for(const [name,test] of [
     ["Metadata and capabilities",metadataAndCapabilitiesTest],
     ["Request mapping",requestMappingTest],
+    ["Cognition assistant role mapping",cognitionAssistantRoleRegressionTest],
+    ["Structured request mapping",structuredRequestMappingTest],
+    ["Structured Mistral-like success",structuredMistralLikeSuccessTest],
+    ["Plain request mapping",plainRequestOmitsResponseFormatTest],
+    ["Structured unsupported classification",structuredUnsupportedClassificationTest],
     ["Success response mapping",successResponseMappingTest],
     ["Finish reasons",finishReasonTest],
     ["Malformed response",malformedResponseTest],
     ["HTTP status normalization",httpStatusTest],
+    ["HTTP 400 provider response diagnostics",http400ResponseBodyPropagationTest],
     ["Timeout and connection",timeoutAndConnectionTest],
+    ["Chat abort",chatAbortTest],
     ["Credential and unsupported inputs",credentialAndUnsupportedTest],
     ["Secret safety",secretSafetyTest],
     ["Streaming",streamingTest],
+    ["Streaming timeout stage",streamingTimeoutStageTest],
+    ["Streaming timeout is an inactivity deadline",streamingTimeoutIsInactivityDeadlineTest],
     ["Streaming usage",streamingUsageTest],
     ["Malformed streaming event",malformedStreamingEventTest],
     ["Streaming abort",streamingAbortTest],

@@ -1,14 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.ai-companion-nova.dev/provider-preset/v1",
-  "title": "AI Companion Nova Provider Preset v1",
+  "$id": "https://schemas.ai-companion-nova.dev/provider-preset/v3",
+  "title": "AI Companion Nova Provider Preset v3",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "id",
     "name",
-    "providerId",
-    "baseUrl",
+    "type",
+    "sources",
+    "activeSourceId",
     "createdAt",
     "updatedAt"
   ],
@@ -23,25 +24,18 @@
       "minLength": 1,
       "maxLength": 200
     },
-    "providerId": {
-      "type": "string",
-      "minLength": 1
+    "sources": {
+      "type": "array",
+      "items": {
+        "$ref": "https://schemas.ai-companion-nova.dev/provider-preset-source/v2"
+      }
     },
-    "baseUrl": {
-      "type": "string",
+    "activeSourceId": {
+      "type": [
+        "string",
+        "null"
+      ],
       "minLength": 1
-    },
-    "credentialProfileId": {
-      "type": "string",
-      "minLength": 1
-    },
-    "model": {
-      "type": "string",
-      "minLength": 1
-    },
-    "timeoutMs": {
-      "type": "number",
-      "minimum": 0.000001
     },
     "createdAt": {
       "type": "string",
@@ -50,6 +44,553 @@
     "updatedAt": {
       "type": "string",
       "minLength": 1
+    },
+    "type": {
+      "enum": [
+        "pool",
+        "single"
+      ]
+    },
+    "providerId": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "enum": [
+            "openai-compatible",
+            "gemini",
+            "ollama"
+          ]
+        }
+      ]
+    },
+    "baseUrl": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 2000,
+      "format": "uri"
+    },
+    "model": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "credentialReference": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "https://schemas.ai-companion-nova.dev/credential-reference/v1"
+        }
+      ]
+    },
+    "enabled": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "timeoutMs": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "exclusiveMinimum": 0
+    },
+    "numCtx": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1
+    },
+    "numPredict": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1
+    },
+    "keepAlive": {
+      "type": [
+        "string",
+        "number",
+        "null"
+      ],
+      "minLength": 1,
+      "minimum": -1
+    },
+    "temperature": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 2
+    },
+    "topP": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "pool"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "sources": {
+            "minItems": 1
+          }
+        },
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "providerId"
+              ],
+              "properties": {
+                "providerId": {
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "required": [
+                "baseUrl"
+              ],
+              "properties": {
+                "baseUrl": {
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "required": [
+                "model"
+              ],
+              "properties": {
+                "model": {
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "required": [
+                "credentialReference"
+              ],
+              "properties": {
+                "credentialReference": {
+                  "$ref": "https://schemas.ai-companion-nova.dev/credential-reference/v1"
+                }
+              }
+            },
+            {
+              "required": [
+                "enabled"
+              ],
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                }
+              }
+            },
+            {
+              "required": [
+                "timeoutMs"
+              ],
+              "properties": {
+                "timeoutMs": {
+                  "type": "number"
+                }
+              }
+            },
+            {
+              "required": [
+                "numCtx"
+              ],
+              "properties": {
+                "numCtx": {
+                  "type": "integer"
+                }
+              }
+            },
+            {
+              "required": [
+                "numPredict"
+              ],
+              "properties": {
+                "numPredict": {
+                  "type": "integer"
+                }
+              }
+            },
+            {
+              "required": [
+                "keepAlive"
+              ],
+              "properties": {
+                "keepAlive": {
+                  "type": [
+                    "string",
+                    "number"
+                  ]
+                }
+              }
+            },
+            {
+              "required": [
+                "temperature"
+              ],
+              "properties": {
+                "temperature": {
+                  "type": "number"
+                }
+              }
+            },
+            {
+              "required": [
+                "topP"
+              ],
+              "properties": {
+                "topP": {
+                  "type": "number"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "single"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "providerId",
+          "baseUrl",
+          "model",
+          "credentialReference",
+          "enabled"
+        ],
+        "properties": {
+          "sources": {
+            "maxItems": 0
+          },
+          "activeSourceId": {
+            "const": null
+          },
+          "providerId": {
+            "enum": [
+              "openai-compatible",
+              "gemini",
+              "ollama"
+            ]
+          },
+          "baseUrl": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "format": "uri"
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "credentialReference": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "https://schemas.ai-companion-nova.dev/credential-reference/v1"
+              }
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "timeoutMs": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "numCtx": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "numPredict": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "keepAlive": {
+            "type": [
+              "string",
+              "number",
+              "null"
+            ],
+            "minLength": 1,
+            "minimum": -1
+          },
+          "temperature": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 2
+          },
+          "topP": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      }
+    }
+  ],
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "type",
+        "sources",
+        "activeSourceId",
+        "createdAt",
+        "updatedAt"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "https://schemas.ai-companion-nova.dev/provider-preset-source/v2"
+          },
+          "minItems": 1
+        },
+        "activeSourceId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "createdAt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "updatedAt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "const": "pool"
+        },
+        "providerId": {
+          "type": "null"
+        },
+        "baseUrl": {
+          "type": "null"
+        },
+        "model": {
+          "type": "null"
+        },
+        "credentialReference": {
+          "type": "null"
+        },
+        "enabled": {
+          "type": "null"
+        },
+        "timeoutMs": {
+          "type": "null"
+        },
+        "numCtx": {
+          "type": "null"
+        },
+        "numPredict": {
+          "type": "null"
+        },
+        "keepAlive": {
+          "type": "null"
+        },
+        "temperature": {
+          "type": "null"
+        },
+        "topP": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "type",
+        "sources",
+        "activeSourceId",
+        "providerId",
+        "baseUrl",
+        "model",
+        "credentialReference",
+        "enabled",
+        "createdAt",
+        "updatedAt"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "sources": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "activeSourceId": {
+          "const": null
+        },
+        "createdAt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "updatedAt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "const": "single"
+        },
+        "providerId": {
+          "enum": [
+            "openai-compatible",
+            "gemini",
+            "ollama"
+          ]
+        },
+        "baseUrl": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "format": "uri"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "credentialReference": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "https://schemas.ai-companion-nova.dev/credential-reference/v1"
+            }
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "timeoutMs": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "numCtx": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "numPredict": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "keepAlive": {
+          "type": [
+            "string",
+            "number",
+            "null"
+          ],
+          "minLength": 1,
+          "minimum": -1
+        },
+        "temperature": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 2
+        },
+        "topP": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    }
+  ]
 }

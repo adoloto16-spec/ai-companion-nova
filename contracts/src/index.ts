@@ -1,3 +1,5 @@
+import {APP_SETTINGS_API_VERSION,APP_SETTINGS_SCHEMA_VERSION} from "./settings";
+import type {DiagnosticsLogLevel} from "./settings";
 import type {ChatStreamHandlers,ChatStreamOptions} from "./chat-stream";
 export type ApiVersion = "1";
 export const FOUNDATION_API_VERSION:ApiVersion="1";
@@ -5,6 +7,7 @@ export const FOUNDATION_SCHEMA_VERSION="1";
 export const CHAT_API_VERSION:ApiVersion="1";
 export const CHAT_SCHEMA_VERSION="1";
 export * from "./chat-stream";
+export * from "./settings";
 
 export type ModuleType="service"|"adapter"|"worker"|"ui";
 export type ModuleRuntime="typescript"|"rust";
@@ -44,15 +47,47 @@ export interface CredentialProfileStore{
 }
 
 export const PROVIDER_PRESET_API_VERSION:ApiVersion="1";
-export const PROVIDER_PRESET_SCHEMA_VERSION="1";
-export interface ProviderPreset{
+export const PROVIDER_PRESET_SCHEMA_VERSION="3";
+export type ProviderSourceHealth="healthy"|"cooldown"|"unavailable";
+export interface ProviderPresetSource{
   id:string;
   name:string;
   providerId:string;
   baseUrl:string;
-  credentialProfileId?:string;
-  model?:string;
+  model:string;
+  credentialReference:CredentialReference|null;
+  enabled:boolean;
+  health:ProviderSourceHealth;
+  failureCount:number;
+  cooldownUntil:string|null;
   timeoutMs?:number;
+  temperature?:number;
+  topP?:number;
+  numCtx?:number;
+  numPredict?:number;
+  keepAlive?:string|number;
+  createdAt:string;
+  updatedAt:string;
+}
+export type ProviderPresetType="pool"|"single";
+export interface ProviderPreset{
+  id:string;
+  name:string;
+  /** Missing only in pre-v3 persisted data; migration treats it as a pool. */
+  type:ProviderPresetType;
+  sources:readonly ProviderPresetSource[];
+  activeSourceId:string|null;
+  providerId?:string|null;
+  baseUrl?:string|null;
+  model?:string|null;
+  credentialReference?:CredentialReference|null;
+  enabled?:boolean|null;
+  timeoutMs?:number|null;
+  temperature?:number|null;
+  topP?:number|null;
+  numCtx?:number|null;
+  numPredict?:number|null;
+  keepAlive?:string|number|null;
   createdAt:string;
   updatedAt:string;
 }
@@ -71,7 +106,7 @@ export interface ProviderPresetModelResolver{
   listModels(presetId:string):Promise<readonly ModelInfo[]>;
 }
 
-export interface ProviderConfiguration{apiVersion:ApiVersion;schemaVersion:string;providerId:string;enabled:boolean;baseUrl:string;model:string;credentialReference:CredentialReference|null;timeoutMs?:number}
+export interface ProviderConfiguration{apiVersion:ApiVersion;schemaVersion:string;providerId:string;enabled:boolean;baseUrl:string;model:string;credentialReference:CredentialReference|null;timeoutMs?:number;temperature?:number;topP?:number;numCtx?:number;numPredict?:number;keepAlive?:string|number}
 export interface ProviderConnectionTestResult{apiVersion:ApiVersion;schemaVersion:string;status:ProviderConnectionTestStatus;providerId:string;message?:string}
 export type CharacterId=string;
 export const CHARACTER_API_VERSION:ApiVersion="1";
@@ -158,9 +193,10 @@ export function defaultModelProfile(characterId:CharacterId,now=new Date().toISO
 }
 export type CoreBookEntryId=string;
 export const CORE_BOOK_API_VERSION:ApiVersion="1";
-export const CORE_BOOK_SCHEMA_VERSION="1";
+export const CORE_BOOK_SCHEMA_VERSION="2";
 export type CoreBookMutationPolicy="locked"|"suggest"|"auto";
 export type CoreBookEntrySource="user"|"import"|"system"|"other";
+export type CoreBookRole="system"|"user"|"assistant";
 export type CoreBookActivation=
   | {kind:"always"}
   | {kind:"keyword";keywords:readonly string[];matchMode:"any"|"all";caseSensitive:boolean}
@@ -179,6 +215,7 @@ export interface CoreBookEntry{
   mutationPolicy:CoreBookMutationPolicy;
   enabled:boolean;
   source:CoreBookEntrySource;
+  role:CoreBookRole;
   metadata:Record<string,unknown>;
   createdAt:string;
   updatedAt:string;
@@ -195,14 +232,20 @@ export interface CoreBookStore{
 }
 export type MemoryItemId=string;
 export const MEMORY_API_VERSION:ApiVersion="1";
-export const MEMORY_SCHEMA_VERSION="1";
+export const MEMORY_SCHEMA_VERSION="3";
+export const MEMORY_SEMANTIC_INDEX_API_VERSION:ApiVersion="1";
+export const MEMORY_SEMANTIC_INDEX_SCHEMA_VERSION="1";
+export const MEMORY_EXTRACTION_API_VERSION:ApiVersion="1";
+export const MEMORY_EXTRACTION_SCHEMA_VERSION="1";
 export type MemoryType="fact"|"preference"|"relationship"|"event"|"experience"|"goal"|"instruction"|"observation";
 export type MemoryStatus="active"|"superseded"|"archived";
 export type MemorySource="user"|"conversation"|"file"|"tool"|"model"|"system";
 export type MemoryMutationPolicy="locked"|"suggest"|"auto";
+export type MemoryArchiveReason="manual"|"duplicate"|"superseded"|"other";
 export interface MemoryItem{
   id:MemoryItemId;
   characterId:CharacterId;
+  originConversationId:ConversationId|null;
   type:MemoryType;
   content:string;
   tags:readonly string[];
@@ -216,10 +259,15 @@ export interface MemoryItem{
   sourceReference:string|null;
   mutationPolicy:MemoryMutationPolicy;
   status:MemoryStatus;
+  archiveReason:MemoryArchiveReason|null;
+  supersededBy?:MemoryItemId|null;
   metadata:Record<string,unknown>;
 }
 export interface MemoryCreateInput{
   id?:MemoryItemId;
+  originConversationId?:ConversationId|null;
+  /** @deprecated Use originConversationId; retained only as a migration/input compatibility field. */
+  conversationId?:ConversationId;
   type:MemoryType;
   content:string;
   tags?:readonly string[];
@@ -235,12 +283,17 @@ export interface MemoryCreateInput{
 export interface MemorySearchQuery{
   characterId:CharacterId;
   query:string;
+  /** Optional administrative/provenance filter; never an implicit retrieval scope. */
+  originConversationId?:ConversationId;
+  /** @deprecated Legacy alias; never used as the retrieval scope. */
+  conversationId?:ConversationId;
   types?:readonly MemoryType[];
   tags?:readonly string[];
   status?:MemoryStatus;
   limit?:number;
 }
 export interface MemoryUpdateInput{
+  type?:MemoryType;
   content?:string;
   tags?:readonly string[];
   importance?:number;
@@ -251,6 +304,26 @@ export interface MemoryUpdateInput{
   sourceReference?:string|null;
   mutationPolicy?:MemoryMutationPolicy;
   metadata?:Record<string,unknown>;
+}
+export interface MemorySemanticVectorRecord{
+  memoryId:MemoryItemId;
+  characterId:CharacterId;
+  contentHash:string;
+  embeddingProviderId:string;
+  embeddingModel:string;
+  dimensions:number;
+  vector:readonly number[];
+  updatedAt:string;
+}
+export interface MemorySemanticIndexState{
+  apiVersion:ApiVersion;
+  schemaVersion:string;
+  characterId:CharacterId;
+  records:readonly MemorySemanticVectorRecord[];
+}
+export interface MemorySemanticIndexStore{
+  load(characterId:CharacterId):Promise<MemorySemanticIndexState|undefined>;
+  save(state:MemorySemanticIndexState):Promise<void>;
 }
 export interface MemoryMutationAuthority{
   actorId:string;
@@ -269,31 +342,82 @@ export interface MemoryStore{
   load(characterId:CharacterId):Promise<MemoryStoreState|undefined>;
   save(state:MemoryStoreState):Promise<void>;
   supersede(characterId:CharacterId,previousMemoryId:MemoryItemId,replacement:MemoryItem):Promise<MemoryItem>;
+  /** @deprecated Compatibility overload for legacy callers; conversationId is provenance only. */
+  supersede(characterId:CharacterId,conversationId:ConversationId,previousMemoryId:MemoryItemId,replacement:MemoryItem):Promise<MemoryItem>;
 }
 export const RETRIEVAL_API_VERSION:ApiVersion="1";
 export const RETRIEVAL_SCHEMA_VERSION="1";
 export type RetrievalSource="core_book"|"memory";
 export interface RetrievalMatch{field:"title"|"content"|"tags";text:string}
 export interface RetrievalFilters{status?:string;type?:string;tags?:readonly string[]}
-export interface RetrievalQuery{apiVersion:ApiVersion;schemaVersion:string;characterId:CharacterId;query:string;sources?:readonly RetrievalSource[];limit?:number;filters?:RetrievalFilters}
-export interface RetrievalCandidate{source:RetrievalSource;sourceId:string;characterId:CharacterId;score:number;matchedText:string;matches:readonly RetrievalMatch[];metadata?:{title?:string;status?:string;type?:string;updatedAt:string}}
+export interface RetrievalQuery{apiVersion:ApiVersion;schemaVersion:string;characterId:CharacterId;conversationId?:ConversationId;query:string;sources?:readonly RetrievalSource[];limit?:number;filters?:RetrievalFilters}
+export interface RetrievalCandidate{source:RetrievalSource;sourceId:string;characterId:CharacterId;conversationId?:ConversationId;score:number;matchedText:string;matches:readonly RetrievalMatch[];metadata?:{title?:string;status?:string;type?:string;updatedAt:string}}
 export interface RetrievalResult{apiVersion:ApiVersion;schemaVersion:string;characterId:CharacterId;query:string;candidates:readonly RetrievalCandidate[];degraded:boolean;error?:string}
 export interface Retriever{search(query:RetrievalQuery):Promise<RetrievalResult>;rebuild(characterId:CharacterId):Promise<void>;rebuildAll():Promise<void>}
-export interface RetrievalIndexDocument{apiVersion:ApiVersion;schemaVersion:string;characterId:CharacterId;source:RetrievalSource;sourceId:string;title:string;content:string;tags:readonly string[];status?:string;type?:string;updatedAt:string}
-export interface RetrievalIndexWriter{upsert(document:RetrievalIndexDocument):Promise<void>;remove(characterId:CharacterId,source:RetrievalSource,sourceId:string):Promise<void>;removeCharacter(characterId:CharacterId):Promise<void>}
+export interface RetrievalIndexDocument{apiVersion:ApiVersion;schemaVersion:string;characterId:CharacterId;conversationId?:ConversationId;source:RetrievalSource;sourceId:string;title:string;content:string;tags:readonly string[];status?:string;type?:string;updatedAt:string}
+export interface RetrievalIndexWriter{upsert(document:RetrievalIndexDocument):Promise<void>;remove(characterId:CharacterId,source:RetrievalSource,sourceId:string,conversationId?:ConversationId):Promise<void>;removeCharacter(characterId:CharacterId):Promise<void>}
 
+export interface MemoryRetrievalQuery{
+  characterId:CharacterId;
+  query:string;
+  status?:MemoryStatus;
+  types?:readonly MemoryType[];
+  tags?:readonly string[];
+  originConversationId?:ConversationId;
+  limit?:number;
+}
+export interface MemoryRetrievalCandidate{
+  memoryId:MemoryItemId;
+  score:number;
+  lexicalRelevance:number;
+  phraseRelevance:number;
+  tagRelevance:number;
+}
+export interface MemoryRetrievalResult{
+  characterId:CharacterId;
+  query:string;
+  candidates:readonly MemoryRetrievalCandidate[];
+}
+export interface MemoryRetriever{
+  search(query:MemoryRetrievalQuery):Promise<MemoryRetrievalResult>;
+}
 export interface MemoryBroker{
   get(characterId:CharacterId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>;
+  /** @deprecated Compatibility overload; conversationId is provenance only. */
+  get(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId):Promise<MemoryItem|undefined>;
+  list(characterId:CharacterId):Promise<readonly MemoryItem[]>;
   search(query:MemorySearchQuery):Promise<readonly MemoryItem[]>;
   create(characterId:CharacterId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
   update(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryUpdateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  /** @deprecated Compatibility overload; conversationId is provenance only. */
+  update(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryUpdateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
   supersede(characterId:CharacterId,memoryId:MemoryItemId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
-  archive(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  /** @deprecated Compatibility overload; conversationId is provenance only. */
+  supersede(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,input:MemoryCreateInput,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  archive(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason,supersededBy?:MemoryItemId|null):Promise<MemoryItem>;
+  /** @deprecated Compatibility overload; conversationId is provenance only. */
+  archive(characterId:CharacterId,conversationId:ConversationId,memoryId:MemoryItemId,authority:MemoryMutationAuthority,reason?:MemoryArchiveReason,supersededBy?:MemoryItemId|null):Promise<MemoryItem>;
+  restore(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>;
+  delete(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<void>;
 }
+export interface MemoryExtractionRequest{
+  apiVersion:ApiVersion;
+  schemaVersion:string;
+  characterId:CharacterId;
+  conversationId:ConversationId;
+  turnId:string;
+  model:string;
+  providerId?:string;
+  providerPresetId?:string;
+  userMessage:ChatMessage;
+  assistantMessage:ChatMessage;
+  contextMessages:readonly ChatMessage[];
+}
+
 export const CONTEXT_API_VERSION:ApiVersion="1";
 export const CONTEXT_SCHEMA_VERSION="1";
 
-export type ContextSource="conversation"|"core_book"|"memory";
+export type ContextSource="conversation"|"core_book"|"memory"|"semantic_search";
 export type ContextZone="system"|"character_core"|"retrieved_core_book"|"retrieved_memory"|"conversation"|"recent_conversation";
 
 export interface ContextBudget{
@@ -368,10 +492,12 @@ export interface EventPayloadMap{
   CoreBookEntryUpdated:{characterId:string;entryId:string};
   CoreBookEntryDeleted:{characterId:string;entryId:string};
   CoreBookEntryEnabledChanged:{characterId:string;entryId:string;enabled:boolean};
-  MemoryCreated:{characterId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
-  MemoryUpdated:{characterId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
-  MemorySuperseded:{characterId:string;memoryId:string;previousMemoryId:string;status:MemoryStatus;updatedAt:string};
-  MemoryArchived:{characterId:string;memoryId:string;status:MemoryStatus;updatedAt:string};
+  MemoryCreated:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;status:MemoryStatus;updatedAt:string};
+  MemoryUpdated:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;status:MemoryStatus;updatedAt:string};
+  MemorySuperseded:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;previousMemoryId:string;status:MemoryStatus;updatedAt:string};
+  MemoryArchived:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;status:MemoryStatus;updatedAt:string;archiveReason?:MemoryArchiveReason};
+  MemoryRestored:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string;status:MemoryStatus;updatedAt:string};
+  MemoryDeleted:{characterId:string;originConversationId?:string;conversationId?:string;memoryId:string};
   ChatResponseReceived:{requestId:string;conversationId:string;providerId:string;model:string;finishReason:ChatFinishReason};
   ConversationCreated:{characterId:string;conversationId:string};
   ConversationUpdated:{characterId:string;conversationId:string};
@@ -380,26 +506,82 @@ export interface EventPayloadMap{
 
   ChatRequestFailed:{requestId:string;conversationId?:string;providerId?:string;code:ChatError["code"]};
 }
+export interface ChatTurnTrace{
+  turnId:string;
+  requestId:string;
+  characterId:CharacterId;
+  conversationId:ConversationId;
+  timestamp:string;
+  durationMs?:number;
+  status:"started"|"completed"|"failed"|"interrupted";
+  contextBuild?:{
+    budget:ContextBudget;
+    estimatedTokens:number;
+    includedCandidates:readonly ContextCandidate[];
+    omittedCandidates:readonly ContextCandidate[];
+  };
+  finalRequest?:ChatRequest;
+  provider?:{
+    chatProviderPresetId?:string;
+    chatProviderId:string;
+    chatModel:string;
+    chatProviderBaseUrlHost?:string;
+    chatProviderTimeoutMs?:number;
+    chatTransport:"stream"|"chat";
+  };
+  providerError?:{
+    providerId?:string;
+    providerPresetId?:string;
+    category?:string;
+    httpStatus?:number;
+    timeoutMs?:number;
+    durationMs?:number;
+    providerResponse?:unknown;
+  };
+  providerResponse?:{
+    providerId:string;
+    model:string;
+    finishReason:ChatFinishReason;
+    usage?:ChatUsage;
+    durationMs?:number;
+  };
+  error?:{code:string;message:string};
+}
+export type ChatTurnTracePatch=Partial<Omit<ChatTurnTrace,"turnId"|"requestId"|"characterId"|"conversationId"|"timestamp">>&{
+  contextBuild?:ChatTurnTrace["contextBuild"];
+};
+
+export interface ChatTraceStore{
+  start(trace:Pick<ChatTurnTrace,"turnId"|"requestId"|"characterId"|"conversationId"|"timestamp">):void;
+  update(turnId:string,patch:ChatTurnTracePatch):void;
+  recent(limit?:number):readonly ChatTurnTrace[];
+  clear():void;
+  configure(level:DiagnosticsLogLevel,maxEntries:number):void;
+}
+
 export interface ErrorDiagnostic{timestamp:string;source:string;code:string;message:string;metadata?:Record<string,unknown>}
 export interface DiagnosticsStore{recordError(source:string,code:string,message:string,metadata?:Record<string,unknown>):void;recentErrors(limit?:number):readonly ErrorDiagnostic[]}
 export function createEvent<K extends keyof EventPayloadMap>(type:K,payload:EventPayloadMap[K],source:string,clock:()=>string,id=source+":"+type+":"+Date.now()):Event<EventPayloadMap[K]>{return{id,type,timestamp:clock(),source,schemaVersion:FOUNDATION_SCHEMA_VERSION,payload}}
 
 export interface ProviderCapabilities{streaming?:boolean;vision?:boolean;toolCalling?:boolean;structuredOutput?:boolean;reasoning?:boolean;audioInput?:boolean;audioOutput?:boolean;embeddings?:boolean;[key:string]:boolean|undefined}
 export interface ModelInfo{id:string;displayName?:string;capabilities?:ProviderCapabilities}
-export interface JsonSchema{$schema?:string;type?:string|string[];properties?:Record<string,JsonSchema>;required?:readonly string[];additionalProperties?:boolean|JsonSchema;items?:JsonSchema;enum?:readonly unknown[];oneOf?:readonly JsonSchema[];const?:unknown;minimum?:number;maximum?:number;minLength?:number;maxLength?:number;minItems?:number;maxItems?:number}
+export interface JsonSchema{$schema?:string;$id?:string;title?:string;description?:string;default?:unknown;examples?:readonly unknown[];type?:string|string[];properties?:Record<string,JsonSchema>;required?:readonly string[];additionalProperties?:boolean|JsonSchema;items?:JsonSchema;enum?:readonly unknown[];oneOf?:readonly JsonSchema[];const?:unknown;minimum?:number;maximum?:number;minLength?:number;maxLength?:number;minItems?:number;maxItems?:number}
 export interface ToolDefinition{id:string;version:string;schemaVersion:string;name:string;description:string;risk:ActionRisk;requiredCapabilities:readonly string[];resourceType:"domain"|"filesystem"|"application"|"resource";action:string;targetResolverId:string;confirmation:"never"|"policy";parameters:JsonSchema}
 export interface ChatMessage{id?:string;role:"system"|"user"|"assistant"|"tool";content:string;toolCallId?:string;metadata?:Record<string,unknown>}
 export interface ChatContext{conversationId:string;messages:readonly ChatMessage[];metadata?:Record<string,unknown>}
-export type ResponseFormat={type:"text"}|{type:"json";schema:Record<string,unknown>}
+export interface StructuredResponseFormat{type:"json-schema";schema:JsonSchema;name?:string;strict?:boolean}
+export type AgentOutputMode="auto"|"structured"|"plain";
+export type ResponseFormat={type:"text"}|{type:"json";schema?:Record<string,unknown>}|StructuredResponseFormat;
 export interface ChatGenerationOptions{temperature?:number;maxTokens?:number;topP?:number;responseFormat?:ResponseFormat}
 export interface ChatUsage{promptTokens?:number;completionTokens?:number;totalTokens?:number}
 export type ChatFinishReason="stop"|"length"|"content_filter"|"error"|"unknown"
 export type ChatErrorCode="INVALID_REQUEST"|"PROVIDER_NOT_FOUND"|"PROVIDER_UNAVAILABLE"|"PROVIDER_ERROR"|"INVALID_RESPONSE"|"UNSUPPORTED"
 export interface ChatError{apiVersion:ApiVersion;schemaVersion:string;code:ChatErrorCode;message:string;requestId?:string;providerId?:string;retryable?:boolean;details?:Record<string,unknown>}
+export interface ChatRequestOptions{signal?:AbortSignal}
 export interface ChatRequest{apiVersion:ApiVersion;schemaVersion:string;requestId:string;providerId?:string;model:string;context:ChatContext;generation?:ChatGenerationOptions;metadata?:Record<string,unknown>}
 export interface ChatResponse{apiVersion:ApiVersion;schemaVersion:string;requestId:string;conversationId:string;providerId:string;model:string;message:ChatMessage;finishReason:ChatFinishReason;usage?:ChatUsage;metadata?:Record<string,unknown>}
 export interface ChatProviderMetadata{id:string;kind:"chat";displayName:string;version:string;description?:string}
-export interface ChatProvider{id:string;metadata():ChatProviderMetadata;capabilities():ProviderCapabilities;listModels():Promise<ModelInfo[]>;chat(request:ChatRequest):Promise<ChatResponse>;stream?(request:ChatRequest,handlers:ChatStreamHandlers,options?:ChatStreamOptions):Promise<ChatResponse>;health():Promise<HealthStatus>}
+export interface ChatProvider{id:string;metadata():ChatProviderMetadata;capabilities():ProviderCapabilities;listModels():Promise<ModelInfo[]>;chat(request:ChatRequest,options?:ChatRequestOptions):Promise<ChatResponse>;stream?(request:ChatRequest,handlers:ChatStreamHandlers,options?:ChatStreamOptions):Promise<ChatResponse>;health():Promise<HealthStatus>}
 export type Message=ChatMessage;
 export type Usage=ChatUsage;
 export interface STTRequest{audio:Uint8Array;language?:string}
@@ -468,6 +650,8 @@ export const CONTRACT_VERSIONS={
   chatRequest:{apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION},
   chatResponse:{apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION},
   chatError:{apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION},
+  appSettings:{apiVersion:APP_SETTINGS_API_VERSION,schemaVersion:APP_SETTINGS_SCHEMA_VERSION},
+  chatTurnTrace:{apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION},
   providerConfiguration:{apiVersion:PROVIDER_CONFIGURATION_API_VERSION,schemaVersion:PROVIDER_CONFIGURATION_SCHEMA_VERSION},
   providerConnectionTestResult:{apiVersion:PROVIDER_CONFIGURATION_API_VERSION,schemaVersion:PROVIDER_CONFIGURATION_SCHEMA_VERSION},
   character:{apiVersion:CHARACTER_API_VERSION,schemaVersion:CHARACTER_SCHEMA_VERSION},
@@ -475,6 +659,8 @@ export const CONTRACT_VERSIONS={
   memoryItem:{apiVersion:MEMORY_API_VERSION,schemaVersion:MEMORY_SCHEMA_VERSION},
   memorySearchQuery:{apiVersion:MEMORY_API_VERSION,schemaVersion:MEMORY_SCHEMA_VERSION},
   memoryStoreState:{apiVersion:MEMORY_API_VERSION,schemaVersion:MEMORY_SCHEMA_VERSION},
+  memoryCandidate:{apiVersion:MEMORY_EXTRACTION_API_VERSION,schemaVersion:MEMORY_EXTRACTION_SCHEMA_VERSION},
+  memoryExtractionRequest:{apiVersion:MEMORY_EXTRACTION_API_VERSION,schemaVersion:MEMORY_EXTRACTION_SCHEMA_VERSION},
   contextSource:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
   contextZone:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
   contextBudget:{apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION},
@@ -485,6 +671,7 @@ export const CONTRACT_VERSIONS={
   credentialProfile:{apiVersion:CREDENTIAL_PROFILE_API_VERSION,schemaVersion:CREDENTIAL_PROFILE_SCHEMA_VERSION},
   credentialProfileStoreState:{apiVersion:CREDENTIAL_PROFILE_API_VERSION,schemaVersion:CREDENTIAL_PROFILE_SCHEMA_VERSION},
   providerPreset:{apiVersion:PROVIDER_PRESET_API_VERSION,schemaVersion:PROVIDER_PRESET_SCHEMA_VERSION},
+  providerPresetSource:{apiVersion:PROVIDER_PRESET_API_VERSION,schemaVersion:PROVIDER_PRESET_SCHEMA_VERSION},
   providerPresetStoreState:{apiVersion:PROVIDER_PRESET_API_VERSION,schemaVersion:PROVIDER_PRESET_SCHEMA_VERSION},
     modelProfileStoreState:{apiVersion:MODEL_PROFILE_API_VERSION,schemaVersion:MODEL_PROFILE_SCHEMA_VERSION},
   retrievalSource:{apiVersion:RETRIEVAL_API_VERSION,schemaVersion:RETRIEVAL_SCHEMA_VERSION},
@@ -497,3 +684,5 @@ export const CONTRACT_VERSIONS={
 export {STANDARD_SCHEMAS} from "./generated-schemas";
 
 export {MinimalJsonSchemaValidator,StandardContractValidator} from "./schema-validator";
+export * from "./mind-runtime";
+export * from "./nova-turn";

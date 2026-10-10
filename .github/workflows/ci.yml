@@ -24,6 +24,7 @@ jobs:
           node-version: 22
       - run: pnpm install --no-frozen-lockfile
       - run: pnpm generate:schemas
+      - run: git diff --exit-code contracts/src/generated-schemas.ts
       - run: pnpm typecheck
       - run: pnpm build
       - run: pnpm test
@@ -40,7 +41,10 @@ jobs:
         with:
           node-version: 22
       - run: pnpm install --no-frozen-lockfile
-      - run: pnpm --dir apps/desktop-ui build
+      - name: React UI typecheck
+        run: pnpm --dir apps/desktop-ui typecheck
+      - name: React UI build
+        run: pnpm --dir apps/desktop-ui build
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-ui-dist
@@ -78,6 +82,7 @@ jobs:
       - run: cargo test -p nova-desktop-host --all-features model_profiles::tests
       - run: cargo test -p nova-desktop-host --all-features credential_profiles::tests
       - run: cargo test -p nova-desktop-host --all-features provider_presets::tests
+      - run: cargo test -p nova-desktop-host --all-features core_book::migration_tests
 
   windows-installer:
     runs-on: windows-latest
@@ -107,11 +112,17 @@ jobs:
       - name: Generate schemas
         run: pnpm generate:schemas
 
+      - name: Check generated schemas are committed
+        run: git diff --exit-code contracts/src/generated-schemas.ts
+
       - name: Typecheck
         run: pnpm typecheck
 
       - name: Build Foundation
         run: pnpm build
+
+      - name: React UI typecheck
+        run: pnpm --dir apps/desktop-ui typecheck
 
       - name: Build React UI
         run: pnpm --dir apps/desktop-ui build
