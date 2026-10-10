@@ -11,7 +11,7 @@ function ok(v:unknown,label:string){if(!v)throw new Error(label)}
 function eq(a:unknown,b:unknown,label:string){if(JSON.stringify(a)!==JSON.stringify(b))throw new Error(label+" expected "+JSON.stringify(b)+" got "+JSON.stringify(a))}
 class Embeddings implements EmbeddingProvider{
  readonly id="test.semantic.integration";capabilities():ProviderCapabilities{return {embeddings:true}} dimensions(){return 3}
- async embed(texts:string[]):Promise<number[][]>{return texts.map(t=>/long-term lease|older conversation/i.test(t)?[0,0,1]:/квартир|где|дом|риг|прожив|housing|riga|home|lease/i.test(t)?[1,0,0]:[0,1,0])}
+ async embed(texts:string[]):Promise<number[][]>{return texts.map(t=>/long-term lease/i.test(t)&&/riga/i.test(t)?[1,0,1]:/крыша|ремонт/i.test(t)?[0,1,0]:/квартир|где|риг|прожив|housing|riga|home|lease/i.test(t)?[1,0,0]:[0,1,0])}
  async health():Promise<HealthStatus>{return {status:"healthy",capabilities:["embeddings"]}}
 }
 async function main(){
