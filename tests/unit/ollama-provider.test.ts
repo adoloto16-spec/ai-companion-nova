@@ -115,6 +115,8 @@ function provider(http: FakeOllamaHttpClient, overrides: Partial<{
   baseUrl: string;
   model: string;
   timeoutMs: number;
+  temperature: number;
+  topP: number;
   numCtx: number;
   numPredict: number;
   keepAlive: string | number;
@@ -180,10 +182,13 @@ async function ordinaryRequestMappingTest(): Promise<void> {
 
 async function configuredOptionsTest(): Promise<void> {
   const http = new FakeOllamaHttpClient();
-  await provider(http, {numCtx: 8192, numPredict: 300, keepAlive: "5m"}).chat(chatRequest());
+  await provider(http, {temperature: 0.6, topP: 0.9, numCtx: 8192, numPredict: 300, keepAlive: "5m"}).chat(chatRequest());
   const body = JSON.parse(http.requests[0]!.body!) as {options?: Record<string, unknown>; keep_alive?: string | number};
-  deepEqual(body.options, {num_predict: 300, num_ctx: 8192}, "only configured model options are sent");
+  deepEqual(body.options, {temperature: 0.6, top_p: 0.9, num_predict: 300, num_ctx: 8192}, "only configured model options are sent");
   equal(body.keep_alive, "5m", "keep_alive is forwarded");
+  const forever = new FakeOllamaHttpClient();
+  await provider(forever, {keepAlive: -1}).chat(chatRequest());
+  equal((JSON.parse(forever.requests[0]!.body!) as {keep_alive?: string | number}).keep_alive, -1, "keep_alive -1 is preserved as a number");
   const noContext = new FakeOllamaHttpClient();
   await provider(noContext).chat(chatRequest());
   const noContextBody = JSON.parse(noContext.requests[0]!.body!) as {options?: Record<string, unknown>};
