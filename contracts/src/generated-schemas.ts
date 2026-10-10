@@ -431,7 +431,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         }
       }
     }
-  },  "assembled-context": {
+  },
+  "assembled-context": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://schemas.ai-companion-nova.dev/assembled-context/v1",
     "title": "AI Companion Nova Assembled Context v1",
