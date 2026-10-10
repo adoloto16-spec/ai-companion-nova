@@ -3,7 +3,7 @@ import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore,MindReactiveTurn,MindTurnSink,MindToolExecutionContext,NovaToolCall,NovaToolResult} from "../../../contracts/src/index";
 import type {Conversation,ConversationCreateInput,ConversationId,ConversationStore,ConversationUpdateInput} from "../../../contracts/src/index";
 import {
-  AiRuntime,AutomaticMemoryAgent,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,MemorySemanticDeduplicator,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,MindRuntime,LLMCognitiveStep,
+  AiRuntime,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,MemorySemanticDeduplicator,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,MindRuntime,LLMCognitiveStep,
   InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,
   DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
   InMemoryActorIdentityResolver,createMemoryConfig,SettingsManager,InMemoryChatTraceStore
@@ -342,6 +342,36 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   };
   const aiRuntime=new AiRuntime(providers,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
   const extractionChatRuntime={
+    getChatProviderCapabilities:(providerPresetId?:string):import("../../../contracts/src/index").ProviderCapabilities=>{
+      if(providerPresetId){
+        const pool=getPoolProvider(providerPresetId);
+        if(pool)return pool.capabilities();
+        const configuration=providerPresetConfigurations.get(providerPresetId);
+        if(!configuration)return {};
+        try{return buildProviderForPreset(configuration,credentialStore,options.httpClient,diagnosticsStore,providerPresetId)?.capabilities()??{};}catch{return {};}
+      }
+      return providers.get<ChatProvider>(activeProviderId(providerConfiguration))?.capabilities()??{};
+    },
+    stream:async(request:ChatRequest,handlers:import("../../../contracts/src/index").ChatStreamHandlers,chatOptions:ChatRequestOptions={},providerPresetId?:string):Promise<ChatResponse>=>{
+      if(providerPresetId){
+        const pool=getPoolProvider(providerPresetId);
+        if(pool){
+          const scopedProviders=new ProviderRegistry();scopedProviders.register(pool,["chat"]);
+          const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
+          return scopedRuntime.stream({...request,providerId:pool.id},handlers,chatOptions);
+        }
+        const configuration=providerPresetConfigurations.get(providerPresetId);
+        const effectiveConfiguration=configuration?{...configuration,model:request.model}:undefined;
+        const scopedProviders=new ProviderRegistry();
+        if(effectiveConfiguration){
+          const configured=buildProviderForPreset(effectiveConfiguration,credentialStore,options.httpClient,diagnosticsStore,providerPresetId);
+          if(configured)scopedProviders.register(configured,["chat"]);
+        }
+        const scopedRuntime=new AiRuntime(scopedProviders,{validator:contractValidator,diagnostics:diagnosticsStore,events,clock:()=>new Date().toISOString()});
+        return scopedRuntime.stream({...request,providerId:effectiveConfiguration?.providerId??request.providerId},handlers,chatOptions);
+      }
+      return aiRuntime.stream(request.providerId?request:{...request,providerId:activeProviderId(providerConfiguration)},handlers,chatOptions);
+    },
     chat:async (request:ChatRequest,providerPresetId?:string,chatOptions:ChatRequestOptions={}):Promise<ChatResponse>=>{
       if(providerPresetId){
         const pool=getPoolProvider(providerPresetId);
@@ -421,15 +451,6 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
         ...(typeof details?.providerResponse!=="undefined"?{providerResponse:details.providerResponse}:{})
       });
     }
-  });
-
-  const automaticMemoryAgent=new AutomaticMemoryAgent({
-    settings:()=>settingsManager.get(),
-    broker:memoryBroker,
-    runtime:{chat:extractionChatRuntime.chat,getChatModelForPreset},
-    validator:contractValidator,
-    diagnostics:diagnosticsStore,
-    traceStore
   });
 
   const semanticMemoryDeduplicator=new MemorySemanticDeduplicator({
@@ -894,6 +915,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     setCoreBookEntryEnabled:(characterId,entryId,enabled)=>coreBookManager.setCoreBookEntryEnabled(characterId,entryId,enabled),
     buildContext:request=>contextEngine.build(request),
     extractMemory:async request=>{
+      if(!settingsManager.get().chat.automaticLongTermMemory)return [];
       if(request.assistantMessage.metadata?.novaTurnLongMemoryCandidate===true){
         const candidate=request.assistantMessage.content.normalize("NFKC").trim();
         const signal=request.assistantMessage.metadata?.longMemoryAbortSignal as AbortSignal|undefined;
@@ -947,8 +969,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
           return [];
         }
       }
-      const item=await automaticMemoryAgent.process(request);
-      return item?[item]:[];
+      // No secondary LLM memory generation: only a validated NovaTurn.longMemory can create a candidate.
+      return [];
     },
     getMemory:(characterId,memoryOrConversationId,memoryId?)=>memoryId===undefined?memoryBroker.get(characterId,memoryOrConversationId):memoryBroker.get(characterId,memoryOrConversationId as MemoryItemId,memoryId as MemoryItemId),
     searchMemory:query=>memoryBroker.search(query),
