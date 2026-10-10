@@ -127,8 +127,8 @@ async function main(){
     ok(loopRuntime.wakeForUserMessage({characterId:character.id,conversationId:loopConversation.id,
       userMessageId:"semantic-loop-user",turnId:"semantic-loop-turn"}),"the persisted user turn schedules a real cognitive wake");
     await waitFor(()=>modelRequests.length>=3&&loopCommits.length>=3&&loopRuntime.getState().lifecycleState==="waiting","tool result and next model response");
-    equal(loopCommits[1]?.turn.tools.map(tool=>tool.name),["MEMORY_SEARCH"],"the model-produced NOVA_TURN tool call was parsed and dispatched");
-    equal(loopCommits[1]?.turn.toolResults[0]?.status,"success","real MEMORY_SEARCH output was attached to the same NOVA_TURN");
+    eq(loopCommits[1]?.turn.tools.map(tool=>tool.name),["MEMORY_SEARCH"],"the model-produced NOVA_TURN tool call was parsed and dispatched");
+    eq(loopCommits[1]?.turn.toolResults[0]?.status,"success","real MEMORY_SEARCH output was attached to the same NOVA_TURN");
     ok(JSON.stringify(loopCommits[1]?.turn.toolResults[0]?.output).includes("old-turn.integration"),"tool result contains the historical source ID");
     ok(nextStepSawToolResult,"the next actual cognitive ChatRequest includes persisted TOOL_RESULTS and historical content");
     ok(modelRequests[2]?.context.messages.some(message=>message.content.includes("TOOL_RESULTS")),"the returned tool payload is passed to the next model step through Conversation context");
