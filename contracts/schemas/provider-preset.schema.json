@@ -125,8 +125,23 @@
         "number",
         "null"
       ],
-      "minLength": 1,
-      "minimum": 0
+      "minLength": 1
+    },
+    "temperature": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 2
+    },
+    "topP": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1
     }
   },
   "allOf": [
@@ -241,6 +256,26 @@
                   ]
                 }
               }
+            },
+            {
+              "required": [
+                "temperature"
+              ],
+              "properties": {
+                "temperature": {
+                  "type": "number"
+                }
+              }
+            },
+            {
+              "required": [
+                "topP"
+              ],
+              "properties": {
+                "topP": {
+                  "type": "number"
+                }
+              }
             }
           ]
         }
@@ -327,8 +362,23 @@
               "number",
               "null"
             ],
-            "minLength": 1,
-            "minimum": 0
+            "minLength": 1
+          },
+          "temperature": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 2
+          },
+          "topP": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1
           }
         }
       }
@@ -408,6 +458,12 @@
           "type": "null"
         },
         "keepAlive": {
+          "type": "null"
+        },
+        "temperature": {
+          "type": "null"
+        },
+        "topP": {
           "type": "null"
         }
       }
@@ -513,8 +569,23 @@
             "number",
             "null"
           ],
-          "minLength": 1,
-          "minimum": 0
+          "minLength": 1
+        },
+        "temperature": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 2
+        },
+        "topP": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
         }
       }
     }
