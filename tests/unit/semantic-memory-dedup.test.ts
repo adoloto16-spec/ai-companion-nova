@@ -364,7 +364,7 @@ async function settingsV5PersistenceTest(){
     chat:{automaticLongTermMemory:false,responseMode:"plain"},
     memoryAgent:{enabled:true,providerPresetId:"legacy-agent",model:"legacy-model",outputMode:"plain",prompt:"legacy prompt",promptBackup:"backup",defaultPromptVersion:"9"}
   });
-  equal(migrated.schemaVersion,"11","legacy saved settings migrate to AppSettings v11");
+  equal(migrated.schemaVersion,"12","legacy saved settings migrate to AppSettings v12");
   equal(migrated.chat.automaticLongTermMemory,false,"LONGMEMORY persistence setting remains intentional and preserved");
   equal(migrated.chat.responseMode,"plain","response mode remains preserved during settings migration");
   equal(Object.prototype.hasOwnProperty.call(migrated,"memoryAgent"),false,"legacy Automatic Memory Agent settings are ignored and not restored");
