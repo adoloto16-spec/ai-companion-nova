@@ -1724,6 +1724,21 @@ function ChatSettingsView({settings,onChange,onSave,onReset,saving,message}:{
   </div>;
 }
 
+function TraceCandidate({candidate}:{candidate:any}){
+  return <div className="diagnostic-candidate">
+    <div className="diagnostic-candidate-header">
+      <strong>{candidate.source}</strong>
+      <span>{candidate.zone}</span>
+      <span>score {candidate.selectionScore}</span>
+    </div>
+    <div className="diagnostic-candidate-content">{candidate.content}</div>
+    <div className="diagnostic-candidate-meta">
+      relevance {candidate.relevance} · retention {candidate.retentionPriority} · recency {candidate.recency} · tokens {candidate.estimatedTokens}
+    </div>
+    <div className="diagnostic-reason">{candidate.reason}</div>
+  </div>;
+}
+
 function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:AppSettings}){
   const [traces,setTraces]=React.useState<readonly ChatTurnTrace[]>([]);
   const [semanticDiagnostics,setSemanticDiagnostics]=React.useState<readonly ErrorDiagnostic[]>([]);
