@@ -15,8 +15,8 @@ class TestEmbeddings implements EmbeddingProvider{
 
   return texts.map(text=>{const v=text.toLocaleLowerCase("ru-RU");
    if(/квантов|затмен/.test(v))return this.version===1?[1,1,1]:[1,1,1,1];
-   if(/сосед/.test(v))return this.version===1?[.8,.6,0]:[.8,.6,0,0];
    if(/крыша|ремонт/.test(v))return this.version===1?[0,1,0]:[0,1,0,0];
+   if(/сосед/.test(v))return this.version===1?[.8,.6,0]:[.8,.6,0,0];
    if(/риг|прожива|город|lease|rental|home|квартир|жиль|дом|адрес|съём|аренд/.test(v))return this.version===1?[1,0,0]:[1,0,0,0];
    return this.version===1?[0,0,1]:[0,0,0,1];
   });
