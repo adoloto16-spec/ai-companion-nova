@@ -83,6 +83,31 @@ async function embedBatchWithRecovery(provider:EmbeddingProvider,texts:readonly 
     throw error;
   }
 }
+async function embedBatchTolerant(provider:EmbeddingProvider,texts:readonly string[],singleRetries=2):Promise<readonly (readonly number[]|undefined)[]>{
+  if(texts.length===0)return [];
+  try{
+    const vectors=await provider.embed([...texts]);
+    const dimensions=vectors[0]?.length??0;
+    if(vectors.length!==texts.length||dimensions<=0||vectors.some(vector=>!isVector(vector)||vector.length!==dimensions)){
+      throw new Error("Embedding provider returned an invalid batch.");
+    }
+    return vectors;
+  }catch{
+    if(texts.length>1){
+      const middle=Math.floor(texts.length/2);
+      const left=await embedBatchTolerant(provider,texts.slice(0,middle),singleRetries);
+      const right=await embedBatchTolerant(provider,texts.slice(middle),singleRetries);
+      return [...left,...right];
+    }
+    for(let attempt=0;attempt<singleRetries;attempt++){
+      try{
+        const vectors=await provider.embed([texts[0]!]);
+        if(vectors.length===1&&isVector(vectors[0]))return [vectors[0]!];
+      }catch{/* bounded retry; diagnostics record the failed canonical document, never its content */}
+    }
+    return [undefined];
+  }
+}
 async function embedCompleteText(provider:EmbeddingProvider,text:string):Promise<number[]>{
   const chunks=chunkLongInput(text),vectors:number[][]=[];
   for(let offset=0;offset<chunks.length;offset+=EMBEDDING_BATCH_SIZE){
@@ -182,15 +207,19 @@ export class SemanticSearchService{
       const activeIds=new Set(entry.documents.map(recordId));
       await this.queueCharacter(entry.characterId,async()=>{
         for(let offset=0;offset<entry.documents.length;offset+=DOCUMENT_BATCH_SIZE){
-          for(const document of entry.documents.slice(offset,offset+DOCUMENT_BATCH_SIZE)){
-            try{await this.ensureIndexed(document,configuration)}catch{this.statusValue.failed++;this.recordIndexFailure(document,configuration)}
+          const batch=entry.documents.slice(offset,offset+DOCUMENT_BATCH_SIZE);
+          let failed:readonly SemanticSearchDocument[]=[];
+          try{failed=await this.ensureIndexedBatch(batch,configuration)}catch{failed=batch}
+          const failedIds=new Set(failed.map(document=>document.id));
+          for(const document of batch){
+            if(failedIds.has(document.id)){this.statusValue.failed++;this.recordIndexFailure(document,configuration)}
             this.statusValue.processed++;
             this.statusValue.pending=Math.max(0,this.statusValue.total-this.statusValue.processed+this.statusValue.failed);
           }
           this.statusValue.updatedAt=this.now();
           this.reportProgress();
         }
-        await this.removeStaleDocuments(entry.characterId,activeIds);
+        await this.removeStaleDocuments(entry.characterId,activeIds,configuration);
       });
     }
     this.statusValue.status=this.statusValue.failed===0?"ready":"degraded";
@@ -207,11 +236,12 @@ export class SemanticSearchService{
       }
       let failed=0;
       for(let offset=0;offset<documents.length;offset+=DOCUMENT_BATCH_SIZE){
-        for(const document of documents.slice(offset,offset+DOCUMENT_BATCH_SIZE)){
-          try{await this.ensureIndexed(document,configuration)}catch{failed++;this.recordIndexFailure(document,configuration)}
-        }
+        const batch=documents.slice(offset,offset+DOCUMENT_BATCH_SIZE);
+        let failedDocuments:readonly SemanticSearchDocument[]=[];
+        try{failedDocuments=await this.ensureIndexedBatch(batch,configuration)}catch{failedDocuments=batch}
+        for(const document of failedDocuments){failed++;this.recordIndexFailure(document,configuration)}
       }
-      await this.removeStaleDocuments(characterId,new Set(documents.map(recordId)));
+      await this.removeStaleDocuments(characterId,new Set(documents.map(recordId)),configuration);
       this.statusValue.status=failed===0?"ready":"degraded";this.statusValue.model=configuration.provider.id+":"+configuration.model;
       this.statusValue.total=documents.length;this.statusValue.processed=documents.length-failed;this.statusValue.failed=failed;
       this.statusValue.pending=failed;this.statusValue.updatedAt=this.now();this.reportProgress();
@@ -250,35 +280,75 @@ export class SemanticSearchService{
     }
     return documents;
   }
-  private async ensureIndexed(document:SemanticSearchDocument,configuration:SemanticEmbeddingConfiguration):Promise<boolean>{
-    return withMemorySemanticIndexLock(this.options.indexStore,async()=>{
-      const state=await this.loadIndex(document.characterId),id=recordId(document);
-      const existing=state.records.find(record=>record.memoryId===id);
-      if(existing&&isActiveDocument(existing,document,configuration.provider,configuration.model))return false;
-      const cachedMemoryVector=document.source==="memory"
-        ?state.records.find(record=>record.memoryId===document.sourceId&&record.contentHash===deterministicContentHash(document.content)
-          &&record.embeddingProviderId===configuration.provider.id&&record.embeddingModel===configuration.model
-          &&isVector(record.vector)&&record.dimensions===record.vector.length)
-        :undefined;
-      const vector=cachedMemoryVector?[...cachedMemoryVector.vector]:await embedCompleteText(configuration.provider,embeddingText(document));
-      const sameModel=state.records.filter(record=>record.memoryId.startsWith(SEMANTIC_SEARCH_RECORD_PREFIX)&&record.embeddingProviderId===configuration.provider.id&&record.embeddingModel===configuration.model);
-      let records=state.records.filter(record=>record.memoryId!==id);
-      if(sameModel.some(record=>record.dimensions!==vector.length)){
-        // Never mix vectors after a dimension change under the same configured model.
-        records=records.filter(record=>!(record.memoryId.startsWith(SEMANTIC_SEARCH_RECORD_PREFIX)&&record.embeddingProviderId===configuration.provider.id&&record.embeddingModel===configuration.model));
-        this.record("SEMANTIC_SEARCH_DIMENSIONS_CHANGED","Embedding dimensions changed; rebuilding vectors for the active model.",{characterId:document.characterId,model:configuration.provider.id+":"+configuration.model,dimensions:vector.length});
+  private async ensureIndexedBatch(documents:readonly SemanticSearchDocument[],configuration:SemanticEmbeddingConfiguration):Promise<readonly SemanticSearchDocument[]>{
+    if(documents.length===0)return [];
+    const failed=new Set<string>();
+    await withMemorySemanticIndexLock(this.options.indexStore,async()=>{
+      const characterId=documents[0]!.characterId;
+      if(documents.some(document=>document.characterId!==characterId))throw new Error("Semantic document batch must be scoped to one character.");
+      const state=await this.loadIndex(characterId);
+      let records=[...state.records];
+      const ready:Array<{document:SemanticSearchDocument;vector:readonly number[]}>=[];
+      const work:Array<{document:SemanticSearchDocument;id:string;chunks:readonly string[]}>=[];
+      for(const document of documents){
+        const id=recordId(document);
+        const existing=records.find(record=>record.memoryId===id);
+        if(existing&&isActiveDocument(existing,document,configuration.provider,configuration.model))continue;
+        const cachedMemoryVector=document.source==="memory"
+          ?records.find(record=>record.memoryId===document.sourceId&&record.contentHash===deterministicContentHash(document.content)
+            &&record.embeddingProviderId===configuration.provider.id&&record.embeddingModel===configuration.model
+            &&isVector(record.vector)&&record.dimensions===record.vector.length)
+          :undefined;
+        if(cachedMemoryVector){ready.push({document,vector:[...cachedMemoryVector.vector]});continue}
+        work.push({document,id,chunks:chunkLongInput(embeddingText(document))});
       }
-      const record:MemorySemanticVectorRecord={memoryId:id,characterId:document.characterId,contentHash:deterministicContentHash(embeddingText(document)),
-        embeddingProviderId:configuration.provider.id,embeddingModel:configuration.model,dimensions:vector.length,vector,updatedAt:this.now()};
-      records.push(record);
+      const flatTexts=work.flatMap(item=>item.chunks);
+      const flatVectors=await embedBatchTolerant(configuration.provider,flatTexts);
+      let vectorOffset=0;
+      for(const item of work){
+        const embedded=flatVectors.slice(vectorOffset,vectorOffset+item.chunks.length);
+        vectorOffset+=item.chunks.length;
+        if(embedded.length!==item.chunks.length||embedded.some(vector=>!vector||!isVector(vector))){
+          failed.add(item.document.id);continue;
+        }
+        try{ready.push({document:item.document,vector:averageVectors(embedded as readonly (readonly number[])[])});}
+        catch{failed.add(item.document.id)}
+      }
+      const dimensions=ready[0]?.vector.length;
+      if(dimensions&&ready.some(item=>item.vector.length!==dimensions)){
+        for(const item of ready)failed.add(item.document.id);
+        ready.splice(0,ready.length);
+      }
+      if(ready.length===0)return;
+      const sameModel=records.filter(record=>record.memoryId.startsWith(SEMANTIC_SEARCH_RECORD_PREFIX)
+        &&record.embeddingProviderId===configuration.provider.id&&record.embeddingModel===configuration.model);
+      if(sameModel.some(record=>record.dimensions!==dimensions)){
+        records=records.filter(record=>!(record.memoryId.startsWith(SEMANTIC_SEARCH_RECORD_PREFIX)
+          &&record.embeddingProviderId===configuration.provider.id&&record.embeddingModel===configuration.model));
+        this.record("SEMANTIC_SEARCH_DIMENSIONS_CHANGED","Embedding dimensions changed; rebuilding vectors for the active model.",{
+          characterId,model:configuration.provider.id+":"+configuration.model,dimensions
+        });
+      }
+      for(const item of ready){
+        const id=recordId(item.document);
+        records=records.filter(record=>record.memoryId!==id);
+        records.push({memoryId:id,characterId,contentHash:deterministicContentHash(embeddingText(item.document)),
+          embeddingProviderId:configuration.provider.id,embeddingModel:configuration.model,dimensions:item.vector.length,
+          vector:[...item.vector],updatedAt:this.now()});
+      }
       await this.options.indexStore.save({...state,records:records.sort((a,b)=>a.memoryId.localeCompare(b.memoryId))});
-      return true;
     });
+    return documents.filter(document=>failed.has(document.id));
   }
-  private async removeStaleDocuments(characterId:CharacterId,activeIds:ReadonlySet<string>):Promise<void>{
+  private async removeStaleDocuments(characterId:CharacterId,activeIds:ReadonlySet<string>,configuration?:SemanticEmbeddingConfiguration):Promise<void>{
     await withMemorySemanticIndexLock(this.options.indexStore,async()=>{
       const state=await this.loadIndex(characterId);
-      const records=state.records.filter(record=>!record.memoryId.startsWith(SEMANTIC_SEARCH_RECORD_PREFIX)||activeIds.has(record.memoryId));
+      const records=state.records.filter(record=>{
+        if(!record.memoryId.startsWith(SEMANTIC_SEARCH_RECORD_PREFIX))return true;
+        if(!activeIds.has(record.memoryId))return false;
+        if(configuration&&(record.embeddingProviderId!==configuration.provider.id||record.embeddingModel!==configuration.model))return false;
+        return true;
+      });
       if(records.length!==state.records.length)await this.options.indexStore.save({...state,records});
     });
   }
