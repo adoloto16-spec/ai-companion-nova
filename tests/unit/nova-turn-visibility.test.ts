@@ -49,6 +49,14 @@ assert.equal(nativePresentation.text,"Native JSON speech survives history reload
 assert.equal(nativePresentation.parseResult?.turn?.longMemory,"Private native JSON memory candidate.","native JSON parser retains LONGMEMORY for technical diagnostics");
 assert.deepEqual(nativePresentation.parseResult?.turn?.toolResults,[],"JSON parsing never accepts model-invented tool results");
 assert.equal(nativePresentation.text.includes("native-thoughts")||nativePresentation.text.includes("Private native JSON memory"),false,"JSON internal fields never enter normal message text");
+const nativeJsonWithoutMetadata:ChatMessage={id:"native-json-legacy",role:"assistant",content:jsonPayload};
+const unmarkedNativePresentation=resolveNovaTurnMessagePresentation(nativeJsonWithoutMetadata,false);
+assert.equal(unmarkedNativePresentation.isNovaTurn,true,"schema-valid stored NovaTurn JSON is recognized without metadata");
+assert.equal(unmarkedNativePresentation.text,"Native JSON speech survives history reload.","schema-valid native JSON is projected to speech even when metadata was lost");
+const malformedJsonWithoutMetadata:ChatMessage={id:"ordinary-json",role:"assistant",content:'{"version":1,"speech":"unfinished'};
+const malformedOrdinary=resolveNovaTurnMessagePresentation(malformedJsonWithoutMetadata,false);
+assert.equal(malformedOrdinary.isNovaTurn,false,"malformed JSON without NovaTurn metadata is not reclassified as a NovaTurn");
+assert.equal(malformedOrdinary.text,malformedJsonWithoutMetadata.content,"ordinary assistant text without metadata remains ordinary text");
 
 const jsonWithoutLongMemory=JSON.stringify({
   version:1,speech:"No memory candidate.",situation:"",thoughts:"",emotion:"",tools:[],nextWakeMs:30_000
@@ -78,15 +86,17 @@ const messages:ChatMessage[]=[
   {id:"legacy",role:"assistant",content:"Legacy plain reply"},
   {id:"old-tagged",role:"assistant",content:visible},
   nativeJsonMessage,
+  nativeJsonWithoutMetadata,
   malformedJson,
   {id:"tool",role:"tool",content:"tool result"}
 ];
-assert.equal(countVisibleSpeechMessages(messages),4,"count includes plain assistant, canonical tag, pre-metadata tag and native JSON; excludes empty/invalid/user/tool");
+assert.equal(countVisibleSpeechMessages(messages),5,"count includes plain assistant, canonical tag, pre-metadata tag and both schema-valid native JSON messages; excludes empty/invalid/user/tool");
 
-const reloadedMessages=JSON.parse(JSON.stringify([taggedWithMetadata,nativeJsonMessage,oldTaggedWithoutMetadata])) as ChatMessage[];
+const reloadedMessages=JSON.parse(JSON.stringify([taggedWithMetadata,nativeJsonMessage,nativeJsonWithoutMetadata,oldTaggedWithoutMetadata])) as ChatMessage[];
 assert.equal(resolveNovaTurnMessagePresentation(reloadedMessages[0]!,false).text,"Visible user-facing reply.","tag-format history remains visible after persistence/reload round-trip");
 assert.equal(resolveNovaTurnMessagePresentation(reloadedMessages[1]!,false).text,"Native JSON speech survives history reload.","native JSON history remains visible after persistence/reload round-trip");
-assert.equal(resolveNovaTurnMessagePresentation(reloadedMessages[2]!,false).text,"Visible user-facing reply.","legacy tagged history without metadata remains visible after reload");
+assert.equal(resolveNovaTurnMessagePresentation(reloadedMessages[2]!,false).text,"Native JSON speech survives history reload.","metadata-free native JSON history remains visible after reload");
+assert.equal(resolveNovaTurnMessagePresentation(reloadedMessages[3]!,false).text,"Visible user-facing reply.","legacy tagged history without metadata remains visible after reload");
 
 const technicalEmpty=resolveNovaTurnMessagePresentation({id:"empty",role:"assistant",content:empty,metadata:{novaTurnVersion:1}},true);
 assert.equal(technicalEmpty.render,true,"technical mode preserves empty turns");
