@@ -429,6 +429,16 @@ async function main(){
   const retried=lifeController.retryLife(()=>true);
   equal(retried.status,"awaiting-life","failed reactive turn can be retried using its persisted user message");
 
+  const transientStream={characterId:"character.life",conversationId:"life-conversation",turnId:"life-request-1",userMessageId:"life-request-1:user"};
+  lifeController.updateNovaTurnStream({type:"start",...transientStream});
+  lifeController.updateNovaTurnStream({type:"delta",...transientStream,text:"Live public speech"});
+  equal(lifeController.getSnapshot().lifeStreamingSpeech?.text,"Live public speech","Nova Life exposes provisional speech before a final turn exists");
+  equal(lifeController.getSnapshot().messages.filter(message=>message.role==="assistant").length,1,"provisional text is not committed as a second assistant message");
+  lifeController.updateNovaTurnStream({type:"delta",...transientStream,characterId:"character.other",text:"must not cross characters"});
+  equal(lifeController.getSnapshot().lifeStreamingSpeech?.text,"Live public speech","stream events from another character are ignored");
+  lifeController.updateNovaTurnStream({type:"delta",...transientStream,conversationId:"conversation.other",text:"must not cross conversations"});
+  equal(lifeController.getSnapshot().lifeStreamingSpeech?.text,"Live public speech","stream events from another conversation are ignored");
+
   const turn={
     version:1 as const,situation:"Comparing the request with prior context",thoughts:"private thoughts live only in the tagged record",
     emotion:"focused",tools:[{name:"read_memory",arguments:{query:"saved preferences"}}],
@@ -449,6 +459,7 @@ async function main(){
   equal(parseNovaTurn(record.content).turn?.thoughts,"private thoughts live only in the tagged record","private technical fields remain persisted");
   equal(persistedMessages.length,lifeController.getSnapshot().messages.length,"canonical persistence and live UI share one Conversation record");
   equal(lifeController.getSnapshot().messages.filter(message=>message.metadata?.novaTurnId==="life-request-1").length,1,"reactive NovaTurn is shown exactly once");
+  equal(lifeController.getSnapshot().lifeStreamingSpeech,undefined,"final persistence removes the provisional speech buffer instead of duplicating it");
   equal(lifeController.getSnapshot().lifeTurn?.status,"completed","reactive turn completes only after persistence");
   equal(ordinaryLifeRequests,0,"Nova Life response does not dispatch a second ordinary LLM request");
   await new Promise(resolve=>setTimeout(resolve,0));
@@ -464,7 +475,7 @@ async function main(){
   ok(!JSON.stringify(memoryRequests[0]).includes("private thoughts live only"),"LONGMEMORY never receives private NovaTurn thoughts");
   ok(Boolean(memoryRequests[0]),"LONGMEMORY candidate was passed to memory persistence");
   const priorProjected=memoryRequests[0]?.contextMessages.find(message=>message.id==="nova-turn:background-turn");
-  equal(priorProjected?.content,"Earlier public statement","prior NovaTurn context is projected to speech before Automatic Memory");
+  equal(priorProjected?.content,"Earlier public statement","prior NovaTurn context is projected to speech before candidate persistence");
   ok(!JSON.stringify(priorProjected).includes("private internal detail"),"prior private thoughts are filtered from Automatic Memory");
   await lifeController.commitNovaTurn(turn,context,async()=>{persistenceWrites++;});
   equal(persistenceWrites,1,"repeated turn commit is idempotent and does not persist twice");
