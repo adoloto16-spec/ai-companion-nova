@@ -280,7 +280,7 @@ async function streamSchemaViolationTest(): Promise<void> {
   const events: string[] = [];
   await rejects(() => provider(http).stream(chatRequest({generation: {responseFormat: {type: "json-schema", schema: {
     type: "object", properties: {answer: {type: "string"}}, required: ["answer"], additionalProperties: false
-  }}}), {onEvent(event) { events.push(event.type); }}),
+  }}}}), {onEvent(event) { events.push(event.type); }}),
     error => error instanceof OllamaProviderError && error.chatError.details?.category === "json_schema_violation",
     "stream schema violation");
   ok(events.includes("error"), "schema violation is emitted as an error stream event");
