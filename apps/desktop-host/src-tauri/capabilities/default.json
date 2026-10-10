@@ -51,6 +51,9 @@
     "allow-get-active-conversation",
     "allow-clear-conversation",
     "allow-get-app-settings",
-    "allow-save-app-settings"
+    "allow-save-app-settings",
+    "allow-ollama-http-request",
+    "allow-ollama-http-stream",
+    "allow-ollama-http-cancel"
   ]
 }
