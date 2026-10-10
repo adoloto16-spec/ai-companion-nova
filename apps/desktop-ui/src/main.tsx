@@ -171,7 +171,6 @@ function ChatView({controller,runtime,character,conversations,activeConversation
   const [snapshot,setSnapshot]=React.useState(()=>controller.getSnapshot());
   const [editingId,setEditingId]=React.useState<string|undefined>();
   const [editingText,setEditingText]=React.useState("");
-  const [showTechnicalData,setShowTechnicalData]=React.useState(false);
   const [persistenceError,setPersistenceError]=React.useState("");
   const bottomRef=React.useRef<HTMLDivElement|null>(null);
 
@@ -300,8 +299,6 @@ function ChatView({controller,runtime,character,conversations,activeConversation
         <p className="chat-subtitle">{activeConversation.title} · persistent and scoped to {character.name}.</p>
       </div>
       <div className="chat-toolbar-actions">
-        <label className="checkbox technical-toggle"><input type="checkbox" checked={showTechnicalData}
-          onChange={event=>setShowTechnicalData(event.target.checked)}/>Show technical data</label>
         {snapshot.status==="streaming"&&<button type="button" onClick={()=>void stop()}>Stop</button>}
         {showContinue&&!chatBusy&&lifeState==="off"&&<button type="button" onClick={()=>void continueGeneration()}>Continue</button>}
         {showRegenerate&&!chatBusy&&lifeState==="off"&&<button type="button" onClick={()=>void regenerate()}>Regenerate</button>}
