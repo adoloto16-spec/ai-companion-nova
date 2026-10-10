@@ -1476,7 +1476,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         "enum": [
           "conversation",
           "core_book",
-          "memory"
+          "memory",
+          "semantic_search"
         ]
       },
       "referenceId": {
@@ -1566,7 +1567,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
     "enum": [
       "conversation",
       "core_book",
-      "memory"
+      "memory",
+      "semantic_search"
     ]
   },
   "context-zone": {
@@ -2762,7 +2764,7 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       },
       "records": {
         "type": "array",
-        "maxItems": 10000,
+        "maxItems": 100000,
         "items": {
           "type": "object",
           "additionalProperties": false,
