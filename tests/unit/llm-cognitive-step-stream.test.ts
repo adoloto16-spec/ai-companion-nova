@@ -83,6 +83,9 @@ async function nativeSchemaStreamsBeforeCompletion():Promise<void>{
   equal(format.name,"nova_turn_v1","native schema uses a stable name");
   equal(calls[0]?.context.messages.find(message=>message.role==="system")?.content,"CUSTOM PROMPT: nova-system-json","native JSON request receives the edited JSON system prompt");
   equal(calls[0]?.context.messages.find(message=>message.id?.endsWith(":user-cue"))?.content,"CUSTOM PROMPT: nova-cue-reactive-json","native JSON request receives the edited reactive JSON cue");
+  const structuredContext=calls[0]?.context.messages.find(message=>message.id?.endsWith(":schedule"))?.content??"";
+  ok(structuredContext.includes("CUSTOM PROMPT: nova-schedule-structured"),"native JSON request receives the edited schedule instruction");
+  ok(structuredContext.includes("CUSTOM PROMPT: nova-tools-allowlist"),"native JSON request receives the edited registered-tools instruction");
   ok(Boolean(format.schema.properties?.speech),"schema defines the canonical speech field");
   resume();
   const result=await run;
@@ -162,6 +165,9 @@ async function plainModeIsOrdinaryText():Promise<void>{
   equal(calls[0]?.generation?.responseFormat,undefined,"plain mode sends no JSON Schema or mandatory text format");
   equal(calls[0]?.context.messages.find(message=>message.role==="system")?.content,"CUSTOM PROMPT: nova-system-plain","plain mode uses the edited plain system prompt");
   equal(calls[0]?.context.messages.find(message=>message.id?.endsWith(":user-cue"))?.content,"CUSTOM PROMPT: nova-cue-reactive-plain","plain mode uses the edited reactive plain cue");
+  const plainContext=calls[0]?.context.messages.find(message=>message.id?.endsWith(":schedule"))?.content??"";
+  ok(plainContext.includes("CUSTOM PROMPT: nova-schedule-plain"),"plain mode receives its edited schedule instruction");
+  ok(!plainContext.includes("CUSTOM PROMPT: nova-tools-allowlist"),"plain mode keeps the tool instruction out of the no-tools context");
   equal(result.turn.speech,text,"plain mode displays response as-is without protocol parsing");
 }
 async function backgroundTurnsUseBackgroundPromptIds():Promise<void>{
