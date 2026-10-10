@@ -857,6 +857,14 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
             mutationPolicy:"auto",
             metadata:{origin:"nova-life-longmemory",turnId:request.turnId}
           },authority);
+          // Keep the existing Judge active for deterministic lexical candidates even when the optional
+          // embedding/semantic-index feature is disabled. The MemoryCreated subscriber handles enabled mode.
+          if(!settingsManager.get().semanticDedup.enabled){
+            const judgeResult=await semanticMemoryDeduplicator.deduplicateMemory(item.id,request.characterId,{forceJudge:true});
+            if(judgeResult.status==="failed"){
+              diagnosticsStore.recordError(source,"MEMORY_JUDGE_FAILED","LONGMEMORY was stored but the existing Memory Judge failed.",{characterId:request.characterId,conversationId:request.conversationId,turnId:request.turnId,memoryId:item.id});
+            }
+          }
           diagnosticsStore.recordError(source,"CANDIDATE_CREATED","LONGMEMORY candidate was passed to the existing MemoryBroker.",{characterId:request.characterId,conversationId:request.conversationId,turnId:request.turnId,memoryId:item.id});
           // MemoryBroker publishes MemoryCreated; the existing Memory Judge/dedup subscriber owns review.
           return [item];
