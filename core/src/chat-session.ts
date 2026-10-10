@@ -31,6 +31,7 @@ export interface ConversationSnapshot{
   status:ChatSessionStatus;
   lifeTurn?:LifeTurnSnapshot;
   committingNovaTurn?:boolean;
+  lifeStreamingSpeech?:{turnId:string;text:string;userMessageId?:string};
   error?:string;
   errorCode?:ChatErrorCode;
 }
@@ -202,6 +203,7 @@ export class ChatSessionController{
   private runSequence=0;
   private committingNovaTurn=false;
   private lifeTurn:LifeTurnSnapshot|undefined;
+  private novaStreamingSpeech:{characterId:string;conversationId:string;turnId:string;userMessageId?:string;text:string}|undefined;
 
   constructor(
     private readonly session:ConversationSession,
@@ -239,6 +241,7 @@ export class ChatSessionController{
       committingNovaTurn:this.committingNovaTurn,
       status:this.status,
       ...(this.lifeTurn?{lifeTurn:{...this.lifeTurn}}:{}),
+      ...(this.novaStreamingSpeech&&this.novaStreamingSpeech.characterId===this.session.characterId&&this.novaStreamingSpeech.conversationId===this.session.conversationId?{lifeStreamingSpeech:{turnId:this.novaStreamingSpeech.turnId,text:this.novaStreamingSpeech.text,...(this.novaStreamingSpeech.userMessageId?{userMessageId:this.novaStreamingSpeech.userMessageId}:{})}}:{}),
       ...(this.error?{error:this.error}:{}),
       ...(this.errorCode?{errorCode:this.errorCode}: {})
     };
@@ -248,6 +251,42 @@ export class ChatSessionController{
     return ()=>{this.listeners.delete(listener)};
   }
   isBusy():boolean{return this.sending||this.committingNovaTurn||Boolean(this.lifeTurn&&["persisting","awaiting","failed","cancelled"].includes(this.lifeTurn.status));}
+
+  updateNovaTurnStream(event:import("../../contracts/src/index").MindTurnSpeechEvent):void{
+    if(event.characterId!==this.session.characterId||event.conversationId!==this.session.conversationId)return;
+    if(event.userMessageId){
+      if(!this.lifeTurn||this.lifeTurn.status!=="awaiting"||this.lifeTurn.turnId!==event.turnId||
+        this.lifeTurn.userMessageId!==event.userMessageId||this.lifeTurn.characterId!==event.characterId||
+        this.lifeTurn.conversationId!==event.conversationId)return;
+    }else if(this.sending||this.committingNovaTurn||Boolean(this.lifeTurn&&["persisting","awaiting","failed","cancelled"].includes(this.lifeTurn.status))){
+      return;
+    }
+    if(event.type==="start"){
+      this.novaStreamingSpeech={characterId:event.characterId,conversationId:event.conversationId,turnId:event.turnId,
+        ...(event.userMessageId?{userMessageId:event.userMessageId}:{}),text:""};
+      this.notify();return;
+    }
+    if(!this.novaStreamingSpeech||this.novaStreamingSpeech.turnId!==event.turnId||
+      this.novaStreamingSpeech.characterId!==event.characterId||this.novaStreamingSpeech.conversationId!==event.conversationId)return;
+    if(event.type==="delta"){
+      if(event.text)this.novaStreamingSpeech={...this.novaStreamingSpeech,text:this.novaStreamingSpeech.text+event.text};
+      this.notify();return;
+    }
+    if(event.type==="reset"){
+      this.novaStreamingSpeech={...this.novaStreamingSpeech,text:""};this.notify();return;
+    }
+    if(event.type==="clear"){this.novaStreamingSpeech=undefined;this.notify();}
+  }
+
+  clearNovaTurnStream():void{
+    if(this.novaStreamingSpeech){this.novaStreamingSpeech=undefined;this.notify();}
+  }
+
+  private clearNovaStreamingSpeech(turnId?:string,notify=true):void{
+    if(this.novaStreamingSpeech&&(!turnId||this.novaStreamingSpeech.turnId===turnId)){
+      this.novaStreamingSpeech=undefined;if(notify)this.notify();
+    }
+  }
 
   async commitNovaTurn(
     turn:NovaTurn,
@@ -261,9 +300,11 @@ export class ChatSessionController{
     const existing=this.session.getMessages().find(message=>message.id===messageId);
     if(existing){
       if(existing.metadata?.novaTurnVersion!==1)throw new Error("NovaTurn id collides with an existing non-protocol message.");
+      this.clearNovaStreamingSpeech(context.turnId,false);
       if(context.userMessageId&&this.lifeTurn?.turnId===context.turnId&&this.lifeTurn.status==="awaiting"){
         const completed={...this.lifeTurn,status:"completed"} as LifeTurnSnapshot;delete completed.error;this.lifeTurn=completed;
       }
+      this.notify();
       return;
     }
     const reactive=Boolean(context.userMessageId);
@@ -308,6 +349,7 @@ export class ChatSessionController{
         try{await persist(before,true);}catch{/* Rollback is best-effort; stale turns are never added to the live session. */}
         throw new Error("NovaTurn commit was cancelled or its Conversation changed during persistence.");
       }
+      this.clearNovaStreamingSpeech(context.turnId,false);
       this.session.addMessage(message);
       this.status="completed";this.error=undefined;this.errorCode=undefined;
       if(reactive&&this.lifeTurn){
@@ -316,7 +358,7 @@ export class ChatSessionController{
       this.notify();
       // LONGMEMORY is produced by the same NovaTurn call. Never schedule persistence for an
       // empty, malformed, cancelled, or stale candidate, and never send SPEECH to memory extraction.
-      if(reactive&&this.memoryExtractor&&turn.longMemory?.trim()&&!context.signal.aborted){
+      if(reactive&&this.memoryExtractor&&(this.memoryExtractionEnabled?.()??true)&&turn.longMemory?.trim()&&!context.signal.aborted){
         const messages=this.session.getMessages();
         const userIndex=messages.findIndex(item=>item.id===context.userMessageId&&item.role==="user");
         const userMessage=messages[userIndex];
@@ -343,6 +385,7 @@ export class ChatSessionController{
         }
       }
     }finally{
+      this.clearNovaStreamingSpeech(context.turnId,false);
       this.committingNovaTurn=false;this.notify();
     }
   }
@@ -684,22 +727,7 @@ export class ChatSessionController{
           durationMs:Date.now()-providerStartedAt
         }
       });
-      if(this.memoryExtractor&&(this.memoryExtractionEnabled?.()??true)){const providerPresetId=this.modelProfile?.providerPresetId??this.runtime.getActiveProviderPresetId?.();
-        const extractionRequest:MemoryExtractionRequest={
-          apiVersion:"1",
-          schemaVersion:"1",
-          characterId:this.session.characterId,
-          conversationId:this.session.conversationId,
-          turnId:active.requestId,
-          model:canonicalResponse.model,
-          providerId:canonicalResponse.providerId,
-          ...(providerPresetId?{providerPresetId}:{}),
-          userMessage:cloneMessage(userMessage),
-          assistantMessage:cloneMessage(canonicalMessage),
-          contextMessages:contextMessages.filter(message=>message.metadata?.contextSource===undefined||message.metadata?.contextSource==="conversation").slice(-(this.recentConversationMessagesProvider?.()??8)).map(cloneMessage)
-        };
-        void Promise.resolve(this.memoryExtractor.extract(extractionRequest)).catch(()=>undefined);
-      }
+      // Ordinary Chat has no NovaTurn.longMemory candidate; do not trigger a second LLM memory call.
 
       return {status:"sent",response:canonicalResponse};
     }catch(error){
