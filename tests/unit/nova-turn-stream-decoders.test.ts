@@ -18,13 +18,25 @@ function nativeJsonChunkBoundaries():void{
 function taggedChunkBoundaries():void{
   const speech="Текст с <SPEECH> как данные и & плюс \"кавычки\"";
   const encoded="Текст с &lt;SPEECH&gt; как данные и &amp; плюс &quot;кавычки&quot;";
-  const protocol='<NOVA_TURN version="1"><SITUATION>PRIVATE-SITUATION</SITUATION><THOUGHTS>PRIVATE-THOUGHTS</THOUGHTS><EMOTION>PRIVATE-EMOTION</EMOTION><TOOLS><private.tool>{"x":"PRIVATE-TOOL"}</private.tool></TOOLS><SPEECH>'+encoded+'</SPEECH><LONGMEMORY>PRIVATE-MEMORY</LONGMEMORY><NEXT_WAKE_MS>30000</NEXT_WAKE_MS></NOVA_TURN>';
+  const protocol='<NOVA_TURN version="1"><SITUATION>PRIVATE-SITUATION</SITUATION><THOUGHTS>PRIVATE-THOUGHTS literal <SPEECH>PRIVATE-DECOY</SPEECH></THOUGHTS><EMOTION>PRIVATE-EMOTION</EMOTION><TOOLS><private.tool>{"x":"PRIVATE-TOOL"}</private.tool></TOOLS><SPEECH>'+encoded+'</SPEECH><LONGMEMORY>PRIVATE-MEMORY</LONGMEMORY><NEXT_WAKE_MS>30000</NEXT_WAKE_MS></NOVA_TURN>';
   for(let width=1;width<=19;width++){
     const decoder=new NovaTurnTaggedSpeechStreamDecoder();let visible="";
     for(let i=0;i<protocol.length;i+=width)visible+=decoder.push(protocol.slice(i,i+width));
     equal(visible,speech,"tagged SPEECH with chunk width "+width);
     ok(!visible.includes("PRIVATE-")&&!visible.includes("<SITUATION>")&&!visible.includes("<LONGMEMORY>"),"tag decoder never emits private fields");
   }
+}
+function hiddenFieldsAreNeverMistakenForSpeech():void{
+  const decoder=new NovaTurnJsonSpeechStreamDecoder();
+  const payload=JSON.stringify({situation:'quoted text "speech":"PRIVATE-DECOY" and \\u003cSPEECH\\u003e',speech:"Only this field is public",thoughts:"PRIVATE-THOUGHTS",longMemory:"PRIVATE-MEMORY",version:1,emotion:"private",tools:[],nextWakeMs:30000});
+  let visible="";
+  for(let i=0;i<payload.length;i+=5)visible+=decoder.push(payload.slice(i,i+5));
+  equal(visible,"Only this field is public","JSON string contents cannot imitate a top-level speech key");
+  const tags=new NovaTurnTaggedSpeechStreamDecoder();
+  const tagged='<NOVA_TURN version="1"><THOUGHTS>PRIVATE-THOUGHTS <SPEECH>PRIVATE-DECOY</SPEECH></THOUGHTS><TOOLS><tool><SPEECH>PRIVATE-TOOL</SPEECH></tool></TOOLS><SPEECH>Only public speech</SPEECH><LONGMEMORY>PRIVATE-MEMORY</LONGMEMORY></NOVA_TURN>';
+  visible="";
+  for(let i=0;i<tagged.length;i+=7)visible+=tags.push(tagged.slice(i,i+7));
+  equal(visible,"Only public speech","nested tag-like text in private fields and tools never reaches the UI");
 }
 function incompleteAndReset():void{
   const json=new NovaTurnJsonSpeechStreamDecoder();
@@ -44,5 +56,6 @@ function incompleteAndReset():void{
 }
 nativeJsonChunkBoundaries();
 taggedChunkBoundaries();
+hiddenFieldsAreNeverMistakenForSpeech();
 incompleteAndReset();
 console.log("PASS NovaTurn incremental SPEECH decoders");
