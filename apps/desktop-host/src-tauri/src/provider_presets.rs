@@ -39,6 +39,10 @@ pub struct ProviderPresetSource{
     pub cooldown_until:Option<String>,
     #[serde(rename="timeoutMs",default,skip_serializing_if="Option::is_none")]
     pub timeout_ms:Option<f64>,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub temperature:Option<f64>,
+    #[serde(rename="topP",default,skip_serializing_if="Option::is_none")]
+    pub top_p:Option<f64>,
     #[serde(rename="numCtx",default,skip_serializing_if="Option::is_none")]
     pub num_ctx:Option<u32>,
     #[serde(rename="numPredict",default,skip_serializing_if="Option::is_none")]
@@ -144,20 +148,22 @@ fn validate_reference(reference:&CredentialReference,provider_id:&str)->Result<(
     Ok(())
 }
 
-fn validate_ollama_options(provider_id:&str,num_ctx:Option<u32>,num_predict:Option<u32>,keep_alive:&Option<Value>)->Result<(),String>{
-    if provider_id!="ollama"&&(num_ctx.is_some()||num_predict.is_some()||keep_alive.is_some()){
+fn validate_ollama_options(provider_id:&str,temperature:Option<f64>,top_p:Option<f64>,num_ctx:Option<u32>,num_predict:Option<u32>,keep_alive:&Option<Value>)->Result<(),String>{
+    if provider_id!="ollama"&&(temperature.is_some()||top_p.is_some()||num_ctx.is_some()||num_predict.is_some()||keep_alive.is_some()){
         return Err("Ollama generation settings may only be used with the Ollama provider".to_string());
     }
+    if temperature.map(|value|!value.is_finite()||!(0.0..=2.0).contains(&value)).unwrap_or(false){return Err("Ollama temperature must be between 0 and 2".to_string());}
+    if top_p.map(|value|!value.is_finite()||!(0.0..=1.0).contains(&value)).unwrap_or(false){return Err("Ollama topP must be between 0 and 1".to_string());}
     if num_ctx==Some(0)||num_predict==Some(0){
         return Err("Ollama numCtx and numPredict must be positive integers".to_string());
     }
     if let Some(value)=keep_alive{
         let valid=match value{
             Value::String(duration)=>!duration.trim().is_empty(),
-            Value::Number(number)=>number.as_f64().map(|number|number.is_finite()&&number>=0.0).unwrap_or(false),
+            Value::Number(number)=>number.as_f64().map(|number|number.is_finite()&&(number>=0.0||number==-1.0)).unwrap_or(false),
             _=>false
         };
-        if !valid{return Err("Ollama keepAlive must be a non-empty duration string or a non-negative number".to_string());}
+        if !valid{return Err("Ollama keepAlive must be a non-empty duration string or -1 or a non-negative number".to_string());}
     }
     Ok(())
 }
@@ -176,7 +182,7 @@ fn validate_source(source:&ProviderPresetSource)->Result<(),String>{
     if let Some(reference)=&source.credential_reference{validate_reference(reference,&source.provider_id)?;}
     if !matches!(source.health.as_str(),"healthy"|"cooldown"|"unavailable"){return Err("unsupported provider preset source health state".to_string());}
     if let Some(timeout)=source.timeout_ms{if !timeout.is_finite()||timeout<=0.0{return Err("provider preset source timeout must be finite and positive".to_string());}}
-    validate_ollama_options(&source.provider_id,source.num_ctx,source.num_predict,&source.keep_alive)?;
+    validate_ollama_options(&source.provider_id,source.temperature,source.top_p,source.num_ctx,source.num_predict,&source.keep_alive)?;
     if source.created_at.trim().is_empty()||source.updated_at.trim().is_empty(){return Err("provider preset source timestamps must not be empty".to_string());}
     Ok(())
 }
@@ -193,7 +199,7 @@ fn validate_preset(preset:&ProviderPreset)->Result<(),String>{
     match preset.preset_type.as_str(){
         "pool"=>{
             if preset.sources.is_empty(){return Err("pool preset must contain at least one source".to_string());}
-            if preset.provider_id.is_some()||preset.base_url.is_some()||preset.model.is_some()||preset.credential_reference.is_some()||preset.enabled.is_some()||preset.timeout_ms.is_some()||preset.num_ctx.is_some()||preset.num_predict.is_some()||preset.keep_alive.is_some(){
+            if preset.provider_id.is_some()||preset.base_url.is_some()||preset.model.is_some()||preset.credential_reference.is_some()||preset.enabled.is_some()||preset.timeout_ms.is_some()||preset.temperature.is_some()||preset.top_p.is_some()||preset.num_ctx.is_some()||preset.num_predict.is_some()||preset.keep_alive.is_some(){
                 return Err("pool preset must not contain direct single-provider configuration fields".to_string());
             }
             if let Some(active)=&preset.active_source_id{
@@ -214,7 +220,7 @@ fn validate_preset(preset:&ProviderPreset)->Result<(),String>{
             if provider=="ollama"{super::ollama_http::validate_base_url(base)?;}
             let model=preset.model.as_deref().ok_or_else(||"single preset model is required".to_string())?;
             if model.trim().is_empty()||model.len()>200{return Err("single preset model is invalid".to_string());}
-            validate_ollama_options(provider,preset.num_ctx,preset.num_predict,&preset.keep_alive)?;
+            validate_ollama_options(provider,preset.temperature,preset.top_p,preset.num_ctx,preset.num_predict,&preset.keep_alive)?;
             if provider=="ollama" {
                 if preset.credential_reference.is_some(){return Err("Ollama provider preset must not store an API credential".to_string());}
             }else{
