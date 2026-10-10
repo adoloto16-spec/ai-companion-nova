@@ -23,10 +23,10 @@ import {
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
   type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem, type ErrorDiagnostic,
-  defaultAppSettings, validateAppSettings, StandardContractValidator, parseNovaTurn,
+  defaultAppSettings, validateAppSettings, StandardContractValidator,
   type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo, type MindState, type MindTurnSink, type MindReactiveTurn
 } from "../../../contracts/src/index";
-import {countVisibleSpeechMessages,shouldRenderNovaTurn} from "./nova-turn-visibility";
+import {countVisibleSpeechMessages,resolveNovaTurnMessagePresentation} from "./nova-turn-visibility";
 import {chatDraftKey,readChatDraft,writeChatDraft,clearSubmittedChatDraft} from "./chat-drafts";
 import "./styles.css";
 
@@ -171,6 +171,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
   const [snapshot,setSnapshot]=React.useState(()=>controller.getSnapshot());
   const [editingId,setEditingId]=React.useState<string|undefined>();
   const [editingText,setEditingText]=React.useState("");
+  const [showTechnicalData,setShowTechnicalData]=React.useState(false);
   const [persistenceError,setPersistenceError]=React.useState("");
   const bottomRef=React.useRef<HTMLDivElement|null>(null);
 
@@ -299,6 +300,8 @@ function ChatView({controller,runtime,character,conversations,activeConversation
         <p className="chat-subtitle">{activeConversation.title} · persistent and scoped to {character.name}.</p>
       </div>
       <div className="chat-toolbar-actions">
+        <label className="checkbox technical-toggle"><input type="checkbox" checked={showTechnicalData}
+          onChange={event=>setShowTechnicalData(event.target.checked)}/>Show technical data</label>
         {snapshot.status==="streaming"&&<button type="button" onClick={()=>void stop()}>Stop</button>}
         {showContinue&&!chatBusy&&lifeState==="off"&&<button type="button" onClick={()=>void continueGeneration()}>Continue</button>}
         {showRegenerate&&!chatBusy&&lifeState==="off"&&<button type="button" onClick={()=>void regenerate()}>Regenerate</button>}
@@ -323,12 +326,13 @@ function ChatView({controller,runtime,character,conversations,activeConversation
       {snapshot.messages.length===0&&<div className="empty-chat">Write a message to start the conversation.</div>}
       {snapshot.messages.map((message,index)=>{
         const state=messageStreamStatus(message);
-        const isNovaTurn=message.metadata?.novaTurnVersion===1;
+        const presentation=resolveNovaTurnMessagePresentation(message,showTechnicalData);
+        const isNovaTurn=presentation.isNovaTurn;
         const editable=message.role==="user"||(message.role==="assistant"&&!isNovaTurn);
         const isEditing=editingId===message.id;
-        const parseResult=isNovaTurn?parseNovaTurn(message.content):undefined;
+        const parseResult=presentation.parseResult;
         const parsedTurn=parseResult?.turn;
-        if(isNovaTurn&&parseResult&&!shouldRenderNovaTurn(parseResult,false))return null;
+        if(!presentation.render)return null;
         const messageKey=message.id??"message-"+index;
         const statusText=(field:{status:string;value?:unknown}|undefined):string=>{
           if(!field)return "missing";
@@ -353,9 +357,25 @@ function ChatView({controller,runtime,character,conversations,activeConversation
                 <button type="button" onClick={()=>{setEditingId(undefined);setEditingText("")}}>Cancel</button>
               </div>
             </div>
-            :<div className="message-content">{isNovaTurn
-              ?(parsedTurn?.speech.trim()?parsedTurn.speech:"The model returned no valid speech.")
-              :message.content}</div>}
+            :<div className="message-content">{isNovaTurn?presentation.text:message.content}</div>}
+          {isNovaTurn&&showTechnicalData&&<section className="nova-turn-technical" aria-label="NovaTurn technical data">
+            <div><strong>Situation</strong><p>{textField(parseResult?.fields.situation)} <em>({statusText(parseResult?.fields.situation)})</em></p></div>
+            <div><strong>Thoughts (private)</strong><p>{textField(parseResult?.fields.thoughts)} <em>({statusText(parseResult?.fields.thoughts)})</em></p></div>
+            <div><strong>Emotion</strong><p>{textField(parseResult?.fields.emotion)} <em>({statusText(parseResult?.fields.emotion)})</em></p></div>
+            <div><strong>Tool calls</strong>{parseResult?.fields.tools.value?.length
+              ?parseResult.fields.tools.value.map((tool,i)=><pre key={tool.name+"-"+i}>{tool.name+"\\n"+JSON.stringify(tool.arguments,null,2)}</pre>)
+              :<p>{parseResult?.fields.tools.status==="empty"?"Empty":parseResult?.fields.tools.status==="invalid"?"Invalid":parseResult?.fields.tools.status==="recovered"?"Recovered (no calls)":"Missing or no calls"} <em>({parseResult?.fields.tools.status??"missing"})</em></p>}</div>
+            <div><strong>Tool results</strong>{parseResult?.fields.toolResults.value?.length
+              ?parseResult.fields.toolResults.value.map(result=><pre key={result.callId}>{result.name+" · "+result.status+"\\n"+(result.error??JSON.stringify(result.output??null,null,2))}</pre>)
+              :<p>{parseResult?.fields.toolResults.status==="empty"?"Empty":parseResult?.fields.toolResults.status==="invalid"?"Invalid":parseResult?.fields.toolResults.status==="recovered"?"Recovered (no results)":"Missing or no results"} <em>({parseResult?.fields.toolResults.status??"missing"})</em></p>}</div>
+            <div><strong>Speech</strong><p>{textField(parseResult?.fields.speech)} <em>({statusText(parseResult?.fields.speech)})</em></p></div>
+            <div><strong>Long-term memory</strong><p>{textField(parseResult?.fields.longMemory)} <em>({statusText(parseResult?.fields.longMemory)})</em></p></div>
+            <div><strong>Next wake</strong><p>{parseResult?.fields.nextWakeMs.value===undefined?"Not available":parseResult.fields.nextWakeMs.value+" ms"} <em>({parseResult?.fields.nextWakeMs.status??"missing"})</em></p></div>
+            <div><strong>Protocol diagnostics</strong><p>{parseResult?.diagnostics.length?parseResult.diagnostics.join(", "):"None"}</p></div>
+            <div><strong>Unrecognized / raw output (bounded)</strong>
+              <pre>{message.content.length>4000?message.content.slice(0,4000)+"\\n[truncated at 4000 characters]":message.content||"(empty provider response)"}</pre>
+            </div>
+          </section>}
           {state==="interrupted"&&<div className="message-status">Interrupted</div>}
           {editable&&!chatBusy&&!isEditing&&message.id&&
             <div className="message-actions">
