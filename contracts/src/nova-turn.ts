@@ -221,6 +221,7 @@ function parseNativeJsonNovaTurn(content:string):NovaTurnParseResult{
 
   const record=decoded as Record<string,unknown>;
   const schema=STANDARD_SCHEMAS["nova-turn"];
+  if(!schema)return invalidJson("native-json-schema-unavailable");
   const validator=new MinimalJsonSchemaValidator();
   const validation=validator.validate(record,schema);
   const textField=(key:"situation"|"thoughts"|"emotion"|"speech"|"longMemory",limit:number,required:boolean):NovaTurnParsedField<string>=>{
