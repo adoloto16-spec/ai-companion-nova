@@ -305,7 +305,12 @@ export class OllamaChatProvider implements ChatProvider {
     if (callerSignal?.aborted) throw abortError();
     callerSignal?.addEventListener("abort", forwardAbort, { once: true });
     let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, this.timeoutMs());
+    let timer:ReturnType<typeof setTimeout>;
+    const resetIdleTimeout=()=>{
+      clearTimeout(timer);
+      timer=setTimeout(()=>{timedOut=true;controller.abort();},this.timeoutMs());
+    };
+    resetIdleTimeout();
     const started = Date.now();
     let status: number | undefined;
     let model = request.model;
@@ -373,6 +378,7 @@ export class OllamaChatProvider implements ChatProvider {
         if (timedOut) throw this.failure(request, "PROVIDER_ERROR", "Ollama streaming request timed out.", "timeout", true, { timeoutMs: this.timeoutMs() });
         const item = await withAbortSignal(iterator.next(), controller.signal);
         if (item.done) break;
+        resetIdleTimeout();
         buffer += item.value;
         while (true) {
           const newline = buffer.indexOf("\n");
