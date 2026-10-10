@@ -38,6 +38,11 @@ function defaultProviderBaseUrl(providerId:ConfigurableChatProviderId):string{
   return "https://api.openai.com/v1";
 }
 function defaultProviderModel(providerId:ConfigurableChatProviderId):string{return providerId==="gemini"?"gemini-2.5-flash":"";}
+function parseOllamaKeepAlive(value:string):string|number|undefined{
+  const trimmed=value.trim();
+  if(!trimmed)return undefined;
+  return /^-?\d+(?:\.\d+)?$/.test(trimmed)?Number(trimmed):trimmed;
+}
 
 
 async function publishAndReadRuntimeDiagnostics(snapshot:RuntimeDiagnostics):Promise<RuntimeDiagnostics>{
@@ -919,6 +924,8 @@ function ProviderPresetsView({
         credentialReference:source?.credentialReference?{...source.credentialReference}:draft.credentialReference??null,
         enabled:source?.enabled??draft.enabled??true,
         timeoutMs:source?.timeoutMs??draft.timeoutMs??30000,
+        ...(source?.temperature!==undefined||draft.temperature!==undefined?{temperature:source?.temperature??draft.temperature}:{}),
+        ...(source?.topP!==undefined||draft.topP!==undefined?{topP:source?.topP??draft.topP}:{}),
         ...(source?.numCtx!==undefined||draft.numCtx!==undefined?{numCtx:source?.numCtx??draft.numCtx}:{}),
         ...(source?.numPredict!==undefined||draft.numPredict!==undefined?{numPredict:source?.numPredict??draft.numPredict}:{}),
         ...(source?.keepAlive!==undefined||draft.keepAlive!==undefined?{keepAlive:source?.keepAlive??draft.keepAlive}:{}),
@@ -933,10 +940,12 @@ function ProviderPresetsView({
       source.credentialReference=draft.credentialReference?{...draft.credentialReference}:null;
       source.enabled=draft.enabled??true;
       source.timeoutMs=draft.timeoutMs??30000;
+      if(draft.temperature!==undefined)source.temperature=draft.temperature;
+      if(draft.topP!==undefined)source.topP=draft.topP;
       if(draft.numCtx!==undefined)source.numCtx=draft.numCtx;
       if(draft.numPredict!==undefined)source.numPredict=draft.numPredict;
       if(draft.keepAlive!==undefined)source.keepAlive=draft.keepAlive;
-      const {providerId:_providerId,baseUrl:_baseUrl,model:_model,credentialReference:_credentialReference,enabled:_enabled,timeoutMs:_timeoutMs,numCtx:_numCtx,numPredict:_numPredict,keepAlive:_keepAlive,...withoutSingle}=draft;
+      const {providerId:_providerId,baseUrl:_baseUrl,model:_model,credentialReference:_credentialReference,enabled:_enabled,timeoutMs:_timeoutMs,temperature:_temperature,topP:_topP,numCtx:_numCtx,numPredict:_numPredict,keepAlive:_keepAlive,...withoutSingle}=draft;
       updateDraft({...withoutSingle,type:"pool",sources:[source],activeSourceId:source.id,updatedAt:now});
       setSelectedSourceId(source.id);
     }
@@ -950,7 +959,7 @@ function ProviderPresetsView({
   const updateDraft=(next:ProviderPreset)=>{
     setDirty(true);
     const normalized={...next,updatedAt:new Date().toISOString()};
-    if(normalized.type==="single"&&normalized.providerId!=="ollama"){delete normalized.numCtx;delete normalized.numPredict;delete normalized.keepAlive;}
+    if(normalized.type==="single"&&normalized.providerId!=="ollama"){delete normalized.temperature;delete normalized.topP;delete normalized.numCtx;delete normalized.numPredict;delete normalized.keepAlive;}
     setDraft(normalized);
   };
 
@@ -960,8 +969,8 @@ function ProviderPresetsView({
       sources:draft.sources.map(source=>{
         if(source.id!==sourceId)return source;
         const next={...source,...patch,updatedAt:new Date().toISOString()};
-        if(patch.providerId&&patch.providerId!=="ollama"){delete next.numCtx;delete next.numPredict;delete next.keepAlive;}
-        for(const key of ["numCtx","numPredict","keepAlive"] as const)if(patch[key]===undefined&&Object.prototype.hasOwnProperty.call(patch,key))delete next[key];
+        if(patch.providerId&&patch.providerId!=="ollama"){delete next.temperature;delete next.topP;delete next.numCtx;delete next.numPredict;delete next.keepAlive;}
+        for(const key of ["temperature","topP","numCtx","numPredict","keepAlive"] as const)if(patch[key]===undefined&&Object.prototype.hasOwnProperty.call(patch,key))delete next[key];
         return next;
       })
     });
@@ -999,7 +1008,7 @@ function ProviderPresetsView({
             if(ollamaErrors.length)throw new Error(ollamaErrors.join(" "));
           }
         }
-        const {providerId:_providerId,baseUrl:_baseUrl,model:_model,credentialReference:_credentialReference,enabled:_enabled,timeoutMs:_timeoutMs,numCtx:_numCtx,numPredict:_numPredict,keepAlive:_keepAlive,...poolFields}=draft;
+        const {providerId:_providerId,baseUrl:_baseUrl,model:_model,credentialReference:_credentialReference,enabled:_enabled,timeoutMs:_timeoutMs,temperature:_temperature,topP:_topP,numCtx:_numCtx,numPredict:_numPredict,keepAlive:_keepAlive,...poolFields}=draft;
         next={...poolFields,name:draft.name.trim(),type:"pool",sources,activeSourceId:draft.activeSourceId&&sources.some(source=>source.id===draft.activeSourceId)?draft.activeSourceId:sources[0]!.id,updatedAt:new Date().toISOString()};
       }
       await onSavePreset(next,activate);
@@ -1237,11 +1246,13 @@ function ProviderPresetsView({
         <label className="checkbox">Enabled
           <input type="checkbox" checked={selectedSource.enabled} onChange={event=>updateSource(selectedSource.id,{enabled:event.target.checked})} disabled={busy}/>
         </label>
-        <label>Timeout (ms)<input type="number" min="1" value={selectedSource.timeoutMs??30000} onChange={event=>updateSource(selectedSource.id,{timeoutMs:Number(event.target.value)})} disabled={busy}/></label>
+        <label>Timeout (ms)<input type="number" min={selectedSource.providerId==="ollama"?100:1} value={selectedSource.timeoutMs??30000} onChange={event=>updateSource(selectedSource.id,{timeoutMs:Number(event.target.value)})} disabled={busy}/></label>
         {selectedSource.providerId==="ollama"&&<>
+          <label>Temperature<input type="number" min="0" max="2" step="0.1" value={selectedSource.temperature??""} onChange={event=>updateSource(selectedSource.id,{temperature:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
+          <label>Top-p<input type="number" min="0" max="1" step="0.05" value={selectedSource.topP??""} onChange={event=>updateSource(selectedSource.id,{topP:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
           <label>Context window (num_ctx)<input type="number" min="1" value={selectedSource.numCtx??""} onChange={event=>updateSource(selectedSource.id,{numCtx:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
           <label>Maximum output tokens (num_predict)<input type="number" min="1" value={selectedSource.numPredict??""} onChange={event=>updateSource(selectedSource.id,{numPredict:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
-          <label>Keep model loaded (keep_alive)<input value={selectedSource.keepAlive===undefined?"":String(selectedSource.keepAlive)} onChange={event=>updateSource(selectedSource.id,{keepAlive:event.target.value.trim()?event.target.value:undefined})} placeholder="5m, -1, or 0" disabled={busy}/></label>
+          <label>Keep model loaded (keep_alive)<input value={selectedSource.keepAlive===undefined?"":String(selectedSource.keepAlive)} onChange={event=>updateSource(selectedSource.id,{keepAlive:parseOllamaKeepAlive(event.target.value)})} placeholder="5m, -1, or 0" disabled={busy}/></label>
         </>}
         <div className="status-grid">
           <span>Health</span><strong>{selectedSource.health}</strong>
@@ -1300,11 +1311,13 @@ function ProviderPresetsView({
         <label className="checkbox">Enabled
           <input type="checkbox" checked={draft.enabled??true} onChange={event=>updateDraft({...draft,enabled:event.target.checked})} disabled={busy}/>
         </label>
-        <label>Timeout (ms)<input type="number" min="1" value={draft.timeoutMs??30000} onChange={event=>updateDraft({...draft,timeoutMs:Number(event.target.value)})} disabled={busy}/></label>
+        <label>Timeout (ms)<input type="number" min={singleProviderId==="ollama"?100:1} value={draft.timeoutMs??30000} onChange={event=>updateDraft({...draft,timeoutMs:Number(event.target.value)})} disabled={busy}/></label>
         {singleProviderId==="ollama"&&<>
+          <label>Temperature<input type="number" min="0" max="2" step="0.1" value={draft.temperature??""} onChange={event=>updateDraft({...draft,temperature:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
+          <label>Top-p<input type="number" min="0" max="1" step="0.05" value={draft.topP??""} onChange={event=>updateDraft({...draft,topP:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
           <label>Context window (num_ctx)<input type="number" min="1" value={draft.numCtx??""} onChange={event=>updateDraft({...draft,numCtx:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
           <label>Maximum output tokens (num_predict)<input type="number" min="1" value={draft.numPredict??""} onChange={event=>updateDraft({...draft,numPredict:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
-          <label>Keep model loaded (keep_alive)<input value={draft.keepAlive===undefined?"":String(draft.keepAlive)} onChange={event=>updateDraft({...draft,keepAlive:event.target.value.trim()?event.target.value:undefined})} placeholder="5m, -1, or 0" disabled={busy}/></label>
+          <label>Keep model loaded (keep_alive)<input value={draft.keepAlive===undefined?"":String(draft.keepAlive)} onChange={event=>updateDraft({...draft,keepAlive:parseOllamaKeepAlive(event.target.value)})} placeholder="5m, -1, or 0" disabled={busy}/></label>
         </>}
         <p className="hint">Single API requests use only this provider configuration. Network, timeout, authentication, and provider errors return without automatic provider/key failover.</p>
       </div>}
