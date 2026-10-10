@@ -46,6 +46,9 @@ fn main() {
                     "get_provider_presets",
                     "save_provider_presets",
                     "delete_provider_preset",
+                    "ollama_http_request",
+                    "ollama_http_stream",
+                    "ollama_http_cancel",
                 ]),
             ),
     )

@@ -179,6 +179,31 @@ async function main(){
     await geminiRuntime.stop();
   }
 
+
+  const ollamaDiagnosticsHttp=new FakeHttpClient();
+  const ollamaDiagnosticsRuntime=await createFoundationRuntime({
+    credentialStore:new FakeCredentialStore(),
+    httpClient:ollamaDiagnosticsHttp,
+    providerConfiguration:{
+      apiVersion:"1",schemaVersion:"1",providerId:"ollama",baseUrl:"http://127.0.0.1:11434",
+      model:"local-model",enabled:true,credentialReference:null
+    }
+  });
+  try{
+    const initial=await ollamaDiagnosticsRuntime.diagnostics();
+    equal(initial.providers.find(item=>item.id==="ollama")?.health?.status,"healthy","initial diagnostics performs one real Ollama availability probe");
+    const tagsCalls=()=>ollamaDiagnosticsHttp.requests.filter(item=>item.url.endsWith("/api/tags")).length;
+    equal(tagsCalls(),1,"initial health check queries /api/tags exactly once");
+    for(let index=0;index<4;index+=1){
+      await ollamaDiagnosticsRuntime.diagnostics({skipProviderHealthFor:["ollama"]});
+    }
+    equal(tagsCalls(),1,"passive periodic diagnostics reuses cached Ollama health without repeat HTTP requests");
+    await ollamaDiagnosticsRuntime.diagnostics();
+    equal(tagsCalls(),2,"an explicit full diagnostics refresh can still re-check provider health");
+  }finally{
+    await ollamaDiagnosticsRuntime.stop();
+  }
+
   console.log("PASS provider pool runtime integration tests");
 }
 void main().catch(error=>{console.error(error);process.exitCode=1});

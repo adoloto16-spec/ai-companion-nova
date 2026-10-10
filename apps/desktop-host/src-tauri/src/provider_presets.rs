@@ -1,4 +1,5 @@
 use serde::{Deserialize,Serialize};
+use serde_json::Value;
 use std::{collections::HashSet,fs,io::Write,path::{Path,PathBuf}};
 use tauri::Manager;
 
@@ -36,8 +37,18 @@ pub struct ProviderPresetSource{
     pub failure_count:u32,
     #[serde(rename="cooldownUntil")]
     pub cooldown_until:Option<String>,
-    #[serde(rename="timeoutMs",skip_serializing_if="Option::is_none")]
+    #[serde(rename="timeoutMs",default,skip_serializing_if="Option::is_none")]
     pub timeout_ms:Option<f64>,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub temperature:Option<f64>,
+    #[serde(rename="topP",default,skip_serializing_if="Option::is_none")]
+    pub top_p:Option<f64>,
+    #[serde(rename="numCtx",default,skip_serializing_if="Option::is_none")]
+    pub num_ctx:Option<u32>,
+    #[serde(rename="numPredict",default,skip_serializing_if="Option::is_none")]
+    pub num_predict:Option<u32>,
+    #[serde(rename="keepAlive",default,skip_serializing_if="Option::is_none")]
+    pub keep_alive:Option<Value>,
     #[serde(rename="createdAt")]
     pub created_at:String,
     #[serde(rename="updatedAt")]
@@ -62,8 +73,18 @@ pub struct ProviderPreset{
     #[serde(rename="credentialReference")]
     pub credential_reference:Option<CredentialReference>,
     pub enabled:Option<bool>,
-    #[serde(rename="timeoutMs",skip_serializing_if="Option::is_none")]
+    #[serde(rename="timeoutMs",default,skip_serializing_if="Option::is_none")]
     pub timeout_ms:Option<f64>,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub temperature:Option<f64>,
+    #[serde(rename="topP",default,skip_serializing_if="Option::is_none")]
+    pub top_p:Option<f64>,
+    #[serde(rename="numCtx",default,skip_serializing_if="Option::is_none")]
+    pub num_ctx:Option<u32>,
+    #[serde(rename="numPredict",default,skip_serializing_if="Option::is_none")]
+    pub num_predict:Option<u32>,
+    #[serde(rename="keepAlive",default,skip_serializing_if="Option::is_none")]
+    pub keep_alive:Option<Value>,
     #[serde(rename="createdAt")]
     pub created_at:String,
     #[serde(rename="updatedAt")]
@@ -131,6 +152,26 @@ fn validate_reference(reference:&CredentialReference,provider_id:&str)->Result<(
     Ok(())
 }
 
+fn validate_ollama_options(provider_id:&str,temperature:Option<f64>,top_p:Option<f64>,num_ctx:Option<u32>,num_predict:Option<u32>,keep_alive:&Option<Value>)->Result<(),String>{
+    if provider_id!="ollama"&&(temperature.is_some()||top_p.is_some()||num_ctx.is_some()||num_predict.is_some()||keep_alive.is_some()){
+        return Err("Ollama generation settings may only be used with the Ollama provider".to_string());
+    }
+    if temperature.map(|value|!value.is_finite()||!(0.0..=2.0).contains(&value)).unwrap_or(false){return Err("Ollama temperature must be between 0 and 2".to_string());}
+    if top_p.map(|value|!value.is_finite()||!(0.0..=1.0).contains(&value)).unwrap_or(false){return Err("Ollama topP must be between 0 and 1".to_string());}
+    if num_ctx==Some(0)||num_predict==Some(0){
+        return Err("Ollama numCtx and numPredict must be positive integers".to_string());
+    }
+    if let Some(value)=keep_alive{
+        let valid=match value{
+            Value::String(duration)=>!duration.trim().is_empty(),
+            Value::Number(number)=>number.as_f64().map(|number|number.is_finite()&&(number>=0.0||number==-1.0)).unwrap_or(false),
+            _=>false
+        };
+        if !valid{return Err("Ollama keepAlive must be a non-empty duration string or -1 or a non-negative number".to_string());}
+    }
+    Ok(())
+}
+
 fn validate_source(source:&ProviderPresetSource)->Result<(),String>{
     if source.id.trim().is_empty()||source.id.len()>200{return Err("provider preset source id is invalid".to_string());}
     if source.name.trim().is_empty()||source.name.len()>200{return Err("provider preset source name is invalid".to_string());}
@@ -140,10 +181,12 @@ fn validate_source(source:&ProviderPresetSource)->Result<(),String>{
     if url.scheme()!="http"&&url.scheme()!="https"{return Err("provider preset source base URL must use HTTP or HTTPS".to_string());}
     if !url.username().is_empty()||url.password().is_some(){return Err("provider preset source base URL must not contain credentials".to_string());}
     if url.query().is_some()||url.fragment().is_some(){return Err("provider preset source base URL must not contain query or fragment".to_string());}
+    if source.provider_id=="ollama"{super::ollama_http::validate_base_url(&source.base_url)?;if source.credential_reference.is_some(){return Err("Ollama provider source must not store an API credential".to_string());}}
     if source.model.trim().is_empty()||source.model.len()>200{return Err("provider preset source model is invalid".to_string());}
     if let Some(reference)=&source.credential_reference{validate_reference(reference,&source.provider_id)?;}
     if !matches!(source.health.as_str(),"healthy"|"cooldown"|"unavailable"){return Err("unsupported provider preset source health state".to_string());}
     if let Some(timeout)=source.timeout_ms{if !timeout.is_finite()||timeout<=0.0{return Err("provider preset source timeout must be finite and positive".to_string());}}
+    validate_ollama_options(&source.provider_id,source.temperature,source.top_p,source.num_ctx,source.num_predict,&source.keep_alive)?;
     if source.created_at.trim().is_empty()||source.updated_at.trim().is_empty(){return Err("provider preset source timestamps must not be empty".to_string());}
     Ok(())
 }
@@ -160,7 +203,7 @@ fn validate_preset(preset:&ProviderPreset)->Result<(),String>{
     match preset.preset_type.as_str(){
         "pool"=>{
             if preset.sources.is_empty(){return Err("pool preset must contain at least one source".to_string());}
-            if preset.provider_id.is_some()||preset.base_url.is_some()||preset.model.is_some()||preset.credential_reference.is_some()||preset.enabled.is_some()||preset.timeout_ms.is_some(){
+            if preset.provider_id.is_some()||preset.base_url.is_some()||preset.model.is_some()||preset.credential_reference.is_some()||preset.enabled.is_some()||preset.timeout_ms.is_some()||preset.temperature.is_some()||preset.top_p.is_some()||preset.num_ctx.is_some()||preset.num_predict.is_some()||preset.keep_alive.is_some(){
                 return Err("pool preset must not contain direct single-provider configuration fields".to_string());
             }
             if let Some(active)=&preset.active_source_id{
@@ -171,18 +214,24 @@ fn validate_preset(preset:&ProviderPreset)->Result<(),String>{
             if !preset.sources.is_empty(){return Err("single preset must not contain pool sources".to_string());}
             if preset.active_source_id.is_some(){return Err("single preset activeSourceId must be null".to_string());}
             let provider=preset.provider_id.as_deref().ok_or_else(||"single preset providerId is required".to_string())?;
-            if provider!="openai-compatible"&&provider!="gemini"{return Err("single preset providerId is unsupported".to_string());}
+            if provider!="openai-compatible"&&provider!="gemini"&&provider!="ollama"{return Err("single preset providerId is unsupported".to_string());}
             let base=preset.base_url.as_deref().ok_or_else(||"single preset baseUrl is required".to_string())?;
             if base.trim()!=base{return Err("single preset base URL must not have surrounding whitespace".to_string());}
             let url=url::Url::parse(base).map_err(|_|"single preset base URL is invalid".to_string())?;
             if url.scheme()!="http"&&url.scheme()!="https"{return Err("single preset base URL must use HTTP or HTTPS".to_string());}
             if !url.username().is_empty()||url.password().is_some(){return Err("single preset base URL must not contain credentials".to_string());}
             if url.query().is_some()||url.fragment().is_some(){return Err("single preset base URL must not contain query or fragment".to_string());}
+            if provider=="ollama"{super::ollama_http::validate_base_url(base)?;}
             let model=preset.model.as_deref().ok_or_else(||"single preset model is required".to_string())?;
             if model.trim().is_empty()||model.len()>200{return Err("single preset model is invalid".to_string());}
-            let reference=preset.credential_reference.as_ref().ok_or_else(||"single preset credentialReference is required".to_string())?;
-            if reference.provider.as_deref()!=Some(provider){return Err("single preset credentialReference provider must match providerId".to_string());}
-            validate_reference(reference,provider)?;
+            validate_ollama_options(provider,preset.temperature,preset.top_p,preset.num_ctx,preset.num_predict,&preset.keep_alive)?;
+            if provider=="ollama" {
+                if preset.credential_reference.is_some(){return Err("Ollama provider preset must not store an API credential".to_string());}
+            }else{
+                let reference=preset.credential_reference.as_ref().ok_or_else(||"single preset credentialReference is required".to_string())?;
+                if reference.provider.as_deref()!=Some(provider){return Err("single preset credentialReference provider must match providerId".to_string());}
+                validate_reference(reference,provider)?;
+            }
             if preset.enabled.is_none(){return Err("single preset enabled state is required".to_string());}
             if let Some(timeout)=preset.timeout_ms{if !timeout.is_finite()||timeout<=0.0{return Err("single preset timeout must be finite and positive".to_string());}}
         },
@@ -197,14 +246,27 @@ fn validate_credential_links(
 )->Result<(),String>{
     for preset in &state.presets{
         let references:Vec<(&CredentialReference,&str)>=if preset.preset_type=="single"{
-            match (&preset.credential_reference,preset.provider_id.as_deref()){
-                (Some(reference),Some(provider))=>vec![(reference,provider)],
-                _=>return Err("single preset credential reference is missing".to_string())
+            let provider=preset.provider_id.as_deref()
+                .ok_or_else(||"single preset providerId is required".to_string())?;
+            if provider=="ollama"{
+                if preset.credential_reference.is_some(){
+                    return Err("Ollama provider preset must not store an API credential".to_string());
+                }
+                // Local Ollama needs no CredentialStore profile.
+                vec![]
+            }else{
+                match preset.credential_reference.as_ref(){
+                    Some(reference)=>vec![(reference,provider)],
+                    None=>return Err("single preset credential reference is missing".to_string())
+                }
             }
         }else{
             preset.sources.iter().filter_map(|source|source.credential_reference.as_ref().map(|reference|(reference,source.provider_id.as_str()))).collect()
         };
         for (reference,provider) in references{
+            if provider=="ollama"{
+                return Err("Ollama provider must not store an API credential".to_string());
+            }
             let profiles=credential_state.ok_or_else(||"provider preset credential profile store is unavailable".to_string())?;
             let profile=profiles.profiles.iter().find(|profile|profile.credential_reference.id==reference.id)
                 .ok_or_else(||format!("provider preset credential reference \"{}\" does not exist in CredentialStore metadata",reference.id))?;
@@ -217,6 +279,16 @@ fn validate_credential_links(
         }
     }
     Ok(())
+}
+
+fn save_with_credential_links(
+    path:&Path,
+    state:&ProviderPresetStoreState,
+    credential_state:Option<&super::credential_profiles::CredentialProfileStoreState>
+)->Result<(),String>{
+    validate_state(state)?;
+    validate_credential_links(state,credential_state)?;
+    save_to_path(path,state)
 }
 
 fn validate_state(state:&ProviderPresetStoreState)->Result<(),String>{
@@ -274,6 +346,11 @@ fn migrate_legacy_state(
             failure_count:0,
             cooldown_until:None,
             timeout_ms:preset.timeout_ms,
+            temperature:None,
+            top_p:None,
+            num_ctx:None,
+            num_predict:None,
+            keep_alive:None,
             created_at:preset.created_at.clone(),
             updated_at:preset.updated_at.clone(),
         };
@@ -289,6 +366,11 @@ fn migrate_legacy_state(
             credential_reference:None,
             enabled:None,
             timeout_ms:None,
+            temperature:None,
+            top_p:None,
+            num_ctx:None,
+            num_predict:None,
+            keep_alive:None,
             created_at:preset.created_at,
             updated_at:preset.updated_at,
         }
@@ -378,10 +460,8 @@ pub fn load(app:&tauri::AppHandle)->Result<Option<ProviderPresetStoreState>,Stri
     load_from_path(&config_path(app)?,credential_state.as_ref())
 }
 pub fn save(app:&tauri::AppHandle,state:&ProviderPresetStoreState)->Result<(),String>{
-    validate_state(state)?;
     let credential_state=super::credential_profiles::load(app)?;
-    validate_credential_links(state,credential_state.as_ref())?;
-    save_to_path(&config_path(app)?,state)
+    save_with_credential_links(&config_path(app)?,state,credential_state.as_ref())
 }
 pub fn delete(app:&tauri::AppHandle,id:&str)->Result<(),String>{
     if id.trim().is_empty(){return Err("provider preset id must not be empty".to_string());}
@@ -417,10 +497,11 @@ fn credential_state()->super::super::credential_profiles::CredentialProfileStore
       ]
     }
 }
-fn source(id:&str)->ProviderPresetSource{ProviderPresetSource{id:id.to_string(),name:"Main".to_string(),provider_id:"openai-compatible".to_string(),base_url:"https://api.example.test/v1".to_string(),model:"model".to_string(),credential_reference:Some(reference("credential-a","openai-compatible")),enabled:true,health:"healthy".to_string(),failure_count:0,cooldown_until:None,timeout_ms:Some(30000.0),created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
-fn preset(id:&str)->ProviderPreset{let source_id=format!("source:{}:primary",id);ProviderPreset{id:id.to_string(),name:id.to_string(),preset_type:"pool".to_string(),sources:vec![source(&source_id)],active_source_id:Some(source_id),provider_id:None,base_url:None,model:None,credential_reference:None,enabled:None,timeout_ms:None,created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
+fn source(id:&str)->ProviderPresetSource{ProviderPresetSource{id:id.to_string(),name:"Main".to_string(),provider_id:"openai-compatible".to_string(),base_url:"https://api.example.test/v1".to_string(),model:"model".to_string(),credential_reference:Some(reference("credential-a","openai-compatible")),enabled:true,health:"healthy".to_string(),failure_count:0,cooldown_until:None,timeout_ms:Some(30000.0),temperature:None,top_p:None,num_ctx:None,num_predict:None,keep_alive:None,created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
+fn preset(id:&str)->ProviderPreset{let source_id=format!("source:{}:primary",id);ProviderPreset{id:id.to_string(),name:id.to_string(),preset_type:"pool".to_string(),sources:vec![source(&source_id)],active_source_id:Some(source_id),provider_id:None,base_url:None,model:None,credential_reference:None,enabled:None,timeout_ms:None,temperature:None,top_p:None,num_ctx:None,num_predict:None,keep_alive:None,created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
 fn state()->ProviderPresetStoreState{ProviderPresetStoreState{api_version:API_VERSION.to_string(),schema_version:SCHEMA_VERSION.to_string(),presets:vec![preset("preset-a")],active_preset_id:Some("preset-a".to_string())}}
-fn single_preset(id:&str)->ProviderPreset{ProviderPreset{id:id.to_string(),name:id.to_string(),preset_type:"single".to_string(),sources:vec![],active_source_id:None,provider_id:Some("openai-compatible".to_string()),base_url:Some("https://single.example/v1".to_string()),model:Some("single-model".to_string()),credential_reference:Some(reference("single-credential","openai-compatible")),enabled:Some(true),timeout_ms:Some(15000.0),created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
+fn single_preset(id:&str)->ProviderPreset{ProviderPreset{id:id.to_string(),name:id.to_string(),preset_type:"single".to_string(),sources:vec![],active_source_id:None,provider_id:Some("openai-compatible".to_string()),base_url:Some("https://single.example/v1".to_string()),model:Some("single-model".to_string()),credential_reference:Some(reference("single-credential","openai-compatible")),enabled:Some(true),timeout_ms:Some(15000.0),temperature:None,top_p:None,num_ctx:None,num_predict:None,keep_alive:None,created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
+fn single_ollama_preset(id:&str)->ProviderPreset{ProviderPreset{id:id.to_string(),name:id.to_string(),preset_type:"single".to_string(),sources:vec![],active_source_id:None,provider_id:Some("ollama".to_string()),base_url:Some("http://127.0.0.1:11434".to_string()),model:Some("llama3.2:latest".to_string()),credential_reference:None,enabled:Some(true),timeout_ms:Some(30000.0),temperature:Some(0.4),top_p:Some(0.85),num_ctx:Some(8192),num_predict:Some(512),keep_alive:Some(serde_json::json!("5m")),created_at:"2026-09-28T00:00:00Z".to_string(),updated_at:"2026-09-28T00:00:00Z".to_string()}}
 
 #[test]fn rejects_unknown_fields(){
  let value=serde_json::json!({"id":"x","name":"X","sources":[],"activeSourceId":null,"createdAt":"x","updatedAt":"x","secret":"bad"});
@@ -472,6 +553,60 @@ fn single_preset(id:&str)->ProviderPreset{ProviderPreset{id:id.to_string(),name:
  let saved:serde_json::Value=serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
  assert_eq!(saved["schemaVersion"],"3");
  assert_eq!(saved["presets"][0]["type"],"pool");
+ fs::remove_dir_all(path.parent().unwrap()).unwrap();
+}
+#[test]fn saves_and_reloads_ollama_single_preset_without_credential_store(){
+ let path=temp("ollama-single-no-credentials");
+ let mut s=state();s.presets=vec![single_ollama_preset("ollama-a")];s.active_preset_id=Some("ollama-a".to_string());
+ // This exercises the same validation-and-write path used by save_provider_presets
+ // when CredentialStore metadata is absent or contains no profiles.
+ save_with_credential_links(&path,&s,None).unwrap();
+ let loaded=load_from_path(&path,None).unwrap().unwrap();
+ let saved=&loaded.presets[0];
+ assert_eq!(saved.provider_id.as_deref(),Some("ollama"));
+ assert_eq!(saved.base_url.as_deref(),Some("http://127.0.0.1:11434"));
+ assert_eq!(saved.model.as_deref(),Some("llama3.2:latest"));
+ assert_eq!(saved.temperature,Some(0.4));
+ assert_eq!(saved.top_p,Some(0.85));
+ assert_eq!(saved.num_ctx,Some(8192));
+ assert_eq!(saved.num_predict,Some(512));
+ assert_eq!(saved.keep_alive.as_ref(),Some(&serde_json::json!("5m")));
+ let raw:serde_json::Value=serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+ assert_eq!(raw["presets"][0]["providerId"],"ollama");
+ assert_eq!(raw["presets"][0]["credentialReference"],serde_json::Value::Null);
+ assert_eq!(raw["presets"][0]["temperature"],0.4);
+ assert_eq!(raw["presets"][0]["topP"],0.85);
+ assert_eq!(raw["presets"][0]["numCtx"],8192);
+ assert_eq!(raw["presets"][0]["numPredict"],512);
+ assert_eq!(raw["presets"][0]["keepAlive"],"5m");
+ fs::remove_dir_all(path.parent().unwrap()).unwrap();
+}
+#[test]fn rejects_ollama_single_preset_with_credential_reference(){
+ let mut s=state();let mut ollama=single_ollama_preset("ollama-with-key");
+ ollama.credential_reference=Some(reference("ollama-key","ollama"));
+ s.presets=vec![ollama];s.active_preset_id=Some("ollama-with-key".to_string());
+ assert!(validate_state(&s).is_err());
+ assert!(validate_credential_links(&s,None).is_err());
+ let path=temp("ollama-with-key");
+ assert!(save_with_credential_links(&path,&s,None).is_err());
+ assert!(!path.exists());
+ fs::remove_dir_all(path.parent().unwrap()).unwrap();
+}
+#[test]fn single_api_provider_still_requires_valid_saved_credentials(){
+ let mut s=state();s.presets=vec![single_preset("single-api")];s.active_preset_id=Some("single-api".to_string());
+ assert!(validate_credential_links(&s,None).is_err());
+ let mut wrong_provider=credential_state();
+ wrong_provider.profiles[0].credential_reference.id="single-credential".to_string();
+ wrong_provider.profiles[0].provider_id="gemini".to_string();
+ wrong_provider.profiles[0].credential_reference.provider=Some("gemini".to_string());
+ assert!(validate_credential_links(&s,Some(&wrong_provider)).is_err());
+ let mut matching=credential_state();
+ matching.profiles[0].credential_reference.id="single-credential".to_string();
+ assert!(validate_credential_links(&s,Some(&matching)).is_ok());
+ let path=temp("single-api-credentials");
+ save_with_credential_links(&path,&s,Some(&matching)).unwrap();
+ let loaded=load_from_path(&path,None).unwrap().unwrap();
+ assert_eq!(loaded.presets[0].credential_reference.as_ref().unwrap().id,"single-credential");
  fs::remove_dir_all(path.parent().unwrap()).unwrap();
 }
 #[test]fn validates_single_credential_reference_against_saved_profile(){

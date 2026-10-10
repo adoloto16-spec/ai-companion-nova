@@ -45,7 +45,7 @@ if(fs.existsSync(tauriCapabilityPath)&&fs.existsSync(tauriBuildPath)){
     "get_characters","save_characters","get_core_book_entries","save_core_book_entries",
     "get_memory_state","save_memory_state","get_memory_semantic_index","save_memory_semantic_index","supersede_memory","search_retrieval_index",
     "rebuild_retrieval_index","rebuild_all_retrieval_index","upsert_retrieval_document",
-    "remove_retrieval_document","remove_retrieval_character","list_conversations","get_conversation","save_conversation","delete_conversation","set_active_conversation","get_active_conversation","clear_conversation","get_model_profile","save_model_profile","delete_model_profile","get_credential_profiles","save_credential_profiles","delete_credential_profile","get_provider_presets","save_provider_presets","delete_provider_preset"
+    "remove_retrieval_document","remove_retrieval_character","list_conversations","get_conversation","save_conversation","delete_conversation","set_active_conversation","get_active_conversation","clear_conversation","get_model_profile","save_model_profile","delete_model_profile","get_credential_profiles","save_credential_profiles","delete_credential_profile","get_provider_presets","save_provider_presets","delete_provider_preset","ollama_http_request","ollama_http_stream","ollama_http_cancel"
   ];
   const buildSource=fs.readFileSync(tauriBuildPath,"utf8");
   for(const command of tauriCommands){

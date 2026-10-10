@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import {chatDraftKey,readChatDraft,writeChatDraft,clearSubmittedChatDraft} from "../../apps/desktop-ui/src/chat-drafts";
+import {passiveDiagnosticsOptions} from "../../apps/desktop-ui/src/provider-health-polling";
 
 const sourcePath=path.resolve(process.cwd(),"apps/desktop-ui/src/main.tsx");
 const source=fs.readFileSync(sourcePath,"utf8");
@@ -22,7 +23,29 @@ const appSettingsView=blockBetween("function AppSettingsView(","function TraceCa
 const diagnosticsView=blockBetween("function DiagnosticsView(","class ViewErrorBoundary");
 const syncCharacters=blockBetween("const syncCharacters=React.useCallback","const addConfigurationLoadError=React.useCallback");
 const refreshRuntime=blockBetween("const refreshRuntime=React.useCallback","React.useEffect(()=>{");
+const startupEffect=blockBetween('React.useEffect(()=>{\n    let active=true;\n    setStartupStatus("initializing")',"const selectCharacter=React.useCallback(async(id:string)=>{");
+const manualConnectionTest=blockBetween("const testPreset=React.useCallback","const saveModelProfile=React.useCallback");
+const modelDiscovery=blockBetween("const refreshPresetModels=React.useCallback","const testPreset=React.useCallback");
+const providerPoolPath=path.resolve(process.cwd(),"runtime/bootstrap/src/provider-pool.ts");
+const providerPoolSource=fs.readFileSync(providerPoolPath,"utf8");
 const app=source.slice(source.indexOf("function App(){"));
+
+assert.deepEqual(passiveDiagnosticsOptions("ollama"),{skipProviderHealthFor:["ollama"]},"Ollama periodic diagnostics reuses cached health");
+assert.equal(passiveDiagnosticsOptions("openai-compatible"),undefined,"OpenAI-compatible/Mistral diagnostics retain their current health probes");
+assert.equal(passiveDiagnosticsOptions("gemini"),undefined,"Gemini diagnostics retain their current health probes");
+assert.ok(refreshRuntime.includes("next.diagnostics(passiveDiagnosticsOptions(config?.providerId))"),"runtime replacement avoids duplicate Ollama startup probes after the first snapshot");
+assert.ok(startupEffect.includes("foundation.diagnostics(passiveDiagnosticsOptions(foundation.getProviderConfiguration()?.providerId))"),"the one-second runtime diagnostics loop does not re-probe Ollama");
+assert.equal((startupEffect.match(/timer\s*=\s*setInterval/g)??[]).length,1,"runtime mount owns only one diagnostics timer start");
+assert.ok(startupEffect.includes("if(timer)clearInterval(timer)"),"runtime cleanup clears its interval on unmount");
+assert.ok(startupEffect.includes("active=false;"),"runtime cleanup invalidates in-flight sync work on unmount");
+assert.ok(startupEffect.includes("if(!active)return;"),"late startup completion cannot create a timer after unmount");
+assert.ok(diagnosticsView.includes("runtime.diagnostics(passiveDiagnosticsOptions(runtime.getProviderConfiguration()?.providerId))"),"Diagnostics view polling does not re-probe Ollama");
+assert.ok(diagnosticsView.includes("const timer=setInterval(refresh,750);")&&diagnosticsView.includes("return ()=>clearInterval(timer);"),"Diagnostics view timer is cleaned up on unmount/remount");
+assert.ok(diagnosticsView.includes("},[refresh]);"),"Diagnostics view creates one interval per effect mount");
+assert.ok(manualConnectionTest.includes("testProviderPresetConfiguration(config,credentialStore,ollamaHttpClient)"),"manual connection testing remains a real request");
+assert.ok(modelDiscovery.includes("listProviderModels("),"manual model discovery remains wired to the configured provider");
+assert.equal(providerPoolSource.includes("setInterval"),false,"provider pool recovery is request-driven; no periodic health timer is required");
+
 
 assert.equal(source.includes("function SettingsView("),false,"Legacy SettingsView component must be removed");
 assert.equal(app.includes("<SettingsView "),false,"Legacy SettingsView render must be removed");
@@ -45,7 +68,7 @@ assert.ok(settingsContainer.includes('tab==="chat"')&&settingsContainer.includes
 assert.ok(appSettingsView.includes('settings.chat.responseMode')&&appSettingsView.includes('value="structured"')&&appSettingsView.includes('value="plain"'),"Chat settings bind both response modes");
 assert.ok(settingsContainer.includes('tab==="provider-presets"'),"Settings must have a Provider Presets tab");
 assert.ok(settingsContainer.includes("<AppSettingsView "), "General tab must render AppSettingsView");
-assert.ok(diagnosticsView.includes("runtime.diagnostics()"),"DiagnosticsView must bridge runtime DiagnosticsStore");
+assert.ok(diagnosticsView.includes("runtime.diagnostics(passiveDiagnosticsOptions(runtime.getProviderConfiguration()?.providerId))"),"DiagnosticsView diagnostics refresh must use cached Ollama health during periodic refresh");
 assert.ok(diagnosticsView.includes("setRuntimeDiagnostics(snapshot.recentErrors)"),"DiagnosticsView must expose all recent runtime diagnostics separately");
 assert.ok(diagnosticsView.includes("Runtime diagnostics"),"DiagnosticsView must label general runtime diagnostics");
 for(const field of ["timestamp","source","code","message","requestId","providerPresetId","sourceId","providerId","model","category","httpStatus","durationMs","baseUrlHost"]){

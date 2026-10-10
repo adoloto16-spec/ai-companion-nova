@@ -18,6 +18,8 @@ mod model_profiles;
 mod credential_profiles;
 #[cfg(feature="tauri-app")]
 mod provider_presets;
+#[cfg(feature="tauri-app")]
+mod ollama_http;
 mod windows_credentials;
 
 use serde::Serialize;
@@ -268,6 +270,7 @@ struct RuntimeDiagnosticsState(Mutex<Option<Value>>);
 fn main(){
     tauri::Builder::default()
         .manage(RuntimeDiagnosticsState::default())
+        .manage(ollama_http::OllamaHttpState::default())
         .manage(memory::MemoryWriteLock::default())
         .manage(retrieval::RetrievalIndexLock::default())
         .invoke_handler(tauri::generate_handler![
@@ -313,7 +316,10 @@ fn main(){
             delete_credential_profile,
             get_provider_presets,
             save_provider_presets,
-            delete_provider_preset
+            delete_provider_preset,
+            ollama_http::ollama_http_request,
+            ollama_http::ollama_http_stream,
+            ollama_http::ollama_http_cancel
         ])
         .run(tauri::generate_context!())
         .expect("Tauri runtime failed");

@@ -937,14 +937,69 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           "type": {
             "enum": [
               "text",
-              "json"
+              "json",
+              "json-schema"
             ]
           },
           "schema": {
             "type": "object",
             "additionalProperties": true
           }
-        }
+        },
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "text"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "json"
+              },
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "schema"
+            ],
+            "properties": {
+              "type": {
+                "const": "json-schema"
+              },
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "strict": {
+                "type": "boolean"
+              }
+            }
+          }
+        ]
       }
     }
   },
@@ -3086,6 +3141,32 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       "timeoutMs": {
         "type": "number",
         "minimum": 0.000001
+      },
+      "numCtx": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "numPredict": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "keepAlive": {
+        "type": [
+          "string",
+          "number"
+        ],
+        "minLength": 1,
+        "minimum": -1
+      },
+      "temperature": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 2
+      },
+      "topP": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
       }
     }
   },
@@ -3219,6 +3300,32 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       "updatedAt": {
         "type": "string",
         "minLength": 1
+      },
+      "numCtx": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "numPredict": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "keepAlive": {
+        "type": [
+          "string",
+          "number"
+        ],
+        "minLength": 1,
+        "minimum": -1
+      },
+      "temperature": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 2
+      },
+      "topP": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
       }
     }
   },
@@ -3316,7 +3423,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           {
             "enum": [
               "openai-compatible",
-              "gemini"
+              "gemini",
+              "ollama"
             ]
           }
         ]
@@ -3360,6 +3468,45 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           "null"
         ],
         "exclusiveMinimum": 0
+      },
+      "numCtx": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "minimum": 1
+      },
+      "numPredict": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "minimum": 1
+      },
+      "keepAlive": {
+        "type": [
+          "string",
+          "number",
+          "null"
+        ],
+        "minLength": 1,
+        "minimum": -1
+      },
+      "temperature": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "minimum": 0,
+        "maximum": 2
+      },
+      "topP": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "minimum": 0,
+        "maximum": 1
       }
     },
     "allOf": [
@@ -3441,6 +3588,59 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
                     "type": "number"
                   }
                 }
+              },
+              {
+                "required": [
+                  "numCtx"
+                ],
+                "properties": {
+                  "numCtx": {
+                    "type": "integer"
+                  }
+                }
+              },
+              {
+                "required": [
+                  "numPredict"
+                ],
+                "properties": {
+                  "numPredict": {
+                    "type": "integer"
+                  }
+                }
+              },
+              {
+                "required": [
+                  "keepAlive"
+                ],
+                "properties": {
+                  "keepAlive": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  }
+                }
+              },
+              {
+                "required": [
+                  "temperature"
+                ],
+                "properties": {
+                  "temperature": {
+                    "type": "number"
+                  }
+                }
+              },
+              {
+                "required": [
+                  "topP"
+                ],
+                "properties": {
+                  "topP": {
+                    "type": "number"
+                  }
+                }
               }
             ]
           }
@@ -3475,7 +3675,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             "providerId": {
               "enum": [
                 "openai-compatible",
-                "gemini"
+                "gemini",
+                "ollama"
               ]
             },
             "baseUrl": {
@@ -3490,7 +3691,14 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
               "maxLength": 200
             },
             "credentialReference": {
-              "$ref": "https://schemas.ai-companion-nova.dev/credential-reference/v1"
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "https://schemas.ai-companion-nova.dev/credential-reference/v1"
+                }
+              ]
             },
             "enabled": {
               "type": "boolean"
@@ -3498,6 +3706,45 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             "timeoutMs": {
               "type": "number",
               "exclusiveMinimum": 0
+            },
+            "numCtx": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "numPredict": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "keepAlive": {
+              "type": [
+                "string",
+                "number",
+                "null"
+              ],
+              "minLength": 1,
+              "minimum": -1
+            },
+            "temperature": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 2
+            },
+            "topP": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1
             }
           }
         }
@@ -3569,6 +3816,21 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           },
           "timeoutMs": {
             "type": "null"
+          },
+          "numCtx": {
+            "type": "null"
+          },
+          "numPredict": {
+            "type": "null"
+          },
+          "keepAlive": {
+            "type": "null"
+          },
+          "temperature": {
+            "type": "null"
+          },
+          "topP": {
+            "type": "null"
           }
         }
       },
@@ -3621,7 +3883,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           "providerId": {
             "enum": [
               "openai-compatible",
-              "gemini"
+              "gemini",
+              "ollama"
             ]
           },
           "baseUrl": {
@@ -3636,28 +3899,14 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             "maxLength": 200
           },
           "credentialReference": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "id",
-              "kind"
-            ],
-            "properties": {
-              "id": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 200
+            "anyOf": [
+              {
+                "type": "null"
               },
-              "kind": {
-                "const": "api-key"
-              },
-              "provider": {
-                "type": "string"
-              },
-              "version": {
-                "type": "string"
+              {
+                "$ref": "https://schemas.ai-companion-nova.dev/credential-reference/v1"
               }
-            }
+            ]
           },
           "enabled": {
             "type": "boolean"
@@ -3665,6 +3914,45 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           "timeoutMs": {
             "type": "number",
             "exclusiveMinimum": 0
+          },
+          "numCtx": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "numPredict": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "keepAlive": {
+            "type": [
+              "string",
+              "number",
+              "null"
+            ],
+            "minLength": 1,
+            "minimum": -1
+          },
+          "temperature": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 2
+          },
+          "topP": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1
           }
         }
       }

@@ -58,7 +58,7 @@ export interface FoundationRuntimeOptions{
 export interface FoundationRuntime{
   start():Promise<void>;
   stop():Promise<void>;
-  diagnostics():Promise<RuntimeDiagnostics>;
+  diagnostics(options?:{skipProviderHealthFor?:readonly string[]}):Promise<RuntimeDiagnostics>;
   recordDiagnosticError(source:string,code:string,message:string,metadata?:Record<string,unknown>):void;
   invoke(request:import("../../../contracts/src/index").ActionRequest):Promise<import("../../../contracts/src/index").ActionResult>;
   chat(request:ChatRequest,providerPresetId?:string):Promise<ChatResponse>;
@@ -206,7 +206,12 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     providerPresetConfigurations.set(preset.id,{
       apiVersion:"1",schemaVersion:"1",providerId:preset.providerId,baseUrl:preset.baseUrl,model:preset.model,
       enabled:preset.enabled,credentialReference:preset.credentialReference?{...preset.credentialReference}:null,
-      ...(preset.timeoutMs==null?{}:{timeoutMs:preset.timeoutMs})
+      ...(preset.timeoutMs==null?{}:{timeoutMs:preset.timeoutMs}),
+      ...(preset.temperature==null?{}:{temperature:preset.temperature}),
+      ...(preset.topP==null?{}:{topP:preset.topP}),
+      ...(preset.numCtx==null?{}:{numCtx:preset.numCtx}),
+      ...(preset.numPredict==null?{}:{numPredict:preset.numPredict}),
+      ...(preset.keepAlive==null?{}:{keepAlive:preset.keepAlive})
     });
   }
   let providerPresetPools=new Map(initialPresets.filter(preset=>preset.type!=="single").map(preset=>[preset.id,preset]));
@@ -255,6 +260,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     providerConfiguration=configuration;
     providers.unregister("openai-compatible");
     providers.unregister("gemini");
+    providers.unregister("ollama");
     const configured=configuration?buildConfiguredProvider(configuration,credentialStore,options.httpClient,diagnosticsStore,activeProviderPresetId):undefined;
     if(configured)providers.register(configured,["chat"]);
   };
@@ -286,7 +292,12 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
           baseUrl:source.baseUrl,
           model:source.model,
           credentialReference:source.credentialReference?{...source.credentialReference}:null,
-          ...(source.timeoutMs===undefined?{}:{timeoutMs:source.timeoutMs})
+          ...(source.timeoutMs===undefined?{}:{timeoutMs:source.timeoutMs}),
+          ...(source.temperature===undefined?{}:{temperature:source.temperature}),
+          ...(source.topP===undefined?{}:{topP:source.topP}),
+          ...(source.numCtx===undefined?{}:{numCtx:source.numCtx}),
+          ...(source.numPredict===undefined?{}:{numPredict:source.numPredict}),
+          ...(source.keepAlive===undefined?{}:{keepAlive:source.keepAlive})
         });
       }
       await options.onProviderPresetPoolStateChange?.(updated);
@@ -548,13 +559,13 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   });
 
   let runtimeStatus:RuntimeDiagnostics["runtimeStatus"]="starting";
-  const snapshot=async():Promise<RuntimeDiagnostics>=>{
+  const snapshot=async(options:{skipProviderHealthFor?:readonly string[]}={}):Promise<RuntimeDiagnostics>=>{
     const moduleHealth=await moduleManager.health().catch(()=>({}));
     const modules=moduleManager.list().map(item=>({
       ...item,
       health:(moduleHealth as Record<string,HealthStatus|undefined>)[item.id]
     }));
-    const providerDiagnostics=await providers.diagnostics();
+    const providerDiagnostics=await providers.diagnostics({skipHealthFor:options.skipProviderHealthFor});
     const degraded=retrievalDegraded||modules.some(item=>item.state==="error"||item.state==="degraded")||
       providerDiagnostics.some(item=>item.health?.status!=="healthy");
     const capabilities=new Set<string>();
@@ -743,7 +754,12 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
           nextConfigurations.set(preset.id,{
             apiVersion:"1",schemaVersion:"1",providerId:preset.providerId,baseUrl:preset.baseUrl,model:preset.model,
             enabled:preset.enabled,credentialReference:preset.credentialReference?{...preset.credentialReference}:null,
-            ...(preset.timeoutMs==null?{}:{timeoutMs:preset.timeoutMs})
+            ...(preset.timeoutMs==null?{}:{timeoutMs:preset.timeoutMs}),
+            ...(preset.temperature==null?{}:{temperature:preset.temperature}),
+            ...(preset.topP==null?{}:{topP:preset.topP}),
+            ...(preset.numCtx==null?{}:{numCtx:preset.numCtx}),
+            ...(preset.numPredict==null?{}:{numPredict:preset.numPredict}),
+            ...(preset.keepAlive==null?{}:{keepAlive:preset.keepAlive})
           });
         }else if(preset.type!=="single"){
           const source=preset.sources.find(item=>item.id===preset.activeSourceId)??preset.sources[0];
@@ -751,7 +767,12 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
             apiVersion:"1",schemaVersion:"1",providerId:source.providerId,baseUrl:source.baseUrl,model:source.model,
             enabled:source.enabled&&source.model.trim().length>0,
             credentialReference:source.credentialReference?{...source.credentialReference}:null,
-            ...(source.timeoutMs===undefined?{}:{timeoutMs:source.timeoutMs})
+            ...(source.timeoutMs===undefined?{}:{timeoutMs:source.timeoutMs}),
+            ...(source.temperature===undefined?{}:{temperature:source.temperature}),
+            ...(source.topP===undefined?{}:{topP:source.topP}),
+            ...(source.numCtx===undefined?{}:{numCtx:source.numCtx}),
+            ...(source.numPredict===undefined?{}:{numPredict:source.numPredict}),
+            ...(source.keepAlive===undefined?{}:{keepAlive:source.keepAlive})
           });
         }
       }

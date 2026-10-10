@@ -13,6 +13,7 @@
     "providers/mock/src/**/*.ts",
     "providers/chat/openai-compatible/src/**/*.ts",
     "providers/chat/gemini/src/**/*.ts",
+    "providers/chat/ollama/src/**/*.ts",
     "providers/embeddings/openai-compatible/src/**/*.ts",
     "host/ipc/src/**/*.ts",
     "host/credentials/src/**/*.ts",

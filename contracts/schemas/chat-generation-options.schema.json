@@ -29,14 +29,69 @@
         "type": {
           "enum": [
             "text",
-            "json"
+            "json",
+            "json-schema"
           ]
         },
         "schema": {
           "type": "object",
           "additionalProperties": true
         }
-      }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "text"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "json"
+            },
+            "schema": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "schema"
+          ],
+          "properties": {
+            "type": {
+              "const": "json-schema"
+            },
+            "schema": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "strict": {
+              "type": "boolean"
+            }
+          }
+        }
+      ]
     }
   }
 }

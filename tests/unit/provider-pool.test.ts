@@ -14,12 +14,13 @@ class PoolFailure extends Error{
 class FakeProvider implements ChatProvider{
   readonly id:string;
   readonly calls:{request:ChatRequest}[]=[];
+  healthCalls=0;
   constructor(id:string,private readonly outcomes:readonly (ChatResponse|Error)[]){
     this.id=id;
   }
   metadata(){return {id:this.id,kind:"chat" as const,displayName:this.id,version:"test"};}
   capabilities():ProviderCapabilities{return {streaming:false,toolCalling:false,structuredOutput:false,reasoning:false};}
-  async health():Promise<HealthStatus>{return {status:"healthy"};}
+  async health():Promise<HealthStatus>{this.healthCalls+=1;return {status:"healthy"};}
   async listModels():Promise<ModelInfo[]>{return [{id:this.id+"-model"}];}
   async chat(request:ChatRequest):Promise<ChatResponse>{
     this.calls.push({request});
@@ -122,6 +123,8 @@ async function main(){
     const result=await pool.chat(request());
     equal(result.message.content,"backup",category+" source failure triggers failover");
     equal(second.calls.length,1,category+" uses next source");
+    equal(first.healthCalls,0,category+" is handled from the real request error without a health preflight");
+    equal(second.healthCalls,0,category+" does not health-check the backup before using it");
   }
 
   {

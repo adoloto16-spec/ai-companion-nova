@@ -1,6 +1,9 @@
 import React from "react";
 import {createRoot} from "react-dom/client";
 import {invoke} from "@tauri-apps/api/core";
+import {NovaHttpClient} from "./ollama-http-client";
+import {validateOllamaBaseUrl} from "../../../providers/chat/ollama/src";
+import {passiveDiagnosticsOptions} from "./provider-health-polling";
 import {ChatSessionController,ConversationSession,InMemoryCharacterStore} from "../../../core/src/index";
 
 import {startFoundationRuntime,testProviderPresetConfiguration,listProviderModels} from "../../../runtime/bootstrap/src/index";
@@ -28,6 +31,19 @@ import {chatDraftKey,readChatDraft,writeChatDraft,clearSubmittedChatDraft} from 
 import "./styles.css";
 
 const preview:RuntimeDiagnostics={schemaVersion:"1",timestamp:new Date().toISOString(),runtimeStatus:"stopped",coreStatus:"stopped",modules:[],providers:[],recentErrors:[],capabilities:[]};
+const ollamaHttpClient=new NovaHttpClient(600_000);
+type ConfigurableChatProviderId="openai-compatible"|"gemini"|"ollama";
+function defaultProviderBaseUrl(providerId:ConfigurableChatProviderId):string{
+  if(providerId==="gemini")return "https://generativelanguage.googleapis.com/v1beta";
+  if(providerId==="ollama")return "http://127.0.0.1:11434";
+  return "https://api.openai.com/v1";
+}
+function defaultProviderModel(providerId:ConfigurableChatProviderId):string{return providerId==="gemini"?"gemini-2.5-flash":"";}
+function parseOllamaKeepAlive(value:string):string|number|undefined{
+  const trimmed=value.trim();
+  if(!trimmed)return undefined;
+  return /^-?\d+(?:\.\d+)?$/.test(trimmed)?Number(trimmed):trimmed;
+}
 
 
 async function publishAndReadRuntimeDiagnostics(snapshot:RuntimeDiagnostics):Promise<RuntimeDiagnostics>{
@@ -849,11 +865,11 @@ function ProviderPresetsView({
   onTestPreset:(preset:ProviderPreset,sourceId:string)=>Promise<ProviderConnectionTestResult>;
 }){
   const firstPreset=presets.find(p=>p.id===activePresetId)??presets[0];
-  const defaultSource=(now=new Date().toISOString(),providerId:"openai-compatible"|"gemini"="openai-compatible",name="Primary"):ProviderPresetSource=>({
+  const defaultSource=(now=new Date().toISOString(),providerId:ConfigurableChatProviderId="openai-compatible",name="Primary"):ProviderPresetSource=>({
     id:"source:"+name.toLowerCase().replace(/[^a-z0-9]+/g,"-")+":"+Date.now(),
     name,
     providerId,
-    baseUrl:providerId==="gemini"?"https://generativelanguage.googleapis.com/v1beta":"https://api.openai.com/v1",
+    baseUrl:defaultProviderBaseUrl(providerId),
     model:"",
     credentialReference:null,
     enabled:true,
@@ -893,33 +909,44 @@ function ProviderPresetsView({
   },[dirty,presets,selectedId]);
 
   const selectedSource=draft.type==="single"?undefined:draft.sources.find(source=>source.id===selectedSourceId)??draft.sources[0];
-  const singleProviderId=draft.providerId==="gemini"?"gemini":"openai-compatible";
+  const singleProviderId:ConfigurableChatProviderId=draft.providerId==="gemini"?"gemini":draft.providerId==="ollama"?"ollama":"openai-compatible";
   const setPresetType=(type:"pool"|"single")=>{
     if(type===(draft.type??"pool"))return;
     const now=new Date().toISOString();
     if(type==="single"){
       const source=selectedSource??draft.sources[0];
+      const sourceProviderId:ConfigurableChatProviderId=source?.providerId==="gemini"?"gemini":source?.providerId==="ollama"?"ollama":"openai-compatible";
       const {sources:_sources,activeSourceId:_activeSourceId,...withoutPool}=draft;
       updateDraft({
         ...withoutPool,type:"single",sources:[],activeSourceId:null,
-        providerId:source?.providerId??"openai-compatible",
-        baseUrl:source?.baseUrl??"https://api.openai.com/v1",
-        model:source?.model??"",
+        providerId:sourceProviderId,
+        baseUrl:source?.baseUrl??defaultProviderBaseUrl(sourceProviderId),
+        model:source?.model??defaultProviderModel(sourceProviderId),
         credentialReference:source?.credentialReference?{...source.credentialReference}:draft.credentialReference??null,
         enabled:source?.enabled??draft.enabled??true,
         timeoutMs:source?.timeoutMs??draft.timeoutMs??30000,
+        ...(source?.temperature!==undefined||draft.temperature!==undefined?{temperature:source?.temperature??draft.temperature}:{}),
+        ...(source?.topP!==undefined||draft.topP!==undefined?{topP:source?.topP??draft.topP}:{}),
+        ...(source?.numCtx!==undefined||draft.numCtx!==undefined?{numCtx:source?.numCtx??draft.numCtx}:{}),
+        ...(source?.numPredict!==undefined||draft.numPredict!==undefined?{numPredict:source?.numPredict??draft.numPredict}:{}),
+        ...(source?.keepAlive!==undefined||draft.keepAlive!==undefined?{keepAlive:source?.keepAlive??draft.keepAlive}:{}),
         updatedAt:now
       });
       setSelectedSourceId(undefined);
     }else{
       const providerId=singleProviderId;
       const source=defaultSource(now,providerId,"Primary");
-      source.baseUrl=draft.baseUrl??(providerId==="gemini"?"https://generativelanguage.googleapis.com/v1beta":"https://api.openai.com/v1");
-      source.model=draft.model??(providerId==="gemini"?"gemini-2.5-flash":"");
+      source.baseUrl=draft.baseUrl??defaultProviderBaseUrl(providerId);
+      source.model=draft.model??defaultProviderModel(providerId);
       source.credentialReference=draft.credentialReference?{...draft.credentialReference}:null;
       source.enabled=draft.enabled??true;
       source.timeoutMs=draft.timeoutMs??30000;
-      const {providerId:_providerId,baseUrl:_baseUrl,model:_model,credentialReference:_credentialReference,enabled:_enabled,timeoutMs:_timeoutMs,...withoutSingle}=draft;
+      if(typeof draft.temperature==="number")source.temperature=draft.temperature;
+      if(typeof draft.topP==="number")source.topP=draft.topP;
+      if(typeof draft.numCtx==="number")source.numCtx=draft.numCtx;
+      if(typeof draft.numPredict==="number")source.numPredict=draft.numPredict;
+      if(draft.keepAlive!==undefined&&draft.keepAlive!==null)source.keepAlive=draft.keepAlive;
+      const {providerId:_providerId,baseUrl:_baseUrl,model:_model,credentialReference:_credentialReference,enabled:_enabled,timeoutMs:_timeoutMs,temperature:_temperature,topP:_topP,numCtx:_numCtx,numPredict:_numPredict,keepAlive:_keepAlive,...withoutSingle}=draft;
       updateDraft({...withoutSingle,type:"pool",sources:[source],activeSourceId:source.id,updatedAt:now});
       setSelectedSourceId(source.id);
     }
@@ -932,13 +959,21 @@ function ProviderPresetsView({
 
   const updateDraft=(next:ProviderPreset)=>{
     setDirty(true);
-    setDraft({...next,updatedAt:new Date().toISOString()});
+    const normalized={...next,updatedAt:new Date().toISOString()};
+    if(normalized.type==="single"&&normalized.providerId!=="ollama"){delete normalized.temperature;delete normalized.topP;delete normalized.numCtx;delete normalized.numPredict;delete normalized.keepAlive;}
+    setDraft(normalized);
   };
 
   const updateSource=(sourceId:string,patch:Partial<ProviderPresetSource>)=>{
     updateDraft({
       ...draft,
-      sources:draft.sources.map(source=>source.id===sourceId?{...source,...patch,updatedAt:new Date().toISOString()}:source)
+      sources:draft.sources.map(source=>{
+        if(source.id!==sourceId)return source;
+        const next={...source,...patch,updatedAt:new Date().toISOString()};
+        if(patch.providerId&&patch.providerId!=="ollama"){delete next.temperature;delete next.topP;delete next.numCtx;delete next.numPredict;delete next.keepAlive;}
+        for(const key of ["temperature","topP","numCtx","numPredict","keepAlive"] as const)if(patch[key]===undefined&&Object.prototype.hasOwnProperty.call(patch,key))delete next[key];
+        return next;
+      })
     });
   };
 
@@ -950,18 +985,31 @@ function ProviderPresetsView({
       let next:ProviderPreset;
       if(draft.type==="single"){
         if(draft.sources.length!==0||draft.activeSourceId!==null)throw new Error("Single presets must not contain pool sources.");
-        if(draft.providerId!=="openai-compatible"&&draft.providerId!=="gemini")throw new Error("Choose a supported provider.");
+        if(draft.providerId!=="openai-compatible"&&draft.providerId!=="gemini"&&draft.providerId!=="ollama")throw new Error("Choose a supported provider.");
         if(!draft.baseUrl?.trim()||!draft.model?.trim())throw new Error("Base URL and model are required for a single preset.");
-        if(!draft.credentialReference)throw new Error("Select or create a saved API credential.");
-        const savedCredential=credentialProfiles.find(profile=>profile.credentialReference.id===draft.credentialReference?.id&&profile.providerId===draft.providerId);
-        if(!savedCredential||!credentialSaved[savedCredential.id])throw new Error("The selected credential is not available in CredentialStore.");
+        if(draft.providerId==="ollama"){
+          if(draft.credentialReference)throw new Error("Ollama does not use an API key.");
+          const ollamaErrors=validateOllamaBaseUrl(draft.baseUrl);
+          if(ollamaErrors.length)throw new Error(ollamaErrors.join(" "));
+        }else{
+          if(!draft.credentialReference)throw new Error("Select or create a saved API credential.");
+          const savedCredential=credentialProfiles.find(profile=>profile.credentialReference.id===draft.credentialReference?.id&&profile.providerId===draft.providerId);
+          if(!savedCredential||!credentialSaved[savedCredential.id])throw new Error("The selected credential is not available in CredentialStore.");
+        }
         const url=new URL(draft.baseUrl);
         if((url.protocol!=="https:"&&url.protocol!=="http:")||url.username||url.password||url.search||url.hash)throw new Error("Base URL must use HTTP(S) and must not contain credentials, query, or fragment.");
-        next={...draft,name:draft.name.trim(),type:"single",sources:[],activeSourceId:null,providerId:draft.providerId,baseUrl:url.toString().replace(/\/$/,""),model:draft.model.trim(),credentialReference:{...draft.credentialReference},enabled:draft.enabled??true,timeoutMs:draft.timeoutMs??30000,updatedAt:new Date().toISOString()};
+        next={...draft,name:draft.name.trim(),type:"single",sources:[],activeSourceId:null,providerId:draft.providerId,baseUrl:url.toString().replace(/\/$/,""),model:draft.model.trim(),credentialReference:draft.credentialReference?{...draft.credentialReference}:null,enabled:draft.enabled??true,timeoutMs:draft.timeoutMs??30000,updatedAt:new Date().toISOString()};
       }else{
         if(draft.sources.length===0)throw new Error("Pool presets must contain at least one source.");
         const sources=draft.sources.map(source=>({...source,credentialReference:source.credentialReference?{...source.credentialReference}:null}));
-        const {providerId:_providerId,baseUrl:_baseUrl,model:_model,credentialReference:_credentialReference,enabled:_enabled,timeoutMs:_timeoutMs,...poolFields}=draft;
+        for(const source of sources){
+          if(source.providerId==="ollama"){
+            if(source.credentialReference)throw new Error("Ollama does not use an API key.");
+            const ollamaErrors=validateOllamaBaseUrl(source.baseUrl);
+            if(ollamaErrors.length)throw new Error(ollamaErrors.join(" "));
+          }
+        }
+        const {providerId:_providerId,baseUrl:_baseUrl,model:_model,credentialReference:_credentialReference,enabled:_enabled,timeoutMs:_timeoutMs,temperature:_temperature,topP:_topP,numCtx:_numCtx,numPredict:_numPredict,keepAlive:_keepAlive,...poolFields}=draft;
         next={...poolFields,name:draft.name.trim(),type:"pool",sources,activeSourceId:draft.activeSourceId&&sources.some(source=>source.id===draft.activeSourceId)?draft.activeSourceId:sources[0]!.id,updatedAt:new Date().toISOString()};
       }
       await onSavePreset(next,activate);
@@ -977,12 +1025,28 @@ function ProviderPresetsView({
       if(!draft.name.trim())throw new Error("Provider preset name is required.");
       await validateProviderPresetCredentialReferences(draft,credentialProfiles);
       if(draft.type==="single"){
-        if(draft.sources.length!==0||draft.activeSourceId!==null||!draft.providerId||!draft.baseUrl?.trim()||!draft.model?.trim()||!draft.credentialReference)throw new Error("Single preset requires one complete API configuration and a saved credential reference.");
-        const savedCredential=credentialProfiles.find(profile=>profile.credentialReference.id===draft.credentialReference?.id&&profile.providerId===draft.providerId);
-        if(!savedCredential||!credentialSaved[savedCredential.id])throw new Error("The selected credential is not available in CredentialStore.");
+        if(draft.sources.length!==0||draft.activeSourceId!==null||!draft.providerId||!draft.baseUrl?.trim()||!draft.model?.trim())throw new Error("Single preset requires one complete provider configuration.");
+        if(draft.providerId==="ollama"){
+          if(draft.credentialReference)throw new Error("Ollama does not use an API key.");
+          const ollamaErrors=validateOllamaBaseUrl(draft.baseUrl);
+          if(ollamaErrors.length)throw new Error(ollamaErrors.join(" "));
+        }else{
+          if(!draft.credentialReference)throw new Error("Select or create a saved API credential.");
+          const savedCredential=credentialProfiles.find(profile=>profile.credentialReference.id===draft.credentialReference?.id&&profile.providerId===draft.providerId);
+          if(!savedCredential||!credentialSaved[savedCredential.id])throw new Error("The selected credential is not available in CredentialStore.");
+        }
         const url=new URL(draft.baseUrl);
         if((url.protocol!=="https:"&&url.protocol!=="http:")||url.username||url.password||url.search||url.hash)throw new Error("Base URL must use HTTP(S) and must not contain credentials, query, or fragment.");
-      }else if(draft.sources.length===0)throw new Error("Pool presets must contain at least one source.");
+      }else{
+        if(draft.sources.length===0)throw new Error("Pool presets must contain at least one source.");
+        for(const source of draft.sources){
+          if(source.providerId==="ollama"){
+            if(source.credentialReference)throw new Error("Ollama does not use an API key.");
+            const ollamaErrors=validateOllamaBaseUrl(source.baseUrl);
+            if(ollamaErrors.length)throw new Error(ollamaErrors.join(" "));
+          }
+        }
+      }
       const now=new Date().toISOString();
       const newId="provider-preset:"+(draft.name.trim()||"preset").toLowerCase().replace(/[^a-z0-9]+/g,"-")+":"+Date.now();
       let next=cloneProviderPresetForSaveAsNew(draft,newId,now);
@@ -1012,7 +1076,7 @@ function ProviderPresetsView({
 
   const addSource=()=>{
     const now=new Date().toISOString();
-    const source=defaultSource(now,selectedSource?.providerId==="gemini"?"gemini":"openai-compatible","Source "+(draft.sources.length+1));
+    const source=defaultSource(now,(selectedSource?.providerId==="gemini"||selectedSource?.providerId==="ollama"?selectedSource.providerId:"openai-compatible"),"Source "+(draft.sources.length+1));
     updateDraft({...draft,sources:[...draft.sources,source],activeSourceId:draft.activeSourceId??source.id});
     setSelectedSourceId(source.id);
   };
@@ -1089,7 +1153,7 @@ function ProviderPresetsView({
     finally{setBusy(false)}
   };
 
-  const setStarter=(name:string,providerId:"openai-compatible"|"gemini",baseUrl:string,model="")=>{
+  const setStarter=(name:string,providerId:ConfigurableChatProviderId,baseUrl:string,model="")=>{
     const now=new Date().toISOString();
     const source=defaultSource(now,providerId,name);
     updateDraft({...draft,type:"pool",name,sources:[{...source,baseUrl,model}],activeSourceId:source.id,createdAt:draft.createdAt,providerId:undefined,baseUrl:undefined,model:undefined,credentialReference:undefined,enabled:undefined,timeoutMs:undefined});
@@ -1134,15 +1198,17 @@ function ProviderPresetsView({
         <label>Source name<input value={selectedSource.name} onChange={event=>updateSource(selectedSource.id,{name:event.target.value})} disabled={busy}/></label>
         <label>Provider
           <select value={selectedSource.providerId} onChange={event=>{
-            const providerId=event.target.value as "openai-compatible"|"gemini";
-            updateSource(selectedSource.id,{providerId,credentialReference:null,model:providerId==="gemini"?"gemini-2.5-flash":selectedSource.model});
+            const providerId=event.target.value as ConfigurableChatProviderId;
+            updateSource(selectedSource.id,{providerId,credentialReference:null,baseUrl:defaultProviderBaseUrl(providerId),model:defaultProviderModel(providerId)});
             setAddingCredential(false);
           }} disabled={busy}>
             <option value="openai-compatible">OpenAI-compatible</option>
             <option value="gemini">Gemini</option>
+            <option value="ollama">Ollama (local)</option>
           </select>
         </label>
         <label>Base URL<input value={selectedSource.baseUrl} onChange={event=>updateSource(selectedSource.id,{baseUrl:event.target.value})} disabled={busy}/></label>
+        {selectedSource.providerId!=="ollama"&&<> 
         <label>API credential
           <select
             value={selectedSource.credentialReference?.id??""}
@@ -1164,6 +1230,8 @@ function ProviderPresetsView({
             <option value="__new__">+ Add new credential</option>
           </select>
         </label>
+        </>}
+        {selectedSource.providerId==="ollama"&&<p className="hint">Ollama runs locally and does not require an API key.</p>}
         {addingCredential&&<div className="character-actions">
           <label>Label<input value={newCredentialLabel} onChange={event=>setNewCredentialLabel(event.target.value)} disabled={busy}/></label>
           <label>API key<input type="password" autoComplete="off" value={newCredentialSecret} onChange={event=>setNewCredentialSecret(event.target.value)} disabled={busy}/></label>
@@ -1179,7 +1247,14 @@ function ProviderPresetsView({
         <label className="checkbox">Enabled
           <input type="checkbox" checked={selectedSource.enabled} onChange={event=>updateSource(selectedSource.id,{enabled:event.target.checked})} disabled={busy}/>
         </label>
-        <label>Timeout (ms)<input type="number" min="1" value={selectedSource.timeoutMs??30000} onChange={event=>updateSource(selectedSource.id,{timeoutMs:Number(event.target.value)})} disabled={busy}/></label>
+        <label>Timeout (ms)<input type="number" min={selectedSource.providerId==="ollama"?100:1} value={selectedSource.timeoutMs??30000} onChange={event=>updateSource(selectedSource.id,{timeoutMs:Number(event.target.value)})} disabled={busy}/></label>
+        {selectedSource.providerId==="ollama"&&<>
+          <label>Temperature<input type="number" min="0" max="2" step="0.1" value={selectedSource.temperature??""} onChange={event=>updateSource(selectedSource.id,{temperature:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
+          <label>Top-p<input type="number" min="0" max="1" step="0.05" value={selectedSource.topP??""} onChange={event=>updateSource(selectedSource.id,{topP:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
+          <label>Context window (num_ctx)<input type="number" min="1" value={selectedSource.numCtx??""} onChange={event=>updateSource(selectedSource.id,{numCtx:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
+          <label>Maximum output tokens (num_predict)<input type="number" min="1" value={selectedSource.numPredict??""} onChange={event=>updateSource(selectedSource.id,{numPredict:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
+          <label>Keep model loaded (keep_alive)<input value={selectedSource.keepAlive===undefined?"":String(selectedSource.keepAlive)} onChange={event=>updateSource(selectedSource.id,{keepAlive:parseOllamaKeepAlive(event.target.value)})} placeholder="5m, -1, or 0" disabled={busy}/></label>
+        </>}
         <div className="status-grid">
           <span>Health</span><strong>{selectedSource.health}</strong>
           <span>Failures</span><strong>{selectedSource.failureCount}</strong>
@@ -1191,16 +1266,18 @@ function ProviderPresetsView({
       {draft.type==="single"&&<div className="provider-single-config">
         <label>Provider
           <select value={singleProviderId} onChange={event=>{
-            const providerId=event.target.value as "openai-compatible"|"gemini";
-            updateDraft({...draft,providerId,baseUrl:providerId==="gemini"?"https://generativelanguage.googleapis.com/v1beta":"https://api.openai.com/v1",
-              model:providerId==="gemini"?"gemini-2.5-flash":"",credentialReference:null});
+            const providerId=event.target.value as ConfigurableChatProviderId;
+            updateDraft({...draft,providerId,credentialReference:null,baseUrl:defaultProviderBaseUrl(providerId),
+              model:defaultProviderModel(providerId)});
             setAddingCredential(false);setModels([]);
           }} disabled={busy}>
             <option value="openai-compatible">OpenAI-compatible</option>
             <option value="gemini">Gemini</option>
+            <option value="ollama">Ollama (local)</option>
           </select>
         </label>
         <label>Base URL<input value={draft.baseUrl??""} onChange={event=>updateDraft({...draft,baseUrl:event.target.value})} placeholder="https://api.example.com/v1" disabled={busy}/></label>
+        {singleProviderId!=="ollama"&&<> 
         <label>Saved API credential
           <select value={draft.credentialReference?.id??""} onChange={event=>{
             const value=event.target.value;
@@ -1218,6 +1295,8 @@ function ProviderPresetsView({
             <option value="__new__">+ Create credential in CredentialStore</option>
           </select>
         </label>
+        </>}
+        {singleProviderId==="ollama"&&<p className="hint">Ollama uses the local API and does not require a saved API credential.</p>}
         {addingCredential&&<div className="character-actions">
           <label>Credential label<input value={newCredentialLabel} onChange={event=>setNewCredentialLabel(event.target.value)} disabled={busy}/></label>
           <label>API key<input type="password" autoComplete="off" value={newCredentialSecret} onChange={event=>setNewCredentialSecret(event.target.value)} disabled={busy}/></label>
@@ -1233,7 +1312,14 @@ function ProviderPresetsView({
         <label className="checkbox">Enabled
           <input type="checkbox" checked={draft.enabled??true} onChange={event=>updateDraft({...draft,enabled:event.target.checked})} disabled={busy}/>
         </label>
-        <label>Timeout (ms)<input type="number" min="1" value={draft.timeoutMs??30000} onChange={event=>updateDraft({...draft,timeoutMs:Number(event.target.value)})} disabled={busy}/></label>
+        <label>Timeout (ms)<input type="number" min={singleProviderId==="ollama"?100:1} value={draft.timeoutMs??30000} onChange={event=>updateDraft({...draft,timeoutMs:Number(event.target.value)})} disabled={busy}/></label>
+        {singleProviderId==="ollama"&&<>
+          <label>Temperature<input type="number" min="0" max="2" step="0.1" value={draft.temperature??""} onChange={event=>updateDraft({...draft,temperature:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
+          <label>Top-p<input type="number" min="0" max="1" step="0.05" value={draft.topP??""} onChange={event=>updateDraft({...draft,topP:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
+          <label>Context window (num_ctx)<input type="number" min="1" value={draft.numCtx??""} onChange={event=>updateDraft({...draft,numCtx:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
+          <label>Maximum output tokens (num_predict)<input type="number" min="1" value={draft.numPredict??""} onChange={event=>updateDraft({...draft,numPredict:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
+          <label>Keep model loaded (keep_alive)<input value={draft.keepAlive===undefined?"":String(draft.keepAlive)} onChange={event=>updateDraft({...draft,keepAlive:parseOllamaKeepAlive(event.target.value)})} placeholder="5m, -1, or 0" disabled={busy}/></label>
+        </>}
         <p className="hint">Single API requests use only this provider configuration. Network, timeout, authentication, and provider errors return without automatic provider/key failover.</p>
       </div>}
       <div className="actions">
@@ -1248,6 +1334,7 @@ function ProviderPresetsView({
       <div className="actions">
         <button onClick={()=>setStarter("OpenAI","openai-compatible","https://api.openai.com/v1","") } disabled={busy}>Starter: OpenAI</button>
         <button onClick={()=>setStarter("Gemini","gemini","https://generativelanguage.googleapis.com/v1beta","gemini-2.5-flash")} disabled={busy}>Starter: Gemini</button>
+        <button onClick={()=>setStarter("Ollama","ollama","http://127.0.0.1:11434","")} disabled={busy}>Starter: Ollama (local)</button>
       </div>
       {message&&<div className="notice" role="status">{message}</div>}
       <p className="hint">API keys are never loaded back into this UI.</p>
@@ -1701,7 +1788,7 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
       setSelectedId(current=>current&&next.some(trace=>trace.turnId===current)?current:next[0]?.turnId);
       setMessage("");
     }catch(error){setMessage(error instanceof Error?error.message:"Diagnostics could not be loaded.");}
-    void runtime.diagnostics().then(snapshot=>{
+    void runtime.diagnostics(passiveDiagnosticsOptions(runtime.getProviderConfiguration()?.providerId)).then(snapshot=>{
       setRuntimeDiagnostics(snapshot.recentErrors);
       setSemanticDiagnostics(snapshot.recentErrors.filter(entry=>entry.source==="memory-semantic-deduplication"));
     }).catch(error=>{
@@ -2369,6 +2456,7 @@ function App(){
     await foundationRef.current?.stop();
     const next=await startFoundationRuntime({
       providerConfiguration:config,credentialStore,characterStore,coreBookStore,memoryStore,semanticIndexStore,conversationStore,retriever,retrievalIndexWriter:retriever,
+      httpClient:ollamaHttpClient,
       providerPresetConfigurations:materializePresetConfigurations(presetState.presets),
       providerPresetPools:presetState.presets,
       onProviderPresetPoolStateChange:persistProviderPresetPoolState,
@@ -2381,7 +2469,7 @@ function App(){
     mindUnsubscribeRef.current=next.subscribeMindState(setMindState);
     setRuntime(await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(await next.diagnostics())));
     await syncCharacters(next);
-    setRuntime(await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(await next.diagnostics())));
+    setRuntime(await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(await next.diagnostics(passiveDiagnosticsOptions(config?.providerId)))));
     setStartupStatus("ready");
     setStartupError("");
   },[addConfigurationLoadError,characterStore,coreBookStore,memoryStore,semanticIndexStore,credentialStore,retriever,conversationStore,syncCharacters,persistProviderPresetPoolState]);
@@ -2432,7 +2520,7 @@ function App(){
         if(!active)return;
         const sync=async()=>{
           const foundation=foundationRef.current;if(!foundation||!active)return;
-          try{const snapshot=await foundation.diagnostics();const live=await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(snapshot));if(active)setRuntime(live)}
+          try{const snapshot=await foundation.diagnostics(passiveDiagnosticsOptions(foundation.getProviderConfiguration()?.providerId));const live=await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(snapshot));if(active)setRuntime(live)}
           catch{if(active)setRuntime(current=>({...current,runtimeStatus:"error",coreStatus:"error"}))}
         };
         await sync();timer=setInterval(()=>{void sync()},1000);
@@ -2649,7 +2737,7 @@ function App(){
       ?materializeSingleProviderConfiguration(preset)
       :(()=>{const source=preset.sources.find(item=>item.id===sourceId);return source?materializeProviderConfiguration(source):undefined;})();
     if(!config)throw new Error(preset.type==="single"?"Single provider preset configuration is incomplete.":"Provider source was not found.");
-    return listProviderModels(preset.type==="single"?{...config,enabled:true}:config,credentialStore);
+    return listProviderModels(preset.type==="single"?{...config,enabled:true}:config,credentialStore,ollamaHttpClient);
   },[credentialStore]);
 
   const testPreset=React.useCallback(async(preset:ProviderPreset,sourceId:string):Promise<ProviderConnectionTestResult>=>{
@@ -2660,12 +2748,12 @@ function App(){
     if(!config)throw new Error(preset.type==="single"?"Single provider preset configuration is incomplete.":"Provider source was not found.");
     if(preset.type==="single")config={...config,enabled:true};
     if(!config.model){
-      const models=await listProviderModels(config,credentialStore);
+      const models=await listProviderModels(config,credentialStore,ollamaHttpClient);
       const first=models[0]?.id;
       if(!first)return {apiVersion:"1",schemaVersion:"1",status:"configuration_error",providerId:config.providerId,message:"Model discovery is unavailable; choose a model manually."};
       config={...config,model:first,enabled:true};
     }
-    return testProviderPresetConfiguration(config,credentialStore);
+    return testProviderPresetConfiguration(config,credentialStore,ollamaHttpClient);
   },[credentialStore]);
 
   const saveModelProfile=React.useCallback(async(profile:ModelProfile)=>{
