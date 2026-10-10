@@ -400,7 +400,7 @@ export interface MemoryBroker{
   restore(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<MemoryItem>;
   delete(characterId:CharacterId,memoryId:MemoryItemId,authority:MemoryMutationAuthority):Promise<void>;
 }
-export interface AutomaticMemoryAgentRequest{
+export interface MemoryExtractionRequest{
   apiVersion:ApiVersion;
   schemaVersion:string;
   characterId:CharacterId;
@@ -413,33 +413,6 @@ export interface AutomaticMemoryAgentRequest{
   assistantMessage:ChatMessage;
   contextMessages:readonly ChatMessage[];
 }
-export type MemoryExtractionRequest=AutomaticMemoryAgentRequest;
-
-/* legacy alias retained above */
-export interface LegacyMemoryExtractionRequest{
-  apiVersion:ApiVersion;
-  schemaVersion:string;
-  characterId:CharacterId;
-  conversationId:ConversationId;
-  turnId:string;
-  model:string;
-  providerId?:string;
-  providerPresetId?:string;
-  userMessage:ChatMessage;
-  assistantMessage:ChatMessage;
-  contextMessages:readonly ChatMessage[];
-}
-export interface MemoryCandidate{
-  type:MemoryType;
-  content:string;
-  tags:readonly string[];
-  importance:number;
-  confidence:number;
-  source:MemorySource;
-  sourceReference:string;
-  mutationPolicy:MemoryMutationPolicy;
-}
-export interface MemoryExtractionResult{memories:readonly MemoryCandidate[];}
 
 export const CONTEXT_API_VERSION:ApiVersion="1";
 export const CONTEXT_SCHEMA_VERSION="1";
@@ -565,28 +538,6 @@ export interface ChatTurnTrace{
     durationMs?:number;
     providerResponse?:unknown;
   };
-  automaticMemory?:{
-    started:boolean;
-    status?:"started"|"completed"|"failed"|"skipped";
-    requestId?:string;
-    providerPresetId?:string;
-    providerId?:string;
-    model?:string;
-    conversationId?:string;
-    contextMessageCount?:number;
-    userMessagePresent?:boolean;
-    assistantResponsePresent?:boolean;
-    result?:string;
-    persistence?:{status:"created"|"duplicate"|"rejected"|"none";memoryId?:string;reason?:string};
-    configuredOutputMode?:"auto"|"structured"|"plain";
-    effectiveOutputMode?:"structured"|"plain";
-    structuredAttempt?:boolean;
-    fallback?:boolean;
-    fallbackReason?:string;
-    schemaName?:string;
-    defaultPromptVersion?:string;
-    failed?:string;
-  };
   providerResponse?:{
     providerId:string;
     model:string;
@@ -595,27 +546,9 @@ export interface ChatTurnTrace{
     durationMs?:number;
   };
   error?:{code:string;message:string};
-  memoryExtraction?:{
-    started:boolean;
-    status?:"started"|"completed"|"failed";
-    requestId?:string;
-    providerId?:string;
-    model?:string;
-    conversationId?:string;
-    contextMessageCount?:number;
-    candidates:readonly MemoryCandidate[];
-    accepted:readonly MemoryCandidate[];
-    rejected:readonly {candidate:MemoryCandidate;reason:string}[];
-    duplicate:readonly MemoryCandidate[];
-    superseded:readonly {candidate:MemoryCandidate;memoryId:string}[];
-    created:readonly {candidate:MemoryCandidate;memoryId:string}[];
-    failed?:string;
-  };
 }
-export type ChatTurnTracePatch=Partial<Omit<ChatTurnTrace,"turnId"|"requestId"|"characterId"|"conversationId"|"timestamp"|"memoryExtraction"|"automaticMemory">>&{
+export type ChatTurnTracePatch=Partial<Omit<ChatTurnTrace,"turnId"|"requestId"|"characterId"|"conversationId"|"timestamp">>&{
   contextBuild?:ChatTurnTrace["contextBuild"];
-  memoryExtraction?:Partial<NonNullable<ChatTurnTrace["memoryExtraction"]>>;
-  automaticMemory?:Partial<NonNullable<ChatTurnTrace["automaticMemory"]>>;
 };
 
 export interface ChatTraceStore{
