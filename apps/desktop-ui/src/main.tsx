@@ -178,7 +178,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
   React.useEffect(()=>{setSnapshot(controller.getSnapshot());return controller.subscribe(setSnapshot)},[controller]);
   React.useEffect(()=>{
     bottomRef.current?.scrollIntoView({block:"end"});
-  },[snapshot.messages.map(message=>message.content).join("\u0000"),snapshot.status,snapshot.lifeStreamingSpeech?.text]);
+  },[snapshot.messages.map(message=>message.content).join("\u0000"),snapshot.status]);
 
   const lifeState=runtime.getMindState().lifecycleState;
   const lifeActive=lifeState!=="off";
@@ -372,6 +372,9 @@ function ChatView({controller,runtime,character,conversations,activeConversation
             <div><strong>Speech</strong><p>{textField(parseResult?.fields.speech)} <em>({statusText(parseResult?.fields.speech)})</em></p></div>
             <div><strong>Next wake</strong><p>{parseResult?.fields.nextWakeMs.value===undefined?"Not available":parseResult.fields.nextWakeMs.value+" ms"} <em>({parseResult?.fields.nextWakeMs.status??"missing"})</em></p></div>
             <div><strong>Protocol diagnostics</strong><p>{parseResult?.diagnostics.length?parseResult.diagnostics.join(", "):"None"}</p></div>
+            <div><strong>Unrecognized / raw output (bounded)</strong>
+              <pre>{message.content.length>4000?message.content.slice(0,4000)+"\n[truncated at 4000 characters]":message.content||"(empty provider response)"}</pre>
+            </div>
           </section>}
           {state==="interrupted"&&<div className="message-status">Interrupted</div>}
           {editable&&!chatBusy&&!isEditing&&message.id&&
@@ -381,10 +384,6 @@ function ChatView({controller,runtime,character,conversations,activeConversation
             </div>}
         </article>;
       })}
-      {snapshot.lifeStreamingSpeech?.text&&<article className="chat-message assistant nova-streaming" data-turn-id={snapshot.lifeStreamingSpeech.turnId}>
-        <div className="message-author">{character.name}</div>
-        <div className="message-content">{snapshot.lifeStreamingSpeech.text}</div>
-      </article>}
       <div ref={bottomRef}/>
     </div>
     {snapshot.lifeTurn?.status==="persisting"&&<p className="chat-hint" role="status">Saving your message for Nova Life…</p>}
@@ -925,7 +924,7 @@ function ProviderPresetsView({
         model:source?.model??defaultProviderModel(sourceProviderId),
         credentialReference:source?.credentialReference?{...source.credentialReference}:draft.credentialReference??null,
         enabled:source?.enabled??draft.enabled??true,
-        timeoutMs:source?.timeoutMs??draft.timeoutMs??600000,
+        timeoutMs:source?.timeoutMs??draft.timeoutMs??30000,
         ...(source?.temperature!==undefined||draft.temperature!==undefined?{temperature:source?.temperature??draft.temperature}:{}),
         ...(source?.topP!==undefined||draft.topP!==undefined?{topP:source?.topP??draft.topP}:{}),
         ...(source?.numCtx!==undefined||draft.numCtx!==undefined?{numCtx:source?.numCtx??draft.numCtx}:{}),
@@ -941,7 +940,7 @@ function ProviderPresetsView({
       source.model=draft.model??defaultProviderModel(providerId);
       source.credentialReference=draft.credentialReference?{...draft.credentialReference}:null;
       source.enabled=draft.enabled??true;
-      source.timeoutMs=draft.timeoutMs??600000;
+      source.timeoutMs=draft.timeoutMs??30000;
       if(typeof draft.temperature==="number")source.temperature=draft.temperature;
       if(typeof draft.topP==="number")source.topP=draft.topP;
       if(typeof draft.numCtx==="number")source.numCtx=draft.numCtx;
@@ -999,7 +998,7 @@ function ProviderPresetsView({
         }
         const url=new URL(draft.baseUrl);
         if((url.protocol!=="https:"&&url.protocol!=="http:")||url.username||url.password||url.search||url.hash)throw new Error("Base URL must use HTTP(S) and must not contain credentials, query, or fragment.");
-        next={...draft,name:draft.name.trim(),type:"single",sources:[],activeSourceId:null,providerId:draft.providerId,baseUrl:url.toString().replace(/\/$/,""),model:draft.model.trim(),credentialReference:draft.credentialReference?{...draft.credentialReference}:null,enabled:draft.enabled??true,timeoutMs:draft.timeoutMs??600000,updatedAt:new Date().toISOString()};
+        next={...draft,name:draft.name.trim(),type:"single",sources:[],activeSourceId:null,providerId:draft.providerId,baseUrl:url.toString().replace(/\/$/,""),model:draft.model.trim(),credentialReference:draft.credentialReference?{...draft.credentialReference}:null,enabled:draft.enabled??true,timeoutMs:draft.timeoutMs??30000,updatedAt:new Date().toISOString()};
       }else{
         if(draft.sources.length===0)throw new Error("Pool presets must contain at least one source.");
         const sources=draft.sources.map(source=>({...source,credentialReference:source.credentialReference?{...source.credentialReference}:null}));
@@ -1248,7 +1247,7 @@ function ProviderPresetsView({
         <label className="checkbox">Enabled
           <input type="checkbox" checked={selectedSource.enabled} onChange={event=>updateSource(selectedSource.id,{enabled:event.target.checked})} disabled={busy}/>
         </label>
-        <label>Timeout (ms)<input type="number" min={selectedSource.providerId==="ollama"?100:1} value={selectedSource.timeoutMs??600000} onChange={event=>updateSource(selectedSource.id,{timeoutMs:Number(event.target.value)})} disabled={busy}/></label>
+        <label>Timeout (ms)<input type="number" min={selectedSource.providerId==="ollama"?100:1} value={selectedSource.timeoutMs??30000} onChange={event=>updateSource(selectedSource.id,{timeoutMs:Number(event.target.value)})} disabled={busy}/></label>
         {selectedSource.providerId==="ollama"&&<>
           <label>Temperature<input type="number" min="0" max="2" step="0.1" value={selectedSource.temperature??""} onChange={event=>updateSource(selectedSource.id,{temperature:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
           <label>Top-p<input type="number" min="0" max="1" step="0.05" value={selectedSource.topP??""} onChange={event=>updateSource(selectedSource.id,{topP:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
@@ -1313,7 +1312,7 @@ function ProviderPresetsView({
         <label className="checkbox">Enabled
           <input type="checkbox" checked={draft.enabled??true} onChange={event=>updateDraft({...draft,enabled:event.target.checked})} disabled={busy}/>
         </label>
-        <label>Timeout (ms)<input type="number" min={singleProviderId==="ollama"?100:1} value={draft.timeoutMs??600000} onChange={event=>updateDraft({...draft,timeoutMs:Number(event.target.value)})} disabled={busy}/></label>
+        <label>Timeout (ms)<input type="number" min={singleProviderId==="ollama"?100:1} value={draft.timeoutMs??30000} onChange={event=>updateDraft({...draft,timeoutMs:Number(event.target.value)})} disabled={busy}/></label>
         {singleProviderId==="ollama"&&<>
           <label>Temperature<input type="number" min="0" max="2" step="0.1" value={draft.temperature??""} onChange={event=>updateDraft({...draft,temperature:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
           <label>Top-p<input type="number" min="0" max="1" step="0.05" value={draft.topP??""} onChange={event=>updateDraft({...draft,topP:event.target.value?Number(event.target.value):undefined})} disabled={busy}/></label>
@@ -1549,6 +1548,46 @@ function AppSettingsView({
         <input type="checkbox" checked={settings.chat.automaticLongTermMemory}
           onChange={event=>onChange({...settings,chat:{...settings.chat,automaticLongTermMemory:event.target.checked}})} disabled={saving}/>
       </label>
+      <label className="checkbox">Automatic Memory Agent
+        <input type="checkbox" checked={settings.memoryAgent.enabled}
+          onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,enabled:event.target.checked}})} disabled={saving}/>
+      </label>
+      <label>Memory Agent provider preset
+        <select value={settings.memoryAgent.providerPresetId??""}
+          onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,providerPresetId:event.target.value||null}})} disabled={saving}>
+          <option value="">Not configured</option>
+          {settings.memoryAgent.providerPresetId&&settings.memoryAgent.providerPresetId!==null&&!providerPresets.some(p=>p.id===settings.memoryAgent.providerPresetId)&&
+            <option value={settings.memoryAgent.providerPresetId} disabled>Unavailable: {settings.memoryAgent.providerPresetId}</option>}
+          {providerPresets.map(preset=><option key={preset.id} value={preset.id}>{preset.name||preset.id}{preset.id===activePresetId?" · active":""}</option>)}
+        </select>
+      </label>
+      <label>Memory Agent model override
+        <input value={settings.memoryAgent.model} onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,model:event.target.value}})} placeholder="Preset model / discovered model" disabled={saving}/>
+      </label>
+      <label>Output Format
+        <select value={settings.memoryAgent.outputMode} onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,outputMode:event.target.value as AppSettings["memoryAgent"]["outputMode"]}})} disabled={saving}>
+          <option value="auto">Auto</option>
+          <option value="structured">Structured</option>
+          <option value="plain">Plain</option>
+        </select>
+        <small>{settings.memoryAgent.outputMode==="auto"?"Structured first; Plain only on explicit capability/unsupported failure.":settings.memoryAgent.outputMode==="structured"?"Structured is explicit; unsupported is terminal.":"Plain text only; no response format is sent."}</small>
+      </label>
+      <label>Agent Prompt
+        <textarea value={settings.memoryAgent.prompt} onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,prompt:event.target.value}})} rows={10} maxLength={12000} disabled={saving}/>
+        <small>{settings.memoryAgent.prompt===defaults.memoryAgent.prompt?"Default prompt":"Custom prompt"} · default version {settings.memoryAgent.defaultPromptVersion}</small>
+      </label>
+      <div className="actions">
+        <button type="button" onClick={()=>{
+          const previous=settings.memoryAgent.prompt===defaults.memoryAgent.prompt?settings.memoryAgent.promptBackup:settings.memoryAgent.prompt;
+          onChange({...settings,memoryAgent:{...settings.memoryAgent,prompt:defaults.memoryAgent.prompt,promptBackup:previous||settings.memoryAgent.promptBackup}});
+        }} disabled={saving}>Reset to Default</button>
+        <button type="button" onClick={()=>{
+          if(settings.memoryAgent.promptBackup){
+            onChange({...settings,memoryAgent:{...settings.memoryAgent,prompt:settings.memoryAgent.promptBackup,promptBackup:settings.memoryAgent.prompt}});
+          }
+        }} disabled={saving||!settings.memoryAgent.promptBackup}>Restore Previous</button>
+        <button type="button" onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save"}</button>
+      </div>
       <label>Memory items
         <input type="number" min={1} max={100} value={settings.memory.candidateLimit}
           onChange={event=>setNumber("memory","candidateLimit",Number(event.target.value))} disabled={saving}/>
@@ -1720,13 +1759,13 @@ function ChatSettingsView({settings,onChange,onSave,onReset,saving,message}:{
       <label>Chat response mode
         <select value={settings.chat.responseMode}
           onChange={event=>onChange({...settings,chat:{...settings.chat,responseMode:event.target.value as AppSettings["chat"]["responseMode"]}})} disabled={saving}>
-          <option value="structured">Structured JSON Schema (tagged fallback if unsupported)</option>
-          <option value="plain">Plain text</option>
+          <option value="structured">Structured protocol (recommended)</option>
+          <option value="plain">Plain text (fallback)</option>
         </select>
       </label>
       {settings.chat.responseMode==="structured"
-        ?<p className="hint">Requests native NovaTurn v1 JSON Schema output. Tagged NOVA_TURN is used only when the selected provider explicitly declares structured output unsupported or explicitly rejects the schema format.</p>
-        :<p className="hint">Sends ordinary plain text without JSON Schema or mandatory NOVA_TURN parsing. Tool requests and structured scheduling metadata are disabled.</p>}
+        ?<p className="hint">Uses the versioned NOVA_TURN v1 protocol with validated tool calls, separate user-facing speech, and a model-proposed next wake interval.</p>
+        :<p className="hint">Uses a separate plain-text prompt. The entire response is user-facing speech; model-requested tools and protocol interpretation are disabled. Background replies may be suppressed only by the exact [[NOVA_SILENT]] sentinel. A silent reactive reply fails and can be retried.</p>}
       <p className="hint">This setting is saved independently of technical-data visibility. It applies on the next cognitive request and does not change previously saved Conversation messages.</p>
       <p className="hint">Default: {defaults.chat.responseMode==="structured"?"Structured protocol (recommended)":"Plain text (fallback)"}.</p>
       <div className="actions">
@@ -1734,21 +1773,6 @@ function ChatSettingsView({settings,onChange,onSave,onReset,saving,message}:{
       </div>
       {message&&<div className="notice" role="status">{message}</div>}
     </section>
-  </div>;
-}
-
-function TraceCandidate({candidate}:{candidate:any}){
-  return <div className="diagnostic-candidate">
-    <div className="diagnostic-candidate-header">
-      <strong>{candidate.source}</strong>
-      <span>{candidate.zone}</span>
-      <span>score {candidate.selectionScore}</span>
-    </div>
-    <div className="diagnostic-candidate-content">{candidate.content}</div>
-    <div className="diagnostic-candidate-meta">
-      relevance {candidate.relevance} · retention {candidate.retentionPriority} · recency {candidate.recency} · tokens {candidate.estimatedTokens}
-    </div>
-    <div className="diagnostic-reason">{candidate.reason}</div>
   </div>;
 }
 
@@ -1965,27 +1989,25 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
         </div>
       </div>}
 
-      {selected.memoryExtraction&&<div className="diagnostic-block">
-        <h3>Automatic Memory Extraction</h3>
-        <p>Started: {selected.memoryExtraction.started?"yes":"no"}</p>
-         <div className="status-grid">
-           <span>Status</span><strong>{selected.memoryExtraction.status??"—"}</strong>
-           <span>Provider</span><strong>{selected.memoryExtraction.providerId??"—"}</strong>
-           <span>Model</span><strong>{selected.memoryExtraction.model??"—"}</strong>
-           <span>Request</span><strong>{selected.memoryExtraction.requestId??"—"}</strong>
-           <span>Conversation</span><strong>{selected.memoryExtraction.conversationId??"—"}</strong>
-           <span>Context messages</span><strong>{selected.memoryExtraction.contextMessageCount===undefined?"—":selected.memoryExtraction.contextMessageCount}</strong>
-         </div>
-        <h4>Candidates</h4>{selected.memoryExtraction.candidates.length===0?<div>None</div>:selected.memoryExtraction.candidates.map((candidate,index)=><TraceCandidate key={candidate.content+index} candidate={candidate}/>)}
-        <h4>Accepted</h4>{selected.memoryExtraction.accepted.length===0?<div>None</div>:selected.memoryExtraction.accepted.map((candidate,index)=><TraceCandidate key={candidate.content+index} candidate={candidate}/>)}
-        <h4>Rejected</h4>{selected.memoryExtraction.rejected.length===0?<div>None</div>:selected.memoryExtraction.rejected.map((item,index)=><div className="diagnostic-candidate" key={item.candidate.content+index}><div className="diagnostic-reason">{item.reason}</div><TraceCandidate candidate={item.candidate}/></div>)}
-        <h4>Duplicates</h4>{selected.memoryExtraction.duplicate.length===0?<div>None</div>:selected.memoryExtraction.duplicate.map((candidate,index)=><TraceCandidate key={candidate.content+index} candidate={candidate}/>)}
-        <h4>Superseded</h4>{selected.memoryExtraction.superseded.length===0?<div>None</div>:selected.memoryExtraction.superseded.map(item=><div className="row" key={item.memoryId}><span>{item.candidate.content}</span><span>{item.memoryId}</span></div>)}
-        <h4>Created</h4>{selected.memoryExtraction.created.length===0?<div>None</div>:selected.memoryExtraction.created.map(item=><div className="row" key={item.memoryId}><span>{item.candidate.content}</span><span>{item.memoryId}</span></div>)}
-        {selected.memoryExtraction.failed&&<div className="error">{selected.memoryExtraction.failed}</div>}
+      {selected.automaticMemory&&<div className="diagnostic-block">
+        <h3>Automatic Memory Agent</h3>
+        <div className="status-grid">
+          <span>Started</span><strong>{selected.automaticMemory.started?"yes":"no"}</strong>
+          <span>Status</span><strong>{selected.automaticMemory.status??"—"}</strong>
+          <span>Preset</span><strong>{selected.automaticMemory.providerPresetId??"—"}</strong>
+          <span>Provider</span><strong>{selected.automaticMemory.providerId??"—"}</strong>
+          <span>Model</span><strong>{selected.automaticMemory.model??"—"}</strong>
+          <span>Origin conversation</span><strong>{selected.automaticMemory.conversationId??"—"}</strong>
+          <span>Context messages</span><strong>{selected.automaticMemory.contextMessageCount??"—"}</strong>
+          <span>Persistence</span><strong>{selected.automaticMemory.persistence?.status??"—"}</strong>
+          <span>Memory id</span><strong>{selected.automaticMemory.persistence?.memoryId??"—"}</strong>
+        </div>
+        {selected.automaticMemory.result&&<pre className="diagnostic-json">{selected.automaticMemory.result}</pre>}
+        {selected.automaticMemory.failed&&<div className="error">{selected.automaticMemory.failed}</div>}
+        {selected.automaticMemory.persistence?.reason&&<div className="diagnostic-reason">{selected.automaticMemory.persistence.reason}</div>}
       </div>}
 
-      {selected.error&&<div className="error">{selected.error.code}: {selected.error.message}</div>}
+            {selected.error&&<div className="error">{selected.error.code}: {selected.error.message}</div>}
       <div className="diagnostic-block">
         <button type="button" onClick={()=>setShowRaw(current=>!current)}>{showRaw?"Hide raw trace":"Show raw trace"}</button>
         {showRaw&&<pre className="diagnostic-json">{JSON.stringify(selected,null,2)}</pre>}
@@ -2311,10 +2333,6 @@ function App(){
           }
         });
       },
-      streamSpeech:event=>{
-        if(!attached||event.characterId!==activeCharacterId||event.conversationId!==activeConversationId)return;
-        chatController.updateNovaTurnStream(event);
-      },
       fail:(turn,reason)=>{
         if(!attached||turn.characterId!==activeCharacterId||turn.conversationId!==activeConversationId)return;
         const current=chatController.getSnapshot();
@@ -2326,7 +2344,6 @@ function App(){
     foundation.setNovaTurnSink(sink);
     return ()=>{
       attached=false;
-      chatController.clearNovaTurnStream();
       foundation.setNovaTurnSink(undefined);
     };
   },[chatController,activeCharacterId,activeConversationId]);
