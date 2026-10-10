@@ -16,10 +16,13 @@ export function isStoredNovaTurnContent(content:string):boolean{
     const value:unknown=JSON.parse(source);
     if(!value||typeof value!=="object"||Array.isArray(value))return false;
     const record=value as Record<string,unknown>;
-    return record.version===1&&["speech","situation","thoughts","emotion","tools","nextWakeMs"].some(key=>key in record);
+    if(record.version!==1||!["speech","situation","thoughts","emotion","tools","nextWakeMs"].some(key=>key in record))return false;
+    // Without metadata, only a schema-valid JSON object is confidently classed as a stored NovaTurn.
+    return parseNovaTurn(source).complete;
   }catch{
-    // Preserve malformed but recognizably NovaTurn-shaped JSON for technical diagnostics.
-    return /"version"\\s*:\\s*1/.test(source.slice(0,1200))&&/"speech"\\s*:/.test(source.slice(0,12000));
+    // Malformed JSON without NovaTurn metadata remains ordinary assistant text; metadata-marked turns
+    // still reach the diagnostic parser through resolveNovaTurnMessagePresentation.
+    return false;
   }
 }
 
