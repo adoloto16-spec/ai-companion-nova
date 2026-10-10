@@ -178,7 +178,7 @@ async function backgroundTurnsUseBackgroundPromptIds():Promise<void>{
       }
     };
     const base=context(()=>{});
-    const background={...base,userTurn:undefined,wakeReason:"timer" as const};
+    const background={characterId:base.characterId,state:base.state,signal:base.signal,wakeReason:"life-start" as const};
     const mode=variant==="plain"?"plain":"structured";
     await createStep(runtime,mode,id=>"CUSTOM PROMPT: "+id).run(background);
     const format=variant==="plain"?"plain":variant==="tagged"?"tagged":"native-json";
