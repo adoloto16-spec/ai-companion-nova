@@ -35,7 +35,7 @@ async function main(){
   const controller=new ChatSessionController(new ConversationSession(active.id,character.id),{async chat(request){captured=request;return runtime.chat(request)}},
    {requestIdFactory:()=>"semantic-context-test",contextBuilder:{buildContext:request=>runtime.buildContext(request)},
     contextBudget:{availableContextTokens:2048,reservedOutputTokens:256,systemOverheadTokens:0,safetyMarginTokens:64}});
-  eq((await controller.submit("Где найти квартиру для себя?",runtime.getActiveChatModel())).status,"sent","real ChatSessionController submits successfully");
+  eq((await controller.submit("Где найти квартиру для себя? Что известно о long-term lease in Riga?",runtime.getActiveChatModel())).status,"sent","real ChatSessionController submits successfully");
   ok(captured,"final ChatRequest was captured");
   const semantic=captured!.context.messages.filter(m=>m.metadata?.contextSource==="semantic_search");
   ok(semantic.length>0,"semantic search results are present in final ChatRequest");
@@ -52,7 +52,7 @@ async function main(){
   ok(output.includes("core_book")&&output.includes("memory")&&output.includes("conversation"),"MEMORY_SEARCH returns results across the three source families");
   ok(output.includes(modelSearch.id),"explicit MEMORY_SEARCH can find model_search Core Book entries");
   const historicalAction=await runtime.invoke({id:"memory-search-historical.integration",schemaVersion:"1",tool:"MEMORY_SEARCH",
-   arguments:{query:"Which detail was saved about the long-term lease in my older conversation?"},metadata:{characterId:character.id,conversationId:active.id,turnId:"tool-turn-historical",callId:"tool-call-historical"}});
+   arguments:{query:"Which detail about the long-term lease in Riga was saved in my older conversation?"},metadata:{characterId:character.id,conversationId:active.id,turnId:"tool-turn-historical",callId:"tool-call-historical"}});
   eq(historicalAction.status,"success","MEMORY_SEARCH supports a focused historical query");
   if(historicalAction.status!=="success")throw new Error("Historical MEMORY_SEARCH failed: "+historicalAction.error.code);
   const historicalOutput=JSON.stringify(historicalAction.output);
@@ -65,7 +65,7 @@ async function main(){
   const modelRequests:ChatRequest[]=[];
   const loopCommits:Array<{turn:NovaTurn;context:MindTurnExecutionContext}>=[];
   let nextStepSawToolResult=false;
-  const toolRequest='<NOVA_TURN version="1"><SITUATION>Look up the saved lease detail.</SITUATION><THOUGHTS>Use the registered read-only search tool before answering.</THOUGHTS><EMOTION>Focused</EMOTION><TOOLS><MEMORY_SEARCH>{"query":"Which detail was saved about the long-term lease in my older conversation?"}</MEMORY_SEARCH></TOOLS><SPEECH>I will check the saved conversation.</SPEECH><LONGMEMORY></LONGMEMORY><NEXT_WAKE_MS>30000</NEXT_WAKE_MS></NOVA_TURN>';
+  const toolRequest='<NOVA_TURN version="1"><SITUATION>Look up the saved lease detail.</SITUATION><THOUGHTS>Use the registered read-only search tool before answering.</THOUGHTS><EMOTION>Focused</EMOTION><TOOLS><MEMORY_SEARCH>{"query":"Which detail about the long-term lease in Riga was saved in my older conversation?"}</MEMORY_SEARCH></TOOLS><SPEECH>I will check the saved conversation.</SPEECH><LONGMEMORY></LONGMEMORY><NEXT_WAKE_MS>30000</NEXT_WAKE_MS></NOVA_TURN>';
   const backgroundTurn='<NOVA_TURN version="1"><SITUATION>Begin cognitive loop.</SITUATION><THOUGHTS>There is no user turn yet.</THOUGHTS><EMOTION>Calm</EMOTION><TOOLS></TOOLS><SPEECH></SPEECH><LONGMEMORY></LONGMEMORY><NEXT_WAKE_MS>30000</NEXT_WAKE_MS></NOVA_TURN>';
   const finalTurn='<NOVA_TURN version="1"><SITUATION>Use the saved detail to answer.</SITUATION><THOUGHTS>The tool result is now part of the canonical conversation.</THOUGHTS><EMOTION>Focused</EMOTION><TOOLS></TOOLS><SPEECH>The earlier conversation recorded a long-term lease and that you live in Riga.</SPEECH><LONGMEMORY></LONGMEMORY><NEXT_WAKE_MS>30000</NEXT_WAKE_MS></NOVA_TURN>';
   const scriptedChat={async chat(request:ChatRequest):Promise<ChatResponse>{
