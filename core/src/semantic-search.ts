@@ -149,10 +149,6 @@ export class SemanticSearchService{
     }
     try{
       const documents=await this.collectDocuments(request.characterId);
-      // Ensure current documents are indexed before scoring. Failed documents are reported and excluded by hash validation.
-      for(const document of documents){
-        try{await this.ensureIndexed(document,configuration)}catch{this.recordIndexFailure(document,configuration)}
-      }
       const queryVector=await embedCompleteText(configuration.provider,query);
       const state=await this.loadIndex(request.characterId);
       const records=new Map(state.records.filter(record=>record.memoryId.startsWith(SEMANTIC_SEARCH_RECORD_PREFIX)).map(record=>[record.memoryId,record] as const));
