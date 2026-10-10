@@ -244,7 +244,7 @@ export function parseNovaTurn(content: string): NovaTurnParseResult {
   for(const field of [situationRaw,thoughtsRaw,emotionRaw,toolsRaw,toolResultsRaw,speechRaw,wakeRaw])withFieldDiagnostic(field,diagnostics);
   if(longMemoryRaw.status!=="missing")withFieldDiagnostic(longMemoryRaw,diagnostics);
 
-  const readBoundedText=(name:"SITUATION"|"THOUGHTS"|"EMOTION"|"SPEECH",field:ReadFieldResult,limit:number):NovaTurnParsedField<string>=>{
+  const readBoundedText=(name:"SITUATION"|"THOUGHTS"|"EMOTION"|"SPEECH"|"LONGMEMORY",field:ReadFieldResult,limit:number):NovaTurnParsedField<string>=>{
     if(field.value===undefined)return {status:field.status};
     if(field.value.length>limit){diagnostics.push(name+"-too-long");return {status:"invalid"};}
     return {status:field.status,value:field.value};
