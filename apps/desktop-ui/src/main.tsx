@@ -940,11 +940,11 @@ function ProviderPresetsView({
       source.credentialReference=draft.credentialReference?{...draft.credentialReference}:null;
       source.enabled=draft.enabled??true;
       source.timeoutMs=draft.timeoutMs??30000;
-      if(draft.temperature!==undefined)source.temperature=draft.temperature;
-      if(draft.topP!==undefined)source.topP=draft.topP;
-      if(draft.numCtx!==undefined)source.numCtx=draft.numCtx;
-      if(draft.numPredict!==undefined)source.numPredict=draft.numPredict;
-      if(draft.keepAlive!==undefined)source.keepAlive=draft.keepAlive;
+      if(typeof draft.temperature==="number")source.temperature=draft.temperature;
+      if(typeof draft.topP==="number")source.topP=draft.topP;
+      if(typeof draft.numCtx==="number")source.numCtx=draft.numCtx;
+      if(typeof draft.numPredict==="number")source.numPredict=draft.numPredict;
+      if(draft.keepAlive!==undefined&&draft.keepAlive!==null)source.keepAlive=draft.keepAlive;
       const {providerId:_providerId,baseUrl:_baseUrl,model:_model,credentialReference:_credentialReference,enabled:_enabled,timeoutMs:_timeoutMs,temperature:_temperature,topP:_topP,numCtx:_numCtx,numPredict:_numPredict,keepAlive:_keepAlive,...withoutSingle}=draft;
       updateDraft({...withoutSingle,type:"pool",sources:[source],activeSourceId:source.id,updatedAt:now});
       setSelectedSourceId(source.id);
