@@ -342,6 +342,18 @@
               "type": "string",
               "maxLength": 12000
             },
+            "nova-schedule-structured": {
+              "type": "string",
+              "maxLength": 12000
+            },
+            "nova-schedule-plain": {
+              "type": "string",
+              "maxLength": 12000
+            },
+            "nova-tools-allowlist": {
+              "type": "string",
+              "maxLength": 12000
+            },
             "memory-judge.system": {
               "type": "string",
               "maxLength": 12000
