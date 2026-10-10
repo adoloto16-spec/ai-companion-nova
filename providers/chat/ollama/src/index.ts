@@ -118,7 +118,7 @@ export class OllamaProviderError extends Error {
 interface OllamaMessage { role: "system" | "user" | "assistant"; content: string; }
 interface OllamaChunk {
   model?: unknown;
-  message?: { role?: unknown; content?: unknown } | null;
+  message?: { role?: unknown; content?: unknown; thinking?: unknown } | null;
   done?: unknown;
   done_reason?: unknown;
   error?: unknown;
@@ -350,6 +350,7 @@ export class OllamaChatProvider implements ChatProvider {
         if (typeof event.error === "string" && event.error) throw this.failure(request, "PROVIDER_ERROR", event.error, "api");
         if (typeof event.model === "string" && event.model) model = event.model;
         const message = event.message;
+        // Ollama may send internal reasoning in `message.thinking`; only `content` is user-visible output.
         if (message && typeof message.content === "string" && message.content.length > 0) {
           content += message.content;
           await handlers.onEvent({
@@ -439,6 +440,7 @@ export class OllamaChatProvider implements ChatProvider {
       model: request.model,
       messages,
       stream,
+      think: false,
       ...(format?.type === "json" ? { format: schema ?? "json" } : format?.type === "json-schema" ? { format: schema } : {}),
       ...(Object.keys(options).length ? { options } : {}),
       ...(this.config.keepAlive === undefined ? {} : { keep_alive: this.config.keepAlive })

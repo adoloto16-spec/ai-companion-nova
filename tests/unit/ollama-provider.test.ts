@@ -172,6 +172,7 @@ async function ordinaryRequestMappingTest(): Promise<void> {
   equal(req.url, "http://127.0.0.1:11434/api/chat", "native chat endpoint");
   const body = JSON.parse(req.body!) as Record<string, unknown>;
   equal(body.stream, false, "ordinary request disables streaming");
+  equal(body.think, false, "native /api/chat explicitly disables thinking");
   equal(body.format, undefined, "text generation omits JSON format");
   deepEqual(body.options, {temperature: 0.35, top_p: 0.75, num_predict: 120}, "generation parameters map without invented context window");
   equal(body.model, "llama3.2:latest", "model tag preserved");
@@ -326,6 +327,39 @@ async function splitNdjsonStreamingTest(): Promise<void> {
   equal(body.stream, true, "native chat streaming enabled");
 }
 
+async function thinkingIsNotAssistantContentTest(): Promise<void> {
+  const http = new FakeOllamaHttpClient();
+  http.streamHandler = async () => ({
+    status: 200,
+    body: chunks([
+      JSON.stringify({
+        model: "qwen3.5:latest",
+        message: {role: "assistant", thinking: "internal reasoning that must not be shown"},
+        done: false
+      }) + "\n",
+      JSON.stringify({
+        model: "qwen3.5:latest",
+        message: {role: "assistant", content: "Here is the answer."},
+        done: false
+      }) + "\n",
+      JSON.stringify({model: "qwen3.5:latest", done: true, done_reason: "stop"}) + "\n"
+    ])
+  });
+  const events: Array<{type: string; text?: string}> = [];
+  const response = await provider(http).stream(chatRequest(), {
+    onEvent(event) { events.push(event); }
+  });
+
+  equal(response.message.content, "Here is the answer.", "only message.content is returned as the assistant answer");
+  deepEqual(
+    events.filter(event => event.type === "delta").map(event => event.text),
+    ["Here is the answer."],
+    "message.thinking is neither accumulated nor emitted as a user-facing delta"
+  );
+  const body = JSON.parse(http.streamRequests[0]!.body!) as Record<string, unknown>;
+  equal(body.think, false, "streaming /api/chat also disables thinking");
+}
+
 async function streamSchemaViolationTest(): Promise<void> {
   const http = new FakeOllamaHttpClient();
   http.streamHandler = async () => ({status: 200, body: chunks([
@@ -421,6 +455,7 @@ async function main(): Promise<void> {
     ["JSON and JSON Schema mode", jsonModeAndSchemaMappingTest],
     ["Invalid JSON and schema violations", invalidJsonAndSchemaViolationTest],
     ["Split NDJSON streaming", splitNdjsonStreamingTest],
+    ["Thinking data is not assistant content", thinkingIsNotAssistantContentTest],
     ["Streaming schema violation", streamSchemaViolationTest],
     ["Cancellation and timeouts", cancellationAndTimeoutTest],
     ["API and missing model errors", apiErrorTest],
