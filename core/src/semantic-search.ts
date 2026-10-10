@@ -32,8 +32,7 @@ const MAX_EMBEDDING_CHARS=2400, EMBEDDING_OVERLAP_CHARS=120, EMBEDDING_BATCH_SIZ
 const DEFAULT_COSINE_THRESHOLD=0.35, MAX_QUERY_INPUT_CHARS=48_000;
 function emptyIndex(characterId:CharacterId):MemorySemanticIndexState{return{apiVersion:MEMORY_SEMANTIC_INDEX_API_VERSION,schemaVersion:MEMORY_SEMANTIC_INDEX_SCHEMA_VERSION,characterId,records:[]}}
 function isVector(value:unknown):value is readonly number[]{return Array.isArray(value)&&value.length>0&&value.every(item=>typeof item==="number"&&Number.isFinite(item))}
-function isCoreBookSearchAvailable(entry:CoreBookEntry,query:string):boolean{
-  const activation=entry.activation;
+function isCoreBookSearchAvailable(activation:CoreBookEntry["activation"],query:string):boolean{
   if(activation.kind==="always"||activation.kind==="semantic")return true;
   if(activation.kind==="model_search")return false;
   if(activation.kind==="keyword"){
@@ -193,13 +192,7 @@ export class SemanticSearchService{
       const records=new Map(state.records.filter(record=>record.memoryId.startsWith(SEMANTIC_SEARCH_RECORD_PREFIX)).map(record=>[record.memoryId,record] as const));
       const hits:SemanticSearchHit[]=[];
       for(const document of documents){
-        if(document.source==="core_book"&&!isCoreBookSearchAvailable(
-          {id:document.sourceId as CoreBookEntry["id"],characterId:document.characterId,title:document.title,content:document.content,
-            tags:document.tags,activation:document.activation??{kind:"always"},retentionPriority:0,placementWeight:0,mutationPolicy:"locked",
-            enabled:document.status==="enabled",source:"user",role:document.role==="system"||document.role==="assistant"||document.role==="user"?document.role:"user",
-            metadata:{},createdAt:document.updatedAt,updatedAt:document.updatedAt},
-          query
-        ))continue;
+        if(document.source==="core_book"&&!isCoreBookSearchAvailable(document.activation??{kind:"always"},query))continue;
         const record=records.get(recordId(document));
         if(!record||!isActiveDocument(record,document,configuration.provider,configuration.model)||record.dimensions!==queryVector.length)continue;
         const similarity=cosineSimilarity(queryVector,record.vector);
