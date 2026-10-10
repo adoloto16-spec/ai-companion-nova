@@ -1531,10 +1531,11 @@ function AppSettingsView({
 
     <section>
       <h3>Memory</h3>
-      <label className="checkbox">Automatic long-term memory extraction
+      <label className="checkbox">Save LONGMEMORY candidates automatically
         <input type="checkbox" checked={settings.chat.automaticLongTermMemory}
           onChange={event=>onChange({...settings,chat:{...settings.chat,automaticLongTermMemory:event.target.checked}})} disabled={saving}/>
       </label>
+      <p className="hint">Controls whether a non-empty LONGMEMORY candidate produced by Nova Life may enter the existing Memory Judge and character-memory save path. An empty or missing candidate causes no extra LLM call and no memory write. It does not make ordinary Chat generate memory candidates.</p>
       <label>Memory items
         <input type="number" min={1} max={100} value={settings.memory.candidateLimit}
           onChange={event=>setNumber("memory","candidateLimit",Number(event.target.value))} disabled={saving}/>
