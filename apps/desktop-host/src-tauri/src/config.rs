@@ -62,12 +62,7 @@ fn validate(configuration:&ProviderConfiguration)->Result<(),String>{
     if !url.username().is_empty()||url.password().is_some(){return Err("provider base URL must not contain credentials".to_string());}
     if url.query().is_some()||url.fragment().is_some(){return Err("provider base URL must not contain query or fragment".to_string());}
     if configuration.provider_id=="ollama"{
-        let host=url.host_str().ok_or_else(||"Ollama base URL has no host".to_string())?;
-        let host=host.strip_prefix('[').and_then(|value|value.strip_suffix(']')).unwrap_or(host);
-        let loopback=host.eq_ignore_ascii_case("localhost")||host.parse::<std::net::IpAddr>().map(|ip|ip.is_loopback()).unwrap_or(false);
-        if url.scheme()!="http"||!loopback||url.path()!="/"{
-            return Err("Ollama base URL must use HTTP on localhost, 127.0.0.1, or ::1 without an API path".to_string());
-        }
+        super::ollama_http::validate_base_url(&configuration.base_url)?;
         if configuration.credential_reference.is_some(){return Err("Ollama configuration must not contain an API credential".to_string());}
     }
     if configuration.model.trim()!=configuration.model||configuration.model.is_empty(){return Err("provider model must be a non-empty trimmed string".to_string());}
