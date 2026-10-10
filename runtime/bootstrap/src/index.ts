@@ -589,8 +589,12 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       const settings=settingsManager.get().retrieval;
       const hits=await semanticSearch.search({characterId,query:target.resource,limit:Math.min(20,settings.semanticResultLimit),threshold:settings.semanticSimilarityThreshold});
       let remaining=3000;
-      const results=hits.map(hit=>{
-        const budget=Math.max(0,Math.min(900,remaining));
+      const results=hits.map((hit,index)=>{
+        // Share the remaining output budget across the remaining ranked hits. Avoid starving
+        // lower-ranked documents to a few characters just because earlier hits used 900 each.
+        const remainingDocuments=hits.length-index;
+        const fairShare=remainingDocuments>0?Math.floor(remaining/remainingDocuments):0;
+        const budget=Math.max(0,Math.min(900,fairShare));
         const content=hit.content.slice(0,budget);
         remaining-=content.length;
         return {id:hit.sourceId,source:hit.source,characterId:hit.characterId,
