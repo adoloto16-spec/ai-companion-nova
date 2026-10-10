@@ -10,7 +10,7 @@ export interface NovaTurnMessagePresentation{
 /** Detect the existing stored v1 tag protocol or its native JSON Schema representation. */
 export function isStoredNovaTurnContent(content:string):boolean{
   const source=content.trimStart();
-  if(/^<\\s*NOVA_TURN\\b/i.test(source))return true;
+  if(/^\s*<\s*NOVA_TURN\b/i.test(source))return true;
   if(!source.startsWith("{"))return false;
   try{
     const value:unknown=JSON.parse(source);
