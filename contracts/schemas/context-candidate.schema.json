@@ -31,7 +31,8 @@
       "enum": [
         "conversation",
         "core_book",
-        "memory"
+        "memory",
+        "semantic_search"
       ]
     },
     "referenceId": {

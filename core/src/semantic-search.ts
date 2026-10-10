@@ -42,15 +42,7 @@ function stableKey(value:string):string{return deterministicContentHash(value)}
 function recordId(document:SemanticSearchDocument):string{
   return SEMANTIC_SEARCH_RECORD_PREFIX+document.source+":"+stableKey([document.characterId,document.source,document.conversationId??"",document.sourceId].join("\u0000"));
 }
-function embeddingText(document:SemanticSearchDocument):string{
-  return [
-    "SOURCE: "+document.source,"SOURCE_ID: "+document.sourceId,"CHARACTER_ID: "+document.characterId,
-    document.conversationId?"CONVERSATION_ID: "+document.conversationId:"",
-    document.title?"TITLE: "+document.title:"",document.role?"MESSAGE_ROLE: "+document.role:"",
-    document.status?"STATUS: "+document.status:"",document.type?"TYPE: "+document.type:"",
-    document.tags.length?"TAGS: "+document.tags.join(", "):"","FULL DOCUMENT CONTENT:",document.content
-  ].filter(Boolean).join("\n");
-}
+function embeddingText(document:SemanticSearchDocument):string{return document.content}
 function chunkLongInput(text:string):string[]{
   // No tokenizer is bundled with this OpenAI-compatible provider. Conservatively chunk at 2,400 Unicode
   // code points with overlap for embedding only; canonical full document text is never truncated.
@@ -267,7 +259,12 @@ export class SemanticSearchService{
       const state=await this.loadIndex(document.characterId),id=recordId(document);
       const existing=state.records.find(record=>record.memoryId===id);
       if(existing&&isActiveDocument(existing,document,configuration.provider,configuration.model))return false;
-      const vector=await embedCompleteText(configuration.provider,embeddingText(document));
+      const cachedMemoryVector=document.source==="memory"
+        ?state.records.find(record=>record.memoryId===document.sourceId&&record.contentHash===deterministicContentHash(document.content)
+          &&record.embeddingProviderId===configuration.provider.id&&record.embeddingModel===configuration.model
+          &&isVector(record.vector)&&record.dimensions===record.vector.length)
+        :undefined;
+      const vector=cachedMemoryVector?[...cachedMemoryVector.vector]:await embedCompleteText(configuration.provider,embeddingText(document));
       const sameModel=state.records.filter(record=>record.memoryId.startsWith(SEMANTIC_SEARCH_RECORD_PREFIX)&&record.embeddingProviderId===configuration.provider.id&&record.embeddingModel===configuration.model);
       let records=state.records.filter(record=>record.memoryId!==id);
       if(sameModel.some(record=>record.dimensions!==vector.length)){

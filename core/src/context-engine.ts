@@ -1,4 +1,5 @@
 import type {
+  AppSettings,
   AssembledContext,
   ChatMessage,
   ContextBuildRequest,
@@ -17,6 +18,7 @@ import type {
   Retriever
 } from "../../contracts/src/index";
 import {InProcessMemoryRetriever} from "./memory-retriever";
+import type {SemanticSearchService} from "./semantic-search";
 import {
   CONTEXT_API_VERSION,
   CONTEXT_SCHEMA_VERSION,DEFAULT_APP_SETTINGS
@@ -117,6 +119,47 @@ export class MemoryCandidateSource implements ContextCandidateSource {
         characterId:request.characterId,
         error:error instanceof Error?error.message:"unknown"
       });
+      return [];
+    }
+  }
+}
+
+export class SemanticSearchCandidateSource implements ContextCandidateSource {
+  readonly source:ContextSource="semantic_search";
+  constructor(
+    private readonly searcher:Pick<SemanticSearchService,"search">,
+    private readonly settings:()=>AppSettings["retrieval"],
+    private readonly estimator:TokenEstimator=new DeterministicApproxTokenEstimator(),
+    private readonly diagnostics?:DiagnosticsStore
+  ){}
+  async collect(request:ContextBuildRequest):Promise<readonly ContextCandidate[]>{
+    const settings=this.settings();
+    if(!settings.semanticSearchEnabled)return [];
+    const recent=request.messages.filter(message=>(message.role==="user"||message.role==="assistant")&&message.content.trim()).slice(-3);
+    if(recent.length===0)return [];
+    const query=recent.map(message=>"["+message.role+"]\n"+message.content).join("\n\n");
+    try{
+      const hits=await this.searcher.search({characterId:request.characterId,query,limit:settings.semanticResultLimit,threshold:settings.semanticSimilarityThreshold});
+      return hits.map(hit=>{
+        const title=hit.title.trim()||hit.source+" record "+hit.sourceId;
+        const content="[Semantic retrieval result]\nSource: "+hit.source+"\nRecord ID: "+hit.sourceId+
+          (hit.conversationId?"\nConversation ID: "+hit.conversationId:"")+"\nTitle: "+title+
+          "\nRaw cosine similarity: "+hit.similarity.toFixed(4)+"\nFull content:\n"+hit.content+"\n[/Semantic retrieval result]";
+        const rankingScore=Math.round((hit.similarity+1)*50);
+        return {
+          id:"semantic_search:"+hit.source+":"+hit.sourceId+":"+(hit.conversationId??""),
+          source:"semantic_search" as const,referenceId:hit.sourceId,characterId:hit.characterId,content,role:"system" as const,
+          metadata:{semanticSearch:true,semanticSource:hit.source,semanticSourceId:hit.sourceId,
+            ...(hit.conversationId?{conversationId:hit.conversationId}:{}),title:hit.title,updatedAt:hit.updatedAt,
+            ...(hit.status?{status:hit.status}:{}),...(hit.type?{type:hit.type}:{}),tags:[...hit.tags],cosineSimilarity:hit.similarity},
+          eligible:true,reason:"semantic vector retrieval; raw cosine similarity="+hit.similarity.toFixed(4)+" (not a percentage)",
+          estimatedTokens:this.estimator.estimate(content),zone:"retrieved_memory" as const,
+          relevance:Math.max(0,Math.min(100,rankingScore)),activationStrength:0,retentionPriority:60,placementWeight:0,recency:0,
+          selectionScore:200+Math.round((hit.similarity+1)*500)
+        } satisfies ContextCandidate;
+      });
+    }catch{
+      this.diagnostics?.recordError("context-engine","SEMANTIC_SEARCH_CONTEXT_FAILED","Semantic context retrieval failed",{characterId:request.characterId});
       return [];
     }
   }
@@ -347,6 +390,8 @@ export interface ContextEngineOptions {
   memoryCandidateLimit?:DynamicNumber;
   retrievalCandidateLimit?:DynamicNumber;
   retriever?:Retriever;
+  semanticSearch?:Pick<SemanticSearchService,"search">;
+  semanticSearchSettings?:()=>AppSettings["retrieval"];
   diagnostics?:DiagnosticsStore;
 }
 
@@ -372,7 +417,23 @@ export class DeterministicContextEngine implements ContextEngineContract {
   async build(request:ContextBuildRequest):Promise<AssembledContext> {
     validateRequest(request);
     const collected=await Promise.all(this.sources.map(source=>source.collect(request)));
-    const candidates=collected.flat().map((candidate,index)=>({candidate,index}));
+    const rawCandidates=collected.flat();
+    const canonicalKey=(source:string,sourceId:string,conversationId?:string)=>source+":"+sourceId+(source==="conversation"?":"+((conversationId??request.conversationId)):"");
+    const ordinaryReferences=new Set(rawCandidates.filter(candidate=>candidate.source!=="semantic_search")
+      .map(candidate=>canonicalKey(candidate.source,candidate.referenceId)));
+    const semanticReferences=new Set<string>();
+    const distinctCandidates=rawCandidates.filter(candidate=>{
+      if(candidate.source!=="semantic_search")return true;
+      const metadata=candidate.metadata??{};
+      const source=typeof metadata.semanticSource==="string"?metadata.semanticSource:"";
+      const sourceId=typeof metadata.semanticSourceId==="string"?metadata.semanticSourceId:candidate.referenceId;
+      const conversationId=typeof metadata.conversationId==="string"?metadata.conversationId:undefined;
+      const key=canonicalKey(source,sourceId,conversationId);
+      if(ordinaryReferences.has(key)||semanticReferences.has(key))return false;
+      semanticReferences.add(key);
+      return true;
+    });
+    const candidates=distinctCandidates.map((candidate,index)=>({candidate,index}));
     const included=new Set<string>();
     let remaining=request.budget.availableContextTokens;
 
@@ -517,6 +578,9 @@ export function createDeterministicContextEngine(
       options.memoryCandidateLimit??DEFAULT_MEMORY_CANDIDATE_LIMIT,
       options.diagnostics
     ));
+  }
+  if(options.semanticSearch&&options.semanticSearchSettings){
+    sources.push(new SemanticSearchCandidateSource(options.semanticSearch,options.semanticSearchSettings,estimator,options.diagnostics));
   }
   return new DeterministicContextEngine(sources,options);
 }
