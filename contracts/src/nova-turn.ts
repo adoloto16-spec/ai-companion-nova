@@ -1,3 +1,6 @@
+import {STANDARD_SCHEMAS} from "./generated-schemas";
+import {MinimalJsonSchemaValidator} from "./schema-validator";
+
 export const NOVA_TURN_PROTOCOL_VERSION = 1 as const;
 export const NOVA_TURN_MAX_SERIALIZED_CHARS = 32_000;
 
@@ -200,7 +203,79 @@ export function serializeNovaTurn(turn: NovaTurn): string {
  * Parse the versioned tagged protocol conservatively. Recover only uniquely paired,
  * bounded fields; malformed or unlabelled text is never promoted to public speech.
  */
+
+function parseNativeJsonNovaTurn(content:string):NovaTurnParseResult{
+  const invalidFields:NovaTurnParseFields={
+    situation:{status:"invalid"},thoughts:{status:"invalid"},emotion:{status:"invalid"},
+    tools:{status:"invalid"},toolResults:{status:"missing"},speech:{status:"invalid"},
+    longMemory:{status:"missing"},nextWakeMs:{status:"invalid"}
+  };
+  const invalidJson=(diagnostic:string):NovaTurnParseResult=>({
+    complete:false,diagnostics:[diagnostic],fields:invalidFields
+  });
+  if(content.length>NOVA_TURN_MAX_SERIALIZED_CHARS)return invalidJson("response-too-large");
+  let decoded:unknown;
+  try{decoded=JSON.parse(content);}
+  catch{return invalidJson("native-json-invalid-json");}
+  if(!decoded||typeof decoded!=="object"||Array.isArray(decoded))return invalidJson("native-json-root-not-object");
+
+  const record=decoded as Record<string,unknown>;
+  const schema=STANDARD_SCHEMAS["nova-turn"];
+  const validator=new MinimalJsonSchemaValidator();
+  const validation=validator.validate(record,schema);
+  const textField=(key:"situation"|"thoughts"|"emotion"|"speech"|"longMemory",limit:number,required:boolean):NovaTurnParsedField<string>=>{
+    if(!Object.prototype.hasOwnProperty.call(record,key)){
+      return {status:required?"missing":"missing"};
+    }
+    const value=record[key];
+    if(typeof value!=="string"||value.length>limit)return {status:"invalid"};
+    return {status:value.trim()?"valid":"empty",value};
+  };
+  const situation=textField("situation",FIELD_LIMITS.SITUATION,true);
+  const thoughts=textField("thoughts",FIELD_LIMITS.THOUGHTS,true);
+  const emotion=textField("emotion",FIELD_LIMITS.EMOTION,true);
+  const speech=textField("speech",FIELD_LIMITS.SPEECH,true);
+  const longMemory=textField("longMemory",FIELD_LIMITS.LONGMEMORY,false);
+  const version: NovaTurnParsedField<number>=record.version===1
+    ?{status:"valid",value:1}:{status:"invalid"};
+  const toolsSchema=schema.properties?.tools;
+  const toolsValidation=toolsSchema?validator.validate(record.tools,toolsSchema):{valid:false,errors:["tools-schema-missing"]};
+  const toolValues=Array.isArray(record.tools)?record.tools as NovaToolCall[]:[];
+  const toolsStatus: NovaTurnFieldStatus=!Array.isArray(record.tools)||!toolsValidation.valid
+    ?"invalid":toolValues.length===0?"empty":"valid";
+  const toolsField:NovaTurnParsedField<readonly NovaToolCall[]>={status:toolsStatus,...(toolsStatus==="invalid"?{}:{value:toolValues})};
+  const wakeValid=Number.isSafeInteger(record.nextWakeMs)&&typeof record.nextWakeMs==="number"&&record.nextWakeMs>=1&&record.nextWakeMs<=FIELD_LIMITS.NEXT_WAKE_MS;
+  const nextWakeMs:NovaTurnParsedField<number>=wakeValid
+    ?{status:"valid",value:record.nextWakeMs as number}:{status:"invalid"};
+  const fields:NovaTurnParseFields={
+    situation,thoughts,emotion,tools:toolsField,toolResults:{status:"missing"},speech,longMemory,nextWakeMs
+  };
+  if(!validation.valid){
+    const diagnostics=validation.errors.slice(0,12).map(error=>"native-json-schema:"+error);
+    if(diagnostics.length===0)diagnostics.push("native-json-schema-invalid");
+    return {complete:false,diagnostics,fields};
+  }
+  const turn:NovaTurn={
+    version:1,
+    situation:record.situation as string,
+    thoughts:record.thoughts as string,
+    emotion:record.emotion as string,
+    tools:toolValues,
+    // Tool results are produced and persisted by the application, never accepted from model JSON.
+    toolResults:[],
+    speech:record.speech as string,
+    longMemory:typeof record.longMemory==="string"?record.longMemory:"",
+    nextWakeMs:record.nextWakeMs as number
+  };
+  return {turn,speech:turn.speech,complete:true,diagnostics:[],fields:{
+    ...fields,
+    version:version as unknown as NovaTurnParseFields["situation"], // Keep the parser result shape limited to the public field contract.
+    longMemory:fields.longMemory.status==="missing"?{status:"missing"}:fields.longMemory
+  }};
+}
+
 export function parseNovaTurn(content: string): NovaTurnParseResult {
+  if(typeof content==="string"&&content.trimStart().startsWith("{"))return parseNativeJsonNovaTurn(content);
   const diagnostics:string[]=[];
   const missing=(status:NovaTurnFieldStatus="missing"):NovaTurnParsedField<string>=>({status});
   const blankFields: NovaTurnParseFields = {
