@@ -2865,8 +2865,17 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           "string",
           "number"
         ],
-        "minLength": 1,
-        "minimum": 0
+        "minLength": 1
+      },
+      "temperature": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 2
+      },
+      "topP": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
       }
     }
   },
@@ -2971,8 +2980,17 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           "string",
           "number"
         ],
-        "minLength": 1,
-        "minimum": 0
+        "minLength": 1
+      },
+      "temperature": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 2
+      },
+      "topP": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
       }
     }
   },
@@ -3136,8 +3154,23 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           "number",
           "null"
         ],
-        "minLength": 1,
-        "minimum": 0
+        "minLength": 1
+      },
+      "temperature": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "minimum": 0,
+        "maximum": 2
+      },
+      "topP": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "minimum": 0,
+        "maximum": 1
       }
     },
     "allOf": [
@@ -3252,6 +3285,26 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
                     ]
                   }
                 }
+              },
+              {
+                "required": [
+                  "temperature"
+                ],
+                "properties": {
+                  "temperature": {
+                    "type": "number"
+                  }
+                }
+              },
+              {
+                "required": [
+                  "topP"
+                ],
+                "properties": {
+                  "topP": {
+                    "type": "number"
+                  }
+                }
               }
             ]
           }
@@ -3338,8 +3391,23 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
                 "number",
                 "null"
               ],
-              "minLength": 1,
-              "minimum": 0
+              "minLength": 1
+            },
+            "temperature": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 2
+            },
+            "topP": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1
             }
           }
         }
@@ -3419,6 +3487,12 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             "type": "null"
           },
           "keepAlive": {
+            "type": "null"
+          },
+          "temperature": {
+            "type": "null"
+          },
+          "topP": {
             "type": "null"
           }
         }
@@ -3524,8 +3598,23 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
               "number",
               "null"
             ],
-            "minLength": 1,
-            "minimum": 0
+            "minLength": 1
+          },
+          "temperature": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 2
+          },
+          "topP": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1
           }
         }
       }
