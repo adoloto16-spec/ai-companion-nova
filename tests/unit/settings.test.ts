@@ -106,7 +106,7 @@ async function main(){
   const migratedV10=migrateAppSettings(v10);
   equal(migratedV10.chat.responseMode,"plain","schema v10 persists the selected Chat response mode");
   equal(migratedV10.cognitiveSchedule.maxRequestsPerHour,120,"explicit quota in the old schema is preserved");
-  equal(migratedV10.schemaVersion,"12","schema v10 upgrades to schema v11");
+  equal(migratedV10.schemaVersion,"12","schema v10 upgrades to schema v12");
   equal(Object.prototype.hasOwnProperty.call(migratedV10,"memoryAgent"),false,"schema v10 Memory Agent configuration is removed safely");
   const v6=JSON.parse(JSON.stringify(defaultAppSettings())) as Record<string,unknown>;
   v6.schemaVersion="6";
