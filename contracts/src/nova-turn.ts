@@ -23,6 +23,8 @@ export interface NovaTurn {
   /** Runtime-produced results; model responses may omit the TOOL_RESULTS block. */
   toolResults: readonly NovaToolResult[];
   speech: string;
+  /** Optional private long-term-memory candidate emitted by the same cognitive response. */
+  longMemory?: string;
   nextWakeMs: number;
 }
 
@@ -38,6 +40,7 @@ export interface NovaTurnParseFields {
   tools: NovaTurnParsedField<readonly NovaToolCall[]>;
   toolResults: NovaTurnParsedField<readonly NovaToolResult[]>;
   speech: NovaTurnParsedField<string>;
+  longMemory: NovaTurnParsedField<string>;
   nextWakeMs: NovaTurnParsedField<number>;
 }
 export interface NovaTurnParseResult {
@@ -54,6 +57,7 @@ const FIELD_LIMITS = {
   THOUGHTS: 8_000,
   EMOTION: 500,
   SPEECH: 4_000,
+  LONGMEMORY: 8_000,
   TOOL_COUNT: 12,
   TOOL_ARGUMENTS: 4_000,
   TOOL_RESULTS: 12,
@@ -80,7 +84,7 @@ function unescapeXml(value: string): string {
   });
 }
 
-type CanonicalField = "SITUATION" | "THOUGHTS" | "EMOTION" | "TOOLS" | "TOOL_RESULTS" | "SPEECH" | "NEXT_WAKE_MS";
+type CanonicalField = "SITUATION" | "THOUGHTS" | "EMOTION" | "TOOLS" | "TOOL_RESULTS" | "SPEECH" | "LONGMEMORY" | "NEXT_WAKE_MS";
 interface TagToken { closing:boolean; rawName:string; canonical:CanonicalField; attributes:string; start:number; end:number; }
 interface ReadFieldResult { status:NovaTurnFieldStatus; value?:string; diagnostic?:string; }
 const FIELD_ALIASES:Record<CanonicalField,readonly string[]> = {
@@ -90,6 +94,7 @@ const FIELD_ALIASES:Record<CanonicalField,readonly string[]> = {
   TOOLS:["TOOL_CALLS"],
   TOOL_RESULTS:["TOOLRESULTS"],
   SPEECH:["PUBLIC_SPEECH"],
+  LONGMEMORY:[],
   NEXT_WAKE_MS:["NEXT_WAKE_INTERVAL_MS"],
 };
 const FIELD_NAME_MAP = new Map<string,CanonicalField>();
@@ -138,12 +143,12 @@ function readField(source:string, canonical:CanonicalField, wrapperRecovered:boo
     return {status:"invalid",diagnostic:canonical+"-tag-malformed"};
   }
   if(open.rawName!==close.rawName)return {status:"invalid",diagnostic:canonical+"-tag-mismatch"};
-  if(canonical==="SPEECH"){
+  if(canonical==="SPEECH"||canonical==="LONGMEMORY"){
     const owner=enclosingFieldNames(source,open.start).at(-1);
-    if(owner)return {status:"invalid",diagnostic:"SPEECH-nested-in-"+owner};
+    if(owner)return {status:"invalid",diagnostic:canonical+"-nested-in-"+owner};
   }
   const raw=source.slice(open.end,close.start);
-  if(canonical==="SPEECH"&&/<\s*\/?\s*[A-Za-z][A-Za-z0-9_.-]*\b[^>]*>/.test(raw)){
+  if((canonical==="SPEECH"||canonical==="LONGMEMORY")&&/<\s*\/?\s*[A-Za-z][A-Za-z0-9_.-]*\b[^>]*>/.test(raw)){
     return {status:"invalid",diagnostic:"SPEECH-contains-unescaped-tags"};
   }
   const value=unescapeXml(raw).trim();
@@ -185,6 +190,7 @@ export function serializeNovaTurn(turn: NovaTurn): string {
     "<TOOLS>" + tools + "</TOOLS>",
     "<TOOL_RESULTS>" + toolResults + "</TOOL_RESULTS>",
     "<SPEECH>" + escapeXml(turn.speech) + "</SPEECH>",
+    "<LONGMEMORY>" + escapeXml(turn.longMemory??"") + "</LONGMEMORY>",
     "<NEXT_WAKE_MS>" + String(turn.nextWakeMs) + "</NEXT_WAKE_MS>",
     "</NOVA_TURN>",
   ].join("\n");
@@ -199,7 +205,7 @@ export function parseNovaTurn(content: string): NovaTurnParseResult {
   const missing=(status:NovaTurnFieldStatus="missing"):NovaTurnParsedField<string>=>({status});
   const blankFields: NovaTurnParseFields = {
     situation:missing(),thoughts:missing(),emotion:missing(),
-    tools:{status:"missing"},toolResults:{status:"missing"},speech:missing(),nextWakeMs:{status:"missing"},
+    tools:{status:"missing"},toolResults:{status:"missing"},speech:missing(),longMemory:missing(),nextWakeMs:{status:"missing"},
   };
   if(typeof content!=="string"||content.length===0){
     return {complete:false,diagnostics:["response-empty-or-invalid"],fields:blankFields};
@@ -207,7 +213,7 @@ export function parseNovaTurn(content: string): NovaTurnParseResult {
   if(content.length>NOVA_TURN_MAX_SERIALIZED_CHARS){
     return {complete:false,diagnostics:["response-too-large"],fields:{
       situation:{status:"invalid"},thoughts:{status:"invalid"},emotion:{status:"invalid"},
-      tools:{status:"invalid"},toolResults:{status:"invalid"},speech:{status:"invalid"},nextWakeMs:{status:"invalid"},
+      tools:{status:"invalid"},toolResults:{status:"invalid"},speech:{status:"invalid"},longMemory:{status:"invalid"},nextWakeMs:{status:"invalid"},
     }};
   }
 
@@ -220,7 +226,7 @@ export function parseNovaTurn(content: string): NovaTurnParseResult {
   if(opens.length===1&&version!==undefined&&version!=="1"){
     return {complete:false,diagnostics:["unsupported-protocol-version"],fields:{
       situation:{status:"invalid"},thoughts:{status:"invalid"},emotion:{status:"invalid"},
-      tools:{status:"invalid"},toolResults:{status:"invalid"},speech:{status:"invalid"},nextWakeMs:{status:"invalid"},
+      tools:{status:"invalid"},toolResults:{status:"invalid"},speech:{status:"invalid"},longMemory:{status:"invalid"},nextWakeMs:{status:"invalid"},
     }};
   }
   const wrapperValid=opens.length===1&&closes.length===1&&wrapperTokens.length===2&&
@@ -233,8 +239,10 @@ export function parseNovaTurn(content: string): NovaTurnParseResult {
   const toolsRaw=readField(body,"TOOLS",!wrapperValid);
   const toolResultsRaw=readField(body,"TOOL_RESULTS",!wrapperValid);
   const speechRaw=readField(body,"SPEECH",!wrapperValid);
+  const longMemoryRaw=readField(body,"LONGMEMORY",!wrapperValid);
   const wakeRaw=readField(body,"NEXT_WAKE_MS",!wrapperValid);
   for(const field of [situationRaw,thoughtsRaw,emotionRaw,toolsRaw,toolResultsRaw,speechRaw,wakeRaw])withFieldDiagnostic(field,diagnostics);
+  if(longMemoryRaw.status!=="missing")withFieldDiagnostic(longMemoryRaw,diagnostics);
 
   const readBoundedText=(name:"SITUATION"|"THOUGHTS"|"EMOTION"|"SPEECH",field:ReadFieldResult,limit:number):NovaTurnParsedField<string>=>{
     if(field.value===undefined)return {status:field.status};
@@ -245,6 +253,7 @@ export function parseNovaTurn(content: string): NovaTurnParseResult {
   const thoughts=readBoundedText("THOUGHTS",thoughtsRaw,FIELD_LIMITS.THOUGHTS);
   const emotion=readBoundedText("EMOTION",emotionRaw,FIELD_LIMITS.EMOTION);
   const speech=readBoundedText("SPEECH",speechRaw,FIELD_LIMITS.SPEECH);
+  const longMemory=readBoundedText("LONGMEMORY",longMemoryRaw,FIELD_LIMITS.LONGMEMORY);
 
   let tools:NovaToolCall[]=[];
   let toolsStatus: NovaTurnFieldStatus=toolsRaw.status;
@@ -313,13 +322,14 @@ export function parseNovaTurn(content: string): NovaTurnParseResult {
   const fields:NovaTurnParseFields={
     situation,thoughts,emotion,tools:{status:toolsStatus,...(toolsStatus==="invalid"?{}:{value:tools})},
     toolResults:{status:toolResultsStatus,...(toolResultsStatus==="invalid"?{}:{value:toolResults})},
-    speech,nextWakeMs:{status:wakeStatus,...(Number.isFinite(nextWakeMs)?{value:nextWakeMs}:{})},
+    speech,longMemory,nextWakeMs:{status:wakeStatus,...(Number.isFinite(nextWakeMs)?{value:nextWakeMs}:{})},
   };
   const fieldAcceptable=(field:NovaTurnParsedField<unknown>)=>field.status==="valid"||field.status==="empty"||field.status==="recovered";
   const speechUsable=speech.value!==undefined&&fieldAcceptable(speech)&&speech.status!=="invalid";
   const nextWakeValid=Number.isFinite(nextWakeMs);
+  const longMemoryAcceptable=longMemory.status==="missing"||fieldAcceptable(longMemory);
   const requiredValid=wrapperValid&&[situation,thoughts,emotion,fields.tools].every(fieldAcceptable)&&speechUsable&&nextWakeValid;
-  const complete=requiredValid&&toolResultsStatus!=="invalid";
+  const complete=requiredValid&&longMemoryAcceptable&&toolResultsStatus!=="invalid";
   if(!complete&&diagnostics.length===0)diagnostics.push("protocol-incomplete");
   if(!speechUsable)return {complete:false,diagnostics,fields};
 
@@ -332,6 +342,8 @@ export function parseNovaTurn(content: string): NovaTurnParseResult {
       tools:toolsStatus==="invalid"?[]:tools,
       toolResults:toolResultsStatus==="invalid"?[]:toolResults,
       speech:speech.value??"",
+      // Never carry any private candidate out of an otherwise incomplete/invalid turn.
+      longMemory:complete?(longMemory.value??""):"",
       nextWakeMs:nextWakeValid?nextWakeMs:30_000,
     },
     speech:speech.value??"",
