@@ -60,6 +60,7 @@ async function main(){
 
   const cognitiveStep=new LLMCognitiveStep({
     runtime:{
+      getChatProviderCapabilities:()=>({structuredOutput:false}),
       chat:async(request:ChatRequest,providerPresetId?:string)=>{
         cognitiveCalls.push({request,providerPresetId});
         return {
