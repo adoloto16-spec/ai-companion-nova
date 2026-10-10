@@ -46,7 +46,7 @@ function incompleteAndReset():void{
   for(const chunk of ['{"speech":"new\\n','text \\uD83D','\\uDE00"'])jsonText+=json.push(chunk);
   equal(jsonText,"new\ntext 😀","native decoder handles split escapes and Unicode surrogate escapes");
   const tags=new NovaTurnTaggedSpeechStreamDecoder();
-  equal(tags.push("noise<SPEE"),"","partial opening tag is not visible");
+  equal(tags.push('<NOVA_TURN version="1"><SITUATION>private</SITUATION><THOUGHTS>hidden</THOUGHTS><EMOTION>private</EMOTION><TOOLS></TOOLS><SPEE'),"","partial top-level opening tag is not visible");
   let text="";
   text+=tags.push("CH>hello</SPEE");
   text+=tags.push("CH> secret </SPEECH>");
