@@ -296,14 +296,15 @@ fn migrate(value:Value)->Result<(AppSettings,bool),String>{
         let mut normalized=value.clone();
         if let Some(root)=normalized.as_object_mut(){
             root.insert("schemaVersion".into(),Value::String(SCHEMA_VERSION.into()));
-            root.entry("semanticDedup".into()).or_insert(serde_json::to_value(&defaults.semantic_dedup).map_err(|e|format!("failed to encode semantic dedup defaults: {e}"))?);
-            root.entry("cognitiveSchedule".into()).or_insert(serde_json::to_value(&defaults.cognitive_schedule).map_err(|e|format!("failed to encode cognitive schedule defaults: {e}"))?);
+            root.entry("semanticDedup".to_string()).or_insert(serde_json::to_value(&defaults.semantic_dedup).map_err(|e|format!("failed to encode semantic dedup defaults: {e}"))?);
+            root.entry("cognitiveSchedule".to_string()).or_insert(serde_json::to_value(&defaults.cognitive_schedule).map_err(|e|format!("failed to encode cognitive schedule defaults: {e}"))?);
             if root.get("memoryAgent").is_none(){
-                root.insert("memoryAgent".into(),legacy_memory_agent_value(legacy_memory_agent_enabled(root)));
+                let enabled=legacy_memory_agent_enabled(root);
+                root.insert("memoryAgent".into(),legacy_memory_agent_value(enabled));
             }else{
                 migrate_memory_agent_object(root);
             }
-            root.entry("prompts".into()).or_insert_with(||serde_json::json!({"overrides":{}}));
+            root.entry("prompts".to_string()).or_insert_with(||serde_json::json!({"overrides":{}}));
         }
         let settings:AppSettings=serde_json::from_value(normalized).map_err(|e|format!("invalid AppSettings schema v1: {e}"))?;
         validate(&settings)?;
