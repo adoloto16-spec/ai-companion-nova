@@ -62,7 +62,7 @@ async function main(){
   if(historicalAction.status!=="success")throw new Error("Historical MEMORY_SEARCH failed: "+historicalAction.error.code);
   const historicalOutput=JSON.stringify(historicalAction.output);
   ok(historicalOutput.includes("old-turn.integration"),"MEMORY_SEARCH returns historical NOVA_TURN by source ID");
-  ok(historicalOutput.includes(oldTurn.slice(0,60)),"MEMORY_SEARCH returns intact historical NOVA_TURN content");
+  ok(historicalOutput.includes(JSON.stringify(oldTurn.slice(0,60)).slice(1,-1)),"MEMORY_SEARCH returns intact historical NOVA_TURN content");
   // Exercise the complete production cognitive loop around the real Action Broker:
   // model emits MEMORY_SEARCH -> Tool Registry dispatches it -> result is persisted in NOVA_TURN
   // -> the next model request receives the TOOL_RESULTS block.
