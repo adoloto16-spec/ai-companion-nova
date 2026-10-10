@@ -58,7 +58,7 @@ export interface FoundationRuntimeOptions{
 export interface FoundationRuntime{
   start():Promise<void>;
   stop():Promise<void>;
-  diagnostics():Promise<RuntimeDiagnostics>;
+  diagnostics(options?:{skipProviderHealthFor?:readonly string[]}):Promise<RuntimeDiagnostics>;
   recordDiagnosticError(source:string,code:string,message:string,metadata?:Record<string,unknown>):void;
   invoke(request:import("../../../contracts/src/index").ActionRequest):Promise<import("../../../contracts/src/index").ActionResult>;
   chat(request:ChatRequest,providerPresetId?:string):Promise<ChatResponse>;
@@ -559,13 +559,13 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   });
 
   let runtimeStatus:RuntimeDiagnostics["runtimeStatus"]="starting";
-  const snapshot=async():Promise<RuntimeDiagnostics>=>{
+  const snapshot=async(options:{skipProviderHealthFor?:readonly string[]}={}):Promise<RuntimeDiagnostics>=>{
     const moduleHealth=await moduleManager.health().catch(()=>({}));
     const modules=moduleManager.list().map(item=>({
       ...item,
       health:(moduleHealth as Record<string,HealthStatus|undefined>)[item.id]
     }));
-    const providerDiagnostics=await providers.diagnostics();
+    const providerDiagnostics=await providers.diagnostics({skipHealthFor:options.skipProviderHealthFor});
     const degraded=retrievalDegraded||modules.some(item=>item.state==="error"||item.state==="degraded")||
       providerDiagnostics.some(item=>item.health?.status!=="healthy");
     const capabilities=new Set<string>();

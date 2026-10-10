@@ -3,6 +3,7 @@ import {createRoot} from "react-dom/client";
 import {invoke} from "@tauri-apps/api/core";
 import {NovaHttpClient} from "./ollama-http-client";
 import {validateOllamaBaseUrl} from "../../../providers/chat/ollama/src";
+import {passiveDiagnosticsOptions} from "./provider-health-polling";
 import {ChatSessionController,ConversationSession,InMemoryCharacterStore} from "../../../core/src/index";
 
 import {startFoundationRuntime,testProviderPresetConfiguration,listProviderModels} from "../../../runtime/bootstrap/src/index";
@@ -1787,7 +1788,7 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
       setSelectedId(current=>current&&next.some(trace=>trace.turnId===current)?current:next[0]?.turnId);
       setMessage("");
     }catch(error){setMessage(error instanceof Error?error.message:"Diagnostics could not be loaded.");}
-    void runtime.diagnostics().then(snapshot=>{
+    void runtime.diagnostics(passiveDiagnosticsOptions(runtime.getProviderConfiguration()?.providerId)).then(snapshot=>{
       setRuntimeDiagnostics(snapshot.recentErrors);
       setSemanticDiagnostics(snapshot.recentErrors.filter(entry=>entry.source==="memory-semantic-deduplication"));
     }).catch(error=>{
@@ -2468,7 +2469,7 @@ function App(){
     mindUnsubscribeRef.current=next.subscribeMindState(setMindState);
     setRuntime(await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(await next.diagnostics())));
     await syncCharacters(next);
-    setRuntime(await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(await next.diagnostics())));
+    setRuntime(await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(await next.diagnostics(passiveDiagnosticsOptions(config?.providerId)))));
     setStartupStatus("ready");
     setStartupError("");
   },[addConfigurationLoadError,characterStore,coreBookStore,memoryStore,semanticIndexStore,credentialStore,retriever,conversationStore,syncCharacters,persistProviderPresetPoolState]);
@@ -2519,7 +2520,7 @@ function App(){
         if(!active)return;
         const sync=async()=>{
           const foundation=foundationRef.current;if(!foundation||!active)return;
-          try{const snapshot=await foundation.diagnostics();const live=await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(snapshot));if(active)setRuntime(live)}
+          try{const snapshot=await foundation.diagnostics(passiveDiagnosticsOptions(foundation.getProviderConfiguration()?.providerId));const live=await publishAndReadRuntimeDiagnostics(addConfigurationLoadError(snapshot));if(active)setRuntime(live)}
           catch{if(active)setRuntime(current=>({...current,runtimeStatus:"error",coreStatus:"error"}))}
         };
         await sync();timer=setInterval(()=>{void sync()},1000);
