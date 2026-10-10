@@ -1,5 +1,6 @@
 import {ChatSessionController,ConversationSession,InMemoryChatTraceStore} from "../../core/src";
 import type {AssembledContext,ChatRequest,ChatResponse,ContextBuildRequest,MindReactiveTurn} from "../../contracts/src";
+import {countVisibleSpeechMessages,resolveNovaTurnMessagePresentation} from "../../apps/desktop-ui/src/nova-turn-visibility";
 
 function equal(actual:unknown,expected:unknown,label:string){if(actual!==expected)throw new Error(label+" expected "+String(expected)+" got "+String(actual))}
 function ok(value:unknown,label:string){if(!value)throw new Error(label)}
@@ -462,6 +463,12 @@ async function main(){
   equal(record.metadata?.novaTurnVersion,1,"stored turn has an explicit protocol version marker");
   equal(record.metadata?.novaTurnId,"life-request-1","stored record has a stable idempotency key");
   equal(parseNovaTurn(record.content).turn?.speech,"A separate public reply","speech is parsed from the full persisted record");
+  const renderedRecord=resolveNovaTurnMessagePresentation(record,false);
+  equal(renderedRecord.render,true,"the exact ChatView presentation resolver keeps the canonical saved turn visible");
+  equal(renderedRecord.text,"A separate public reply","the saved assistant bubble displays only SPEECH");
+  equal(countVisibleSpeechMessages([record]),1,"the conversation counter counts the saved assistant reply once");
+  const reloadedRecord=JSON.parse(JSON.stringify(record)) as typeof record;
+  equal(resolveNovaTurnMessagePresentation(reloadedRecord,false).text,"A separate public reply","the canonical response remains visible after persistence reload");
   equal(parseNovaTurn(record.content).turn?.thoughts,"private thoughts live only in the tagged record","private technical fields remain persisted");
   equal(persistedMessages.length,lifeController.getSnapshot().messages.length,"canonical persistence and live UI share one Conversation record");
   equal(lifeController.getSnapshot().messages.filter(message=>message.metadata?.novaTurnId==="life-request-1").length,1,"reactive NovaTurn is shown exactly once");
