@@ -26,6 +26,7 @@ import type {CoreBookCreateInput,CoreBookUpdateInput} from "../../../core/src/co
 import {activeProviderId,buildConfiguredProvider,buildEmbeddingProviderForPreset,buildProviderForDiscovery,buildProviderForPreset,buildChatProviderForSource,testProviderConfiguration} from "./provider-configuration";
 import {ProviderPoolChatProvider} from "./provider-pool";
 import {RetrievalEventIndexer} from "../../../core/src/retrieval-indexer";
+import {SemanticSearchService,type SemanticEmbeddingConfiguration,type SemanticSearchStatus} from "../../../core/src/semantic-search";
 
 
 export interface OpenAICompatibleRuntimeConfig{
@@ -48,6 +49,7 @@ export interface FoundationRuntimeOptions{
   retriever?:Retriever;
   retrievalIndexWriter?:RetrievalIndexWriter;
   semanticIndexStore?:MemorySemanticIndexStore;
+  semanticEmbeddingConfiguration?:()=>Promise<SemanticEmbeddingConfiguration|undefined>;
   embeddingHttpClient?:import("../../../providers/embeddings/openai-compatible/src").EmbeddingHttpClient;
   providerPresetConfigurations?:readonly {presetId:string;configuration:ProviderConfiguration}[];
   providerPresetPools?:readonly ProviderPreset[];
@@ -89,6 +91,10 @@ export interface FoundationRuntime{
   applyProviderConfiguration(configuration:ProviderConfiguration|undefined):Promise<void>;
   testConfiguredProvider():Promise<import("../../../contracts/src/index").ProviderConnectionTestResult>;
   getSettings():AppSettings;
+  /** Current background semantic-index state; only counts and model identity are returned. */
+  getSemanticSearchStatus():SemanticSearchStatus;
+  /** Retry the idempotent full indexing pass and stale-record cleanup. */
+  rebuildSemanticSearchIndex():Promise<void>;
   updateSettings(settings:AppSettings):Promise<AppSettings>;
   resetSettings():Promise<AppSettings>;
   getChatTraceStore():ChatTraceStore;
@@ -234,9 +240,31 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     capabilities:[]
   };
   const memoryRetriever=new InProcessMemoryRetriever(memoryBroker,{diagnostics:diagnosticsStore});
+  const semanticSearch=new SemanticSearchService({
+    settings:()=>settingsManager.get(),
+    indexStore:semanticIndexStore,
+    embeddingConfiguration:async()=>{
+      if(options.semanticEmbeddingConfiguration)return options.semanticEmbeddingConfiguration();
+      const settings=settingsManager.get().semanticDedup;
+      if(!settings.embeddingProviderPresetId||!settings.embeddingModel.trim())return undefined;
+      const configuration=providerPresetConfigurations.get(settings.embeddingProviderPresetId);
+      if(!configuration)return undefined;
+      const provider=buildEmbeddingProviderForPreset(configuration,settings.embeddingModel.trim(),credentialStore,options.embeddingHttpClient);
+      return provider?{provider,model:settings.embeddingModel.trim()}:undefined;
+    },
+    listCharacterIds:async()=>(await characterManager.listCharacters()).map(character=>character.id),
+    coreBook:{listCoreBookEntries:characterId=>coreBookManager.listCoreBookEntries(characterId)},
+    memory:memoryBroker,
+    conversations:{listConversations:characterId=>conversationManager.listConversations(characterId)},
+    events,diagnostics:diagnosticsStore
+  });
   const contextEngine=options.contextEngine??createDeterministicContextEngine(
     {listCoreBookEntries:characterId=>coreBookManager.listCoreBookEntries(characterId)},
-    {memoryBroker,memoryRetriever,retriever:options.retriever,recentMessageCount:()=>settingsManager.get().context.recentConversationMessages,memoryCandidateLimit:()=>settingsManager.get().memory.candidateLimit,retrievalCandidateLimit:()=>settingsManager.get().retrieval.candidateLimit,diagnostics:diagnosticsStore}
+    {memoryBroker,memoryRetriever,retriever:options.retriever,
+      recentMessageCount:()=>settingsManager.get().context.recentConversationMessages,
+      memoryCandidateLimit:()=>settingsManager.get().memory.candidateLimit,
+      retrievalCandidateLimit:()=>settingsManager.get().retrieval.candidateLimit,
+      semanticSearch,semanticSearchSettings:()=>settingsManager.get().retrieval,diagnostics:diagnosticsStore}
   );
   const retrievalIndexer=options.retrievalIndexWriter
     ? new RetrievalEventIndexer({events,coreBook:coreBookManager,memory:memoryBroker,writer:options.retrievalIndexWriter})
@@ -535,6 +563,49 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     }
   };
   tools.register(readMemoryDefinition,readMemoryDriver);
+  const semanticMemoryResolver:ActionTargetResolver={
+    id:"memory.semantic-search-query",
+    async resolve(request){
+      const query=request.arguments?.query;
+      if(typeof query!=="string"||!query.trim())throw new Error("MEMORY_SEARCH requires a non-empty natural-language query.");
+      if(query.length>1000)throw new Error("MEMORY_SEARCH query exceeds 1000 characters.");
+      return {kind:"resource",resource:query.trim()};
+    }
+  };
+  targetResolvers.set(semanticMemoryResolver.id,semanticMemoryResolver);
+  const semanticMemoryDefinition:ToolDefinition={
+    id:"memory.semantic-search",version:"1.0.0",schemaVersion:FOUNDATION_SCHEMA_VERSION,name:"MEMORY_SEARCH",
+    description:"Semantically search active Core Book entries, active Character Memory, and saved user/Nova messages from all conversations available to this character. Returns full-source provenance and bounded excerpts. Read-only.",
+    risk:"low",requiredCapabilities:["memory.search"],resourceType:"resource",action:"memory.search",
+    targetResolverId:semanticMemoryResolver.id,confirmation:"never",
+    parameters:objectSchema({query:{type:"string",minLength:1,maxLength:1000}},["query"])
+  };
+  const semanticMemoryDriver:ActionDriver={
+    id:"memory-semantic-search-driver",
+    async execute(request,target){
+      if(target.kind!=="resource")throw new Error("MEMORY_SEARCH requires a resource query target.");
+      const characterId=request.metadata?.characterId;
+      if(typeof characterId!=="string"||!characterId.trim())throw new Error("MEMORY_SEARCH is missing its character scope.");
+      const settings=settingsManager.get().retrieval;
+      const hits=await semanticSearch.search({characterId,query:target.resource,limit:Math.min(20,settings.semanticResultLimit),threshold:settings.semanticSimilarityThreshold});
+      let remaining=3000;
+      const results=hits.map((hit,index)=>{
+        // Share the remaining output budget across the remaining ranked hits. Avoid starving
+        // lower-ranked documents to a few characters just because earlier hits used 900 each.
+        const remainingDocuments=hits.length-index;
+        const fairShare=remainingDocuments>0?Math.floor(remaining/remainingDocuments):0;
+        const budget=Math.max(0,Math.min(900,fairShare));
+        const content=hit.content.slice(0,budget);
+        remaining-=content.length;
+        return {id:hit.sourceId,source:hit.source,characterId:hit.characterId,
+          ...(hit.conversationId?{conversationId:hit.conversationId}:{}),title:hit.title,
+          ...(hit.role?{role:hit.role}:{}),...(hit.type?{type:hit.type}:{}),...(hit.status?{status:hit.status}:{}),
+          tags:hit.tags,cosineSimilarity:hit.similarity,content,contentTruncated:content.length<hit.content.length};
+      }).filter(result=>result.content.length>0);
+      return {query:target.resource,resultCount:results.length,results};
+    }
+  };
+  tools.register(semanticMemoryDefinition,semanticMemoryDriver);
   permissions.add({
     id:"character-memory-search",
     schemaVersion:FOUNDATION_SCHEMA_VERSION,
@@ -597,6 +668,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       retrievalIndexer?.start();
       try{await semanticMemoryDeduplicator.rebuildAll();}
       catch(error){diagnosticsStore.recordError("memory-semantic-deduplication","STARTUP_REBUILD_FAILED",error instanceof Error?error.message:String(error));}
+      semanticSearch.start();
       if(options.retriever){
         try{await options.retriever.rebuildAll();retrievalDegraded=false}
         catch(error){retrievalDegraded=true;diagnosticsStore.recordError("retrieval","REBUILD_FAILED",error instanceof Error?error.message:String(error))}
@@ -605,7 +677,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       await moduleManager.startAll();
       runtimeStatus="running";
     },
-    async stop(){try{await mindRuntime.stop();semanticMemoryDeduplicator.stop();retrievalIndexer?.stop();await moduleManager.stopAll();}finally{runtimeStatus="stopped";}},
+    async stop(){try{await mindRuntime.stop();semanticSearch.stop();semanticMemoryDeduplicator.stop();retrievalIndexer?.stop();await moduleManager.stopAll();}finally{runtimeStatus="stopped";}},
     diagnostics:snapshot,
     recordDiagnosticError:(source,code,message,metadata)=>diagnosticsStore.recordError(source,code,message,metadata),
     invoke:request=>broker.execute({request,credential:characterCredential}),
@@ -721,6 +793,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     getChatModelForPreset,
     applyProviderConfiguration:async(configuration)=>{await applyProvider(configuration);},
     getSettings:()=>settingsManager.get(),
+    getSemanticSearchStatus:()=>semanticSearch.getStatus(),
+    rebuildSemanticSearchIndex:()=>semanticSearch.rebuildAll(),
     updateSettings:async(settings)=>{
       const next=await settingsManager.set(settings);
       mindRuntime.updateSchedule(next.cognitiveSchedule);

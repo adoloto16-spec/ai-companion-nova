@@ -17,6 +17,7 @@ const MAX_RECENT_MESSAGES:i64=100;
 const MAX_MEMORY_CANDIDATES:i64=100;
 const MAX_RETRIEVAL_CANDIDATES:i64=100;
 const MAX_SEMANTIC_CANDIDATES:i64=100;
+const MAX_SEMANTIC_SEARCH_RESULTS:i64=20;
 const MAX_SEMANTIC_PROMPT:usize=12000;
 const MAX_DIAGNOSTICS_ENTRIES:i64=500;
 const MAX_MEMORY_AGENT_PROMPT:usize=12000;
@@ -26,11 +27,30 @@ const DEFAULT_MEMORY_JUDGE_PROMPT_VERSION:&str="2";
 const DEFAULT_MEMORY_JUDGE_INSTRUCTIONS:&str="You are a memory deduplication judge.\n\nCompare NEW MEMORY with CANDIDATES.\n\nKeep the most complete and informative record.\n\nIf NEW MEMORY is less informative because its information is contained in a candidate, archive NEW.\n\nIf a candidate is less informative because its information is contained in NEW MEMORY, archive that candidate number.\n\nIf records contain essentially the same information, archive one duplicate.\n\nIf records contain different useful information, archive nothing.\n\nYour decision is the list of archive targets.\n\nIn structured mode, return only:\n{\"archive\":[\"NEW\",\"1\",\"2\"]}\n\nIn plain mode, return only:\nNO_ARCHIVE\nor NEW / candidate numbers, one per line.\n\nNever return explanations.\nNever invent candidate numbers.";
 const LEGACY_MEMORY_JUDGE_INSTRUCTIONS:&str="You are a memory deduplication judge.\n\nCompare NEW MEMORY with CANDIDATES.\n\nKeep the most complete and informative record.\n\nIf NEW MEMORY is less informative because its information is contained in a candidate, return NEW.\n\nIf a candidate contains all meaningful information from NEW MEMORY and adds useful information, return that candidate number.\n\nIf two records contain essentially the same information, return one of them.\n\nIf records contain different useful information, return NO_ARCHIVE.\n\nReturn only:\nNO_ARCHIVE,\nNEW,\nor candidate numbers, one per line.\n\nNever return explanations or text.\nNever invent candidate numbers.";
 
+fn default_response_mode()->String{"structured".into()}
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ChatSettings{
     #[serde(rename="automaticLongTermMemory")]
-    pub automatic_long_term_memory:bool
+    pub automatic_long_term_memory:bool,
+    #[serde(rename="responseMode",default="default_response_mode")]
+    pub response_mode:String
+}
+fn default_cognitive_schedule()->CognitiveScheduleSettings{
+    CognitiveScheduleSettings{mode:"adaptive".into(),default_interval_ms:30000,min_interval_ms:3000,max_interval_ms:300000,max_requests_per_hour:None}
+}
+#[derive(Debug,Deserialize,Serialize,Clone)]
+#[serde(deny_unknown_fields)]
+pub struct CognitiveScheduleSettings{
+    pub mode:String,
+    #[serde(rename="defaultIntervalMs")]
+    pub default_interval_ms:i64,
+    #[serde(rename="minIntervalMs")]
+    pub min_interval_ms:i64,
+    #[serde(rename="maxIntervalMs")]
+    pub max_interval_ms:i64,
+    #[serde(rename="maxRequestsPerHour",default)]
+    pub max_requests_per_hour:Option<i64>
 }
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(deny_unknown_fields)]
@@ -98,8 +118,16 @@ pub struct MemorySettings{
 #[serde(deny_unknown_fields)]
 pub struct RetrievalSettings{
     #[serde(rename="candidateLimit")]
-    pub candidate_limit:i64
+    pub candidate_limit:i64,
+    #[serde(rename="semanticSearchEnabled",default)]
+    pub semantic_search_enabled:bool,
+    #[serde(rename="semanticSimilarityThreshold",default="default_semantic_similarity_threshold")]
+    pub semantic_similarity_threshold:f64,
+    #[serde(rename="semanticResultLimit",default="default_semantic_result_limit")]
+    pub semantic_result_limit:i64
 }
+fn default_semantic_similarity_threshold()->f64{0.35}
+fn default_semantic_result_limit()->i64{5}
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(deny_unknown_fields)]
 pub struct DiagnosticsSettings{
@@ -121,6 +149,8 @@ pub struct AppSettings{
     pub api_version:String,
     #[serde(rename="schemaVersion")]
     pub schema_version:String,
+    #[serde(rename="cognitiveSchedule",default="default_cognitive_schedule")]
+    pub cognitive_schedule:CognitiveScheduleSettings,
     pub chat:ChatSettings,
     #[serde(rename="memoryAgent")]
     pub memory_agent:MemoryAgentSettings,
@@ -136,7 +166,8 @@ pub struct AppSettings{
 fn default_settings()->AppSettings{
     AppSettings{
         api_version:API_VERSION.into(),schema_version:SCHEMA_VERSION.into(),
-        chat:ChatSettings{automatic_long_term_memory:true},
+        cognitive_schedule:default_cognitive_schedule(),
+        chat:ChatSettings{automatic_long_term_memory:true,response_mode:default_response_mode()},
         memory_agent:MemoryAgentSettings{enabled:true,provider_preset_id:None,model:String::new(),output_mode:"auto".into(),prompt:DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS.to_string(),prompt_backup:None,default_prompt_version:DEFAULT_MEMORY_AGENT_PROMPT_VERSION.into()},
         semantic_dedup:SemanticDedupSettings{
             enabled:false,embedding_provider_preset_id:None,embedding_model:String::new(),
@@ -148,7 +179,7 @@ fn default_settings()->AppSettings{
         },
         context:ContextSettings{available_context_tokens:4096,reserved_output_tokens:1024,safety_margin_tokens:128,recent_conversation_messages:8},
         memory:MemorySettings{candidate_limit:8},
-        retrieval:RetrievalSettings{candidate_limit:32},
+        retrieval:RetrievalSettings{candidate_limit:32,semantic_search_enabled:false,semantic_similarity_threshold:0.35,semantic_result_limit:5},
         diagnostics:DiagnosticsSettings{log_level:"normal".into(),keep_recent_entries:100},
         ui:UiSettings{show_diagnostics_in_chat:true}
     }
@@ -165,13 +196,22 @@ fn valid_integer(value:i64,min:i64,max:i64,label:&str)->Result<(),String>{
     Ok(())
 }
 fn validate(settings:&AppSettings)->Result<(),String>{
-    if settings.api_version!=API_VERSION||settings.schema_version!=SCHEMA_VERSION{return Err("unsupported AppSettings version".into());}
+    if settings.api_version!=API_VERSION||!(settings.schema_version==SCHEMA_VERSION||settings.schema_version=="10"){return Err("unsupported AppSettings version".into());}
+    if !matches!(settings.cognitive_schedule.mode.as_str(),"adaptive"|"fixed"){return Err("Unsupported cognitive schedule mode.".into());}
+    valid_integer(settings.cognitive_schedule.default_interval_ms,1000,3_600_000,"Cognitive schedule interval")?;
+    valid_integer(settings.cognitive_schedule.min_interval_ms,1000,3_600_000,"Minimum cognitive interval")?;
+    valid_integer(settings.cognitive_schedule.max_interval_ms,1000,3_600_000,"Maximum cognitive interval")?;
+    if settings.cognitive_schedule.min_interval_ms>settings.cognitive_schedule.default_interval_ms||settings.cognitive_schedule.default_interval_ms>settings.cognitive_schedule.max_interval_ms{return Err("Cognitive schedule interval bounds are inconsistent.".into());}
+    if let Some(limit)=settings.cognitive_schedule.max_requests_per_hour{valid_integer(limit,1,3_600,"Cognitive requests per hour")?;}
+    if !matches!(settings.chat.response_mode.as_str(),"structured"|"plain"){return Err("Unsupported Chat response mode.".into());}
     valid_integer(settings.context.available_context_tokens,256,MAX_CONTEXT_TOKENS,"Context size")?;
     valid_integer(settings.context.reserved_output_tokens,0,MAX_RESERVED_OUTPUT,"Reserved response tokens")?;
     valid_integer(settings.context.safety_margin_tokens,0,MAX_SAFETY_MARGIN,"Safety margin")?;
     valid_integer(settings.context.recent_conversation_messages,1,MAX_RECENT_MESSAGES,"Recent messages")?;
     valid_integer(settings.memory.candidate_limit,1,MAX_MEMORY_CANDIDATES,"Memory items")?;
     valid_integer(settings.retrieval.candidate_limit,1,MAX_RETRIEVAL_CANDIDATES,"Retrieval candidates")?;
+    valid_integer(settings.retrieval.semantic_result_limit,1,MAX_SEMANTIC_SEARCH_RESULTS,"Semantic search results")?;
+    if !settings.retrieval.semantic_similarity_threshold.is_finite()||!(0.0..=1.0).contains(&settings.retrieval.semantic_similarity_threshold){return Err("Semantic cosine similarity threshold must be between 0 and 1.".into());}
     valid_integer(settings.semantic_dedup.candidate_limit,1,MAX_SEMANTIC_CANDIDATES,"Semantic candidate items")?;
     if !settings.semantic_dedup.candidate_similarity_threshold.is_finite()||!(0.0..=1.0).contains(&settings.semantic_dedup.candidate_similarity_threshold){return Err("Semantic candidate similarity threshold must be between 0 and 1.".into());}
     if settings.semantic_dedup.embedding_model.len()>200{return Err("Semantic embedding model exceeds the 200 character limit.".into());}

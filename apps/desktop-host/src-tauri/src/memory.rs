@@ -85,7 +85,7 @@ pub struct MemoryWriteLock(pub Mutex<()>);
 
 const SEMANTIC_API_VERSION:&str="1";
 const SEMANTIC_SCHEMA_VERSION:&str="1";
-const MAX_SEMANTIC_RECORDS:usize=10000;
+const MAX_SEMANTIC_RECORDS:usize=100_000;
 const MAX_SEMANTIC_DIMENSIONS:usize=10000;
 
 #[derive(Debug,Deserialize,Serialize,Clone)]

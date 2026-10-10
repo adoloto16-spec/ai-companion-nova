@@ -4,6 +4,7 @@ import type {
 } from "../../contracts/src/index";
 import {MEMORY_SEMANTIC_INDEX_API_VERSION,MEMORY_SEMANTIC_INDEX_SCHEMA_VERSION,STANDARD_SCHEMAS} from "../../contracts/src/index";
 import {AgentOutputRunner} from "./agent-output";
+import {SEMANTIC_SEARCH_RECORD_PREFIX,replaceMemorySemanticIndexPartition,withMemorySemanticIndexLock} from "./semantic-index-lock";
 
 export interface SemanticMemoryCandidate{
   memory:MemoryItem;
@@ -621,7 +622,8 @@ export class MemorySemanticDeduplicator{
       characterId,
       records:[...records.values()].sort((a,b)=>a.memoryId.localeCompare(b.memoryId))
     };
-    await this.options.indexStore.save(nextState);
+    await replaceMemorySemanticIndexPartition(this.options.indexStore,characterId,
+      memoryId=>!memoryId.startsWith(SEMANTIC_SEARCH_RECORD_PREFIX),nextState.records);
     return {vectors:new Map(nextState.records.map(record=>[record.memoryId,record.vector] as const)),staleOrMissing:stale.length+(cachedNewIsValid?0:1)};
   }
 
@@ -660,12 +662,8 @@ export class MemorySemanticDeduplicator{
       const now=this.options.clock?.now()??new Date().toISOString();
       for(let i=0;i<stale.length;i++)records.push(makeIndexRecord(stale[i]!,provider,model,vectors[i]!,now));
     }
-    await this.options.indexStore.save({
-      apiVersion:MEMORY_SEMANTIC_INDEX_API_VERSION,
-      schemaVersion:MEMORY_SEMANTIC_INDEX_SCHEMA_VERSION,
-      characterId,
-      records:records.sort((a,b)=>a.memoryId.localeCompare(b.memoryId))
-    });
+    await replaceMemorySemanticIndexPartition(this.options.indexStore,characterId,
+      memoryId=>!memoryId.startsWith(SEMANTIC_SEARCH_RECORD_PREFIX),records.sort((a,b)=>a.memoryId.localeCompare(b.memoryId)));
   }
 
   private async onMemoryCreated(payload:{characterId:string;memoryId:string}):Promise<void>{
@@ -708,10 +706,12 @@ export class MemorySemanticDeduplicator{
   }
   private async removeIndexRecord(characterId:CharacterId,memoryId:string):Promise<void>{
     try{
-      const current=validIndexState(await this.options.indexStore.load(characterId),characterId);
-      const records=current.records.filter(record=>record.memoryId!==memoryId);
-      if(records.length===current.records.length)return;
-      await this.options.indexStore.save({...current,records});
+      await withMemorySemanticIndexLock(this.options.indexStore,async()=>{
+        const current=validIndexState(await this.options.indexStore.load(characterId),characterId);
+        const records=current.records.filter(record=>record.memoryId!==memoryId);
+        if(records.length===current.records.length)return;
+        await this.options.indexStore.save({...current,records});
+      });
     }catch(error){this.recordFailure("DERIVED_INDEX_CLEANUP_FAILED",error,characterId,{memoryId});}
   }
 

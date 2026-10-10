@@ -181,6 +181,23 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             "type": "integer",
             "minimum": 1,
             "maximum": 100
+          },
+          "semanticSearchEnabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "semanticSimilarityThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.35,
+            "description": "Raw cosine similarity threshold, not a percentage."
+          },
+          "semanticResultLimit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20,
+            "default": 5
           }
         }
       },
@@ -1459,7 +1476,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         "enum": [
           "conversation",
           "core_book",
-          "memory"
+          "memory",
+          "semantic_search"
         ]
       },
       "referenceId": {
@@ -1549,7 +1567,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
     "enum": [
       "conversation",
       "core_book",
-      "memory"
+      "memory",
+      "semantic_search"
     ]
   },
   "context-zone": {
@@ -2745,7 +2764,7 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       },
       "records": {
         "type": "array",
-        "maxItems": 10000,
+        "maxItems": 100000,
         "items": {
           "type": "object",
           "additionalProperties": false,

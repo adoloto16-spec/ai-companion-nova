@@ -444,7 +444,7 @@ export interface MemoryExtractionResult{memories:readonly MemoryCandidate[];}
 export const CONTEXT_API_VERSION:ApiVersion="1";
 export const CONTEXT_SCHEMA_VERSION="1";
 
-export type ContextSource="conversation"|"core_book"|"memory";
+export type ContextSource="conversation"|"core_book"|"memory"|"semantic_search";
 export type ContextZone="system"|"character_core"|"retrieved_core_book"|"retrieved_memory"|"conversation"|"recent_conversation";
 
 export interface ContextBudget{

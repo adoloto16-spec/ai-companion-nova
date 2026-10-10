@@ -11,7 +11,7 @@
     "characterId":{"type":"string","minLength":1,"maxLength":200},
     "records":{
       "type":"array",
-      "maxItems":10000,
+      "maxItems":100000,
       "items":{
         "type":"object",
         "additionalProperties":false,
