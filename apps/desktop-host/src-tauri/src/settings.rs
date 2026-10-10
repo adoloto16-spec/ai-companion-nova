@@ -339,13 +339,15 @@ fn migrate(value:Value)->Result<(AppSettings,bool),String>{
                 root.insert("prompts".into(),serde_json::json!({"overrides":overrides}));
                 migrated=true;
             }
-            if let Some(prompt)=root.get("prompts").and_then(Value::as_object)
+            let effective_judge_prompt=root.get("prompts").and_then(Value::as_object)
                 .and_then(|prompts|prompts.get("overrides")).and_then(Value::as_object)
-                .and_then(|overrides|overrides.get("memory-judge.system")).and_then(Value::as_str){
-                if let Some(judge)=root.get_mut("semanticDedup").and_then(Value::as_object_mut)
-                    .and_then(|semantic|semantic.get_mut("judge")).and_then(Value::as_object_mut){
-                    judge.insert("prompt".into(),Value::String(prompt.to_string()));
-                }
+                .and_then(|overrides|overrides.get("memory-judge.system")).and_then(Value::as_str)
+                .filter(|prompt|!prompt.trim().is_empty())
+                .unwrap_or(DEFAULT_MEMORY_JUDGE_INSTRUCTIONS).to_string();
+            if let Some(judge)=root.get_mut("semanticDedup").and_then(Value::as_object_mut)
+                .and_then(|semantic|semantic.get_mut("judge")).and_then(Value::as_object_mut){
+                if judge.get("prompt").and_then(Value::as_str)!=Some(effective_judge_prompt.as_str()){migrated=true;}
+                judge.insert("prompt".into(),Value::String(effective_judge_prompt));
             }
         }
         let settings:AppSettings=serde_json::from_value(normalized).map_err(|e|format!("invalid AppSettings: {e}"))?;
@@ -490,7 +492,56 @@ mod tests{
         assert_eq!(restored.semantic_dedup.judge.default_prompt_version,DEFAULT_MEMORY_JUDGE_PROMPT_VERSION);
     }
 
-#[test]fn preserves_schema_v5_semantic_settings(){
+#[test]fn migrates_custom_judge_prompt_to_central_registry_and_preserves_settings(){
+        let mut value=serde_json::to_value(default_settings()).expect("encode defaults");
+        if let Some(root)=value.as_object_mut(){
+            root.insert("schemaVersion".into(),Value::String("11".into()));
+            root.remove("prompts");
+            root.insert("context".into(),serde_json::json!({"availableContextTokens":6144,"reservedOutputTokens":1024,"safetyMarginTokens":128,"recentConversationMessages":9}));
+            if let Some(semantic)=root.get_mut("semanticDedup").and_then(Value::as_object_mut){
+                semantic.insert("embeddingProviderPresetId".into(),Value::String("embedding-preset".into()));
+                semantic.insert("embeddingModel".into(),Value::String("embedding-model".into()));
+                if let Some(judge)=semantic.get_mut("judge").and_then(Value::as_object_mut){
+                    judge.insert("prompt".into(),Value::String("custom legacy Judge prompt".into()));
+                    judge.insert("providerPresetId".into(),Value::String("judge-preset".into()));
+                    judge.insert("model".into(),Value::String("judge-model".into()));
+                }
+            }
+        }
+        let (settings,migrated)=migrate(value).expect("previous settings version should migrate");
+        assert!(migrated);
+        assert_eq!(settings.schema_version,SCHEMA_VERSION);
+        assert_eq!(settings.prompts.overrides.get("memory-judge.system").map(String::as_str),Some("custom legacy Judge prompt"));
+        assert_eq!(settings.semantic_dedup.judge.prompt,"custom legacy Judge prompt");
+        assert_eq!(settings.semantic_dedup.judge.provider_preset_id.as_deref(),Some("judge-preset"));
+        assert_eq!(settings.semantic_dedup.judge.model,"judge-model");
+        assert_eq!(settings.semantic_dedup.embedding_provider_preset_id.as_deref(),Some("embedding-preset"));
+        assert_eq!(settings.semantic_dedup.embedding_model,"embedding-model");
+        assert_eq!(settings.context.available_context_tokens,6144);
+        assert_eq!(settings.context.recent_conversation_messages,9);
+    }
+
+    #[test]fn validates_prompt_override_ids_and_lengths(){
+        let mut settings=default_settings();
+        settings.prompts.overrides.insert("unknown".into(),"custom".into());
+        assert!(validate(&settings).is_err());
+        settings.prompts.overrides.clear();
+        settings.prompts.overrides.insert("nova-system-json".into(),"x".repeat(MAX_SEMANTIC_PROMPT+1));
+        assert!(validate(&settings).is_err());
+    }
+
+    #[test]fn prompt_override_round_trips_without_resetting_other_settings(){
+        let mut settings=default_settings();
+        settings.prompts.overrides.insert("nova-system-json".into(),"custom native JSON prompt".into());
+        settings.context.available_context_tokens=8192;
+        let encoded=serde_json::to_vec(&settings).expect("encode");
+        let (restored,migrated)=migrate(serde_json::from_slice(&encoded).expect("json")).expect("v12 settings should round-trip");
+        assert!(!migrated);
+        assert_eq!(restored.prompts.overrides.get("nova-system-json").map(String::as_str),Some("custom native JSON prompt"));
+        assert_eq!(restored.context.available_context_tokens,8192);
+    }
+
+    #[test]fn preserves_schema_v5_semantic_settings(){
         let settings=default_settings();
         let encoded=serde_json::to_vec(&settings).expect("encode");
         let (restored,migrated)=migrate(serde_json::from_slice(&encoded).expect("json")).expect("schema v5 should round-trip");
