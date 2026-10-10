@@ -287,7 +287,11 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     }
   };
 
-  const lastAssistant=[...snapshot.messages].reverse().find(message=>message.role==="assistant"&&(message.metadata?.novaTurnVersion!==1||Boolean(parseNovaTurn(message.content).turn?.speech.trim())));
+  const lastAssistant=[...snapshot.messages].reverse().find(message=>{
+    if(message.role!=="assistant")return false;
+    const presentation=resolveNovaTurnMessagePresentation(message,false);
+    return presentation.render&&Boolean(presentation.text.trim());
+  });
   const lastAssistantStatus=lastAssistant?messageStreamStatus(lastAssistant):undefined;
   const showContinue=snapshot.status==="interrupted"&&lastAssistantStatus==="interrupted"&&!snapshot.sending;
   const showRegenerate=(snapshot.status==="completed"||snapshot.status==="interrupted")&&(lastAssistantStatus==="complete"||lastAssistantStatus==="interrupted")&&!snapshot.sending;
