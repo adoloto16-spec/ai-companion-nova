@@ -125,7 +125,8 @@
         "number",
         "null"
       ],
-      "minLength": 1
+      "minLength": 1,
+      "minimum": -1
     },
     "temperature": {
       "type": [
@@ -362,7 +363,8 @@
               "number",
               "null"
             ],
-            "minLength": 1
+            "minLength": 1,
+            "minimum": -1
           },
           "temperature": {
             "type": [
@@ -569,7 +571,8 @@
             "number",
             "null"
           ],
-          "minLength": 1
+          "minLength": 1,
+          "minimum": -1
         },
         "temperature": {
           "type": [
