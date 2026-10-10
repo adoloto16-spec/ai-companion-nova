@@ -76,9 +76,10 @@ async function nativeSchemaStreamsBeforeCompletion():Promise<void>{
   ok(visible.length>0,"public speech is visible before stream completion");
   ok(visible.length<payload.length,"raw JSON was not sent as visible text");
   equal(returned,false,"provider stream has not returned when partial speech appears");
-  equal(calls[0]?.generation?.responseFormat?.type,"json-schema","structured mode sends JSON Schema to primary provider");
-  equal(calls[0]?.generation?.responseFormat?.name,"nova_turn_v1","native schema uses a stable name");
-  ok(Boolean(calls[0]?.generation?.responseFormat?.type==="json-schema"&&calls[0].generation.responseFormat.schema.properties?.speech),"schema defines the canonical speech field");
+  const format=calls[0]?.generation?.responseFormat;
+  ok(format?.type==="json-schema","structured mode sends JSON Schema to primary provider");
+  equal(format.type==="json-schema"?format.name:undefined,"nova_turn_v1","native schema uses a stable name");
+  if(format?.type==="json-schema")ok(Boolean(format.schema.properties?.speech),"schema defines the canonical speech field");
   resume();
   const result=await run;
   equal(visible,"The answer is arriving while the model is still generating the rest.","streamed native output is only SPEECH and has no duplicated final text");
