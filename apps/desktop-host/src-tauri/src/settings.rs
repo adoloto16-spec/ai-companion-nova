@@ -334,7 +334,7 @@ fn migrate(value:Value)->Result<(AppSettings,bool),String>{
                 .map(|overrides|overrides.contains_key("memory-judge.system")).unwrap_or(false);
             if !has_judge_override {
                 if let Some(prompt)=custom_judge_prompt.as_deref(){
-                    if !prompt.trim().is_empty() && prompt!=DEFAULT_MEMORY_JUDGE_INSTRUCTIONS && prompt!=LEGACY_MEMORY_JUDGE_INSTRUCTIONS{
+                    if !prompt.trim().is_empty() && prompt!=DEFAULT_MEMORY_JUDGE_INSTRUCTIONS{
                         let prompts=root.entry("prompts").or_insert_with(||serde_json::json!({"overrides":{}}));
                         if !prompts.is_object(){*prompts=serde_json::json!({"overrides":{}});}
                         let prompt_settings=prompts.as_object_mut().expect("prompt settings object");
