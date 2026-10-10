@@ -174,7 +174,7 @@ export function validateAppSettings(settings:AppSettings):string[]{
   if(!settings.prompts||typeof settings.prompts!=="object"||!settings.prompts.overrides||typeof settings.prompts.overrides!=="object"||Array.isArray(settings.prompts.overrides))errors.push("Prompt overrides must be an object.");
   else for(const [id,text] of Object.entries(settings.prompts.overrides)){
     if(!PROMPT_REGISTRY.some(definition=>definition.id===id))errors.push("Unsupported prompt id: "+id+".");
-    if(typeof text!=="string"||text.length>12000)errors.push("Prompt overrides must contain strings up to 12000 characters.");
+    if(typeof text!=="string"||Array.from(text).length>12000)errors.push("Prompt overrides must contain strings up to 12000 characters.");
   }
   if(typeof settings.semanticDedup.enabled!=="boolean")errors.push("Semantic Memory Deduplication enabled must be boolean.");
   if(settings.semanticDedup.embeddingProviderPresetId!==null&&(typeof settings.semanticDedup.embeddingProviderPresetId!=="string"||settings.semanticDedup.embeddingProviderPresetId.trim().length===0))errors.push("Semantic embedding provider preset must be empty or a non-empty string.");
@@ -185,8 +185,8 @@ export function validateAppSettings(settings:AppSettings):string[]{
   if(settings.semanticDedup.judge.providerPresetId!==null&&(typeof settings.semanticDedup.judge.providerPresetId!=="string"||settings.semanticDedup.judge.providerPresetId.trim().length===0))errors.push("Memory Judge provider preset must be empty or a non-empty string.");
   if(typeof settings.semanticDedup.judge.model!=="string"||settings.semanticDedup.judge.model.length>200)errors.push("Memory Judge model must be a string up to 200 characters.");
   if(!["auto","structured","plain"].includes(settings.semanticDedup.judge.outputMode))errors.push("Unsupported Memory Judge output mode.");
-  if(typeof settings.semanticDedup.judge.prompt!=="string"||settings.semanticDedup.judge.prompt.length>12000)errors.push("Memory Judge prompt must be a string up to 12000 characters.");
-  if(settings.semanticDedup.judge.promptBackup!==null&&(typeof settings.semanticDedup.judge.promptBackup!=="string"||settings.semanticDedup.judge.promptBackup.length>12000))errors.push("Memory Judge prompt backup must be null or a string up to 12000 characters.");
+  if(typeof settings.semanticDedup.judge.prompt!=="string"||Array.from(settings.semanticDedup.judge.prompt).length>12000)errors.push("Memory Judge prompt must be a string up to 12000 characters.");
+  if(settings.semanticDedup.judge.promptBackup!==null&&(typeof settings.semanticDedup.judge.promptBackup!=="string"||Array.from(settings.semanticDedup.judge.promptBackup).length>12000))errors.push("Memory Judge prompt backup must be null or a string up to 12000 characters.");
   if(typeof settings.semanticDedup.judge.defaultPromptVersion!=="string"||settings.semanticDedup.judge.defaultPromptVersion.trim().length===0)errors.push("Memory Judge default prompt version must be a non-empty string.");
   integer(settings.context.availableContextTokens,"Context size",256,SECURITY_MAX.availableContextTokens);
   integer(settings.context.reservedOutputTokens,"Reserved response tokens",0,SECURITY_MAX.reservedOutputTokens);
@@ -252,7 +252,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const promptOverrides:PromptOverrides={};
   for(const [key,rawText] of Object.entries(rawPromptOverrides)){
     if(!PROMPT_REGISTRY.some(definition=>definition.id===key))throw new Error("Unsupported prompt id: "+key+".");
-    if(typeof rawText!=="string"||rawText.length>12000)throw new Error("Prompt override must be a string up to 12000 characters.");
+    if(typeof rawText!=="string"||Array.from(rawText).length>12000)throw new Error("Prompt override must be a string up to 12000 characters.");
     if(rawText.trim().length>0)(promptOverrides as Record<string,string>)[key]=rawText;
   }
   const migratedLegacyJudgePrompt=semanticJudgePromptIsLegacyDefault
