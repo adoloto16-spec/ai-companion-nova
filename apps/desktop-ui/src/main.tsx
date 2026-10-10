@@ -1198,7 +1198,7 @@ function ProviderPresetsView({
         <label>Provider
           <select value={selectedSource.providerId} onChange={event=>{
             const providerId=event.target.value as ConfigurableChatProviderId;
-            updateSource(selectedSource.id,{providerId,baseUrl:defaultProviderBaseUrl(providerId),credentialReference:null,model:defaultProviderModel(providerId)});
+            updateSource(selectedSource.id,{providerId,credentialReference:null,baseUrl:defaultProviderBaseUrl(providerId),model:defaultProviderModel(providerId)});
             setAddingCredential(false);
           }} disabled={busy}>
             <option value="openai-compatible">OpenAI-compatible</option>
@@ -1266,8 +1266,8 @@ function ProviderPresetsView({
         <label>Provider
           <select value={singleProviderId} onChange={event=>{
             const providerId=event.target.value as ConfigurableChatProviderId;
-            updateDraft({...draft,providerId,baseUrl:defaultProviderBaseUrl(providerId),
-              model:defaultProviderModel(providerId),credentialReference:null});
+            updateDraft({...draft,providerId,credentialReference:null,baseUrl:defaultProviderBaseUrl(providerId),
+              model:defaultProviderModel(providerId)});
             setAddingCredential(false);setModels([]);
           }} disabled={busy}>
             <option value="openai-compatible">OpenAI-compatible</option>
