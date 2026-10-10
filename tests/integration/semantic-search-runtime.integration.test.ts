@@ -62,9 +62,6 @@ async function main(){
   // model emits MEMORY_SEARCH -> Tool Registry dispatches it -> result is persisted in NOVA_TURN
   // -> the next model request receives the TOOL_RESULTS block.
   const loopConversation=await runtime.createConversation(character.id,{id:"semantic-tool-loop.integration",title:"Semantic tool loop"});
-  await runtime.updateConversation(character.id,loopConversation.id,{messages:[
-    {id:"semantic-loop-user",role:"user",content:"Please find my saved lease details."}
-  ]});
   const modelRequests:ChatRequest[]=[];
   const loopCommits:Array<{turn:NovaTurn;context:MindTurnExecutionContext}>=[];
   let nextStepSawToolResult=false;
