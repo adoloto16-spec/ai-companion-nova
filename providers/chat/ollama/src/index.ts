@@ -22,7 +22,7 @@ import { MinimalJsonSchemaValidator } from "../../../../contracts/src/schema-val
 
 export const OLLAMA_PROVIDER_ID = "ollama";
 export const OLLAMA_DEFAULT_BASE_URL = "http://127.0.0.1:11434";
-const DEFAULT_TIMEOUT_MS = 120_000;
+const DEFAULT_TIMEOUT_MS = 600_000;
 const schemaValidator = new MinimalJsonSchemaValidator();
 const ALLOWED_SCHEMA_KEYS = new Set([
   "$schema", "$id", "title", "description", "default", "examples",
