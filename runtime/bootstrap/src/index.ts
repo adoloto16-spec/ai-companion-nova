@@ -587,7 +587,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       const characterId=request.metadata?.characterId;
       if(typeof characterId!=="string"||!characterId.trim())throw new Error("MEMORY_SEARCH is missing its character scope.");
       const settings=settingsManager.get().retrieval;
-      const hits=await semanticSearch.search({characterId,query:target.resource,limit:Math.min(5,settings.semanticResultLimit),threshold:settings.semanticSimilarityThreshold});
+      const hits=await semanticSearch.search({characterId,query:target.resource,limit:Math.min(20,settings.semanticResultLimit),threshold:settings.semanticSimilarityThreshold});
       let remaining=3000;
       const results=hits.map(hit=>{
         const budget=Math.max(0,Math.min(900,remaining));

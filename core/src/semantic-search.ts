@@ -28,7 +28,7 @@ export interface SemanticSearchOptions{
   conversations:{listConversations(characterId:CharacterId):Promise<readonly Conversation[]>};
   events:EventBus; diagnostics?:DiagnosticsStore; clock?:{now():string};
 }
-const MAX_EMBEDDING_CHARS=2400, EMBEDDING_OVERLAP_CHARS=120, EMBEDDING_BATCH_SIZE=32, DOCUMENT_BATCH_SIZE=16, MAX_RESULTS=20;
+const MAX_EMBEDDING_CHARS=2400, EMBEDDING_OVERLAP_CHARS=120, EMBEDDING_BATCH_SIZE=32, DOCUMENT_BATCH_SIZE=64, MAX_RESULTS=20;
 const DEFAULT_COSINE_THRESHOLD=0.35, MAX_QUERY_INPUT_CHARS=48_000;
 function emptyIndex(characterId:CharacterId):MemorySemanticIndexState{return{apiVersion:MEMORY_SEMANTIC_INDEX_API_VERSION,schemaVersion:MEMORY_SEMANTIC_INDEX_SCHEMA_VERSION,characterId,records:[]}}
 function isVector(value:unknown):value is readonly number[]{return Array.isArray(value)&&value.length>0&&value.every(item=>typeof item==="number"&&Number.isFinite(item))}

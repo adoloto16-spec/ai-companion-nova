@@ -400,6 +400,7 @@ export interface ContextEngineOptions {
 export class DeterministicContextEngine implements ContextEngineContract {
   private readonly sources:readonly ContextCandidateSource[];
   private readonly diagnostics?:DiagnosticsStore;
+  private readonly semanticSearchSettings?:()=>AppSettings["retrieval"];
 
   constructor(
     sources:readonly ContextCandidateSource[],
@@ -408,6 +409,7 @@ export class DeterministicContextEngine implements ContextEngineContract {
     if(sources.length===0)throw new Error("Context Engine requires at least one candidate source.");
     this.sources=sources;
     this.diagnostics=options.diagnostics;
+    this.semanticSearchSettings=options.semanticSearchSettings;
     const recentMessageCount=typeof options.recentMessageCount==="number"?options.recentMessageCount:undefined;
     const memoryCandidateLimit=typeof options.memoryCandidateLimit==="number"?options.memoryCandidateLimit:undefined;
     const retrievalCandidateLimit=typeof options.retrievalCandidateLimit==="number"?options.retrievalCandidateLimit:undefined;
@@ -439,7 +441,15 @@ export class DeterministicContextEngine implements ContextEngineContract {
       if(source==="core_book"&&activation!=="semantic"&&ordinary&&!ordinary.eligible)return false;
       return true;
     });
-    const candidates=distinctCandidates.map((candidate,index)=>({candidate,index}));
+    const semanticLimit=Math.max(1,Math.min(20,Math.floor(this.semanticSearchSettings?.().semanticResultLimit??20)));
+    let semanticCount=0;
+    const boundedCandidates=distinctCandidates.filter(candidate=>{
+      if(candidate.source!=="semantic_search")return true;
+      if(semanticCount>=semanticLimit)return false;
+      semanticCount++;
+      return true;
+    });
+    const candidates=boundedCandidates.map((candidate,index)=>({candidate,index}));
     const included=new Set<string>();
     let remaining=request.budget.availableContextTokens;
 

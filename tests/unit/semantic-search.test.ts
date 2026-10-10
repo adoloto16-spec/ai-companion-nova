@@ -36,7 +36,7 @@ async function main(){
  const longThoughts="The saved note says the user has a long-term rental in Riga. ".repeat(70);
  const fullTurn='<NOVA_TURN version="1"><SITUATION>Continuation.</SITUATION><THOUGHTS>'+longThoughts+'</THOUGHTS><EMOTION>Calm</EMOTION><TOOLS></TOOLS><TOOL_RESULTS></TOOL_RESULTS><SPEECH>Everything is fine.</SPEECH><LONGMEMORY>Apartment lease in Riga.</LONGMEMORY><NEXT_WAKE_MS>30000</NEXT_WAKE_MS></NOVA_TURN>';
  const books=[book("home",a,"Home","Пользователь постоянно проживает в Риге."),book("roof",a,"Repair","Ремонт крыши в соседнем доме."),book("partial",a,"Neighbour","Новый дом по соседству."),book("model-search",a,"Model search","Пользователь проживает в Риге через model_search.",{kind:"model_search"}),book("other",b,"Other","The user rents a house in Riga.")];
- for(let i=0;i<18;i++)books.push(book("batch-"+i,a,"Batch document","Notes about astronomy and public events "+i));
+ for(let i=0;i<58;i++)books.push(book("batch-"+i,a,"Batch document","Notes about astronomy and public events "+i));
  const memories=[memory("memory-home",a,"Пользователь возвращается домой в Ригу по выходным."),memory("archived",a,"Пользователь снимал жильё в Риге.","archived"),memory("memory-other",b,"Пользователь живёт в Риге.")];
  const conversations=[conv("old-chat",a,[{id:"old-user",role:"user",content:"Я ищу жильё на длительный срок."},{id:"old-nova",role:"assistant",content:fullTurn}]),conv("other-chat",b,[{id:"other-user",role:"user",content:"I rent in Riga."}])];
  const index=new InMemoryMemorySemanticIndexStore();
@@ -49,7 +49,7 @@ async function main(){
   memory:{list:async c=>memories.filter(x=>x.characterId===c)},conversations:{listConversations:async c=>conversations.filter(x=>x.characterId===c)},
   events,diagnostics,clock:{now:()=>stamp}});
  const service=makeService();service.start();await service.rebuildAll();
- equal(service.getStatus().status,"ready","initial index status");equal(service.getStatus().processed,28,"every current source document is processed across multiple batches");
+ equal(service.getStatus().status,"ready","initial index status");equal(service.getStatus().processed,68,"every current source document is processed across multiple batches");
  ok((await index.load(a))?.records.some(r=>r.memoryId==="memory-home"),"semantic indexing preserves the existing memory-dedup vector");
  ok(provider.calls.some(call=>call.length>4),"oversized embedding batches were split and recovered");
  const calls=provider.calls.length;await service.rebuildAll();equal(provider.calls.length,calls,"unchanged documents are not embedded again");
