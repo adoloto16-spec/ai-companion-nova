@@ -20,6 +20,10 @@ pub struct ProviderConfiguration{
     pub credential_reference:Option<super::windows_credentials::CredentialReference>,
     #[serde(rename="timeoutMs",default)]
     pub timeout_ms:Option<f64>,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub temperature:Option<f64>,
+    #[serde(rename="topP",default,skip_serializing_if="Option::is_none")]
+    pub top_p:Option<f64>,
     #[serde(rename="numCtx",default,skip_serializing_if="Option::is_none")]
     pub num_ctx:Option<u32>,
     #[serde(rename="numPredict",default,skip_serializing_if="Option::is_none")]
@@ -73,17 +77,19 @@ fn validate(configuration:&ProviderConfiguration)->Result<(),String>{
         if configuration.provider_id!="openai-compatible"||reference.kind!="api-key"||reference.provider.as_deref()!=Some("openai-compatible"){return Err("invalid provider credential reference".to_string());}
     }
     if configuration.enabled&&configuration.credential_reference.is_none()&&configuration.provider_id!="ollama"{return Err("enabled provider requires a credential reference".to_string());}
-    if configuration.provider_id!="ollama"&&(configuration.num_ctx.is_some()||configuration.num_predict.is_some()||configuration.keep_alive.is_some()){
+    if configuration.provider_id!="ollama"&&(configuration.temperature.is_some()||configuration.top_p.is_some()||configuration.num_ctx.is_some()||configuration.num_predict.is_some()||configuration.keep_alive.is_some()){
         return Err("Ollama generation settings may only be used with the Ollama provider".to_string());
     }
+    if configuration.temperature.map(|value|!value.is_finite()||!(0.0..=2.0).contains(&value)).unwrap_or(false){return Err("Ollama temperature must be between 0 and 2".to_string());}
+    if configuration.top_p.map(|value|!value.is_finite()||!(0.0..=1.0).contains(&value)).unwrap_or(false){return Err("Ollama topP must be between 0 and 1".to_string());}
     if configuration.num_ctx==Some(0)||configuration.num_predict==Some(0){return Err("Ollama numCtx and numPredict must be positive integers".to_string());}
     if let Some(value)=&configuration.keep_alive{
         let valid=match value{
             Value::String(duration)=>!duration.trim().is_empty(),
-            Value::Number(number)=>number.as_f64().map(|number|number.is_finite()&&number>=0.0).unwrap_or(false),
+            Value::Number(number)=>number.as_f64().map(|number|number.is_finite()&&(number>=0.0||number==-1.0)).unwrap_or(false),
             _=>false
         };
-        if !valid{return Err("Ollama keepAlive must be a non-empty duration string or a non-negative number".to_string());}
+        if !valid{return Err("Ollama keepAlive must be a non-empty duration string or -1 or a non-negative number".to_string());}
     }
     Ok(())
 }
