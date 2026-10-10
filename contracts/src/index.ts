@@ -61,6 +61,8 @@ export interface ProviderPresetSource{
   failureCount:number;
   cooldownUntil:string|null;
   timeoutMs?:number;
+  temperature?:number;
+  topP?:number;
   numCtx?:number;
   numPredict?:number;
   keepAlive?:string|number;
@@ -81,6 +83,8 @@ export interface ProviderPreset{
   credentialReference?:CredentialReference|null;
   enabled?:boolean|null;
   timeoutMs?:number|null;
+  temperature?:number|null;
+  topP?:number|null;
   numCtx?:number|null;
   numPredict?:number|null;
   keepAlive?:string|number|null;
@@ -102,7 +106,7 @@ export interface ProviderPresetModelResolver{
   listModels(presetId:string):Promise<readonly ModelInfo[]>;
 }
 
-export interface ProviderConfiguration{apiVersion:ApiVersion;schemaVersion:string;providerId:string;enabled:boolean;baseUrl:string;model:string;credentialReference:CredentialReference|null;timeoutMs?:number;numCtx?:number;numPredict?:number;keepAlive?:string|number}
+export interface ProviderConfiguration{apiVersion:ApiVersion;schemaVersion:string;providerId:string;enabled:boolean;baseUrl:string;model:string;credentialReference:CredentialReference|null;timeoutMs?:number;temperature?:number;topP?:number;numCtx?:number;numPredict?:number;keepAlive?:string|number}
 export interface ProviderConnectionTestResult{apiVersion:ApiVersion;schemaVersion:string;status:ProviderConnectionTestStatus;providerId:string;message?:string}
 export type CharacterId=string;
 export const CHARACTER_API_VERSION:ApiVersion="1";
