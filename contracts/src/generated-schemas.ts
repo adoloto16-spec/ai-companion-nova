@@ -78,7 +78,7 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       }
     }
   },
-  "app-settings": {
+    "app-settings": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://schemas.ai-companion-nova.dev/app-settings/v12",
     "title": "AI Companion Nova App Settings v12",
@@ -419,6 +419,18 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
                 "maxLength": 12000
               },
               "nova-cue-background-plain": {
+                "type": "string",
+                "maxLength": 12000
+              },
+              "nova-schedule-structured": {
+                "type": "string",
+                "maxLength": 12000
+              },
+              "nova-schedule-plain": {
+                "type": "string",
+                "maxLength": 12000
+              },
+              "nova-tools-allowlist": {
                 "type": "string",
                 "maxLength": 12000
               },
