@@ -13,7 +13,7 @@ function equal(actual:unknown,expected:unknown,label:string):void{
 function ok(value:unknown,label:string):void{if(!value)throw new Error(label);}
 async function main():Promise<void>{
   const ids=PROMPT_REGISTRY.map(prompt=>prompt.id);
-  equal(ids.length,10,"complete registry contains all discovered editable prompt templates");
+  equal(ids.length,13,"complete registry contains all discovered editable prompt templates");
   equal([...ids].sort(),Object.keys(DEFAULT_PROMPT_TEXTS).sort(),"each registry item has one immutable factory default");
   ok(Object.isFrozen(DEFAULT_PROMPT_TEXTS),"factory prompt definitions are runtime-frozen");
   for(const prompt of PROMPT_REGISTRY){
