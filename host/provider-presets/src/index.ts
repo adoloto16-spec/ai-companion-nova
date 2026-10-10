@@ -90,6 +90,8 @@ export function materializeSingleProviderConfiguration(preset:ProviderPreset):Pr
     model:preset.model??"",
     credentialReference:preset.credentialReference?{...preset.credentialReference}:null,
     ...(preset.timeoutMs==null?{}:{timeoutMs:preset.timeoutMs}),
+    ...(preset.temperature==null?{}:{temperature:preset.temperature}),
+    ...(preset.topP==null?{}:{topP:preset.topP}),
     ...(preset.numCtx==null?{}:{numCtx:preset.numCtx}),
     ...(preset.numPredict==null?{}:{numPredict:preset.numPredict}),
     ...(preset.keepAlive==null?{}:{keepAlive:preset.keepAlive})
@@ -106,6 +108,8 @@ export function materializeProviderConfiguration(source:ProviderPresetSource):Pr
     model:source.model,
     credentialReference:source.credentialReference?{...source.credentialReference}:null,
     ...(source.timeoutMs===undefined?{}:{timeoutMs:source.timeoutMs}),
+    ...(source.temperature===undefined?{}:{temperature:source.temperature}),
+    ...(source.topP===undefined?{}:{topP:source.topP}),
     ...(source.numCtx===undefined?{}:{numCtx:source.numCtx}),
     ...(source.numPredict===undefined?{}:{numPredict:source.numPredict}),
     ...(source.keepAlive===undefined?{}:{keepAlive:source.keepAlive})
@@ -134,6 +138,8 @@ export function sourceFromProviderConfiguration(
     failureCount:0,
     cooldownUntil:null,
     ...(configuration.timeoutMs===undefined?{}:{timeoutMs:configuration.timeoutMs}),
+    ...(configuration.temperature===undefined?{}:{temperature:configuration.temperature}),
+    ...(configuration.topP===undefined?{}:{topP:configuration.topP}),
     ...(configuration.numCtx===undefined?{}:{numCtx:configuration.numCtx}),
     ...(configuration.numPredict===undefined?{}:{numPredict:configuration.numPredict}),
     ...(configuration.keepAlive===undefined?{}:{keepAlive:configuration.keepAlive}),
