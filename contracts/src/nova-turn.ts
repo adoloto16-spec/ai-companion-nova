@@ -149,7 +149,7 @@ function readField(source:string, canonical:CanonicalField, wrapperRecovered:boo
   }
   const raw=source.slice(open.end,close.start);
   if((canonical==="SPEECH"||canonical==="LONGMEMORY")&&/<\s*\/?\s*[A-Za-z][A-Za-z0-9_.-]*\b[^>]*>/.test(raw)){
-    return {status:"invalid",diagnostic:"SPEECH-contains-unescaped-tags"};
+    return {status:"invalid",diagnostic:canonical+"-contains-unescaped-tags"};
   }
   const value=unescapeXml(raw).trim();
   const aliasUsed=open.rawName!==canonical||close.rawName!==canonical;
