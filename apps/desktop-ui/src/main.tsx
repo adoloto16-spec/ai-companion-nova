@@ -24,7 +24,7 @@ import {
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
   type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem, type ErrorDiagnostic,
-  defaultAppSettings, validateAppSettings, StandardContractValidator, applyPromptOverride, restoreAllPromptDefaults, type PromptId,
+  defaultAppSettings, validateAppSettings, StandardContractValidator, applyPromptOverride, restorePromptDefault, restoreAllPromptDefaults, type PromptId,
   type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo, type MindState, type MindTurnSink, type MindReactiveTurn
 } from "../../../contracts/src/index";
 import {countVisibleSpeechMessages,resolveNovaTurnMessagePresentation} from "./nova-turn-visibility";
@@ -1656,18 +1656,28 @@ function AppSettingsView({
       </label>
       <label>Judge Prompt
         <textarea value={settings.semanticDedup.judge.prompt}
-          onChange={event=>onChange({...settings,semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,prompt:event.target.value}}})}
+          onChange={event=>{
+            const prompt=event.currentTarget.value;
+            onChange({
+              ...settings,
+              prompts:{overrides:{...settings.prompts.overrides,"memory-judge.system":prompt}},
+              semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,prompt}}
+            });
+          }}
           rows={10} maxLength={12000} disabled={saving}/>
-        <small>{settings.semanticDedup.judge.prompt===defaults.semanticDedup.judge.prompt?"Default prompt":"Custom prompt"} · default version {settings.semanticDedup.judge.defaultPromptVersion}</small>
+        <small>{settings.semanticDedup.judge.prompt===defaults.semanticDedup.judge.prompt?"Default prompt":"Custom prompt"} · default version {settings.semanticDedup.judge.defaultPromptVersion}. This setting is synchronized with the Prompts tab.</small>
       </label>
       <div className="actions">
         <button type="button" onClick={()=>{
           const previous=settings.semanticDedup.judge.prompt===defaults.semanticDedup.judge.prompt?settings.semanticDedup.judge.promptBackup:settings.semanticDedup.judge.prompt;
-          onChange({...settings,semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,prompt:defaults.semanticDedup.judge.prompt,promptBackup:previous||settings.semanticDedup.judge.promptBackup}}});
+          const reset=restorePromptDefault(settings,"memory-judge.system");
+          onChange({...reset,semanticDedup:{...reset.semanticDedup,judge:{...reset.semanticDedup.judge,promptBackup:previous||settings.semanticDedup.judge.promptBackup}}});
         }} disabled={saving}>Reset to Default</button>
         <button type="button" onClick={()=>{
           if(settings.semanticDedup.judge.promptBackup){
-            onChange({...settings,semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,prompt:settings.semanticDedup.judge.promptBackup,promptBackup:settings.semanticDedup.judge.prompt}}});
+            const previous=settings.semanticDedup.judge.prompt;
+            const restored=applyPromptOverride(settings,"memory-judge.system",settings.semanticDedup.judge.promptBackup);
+            onChange({...restored,semanticDedup:{...restored.semanticDedup,judge:{...restored.semanticDedup.judge,promptBackup:previous}}});
           }
         }} disabled={saving||!settings.semanticDedup.judge.promptBackup}>Restore Previous</button>
         <button type="button" onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save"}</button>
