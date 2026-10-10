@@ -433,7 +433,7 @@ async function main(){
     version:1 as const,situation:"Comparing the request with prior context",thoughts:"private thoughts live only in the tagged record",
     emotion:"focused",tools:[{name:"read_memory",arguments:{query:"saved preferences"}}],
     toolResults:[{callId:"life-request-1:tool:0:read_memory",name:"read_memory",status:"success" as const,output:[{content:"Prefers trains"}]}],
-    speech:"A separate public reply",nextWakeMs:45000
+    speech:"A separate public reply",longMemory:"The user prefers train travel.",nextWakeMs:45000
   };
   let persistedMessages:readonly import("../../contracts/src").ChatMessage[]=[];
   await lifeController.commitNovaTurn(turn,context,async snapshot=>{
@@ -452,13 +452,17 @@ async function main(){
   equal(lifeController.getSnapshot().lifeTurn?.status,"completed","reactive turn completes only after persistence");
   equal(ordinaryLifeRequests,0,"Nova Life response does not dispatch a second ordinary LLM request");
   await new Promise(resolve=>setTimeout(resolve,0));
-  equal(memoryExtractions,1,"completed reactive turn invokes Automatic Memory exactly once");
-  equal(memoryRequests[0]?.turnId,"life-request-1","memory receives the original turn id");
-  equal(memoryRequests[0]?.userMessage.id,"life-request-1:user","memory receives the exact user message");
-  equal(memoryRequests[0]?.assistantMessage.content,"A separate public reply","Automatic Memory receives only the public speech projection");
-  equal(memoryRequests[0]?.model,"cognitive-model","memory receives actual cognitive model provenance");
-  ok(!JSON.stringify(memoryRequests[0]).includes("private thoughts live only"),"Automatic Memory never receives private NovaTurn thoughts");
-  ok(Boolean(memoryRequests[0]),"Automatic Memory received a request for the completed exchange");
+  equal(memoryExtractions,1,"non-empty LONGMEMORY invokes the existing persistence boundary exactly once");
+  equal(memoryRequests[0]?.turnId,"life-request-1","LONGMEMORY uses the original turn id");
+  equal(memoryRequests[0]?.userMessage.id,"life-request-1:user","LONGMEMORY preserves the exact user message scope");
+  equal(memoryRequests[0]?.assistantMessage.content,"The user prefers train travel.","only the LONGMEMORY candidate is sent to memory persistence");
+  equal(memoryRequests[0]?.assistantMessage.metadata?.novaTurnLongMemoryCandidate,true,"candidate uses the direct LONGMEMORY path rather than another LLM extraction");
+  equal(memoryRequests[0]?.assistantMessage.metadata?.source,"nova-life-longmemory-candidate","candidate source is explicitly marked");
+  equal(memoryRequests[0]?.assistantMessage.metadata?.longMemoryAbortSignal,context.signal,"memory path receives cancellation state");
+  equal(memoryRequests[0]?.model,"cognitive-model","LONGMEMORY retains cognitive model provenance");
+  ok(!JSON.stringify(memoryRequests[0]?.assistantMessage).includes("A separate public reply"),"public speech is never sent as a memory candidate");
+  ok(!JSON.stringify(memoryRequests[0]).includes("private thoughts live only"),"LONGMEMORY never receives private NovaTurn thoughts");
+  ok(Boolean(memoryRequests[0]),"LONGMEMORY candidate was passed to memory persistence");
   const priorProjected=memoryRequests[0]?.contextMessages.find(message=>message.id==="nova-turn:background-turn");
   equal(priorProjected?.content,"Earlier public statement","prior NovaTurn context is projected to speech before Automatic Memory");
   ok(!JSON.stringify(priorProjected).includes("private internal detail"),"prior private thoughts are filtered from Automatic Memory");
