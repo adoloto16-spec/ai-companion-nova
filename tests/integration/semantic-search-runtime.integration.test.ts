@@ -10,11 +10,11 @@ function ok(v:unknown,label:string){if(!v)throw new Error(label)}
 function eq(a:unknown,b:unknown,label:string){if(JSON.stringify(a)!==JSON.stringify(b))throw new Error(label+" expected "+JSON.stringify(b)+" got "+JSON.stringify(a))}
 class Embeddings implements EmbeddingProvider{
  readonly id="test.semantic.integration";capabilities():ProviderCapabilities{return {embeddings:true}} dimensions(){return 3}
- async embed(texts:string[]):Promise<number[][]>{return texts.map(t=>/квартир|где|дом|риг|прожив|housing|riga|home|lease/i.test(t)?[1,0,0]:/крыша|ремонт/i.test(t)?[0,1,0]:[0,0,1])}
+ async embed(texts:string[]):Promise<number[][]>{return texts.map(t=>/long-term lease|older conversation/i.test(t)?[0,0,1]:/квартир|где|дом|риг|прожив|housing|riga|home|lease/i.test(t)?[1,0,0]:/крыша|ремонт/i.test(t)?[0,1,0]:[0,0,1])}
  async health():Promise<HealthStatus>{return {status:"healthy",capabilities:["embeddings"]}}
 }
 async function main(){
- const s:AppSettings=defaultAppSettings();s.retrieval.semanticSearchEnabled=true;s.retrieval.semanticSimilarityThreshold=.7;s.retrieval.semanticResultLimit=10;
+ const s:AppSettings=defaultAppSettings();s.retrieval.semanticSearchEnabled=true;s.retrieval.semanticSimilarityThreshold=.7;s.retrieval.semanticResultLimit=20;
  const settingsStore=new InMemorySettingsStore(new StandardContractValidator());await settingsStore.save(s);
  const characterStore=new InMemoryCharacterStore(),coreBookStore=new InMemoryCoreBookStore(),memoryStore=new InMemoryMemoryStore();
  const conversationStore=new InMemoryConversationStore(),semanticIndexStore=new InMemoryMemorySemanticIndexStore();
@@ -48,9 +48,15 @@ async function main(){
   eq(action.status,"success","MEMORY_SEARCH dispatched through the production Tool Registry and Action Broker");
   if(action.status!=="success")throw new Error("MEMORY_SEARCH action failed: "+action.error.code);
   const output=JSON.stringify(action.output);
-  ok(output.includes("old-turn.integration")&&output.includes(oldTurn.slice(0,60)),"MEMORY_SEARCH returns historical NOVA_TURN with source provenance");
   ok(output.includes("core_book")&&output.includes("memory")&&output.includes("conversation"),"MEMORY_SEARCH returns results across the three source families");
   ok(output.includes(modelSearch.id),"explicit MEMORY_SEARCH can find model_search Core Book entries");
+  const historicalAction=await runtime.invoke({id:"memory-search-historical.integration",schemaVersion:"1",tool:"MEMORY_SEARCH",
+   arguments:{query:"Which detail was saved about the long-term lease in my older conversation?"},metadata:{characterId:character.id,conversationId:active.id,turnId:"tool-turn-historical",callId:"tool-call-historical"}});
+  eq(historicalAction.status,"success","MEMORY_SEARCH supports a focused historical query");
+  if(historicalAction.status!=="success")throw new Error("Historical MEMORY_SEARCH failed: "+historicalAction.error.code);
+  const historicalOutput=JSON.stringify(historicalAction.output);
+  ok(historicalOutput.includes("old-turn.integration"),"MEMORY_SEARCH returns historical NOVA_TURN by source ID");
+  ok(historicalOutput.includes(oldTurn.slice(0,60)),"MEMORY_SEARCH returns intact historical NOVA_TURN content");
  }finally{await runtime.stop()}
  console.log("semantic search runtime integration tests passed");
 }
