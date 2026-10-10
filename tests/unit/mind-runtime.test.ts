@@ -111,7 +111,7 @@ async function llmUsesTaggedProtocolAndPreservesContextTest(){
  const conversation={id:"conversation.llm",characterId:"character.llm",messages} as unknown as Conversation;
  const character={id:"character.llm",name:"Nova",description:"A careful companion"} as Character;
  let outputMode:"structured"|"plain"="structured";const calls:ChatRequest[]=[];let responseContent='<NOVA_TURN version="1"><SITUATION>Use real memory results before concluding.</SITUATION><THOUGHTS>Keep private notes private.</THOUGHTS><EMOTION>Focused.</EMOTION><TOOLS><read_memory>{"query":"user preference"}</read_memory><browser.navigate>{"url":"https://wikipedia.org/"}</browser.navigate></TOOLS><SPEECH>I’ll check what was saved before answering.</SPEECH><NEXT_WAKE_MS>45000</NEXT_WAKE_MS></NOVA_TURN>';
- const runtime={async chat(request:ChatRequest){calls.push(request);return responseFor(request,responseContent);},getActiveProviderPresetId:()=>undefined,getChatModel:()=>"fake-model",async getChatModelForPreset(){return "unused";}};
+ const runtime={async chat(request:ChatRequest){calls.push(request);return responseFor(request,responseContent);},getChatProviderCapabilities:()=>({structuredOutput:false}),getActiveProviderPresetId:()=>undefined,getChatModel:()=>"fake-model",async getChatModelForPreset(){return "unused";}};
  const budget={availableContextTokens:4096,reservedOutputTokens:1024,systemOverheadTokens:0,safetyMarginTokens:128};
  const step=new LLMCognitiveStep({
   runtime,
@@ -129,7 +129,7 @@ async function llmUsesTaggedProtocolAndPreservesContextTest(){
  const context:CognitiveStepContext={characterId:"character.llm",state:{lifecycleState:"thinking",nextWakeAt:null,recentTrace:[]},signal:new AbortController().signal,wakeReason:"user-message",userTurn:{characterId:"character.llm",conversationId:"conversation.llm",userMessageId:"latest-user",turnId:"turn-llm"}};
  const result=await step.run(context);
  equal(calls.length,1,"all cognitive fields come from exactly one LLM request");
- equal(calls[0]?.generation?.responseFormat?.type,"text","tagged protocol uses provider-neutral text, not JSON Schema mode");
+ equal(calls[0]?.generation?.responseFormat?.type,"text","provider explicitly lacking schema support uses tagged fallback");
  equal(calls[0]?.context.messages.at(-1)?.role,"user","Mistral-compatible synthetic cue is the final user message");
  ok(calls[0]?.context.messages.at(-1)?.content.includes("SPEECH must be non-empty"),"reactive user cue requires public speech");
  ok(calls[0]?.context.messages.some(message=>message.content===rawPrevious),"complete prior NovaTurn remains in the model context");
@@ -147,7 +147,7 @@ async function llmUsesTaggedProtocolAndPreservesContextTest(){
  const plainRequest=calls.at(-1)!;
  ok(plainRequest.context.messages[0]?.content.includes("ordinary plain text"),"plain mode uses a distinct plain-text hidden system prompt");
  ok(!plainRequest.context.messages[0]?.content.includes("NOVA_TURN protocol version 1"),"plain mode does not reuse the structured protocol prompt");
- ok(plainRequest.context.messages.at(-1)?.content.includes("[[NOVA_SILENT]]"),"plain background cue defines the exact silence sentinel");
+ ok(!plainRequest.context.messages.at(-1)?.content.includes("[[NOVA_SILENT]]"),"plain background cue does not require a special sentinel");
  ok(!plainRequest.context.messages[2]?.content.includes("[REGISTERED TOOLS]"),"plain mode omits the model tool catalogue");
  equal(plain.turn.speech,responseContent,"plain mode returns provider response as user-facing speech without parsing tool-like tags");
  equal(plain.turn.tools,[],"tool-like tags in plain text never become executable tool calls");
@@ -157,13 +157,13 @@ async function llmUsesTaggedProtocolAndPreservesContextTest(){
  equal(plain.turn.toolResults,[],"plain mode does not fabricate tool results");
  equal(plain.turn.nextWakeMs,20,"plain mode uses the configured default interval clamped to schedule bounds");
  const savedMessagesBefore=JSON.stringify(messages);
- responseContent="[[NOVA_SILENT]]";
+ responseContent="";
  const silent=await step.run({...context,wakeReason:"scheduled",userTurn:undefined});
- equal(silent.turn.speech,"","exact background sentinel becomes empty speech and is not displayed");
- equal(silent.turn.nextWakeMs,20,"silent turn also uses the bounded configured default interval");
- let reactiveSilentRejected=false;
- try{await step.run(context);}catch{reactiveSilentRejected=true;}
- equal(reactiveSilentRejected,true,"plain silent sentinel fails instead of satisfying a reactive user turn");
+ equal(silent.turn.speech,"","empty plain background response remains empty text without protocol parsing");
+ equal(silent.turn.nextWakeMs,20,"empty plain background response uses the bounded configured default interval");
+ let reactiveEmptyRejected=false;
+ try{await step.run(context);}catch{reactiveEmptyRejected=true;}
+ equal(reactiveEmptyRejected,true,"empty plain response fails instead of satisfying a reactive user turn");
  equal(JSON.stringify(messages),savedMessagesBefore,"output mode changes do not mutate saved conversation messages");
  outputMode="structured";
  responseContent="free text must not become speech";
