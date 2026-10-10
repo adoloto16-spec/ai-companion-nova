@@ -80,8 +80,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
   },
   "app-settings": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v11",
-    "title": "AI Companion Nova App Settings v11",
+    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v10",
+    "title": "AI Companion Nova App Settings v10",
     "type": "object",
     "additionalProperties": false,
     "required": [
@@ -94,14 +94,15 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       "retrieval",
       "diagnostics",
       "ui",
-      "semanticDedup"
+      "semanticDedup",
+      "memoryAgent"
     ],
     "properties": {
       "apiVersion": {
         "const": "1"
       },
       "schemaVersion": {
-        "const": "11"
+        "const": "10"
       },
       "chat": {
         "type": "object",
@@ -233,6 +234,58 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         "properties": {
           "showDiagnosticsInChat": {
             "type": "boolean"
+          }
+        }
+      },
+      "memoryAgent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "enabled",
+          "providerPresetId",
+          "model",
+          "outputMode",
+          "prompt",
+          "promptBackup",
+          "defaultPromptVersion"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "providerPresetId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "outputMode": {
+            "enum": [
+              "auto",
+              "structured",
+              "plain"
+            ]
+          },
+          "prompt": {
+            "type": "string",
+            "maxLength": 12000
+          },
+          "promptBackup": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 12000
+          },
+          "defaultPromptVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32
           }
         }
       },
@@ -2169,29 +2222,6 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
   "json-rpc-message": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "description": "Validated at runtime by the JSON-RPC boundary. Request, response and notification share the jsonrpc marker."
-  },
-  "memory-agent-decision": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/memory-agent-decision/v1",
-    "title": "AI Companion Nova Memory Agent Decision v1",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "decision",
-      "content"
-    ],
-    "properties": {
-      "decision": {
-        "enum": [
-          "remember",
-          "no_memory"
-        ]
-      },
-      "content": {
-        "type": "string",
-        "maxLength": 32768
-      }
-    }
   },
   "memory-candidate": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
