@@ -52,7 +52,7 @@ function incompleteAndReset():void{
   text+=tags.push("CH> secret </SPEECH>");
   equal(text,"hello","tag decoder stops exactly at split closing tag");
   tags.reset();
-  equal(tags.push("<SPEECH>again</SPEECH>"),"again","reset permits the next stream");
+  equal(tags.push('<NOVA_TURN version="1"><SITUATION>private</SITUATION><THOUGHTS>hidden</THOUGHTS><EMOTION>private</EMOTION><TOOLS></TOOLS><SPEECH>again</SPEECH><LONGMEMORY></LONGMEMORY><NEXT_WAKE_MS>30000</NEXT_WAKE_MS></NOVA_TURN>'),"again","reset permits the next canonical turn stream");
 }
 nativeJsonChunkBoundaries();
 taggedChunkBoundaries();
