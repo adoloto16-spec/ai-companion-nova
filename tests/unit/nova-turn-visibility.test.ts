@@ -6,7 +6,7 @@ const base:NovaTurn={
   version:1,situation:"",thoughts:"",emotion:"",tools:[],toolResults:[],speech:"",nextWakeMs:30_000
 };
 const empty=serializeNovaTurn(base);
-const visible=serializeNovaTurn({...base,speech:"Visible user-facing reply."});
+const visible=serializeNovaTurn({...base,speech:"Visible user-facing reply.",longMemory:"Private candidate that must never be displayed."});
 const malformed="<NOVA_TURN version=\"1\"><THOUGHTS>private note</THOUGHTS>";
 const emptyParsed=parseNovaTurn(empty);
 const visibleParsed=parseNovaTurn(visible);
@@ -17,6 +17,8 @@ assert.equal(shouldRenderNovaTurn(emptyParsed,true),true,"empty persisted turns 
 assert.equal(shouldRenderNovaTurn(malformedParsed,false),false,"malformed raw content is never presented as public speech");
 assert.equal(shouldRenderNovaTurn(malformedParsed,true),true,"malformed persisted turns remain visible in technical mode");
 assert.equal(shouldRenderNovaTurn(visibleParsed,false),true,"unique valid speech remains visible in ordinary Chat");
+assert.equal(visibleParsed.turn?.speech,"Visible user-facing reply.","ordinary Chat reads only SPEECH even when LONGMEMORY is present");
+assert.notEqual(visibleParsed.speech,"Private candidate that must never be displayed.","LONGMEMORY is never promoted to visible speech");
 
 const messages:ChatMessage[]=[
   {id:"user",role:"user",content:"Question"},

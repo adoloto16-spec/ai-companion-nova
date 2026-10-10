@@ -313,7 +313,7 @@ export class MemorySemanticDeduplicator{
     }
   }
 
-  async deduplicateMemory(memoryId:string,characterId:CharacterId):Promise<SemanticDedupExecution>{
+  async deduplicateMemory(memoryId:string,characterId:CharacterId,options:{forceJudge?:boolean}={}):Promise<SemanticDedupExecution>{
     const key=characterId+"\0"+memoryId;
     if(this.inFlight.has(key)){
       this.recordDiagnostic("SEMANTIC_DEDUP_SKIPPED","deduplication_already_in_flight",{characterId,memoryId});
@@ -331,7 +331,7 @@ export class MemorySemanticDeduplicator{
         judgeModel:settings.semanticDedup.judge.model,
         judgeOutputMode:settings.semanticDedup.judge.outputMode
       });
-      if(!settings.semanticDedup.enabled)return this.skip("semantic_deduplication_disabled",characterId);
+      if(!settings.semanticDedup.enabled&&!options.forceJudge)return this.skip("semantic_deduplication_disabled",characterId);
       const newMemory=await this.options.broker.get(characterId,memoryId);
       if(!newMemory)return this.skip("new_memory_not_found",characterId);
       if(newMemory.status!=="active")return this.skip("new_memory_not_active",characterId);
@@ -339,9 +339,11 @@ export class MemorySemanticDeduplicator{
 
       // Embeddings are an optional semantic candidate source; deterministic containment must still run without them.
       let provider:EmbeddingProvider|undefined;
-      try{provider=await this.options.embeddingProvider();}
-      catch(error){this.recordFailure("EMBEDDING_PROVIDER_RESOLUTION_FAILED",error,characterId,{memoryId});}
-      const model=settings.semanticDedup.embeddingModel.trim();
+      if(settings.semanticDedup.enabled){
+        try{provider=await this.options.embeddingProvider();}
+        catch(error){this.recordFailure("EMBEDDING_PROVIDER_RESOLUTION_FAILED",error,characterId,{memoryId});}
+      }
+      const model=settings.semanticDedup.enabled?settings.semanticDedup.embeddingModel.trim():"";
       let vectors:ReadonlyMap<string,readonly number[]>=new Map();
       let staleOrMissing=0;
       if(provider&&model){

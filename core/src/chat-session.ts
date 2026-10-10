@@ -314,24 +314,32 @@ export class ChatSessionController{
         const completed={...this.lifeTurn,status:"completed"} as LifeTurnSnapshot;delete completed.error;this.lifeTurn=completed;
       }
       this.notify();
-      if(reactive&&this.memoryExtractor&&(this.memoryExtractionEnabled?.()??true)){
+      // LONGMEMORY is produced by the same NovaTurn call. Never schedule persistence for an
+      // empty, malformed, cancelled, or stale candidate, and never send SPEECH to memory extraction.
+      if(reactive&&this.memoryExtractor&&turn.longMemory?.trim()&&!context.signal.aborted){
         const messages=this.session.getMessages();
         const userIndex=messages.findIndex(item=>item.id===context.userMessageId&&item.role==="user");
         const userMessage=messages[userIndex];
-        if(userMessage){
+        if(userMessage&&this.lifeTurn?.turnId===context.turnId&&this.lifeTurn.status==="completed"){
           const providerPresetId=context.providerPresetId??this.modelProfile?.providerPresetId??this.runtime.getActiveProviderPresetId?.();
           const projection=messages.slice(0,userIndex+1)
             .filter(item=>item.metadata?.contextSource===undefined||item.metadata?.contextSource==="conversation")
             .map(projectNovaTurnToSpeech).filter((item):item is ChatMessage=>Boolean(item))
             .slice(-(this.recentConversationMessagesProvider?.()??8));
-          const assistantProjection:ChatMessage={id:message.id,role:"assistant",content:turn.speech,metadata:{streamStatus:"complete",source:"nova-life",novaTurnVersion:1}};
+          const assistantProjection:ChatMessage={
+            id:message.id,role:"assistant",content:turn.longMemory.trim(),
+            metadata:{streamStatus:"complete",source:"nova-life-longmemory-candidate",novaTurnLongMemoryCandidate:true,longMemoryAbortSignal:context.signal}
+          };
           const extractionRequest:MemoryExtractionRequest={
             apiVersion:"1",schemaVersion:"1",characterId:this.session.characterId,conversationId:this.session.conversationId,turnId:context.turnId,
             model:context.model??this.modelProfile?.model??"",
             ...(context.providerId?{providerId:context.providerId}:{}),...(providerPresetId?{providerPresetId}:{}),
             userMessage:cloneMessage(userMessage),assistantMessage:assistantProjection,contextMessages:projection
           };
-          void Promise.resolve().then(()=>this.memoryExtractor!.extract(extractionRequest)).catch(()=>undefined);
+          void Promise.resolve().then(()=>{
+            if(context.signal.aborted||this.session.characterId!==context.characterId||this.session.conversationId!==context.conversationId)return;
+            return this.memoryExtractor!.extract(extractionRequest);
+          }).catch(()=>undefined);
         }
       }
     }finally{

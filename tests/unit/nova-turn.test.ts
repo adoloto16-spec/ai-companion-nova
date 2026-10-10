@@ -9,12 +9,33 @@ const source: NovaTurn = {
   tools: [{ name: "read_memory", arguments: { query: "travel preferences" } }, { name: "web_search", arguments: { query: "current fares" } }],
   toolResults: [],
   speech: "Here is the comparison. The input contained <SPEECH> as quoted text.",
+  longMemory: "The user is comparing options.",
   nextWakeMs: 30_000,
 };
 const serialized = serializeNovaTurn(source);
 const roundTrip = parseNovaTurn(serialized);
 assert.equal(roundTrip.complete, true);
 assert.deepEqual(roundTrip.turn, source);
+
+assert.equal(roundTrip.turn?.longMemory,"The user is comparing options.","non-empty LONGMEMORY survives serialize/parse");
+assert.ok(serialized.indexOf("<LONGMEMORY>")>serialized.indexOf("</SPEECH>"),"LONGMEMORY follows SPEECH");
+assert.ok(serialized.indexOf("<NEXT_WAKE_MS>")>serialized.indexOf("</LONGMEMORY>"),"NEXT_WAKE_MS follows LONGMEMORY");
+
+const legacyWithoutLongMemory=serialized.replace(/<LONGMEMORY>[\s\S]*?<\/LONGMEMORY>\n?/,"");
+const legacyParsed=parseNovaTurn(legacyWithoutLongMemory);
+assert.equal(legacyParsed.complete,true,"old NovaTurn responses without LONGMEMORY remain valid");
+assert.equal(legacyParsed.turn?.longMemory,"","missing LONGMEMORY defaults to empty");
+assert.equal(legacyParsed.fields.longMemory.status,"missing","legacy absence is represented explicitly");
+
+const explicitEmptyLongMemory=parseNovaTurn(serializeNovaTurn({...source,longMemory:"   "}));
+assert.equal(explicitEmptyLongMemory.complete,true,"empty LONGMEMORY remains valid");
+assert.equal(explicitEmptyLongMemory.turn?.longMemory,"","empty LONGMEMORY does not create a candidate");
+assert.equal(explicitEmptyLongMemory.fields.longMemory.status,"empty");
+
+const malformedLongMemory=parseNovaTurn(serialized.replace(/<LONGMEMORY>[\s\S]*?<\/LONGMEMORY>/,"<LONGMEMORY>incomplete candidate"));
+assert.equal(malformedLongMemory.complete,false,"malformed LONGMEMORY makes the protocol incomplete");
+assert.equal(malformedLongMemory.turn?.longMemory,"","malformed turns do not carry a memory candidate");
+assert.equal(malformedLongMemory.fields.longMemory.status,"invalid");
 
 const damaged = serialized.replace(/<SITUATION>[\s\S]*?<\/SITUATION>/, '<SITUATION malformed="yes">broken</SITUATION>');
 const recovered = parseNovaTurn(damaged);
@@ -34,7 +55,7 @@ assert.equal(invalidInterval.fields.nextWakeMs.status,"invalid");
 assert.ok(invalidInterval.diagnostics.includes("NEXT_WAKE_MS-invalid"));
 assert.equal(parseNovaTurn(serialized + serialized).turn?.speech, undefined);
 
-const emptyTurn:NovaTurn={...source,situation:"",thoughts:"",emotion:"",tools:[],toolResults:[],speech:"",nextWakeMs:1};
+const emptyTurn:NovaTurn={...source,situation:"",thoughts:"",emotion:"",tools:[],toolResults:[],speech:"",longMemory:"",nextWakeMs:1};
 const emptyParsed=parseNovaTurn(serializeNovaTurn(emptyTurn));
 assert.equal(emptyParsed.complete,true,"explicit empty fields are valid");
 assert.equal(emptyParsed.turn?.speech,"","empty speech stays explicitly empty");

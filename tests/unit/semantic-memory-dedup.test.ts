@@ -180,6 +180,31 @@ async function belowThresholdContainmentReachesJudgeTest(){
   ok(f.diagnostics.recentErrors().some(error=>error.code==="SEMANTIC_DEDUP_JUDGE_COMPLETED"),"Judge completed diagnostic is emitted");
 }
 
+async function forceJudgeForLongMemoryWithoutSemanticSearchTest(){
+  const f=await fixture(()=>JSON.stringify({archive:["1"]}),undefined,false);
+  f.settings.semanticDedup={...f.settings.semanticDedup,enabled:false};
+  await f.broker.create("character.a",{id:"longmemory-old",type:"fact",content:"The user prefers quiet scenic train journeys with a window seat.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  await f.broker.create("character.a",{id:"longmemory-new",type:"observation",content:"The user prefers quiet scenic train journeys.",source:"conversation",sourceReference:"longmemory-turn",mutationPolicy:"auto"},{actorId:"u",actorType:"system",trusted:true,capabilities:["memory.create","memory.write.auto"]});
+  const result=await f.service.deduplicateMemory("longmemory-new","character.a",{forceJudge:true});
+  equal(result.status,"completed","direct LONGMEMORY path can ask the existing Judge with semantic search disabled");
+  equal(f.judge.calls.length,1,"the existing Memory Judge is invoked exactly once");
+  equal(f.embeddings.calls.length,0,"forced Judge uses existing deterministic containment and does not introduce embedding search");
+  equal((await f.broker.get("character.a","longmemory-new"))?.status,"active","Judge decision can retain the new LONGMEMORY");
+  equal((await f.broker.get("character.a","longmemory-old"))?.status,"archived","Judge decision is applied through the existing MemoryBroker");
+}
+
+async function forceJudgeCanRefuseLongMemoryTest(){
+  const f=await fixture(()=>JSON.stringify({archive:[]}),undefined,false);
+  f.settings.semanticDedup={...f.settings.semanticDedup,enabled:false};
+  await f.broker.create("character.a",{id:"longmemory-refusal-old",type:"fact",content:"The user prefers quiet scenic train journeys with a window seat.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
+  await f.broker.create("character.a",{id:"longmemory-refusal-new",type:"observation",content:"The user prefers quiet scenic train journeys.",source:"conversation",sourceReference:"longmemory-refusal-turn",mutationPolicy:"auto"},{actorId:"u",actorType:"system",trusted:true,capabilities:["memory.create","memory.write.auto"]});
+  const result=await f.service.deduplicateMemory("longmemory-refusal-new","character.a",{forceJudge:true});
+  equal(result.status,"completed","Judge refusal is a successful no-mutation decision");
+  equal(f.judge.calls.length,1,"the existing Judge receives the LONGMEMORY duplicate candidates");
+  equal((await f.broker.get("character.a","longmemory-refusal-old"))?.status,"active","NO_ARCHIVE preserves the existing candidate");
+  equal((await f.broker.get("character.a","longmemory-refusal-new"))?.status,"active","NO_ARCHIVE preserves the new memory");
+}
+
 async function structuredArchiveTest(){
   const f=await fixture(()=>JSON.stringify({archive:["1"]}));
   await f.broker.create("character.a",{id:"candidate",type:"fact",content:"User lives in Berlin.",source:"user",mutationPolicy:"auto"},{actorId:"u",actorType:"user",trusted:true,capabilities:[]});
@@ -710,6 +735,8 @@ async function main(){
   await productionRuntimeSmokePathTest();
   await productionChatJudgeFailureIsolationRegressionTest();
   await belowThresholdContainmentReachesJudgeTest();
+  await forceJudgeForLongMemoryWithoutSemanticSearchTest();
+  await forceJudgeCanRefuseLongMemoryTest();
   await structuredArchiveTest();
   await structuredNoArchiveTest();
   await plainArchiveTest();
