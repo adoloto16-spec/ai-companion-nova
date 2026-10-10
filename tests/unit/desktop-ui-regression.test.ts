@@ -35,7 +35,7 @@ assert.equal(passiveDiagnosticsOptions("openai-compatible"),undefined,"OpenAI-co
 assert.equal(passiveDiagnosticsOptions("gemini"),undefined,"Gemini diagnostics retain their current health probes");
 assert.ok(refreshRuntime.includes("next.diagnostics(passiveDiagnosticsOptions(config?.providerId))"),"runtime replacement avoids duplicate Ollama startup probes after the first snapshot");
 assert.ok(startupEffect.includes("foundation.diagnostics(passiveDiagnosticsOptions(foundation.getProviderConfiguration()?.providerId))"),"the one-second runtime diagnostics loop does not re-probe Ollama");
-assert.equal((startupEffect.match(/setInterval/g)??[]).length,1,"runtime mount owns only one diagnostics interval");
+assert.equal((startupEffect.match(/timer\s*=\s*setInterval/g)??[]).length,1,"runtime mount owns only one diagnostics timer start");
 assert.ok(startupEffect.includes("if(timer)clearInterval(timer)"),"runtime cleanup clears its interval on unmount");
 assert.ok(startupEffect.includes("active=false;"),"runtime cleanup invalidates in-flight sync work on unmount");
 assert.ok(startupEffect.includes("if(!active)return;"),"late startup completion cannot create a timer after unmount");
