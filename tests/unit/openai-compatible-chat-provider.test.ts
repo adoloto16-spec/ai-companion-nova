@@ -521,10 +521,10 @@ async function streamingTimeoutStageTest(){
 async function streamingTimeoutIsInactivityDeadlineTest(){
   const http=new FakeHttpClient();
   const frames=[
-    "data: "+JSON.stringify({choices:[{delta:{content:"still "},finish_reason:null}]})+"\\n\\n",
-    "data: "+JSON.stringify({choices:[{delta:{content:"streaming "},finish_reason:null}]})+"\\n\\n",
-    "data: "+JSON.stringify({choices:[{delta:{content:"after thirty seconds in total"},finish_reason:"stop"}]})+"\\n\\n",
-    "data: [DONE]\\n\\n"
+    "data: "+JSON.stringify({choices:[{delta:{content:"still "},finish_reason:null}]})+"\n\n",
+    "data: "+JSON.stringify({choices:[{delta:{content:"streaming "},finish_reason:null}]})+"\n\n",
+    "data: "+JSON.stringify({choices:[{delta:{content:"after thirty seconds in total"},finish_reason:"stop"}]})+"\n\n",
+    "data: [DONE]\n\n"
   ];
   http.streamNext={status:200,headers:{"content-type":"text/event-stream"},body:delayedStreamChunks(frames,15)};
   const response=await provider(http,new FakeCredentialStore(),25).stream(request(),{onEvent:()=>{}});
