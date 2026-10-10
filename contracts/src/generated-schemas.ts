@@ -181,6 +181,23 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             "type": "integer",
             "minimum": 1,
             "maximum": 100
+          },
+          "semanticSearchEnabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "semanticSimilarityThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.35,
+            "description": "Raw cosine similarity threshold, not a percentage."
+          },
+          "semanticResultLimit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20,
+            "default": 5
           }
         }
       },

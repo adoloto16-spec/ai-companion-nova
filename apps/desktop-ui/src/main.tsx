@@ -1598,6 +1598,25 @@ function AppSettingsView({
           onChange={event=>setNumber("retrieval","candidateLimit",Number(event.target.value))} disabled={saving}/>
         <small>Default: {defaults.retrieval.candidateLimit}</small>
       </label>
+      <hr/>
+      <h4>Automatic Semantic Search</h4>
+      <label className="checkbox">Enabled
+        <input type="checkbox" checked={settings.retrieval.semanticSearchEnabled}
+          onChange={event=>onChange({...settings,retrieval:{...settings.retrieval,semanticSearchEnabled:event.target.checked}})} disabled={saving}/>
+      </label>
+      <div className="core-book-grid">
+        <label>Cosine similarity threshold
+          <input type="number" min="0" max="1" step="0.01" value={settings.retrieval.semanticSimilarityThreshold}
+            onChange={event=>onChange({...settings,retrieval:{...settings.retrieval,semanticSimilarityThreshold:Number(event.target.value)}})} disabled={saving}/>
+          <small>Default: {defaults.retrieval.semanticSimilarityThreshold}. Raw cosine similarity in [-1, 1], not a relevance percentage. Starting threshold: 0.35; tune for the configured embedding model.</small>
+        </label>
+        <label>Maximum results
+          <input type="number" min={1} max={20} step={1} value={settings.retrieval.semanticResultLimit}
+            onChange={event=>onChange({...settings,retrieval:{...settings.retrieval,semanticResultLimit:Number(event.target.value)}})} disabled={saving}/>
+          <small>Default: {defaults.retrieval.semanticResultLimit}. Context budget may omit results that do not fit.</small>
+        </label>
+      </div>
+      <p className="hint">Semantic search uses the configured Embedding Provider Preset and Embedding Model under Semantic Memory Deduplication. Indexing continues in the background; logs contain counts and source IDs, not private document contents.</p>
       <p className="hint">Memory storage, character/conversation isolation, deduplication, and extraction safety rules are not configurable here.</p>
     </section>
 
@@ -1633,7 +1652,7 @@ function AppSettingsView({
           <small>Default: {defaults.semanticDedup.candidateLimit}. Only the top candidates are sent to the Judge.</small>
         </label>
       </div>
-      <p className="hint">Embeddings detect potentially similar active memories for the same character. They are not used for normal Chat memory retrieval.</p>
+      <p className="hint">The configured embedding model powers both same-character memory deduplication and optional multi-source semantic search. Automatic retrieval is independently controlled above.</p>
     </section>
 
     <section>

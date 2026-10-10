@@ -67,6 +67,9 @@ export interface AppSettings{
   };
   retrieval:{
     candidateLimit:number;
+    semanticSearchEnabled:boolean;
+    semanticSimilarityThreshold:number;
+    semanticResultLimit:number;
   };
   diagnostics:{
     logLevel:DiagnosticsLogLevel;
@@ -91,7 +94,7 @@ export const DEFAULT_APP_SETTINGS:AppSettings={
     recentConversationMessages:8
   },
   memory:{candidateLimit:8},
-  retrieval:{candidateLimit:32},
+  retrieval:{candidateLimit:32,semanticSearchEnabled:false,semanticSimilarityThreshold:0.35,semanticResultLimit:5},
   diagnostics:{logLevel:"normal",keepRecentEntries:100},
   ui:{showDiagnosticsInChat:true}
 };
@@ -121,6 +124,7 @@ const SECURITY_MAX={
   recentConversationMessages:100,
   memoryCandidateLimit:100,
   retrievalCandidateLimit:100,
+  semanticResultLimit:20,
   semanticCandidateLimit:100,
   diagnosticsEntries:500,
 } as const;
@@ -170,6 +174,9 @@ export function validateAppSettings(settings:AppSettings):string[]{
   integer(settings.context.recentConversationMessages,"Recent messages",1,SECURITY_MAX.recentConversationMessages);
   integer(settings.memory.candidateLimit,"Memory items",1,SECURITY_MAX.memoryCandidateLimit);
   integer(settings.retrieval.candidateLimit,"Retrieval candidates",1,SECURITY_MAX.retrievalCandidateLimit);
+  if(typeof settings.retrieval.semanticSearchEnabled!=="boolean")errors.push("Automatic semantic search enabled must be boolean.");
+  if(!Number.isFinite(settings.retrieval.semanticSimilarityThreshold)||settings.retrieval.semanticSimilarityThreshold<0||settings.retrieval.semanticSimilarityThreshold>1)errors.push("Semantic cosine similarity threshold must be between 0 and 1.");
+  integer(settings.retrieval.semanticResultLimit,"Semantic search result limit",1,SECURITY_MAX.semanticResultLimit);
   if(!["off","errors","normal","verbose","debug"].includes(settings.diagnostics.logLevel))errors.push("Unsupported diagnostics log level.");
   integer(settings.diagnostics.keepRecentEntries,"Recent diagnostic entries",1,SECURITY_MAX.diagnosticsEntries);
   if(typeof settings.chat.automaticLongTermMemory!=="boolean")errors.push("Automatic long-term memory must be boolean.");
@@ -188,6 +195,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const root=value as Record<string,any>;
   const context=root.context&&typeof root.context==="object"?root.context:{};
   const memory=root.memory&&typeof root.memory==="object"?root.memory:{};
+  const retrieval=root.retrieval&&typeof root.retrieval==="object"?root.retrieval:{};
   const diagnostics=root.diagnostics&&typeof root.diagnostics==="object"?root.diagnostics:{};
   const chat=root.chat&&typeof root.chat==="object"?root.chat:{};
   const memoryAgent=root.memoryAgent&&typeof root.memoryAgent==="object"?root.memoryAgent:{};
@@ -270,7 +278,12 @@ export function migrateAppSettings(value:unknown):AppSettings{
     memory:{
       candidateLimit:typeof memory.candidateLimit==="number"?memory.candidateLimit:(legacyMemory??defaults.memory.candidateLimit)
     },
-    retrieval:{candidateLimit:typeof (root.retrieval as any)?.candidateLimit==="number"?(root.retrieval as any).candidateLimit:defaults.retrieval.candidateLimit},
+    retrieval:{
+      candidateLimit:typeof retrieval.candidateLimit==="number"?retrieval.candidateLimit:defaults.retrieval.candidateLimit,
+      semanticSearchEnabled:typeof retrieval.semanticSearchEnabled==="boolean"?retrieval.semanticSearchEnabled:defaults.retrieval.semanticSearchEnabled,
+      semanticSimilarityThreshold:typeof retrieval.semanticSimilarityThreshold==="number"?retrieval.semanticSimilarityThreshold:defaults.retrieval.semanticSimilarityThreshold,
+      semanticResultLimit:typeof retrieval.semanticResultLimit==="number"?retrieval.semanticResultLimit:defaults.retrieval.semanticResultLimit
+    },
     diagnostics:{
       logLevel:logLevelValue as DiagnosticsLogLevel,
       keepRecentEntries:typeof diagnostics.keepRecentEntries==="number"?diagnostics.keepRecentEntries:defaults.diagnostics.keepRecentEntries
