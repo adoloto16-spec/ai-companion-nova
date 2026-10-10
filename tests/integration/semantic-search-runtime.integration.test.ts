@@ -51,6 +51,11 @@ async function main(){
   const output=JSON.stringify(action.output);
   ok(output.includes("core_book")&&output.includes("memory")&&output.includes("conversation"),"MEMORY_SEARCH returns results across the three source families");
   ok(output.includes(modelSearch.id),"explicit MEMORY_SEARCH can find model_search Core Book entries");
+  // A strict raw-cosine threshold isolates the exact historical vector for full-document assertions,
+  // instead of making an assertion depend on the tool's bounded multi-result payload budget.
+  const strictSearchSettings=runtime.getSettings();
+  strictSearchSettings.retrieval.semanticSimilarityThreshold=0.99;
+  await runtime.updateSettings(strictSearchSettings);
   const historicalAction=await runtime.invoke({id:"memory-search-historical.integration",schemaVersion:"1",tool:"MEMORY_SEARCH",
    arguments:{query:"Which detail about the long-term lease in Riga was saved in my older conversation?"},metadata:{characterId:character.id,conversationId:active.id,turnId:"tool-turn-historical",callId:"tool-call-historical"}});
   eq(historicalAction.status,"success","MEMORY_SEARCH supports a focused historical query");
