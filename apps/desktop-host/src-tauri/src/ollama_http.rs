@@ -1,7 +1,7 @@
 use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
-    net::IpAddr,
+    net::{IpAddr, Ipv4Addr},
     str::FromStr,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -95,10 +95,10 @@ impl OllamaHttpStreamEvent {
     }
 }
 
-fn validated_url(base_url: &str, route: &str, method: &str) -> Result<Url, String> {
-    let mut url = Url::parse(base_url).map_err(|_| "Ollama base URL is invalid.".to_string())?;
+pub(super) fn validate_base_url(base_url: &str) -> Result<(), String> {
+    let url = Url::parse(base_url).map_err(|_| "Ollama base URL is invalid.".to_string())?;
     if url.scheme() != "http" {
-        return Err("Ollama HTTP transport requires the http scheme.".to_string());
+        return Err("Ollama base URL must use HTTP.".to_string());
     }
     if !url.username().is_empty() || url.password().is_some() {
         return Err("Ollama base URL must not contain credentials.".to_string());
@@ -111,17 +111,25 @@ fn validated_url(base_url: &str, route: &str, method: &str) -> Result<Url, Strin
     let loopback = if host.eq_ignore_ascii_case("localhost") {
         true
     } else {
-        IpAddr::from_str(host).map(|ip| ip.is_loopback()).unwrap_or(false)
+        IpAddr::from_str(host).map(|ip| match ip {
+            IpAddr::V4(address) => address == Ipv4Addr::LOCALHOST,
+            IpAddr::V6(address) => address.is_loopback(),
+        }).unwrap_or(false)
     };
     if !loopback {
         return Err("Ollama HTTP transport is restricted to loopback hosts (127.0.0.1, localhost, or ::1).".to_string());
     }
+    if url.port() == Some(0) {
+        return Err("Ollama port is invalid.".to_string());
+    }
+    Ok(())
+}
+
+fn validated_url(base_url: &str, route: &str, method: &str) -> Result<Url, String> {
+    validate_base_url(base_url)?;
+    let mut url = Url::parse(base_url).map_err(|_| "Ollama base URL is invalid.".to_string())?;
     if url.port().is_none() {
         url.set_port(Some(11434)).map_err(|_| "Ollama port is invalid.".to_string())?;
-    }
-    let port = url.port_or_known_default().ok_or_else(|| "Ollama port is invalid.".to_string())?;
-    if port == 0 {
-        return Err("Ollama port is invalid.".to_string());
     }
     match (method, route) {
         ("GET", "/api/tags" | "/api/version") | ("POST", "/api/chat") => {}
@@ -292,6 +300,7 @@ mod tests {
         assert!(validated_url("http://[::1]:11434", "/api/chat", "POST").is_ok());
         assert!(validated_url("https://127.0.0.1:11434", "/api/tags", "GET").is_err());
         assert!(validated_url("http://192.168.1.5:11434", "/api/tags", "GET").is_err());
+        assert!(validated_url("http://127.0.0.2:11434", "/api/tags", "GET").is_err());
         assert!(validated_url("http://example.com:11434", "/api/tags", "GET").is_err());
         assert!(validated_url("http://127.0.0.1:11434", "/anything", "GET").is_err());
         assert!(validated_url("http://127.0.0.1:11434", "/api/chat", "GET").is_err());
