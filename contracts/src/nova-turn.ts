@@ -236,15 +236,13 @@ function parseNativeJsonNovaTurn(content:string):NovaTurnParseResult{
   const emotion=textField("emotion",FIELD_LIMITS.EMOTION,true);
   const speech=textField("speech",FIELD_LIMITS.SPEECH,true);
   const longMemory=textField("longMemory",FIELD_LIMITS.LONGMEMORY,false);
-  const version: NovaTurnParsedField<number>=record.version===1
-    ?{status:"valid",value:1}:{status:"invalid"};
   const toolsSchema=schema.properties?.tools;
   const toolsValidation=toolsSchema?validator.validate(record.tools,toolsSchema):{valid:false,errors:["tools-schema-missing"]};
   const toolValues=Array.isArray(record.tools)?record.tools as NovaToolCall[]:[];
   const toolsStatus: NovaTurnFieldStatus=!Array.isArray(record.tools)||!toolsValidation.valid
     ?"invalid":toolValues.length===0?"empty":"valid";
   const toolsField:NovaTurnParsedField<readonly NovaToolCall[]>={status:toolsStatus,...(toolsStatus==="invalid"?{}:{value:toolValues})};
-  const wakeValid=Number.isSafeInteger(record.nextWakeMs)&&typeof record.nextWakeMs==="number"&&record.nextWakeMs>=1&&record.nextWakeMs<=FIELD_LIMITS.NEXT_WAKE_MS;
+  const wakeValid=typeof record.nextWakeMs==="number"&&Number.isSafeInteger(record.nextWakeMs)&&record.nextWakeMs>=1&&record.nextWakeMs<=FIELD_LIMITS.NEXT_WAKE_MS;
   const nextWakeMs:NovaTurnParsedField<number>=wakeValid
     ?{status:"valid",value:record.nextWakeMs as number}:{status:"invalid"};
   const fields:NovaTurnParseFields={
@@ -267,11 +265,7 @@ function parseNativeJsonNovaTurn(content:string):NovaTurnParseResult{
     longMemory:typeof record.longMemory==="string"?record.longMemory:"",
     nextWakeMs:record.nextWakeMs as number
   };
-  return {turn,speech:turn.speech,complete:true,diagnostics:[],fields:{
-    ...fields,
-    version:version as unknown as NovaTurnParseFields["situation"], // Keep the parser result shape limited to the public field contract.
-    longMemory:fields.longMemory.status==="missing"?{status:"missing"}:fields.longMemory
-  }};
+  return {turn,speech:turn.speech,complete:true,diagnostics:[],fields};
 }
 
 export function parseNovaTurn(content: string): NovaTurnParseResult {
