@@ -1,3 +1,4 @@
+import {DEFAULT_PROMPT_TEXTS,PROMPT_REGISTRY,resolvePromptText,type PromptId,type PromptOverrides} from "./prompts";
 export type DiagnosticsLogLevel="off"|"errors"|"normal"|"verbose"|"debug";
 export type CognitiveScheduleMode="adaptive"|"fixed";
 export interface CognitiveScheduleSettings{
@@ -15,20 +16,20 @@ export const DEFAULT_COGNITIVE_SCHEDULE:CognitiveScheduleSettings={
   maxRequestsPerHour:null
 };
 export const APP_SETTINGS_API_VERSION:"1"="1";
-export const APP_SETTINGS_SCHEMA_VERSION:"11"="11";
+export const APP_SETTINGS_SCHEMA_VERSION:"12"="12";
 export const DEFAULT_MEMORY_JUDGE_PROMPT_VERSION="2";
-export const DEFAULT_MEMORY_JUDGE_PROMPT="You are a memory deduplication judge.\n\nCompare NEW MEMORY with CANDIDATES.\n\nKeep the most complete and informative record.\n\nIf NEW MEMORY is less informative because its information is contained in a candidate, archive NEW.\n\nIf a candidate is less informative because its information is contained in NEW MEMORY, archive that candidate number.\n\nIf records contain essentially the same information, archive one duplicate.\n\nIf records contain different useful information, archive nothing.\n\nYour decision is the list of archive targets.\n\nIn structured mode, return only:\n{\"archive\":[\"NEW\",\"1\",\"2\"]}\n\nIn plain mode, return only:\nNO_ARCHIVE\nor NEW / candidate numbers, one per line.\n\nNever return explanations.\nNever invent candidate numbers.";
-
+export const DEFAULT_MEMORY_JUDGE_PROMPT=DEFAULT_PROMPT_TEXTS["memory-judge.system"];
 const LEGACY_MEMORY_JUDGE_PROMPT="You are a memory deduplication judge.\n\nCompare NEW MEMORY with CANDIDATES.\n\nKeep the most complete and informative record.\n\nIf NEW MEMORY is less informative because its information is contained in a candidate, return NEW.\n\nIf a candidate contains all meaningful information from NEW MEMORY and adds useful information, return that candidate number.\n\nIf two records contain essentially the same information, return one of them.\n\nIf records contain different useful information, return NO_ARCHIVE.\n\nReturn only:\nNO_ARCHIVE,\nNEW,\nor candidate numbers, one per line.\n\nNever return explanations or text.\nNever invent candidate numbers.";
 
 export interface AppSettings{
   apiVersion:"1";
-  schemaVersion:"11";
+  schemaVersion:"12";
   cognitiveSchedule:CognitiveScheduleSettings;
   chat:{
     automaticLongTermMemory:boolean;
     responseMode:"structured"|"plain";
   };
+  prompts:{overrides:PromptOverrides};
   semanticDedup:{
     enabled:boolean;
     embeddingProviderPresetId:string|null;
@@ -74,6 +75,7 @@ export const DEFAULT_APP_SETTINGS:AppSettings={
   schemaVersion:APP_SETTINGS_SCHEMA_VERSION,
   cognitiveSchedule:{...DEFAULT_COGNITIVE_SCHEDULE},
   chat:{automaticLongTermMemory:true,responseMode:"structured"},
+  prompts:{overrides:{}},
   semanticDedup:{enabled:false,embeddingProviderPresetId:null,embeddingModel:"",candidateSimilarityThreshold:0.88,candidateLimit:5,judge:{enabled:true,providerPresetId:null,model:"",outputMode:"auto",prompt:DEFAULT_MEMORY_JUDGE_PROMPT,promptBackup:null,defaultPromptVersion:DEFAULT_MEMORY_JUDGE_PROMPT_VERSION}},
   context:{
     availableContextTokens:4096,
@@ -93,12 +95,45 @@ export function defaultAppSettings():AppSettings{
     schemaVersion:DEFAULT_APP_SETTINGS.schemaVersion,
     cognitiveSchedule:{...DEFAULT_APP_SETTINGS.cognitiveSchedule},
     chat:{...DEFAULT_APP_SETTINGS.chat},
+    prompts:{overrides:{...DEFAULT_APP_SETTINGS.prompts.overrides}},
     semanticDedup:{...DEFAULT_APP_SETTINGS.semanticDedup,judge:{...DEFAULT_APP_SETTINGS.semanticDedup.judge}},
     context:{...DEFAULT_APP_SETTINGS.context},
     memory:{...DEFAULT_APP_SETTINGS.memory},
     retrieval:{...DEFAULT_APP_SETTINGS.retrieval},
     diagnostics:{...DEFAULT_APP_SETTINGS.diagnostics},
     ui:{...DEFAULT_APP_SETTINGS.ui}
+  };
+}
+
+
+export function applyPromptOverride(settings:AppSettings,id:PromptId,text:string):AppSettings{
+  const overrides:PromptOverrides={...settings.prompts.overrides};
+  if(typeof text==="string"&&text.trim().length>0)overrides[id]=text;
+  else delete overrides[id];
+  const prompts={overrides};
+  const judgePrompt=resolvePromptText(prompts,"memory-judge.system");
+  return {
+    ...settings,
+    prompts,
+    semanticDedup:{
+      ...settings.semanticDedup,
+      judge:{...settings.semanticDedup.judge,prompt:judgePrompt}
+    }
+  };
+}
+
+export function restorePromptDefault(settings:AppSettings,id:PromptId):AppSettings{
+  return applyPromptOverride(settings,id,"");
+}
+
+export function restoreAllPromptDefaults(settings:AppSettings):AppSettings{
+  return {
+    ...settings,
+    prompts:{overrides:{}},
+    semanticDedup:{
+      ...settings.semanticDedup,
+      judge:{...settings.semanticDedup.judge,prompt:DEFAULT_PROMPT_TEXTS["memory-judge.system"]}
+    }
   };
 }
 
@@ -171,7 +206,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const input=value as Record<string,unknown>;
   const legacy=input.schemaVersion==="0"||input.schemaVersion===undefined||input.schemaVersion==="1";
   if(input.apiVersion!==undefined&&input.apiVersion!=="1"&&!legacy)throw new Error("Unsupported AppSettings apiVersion.");
-  if(input.schemaVersion!==undefined&&!["0","1","2","3","4","5","6","7","8","9","10","11"].includes(String(input.schemaVersion)))throw new Error("Unsupported AppSettings schemaVersion.");
+  if(input.schemaVersion!==undefined&&!["0","1","2","3","4","5","6","7","8","9","10","11","12"].includes(String(input.schemaVersion)))throw new Error("Unsupported AppSettings schemaVersion.");
   const root=value as Record<string,any>;
   const context=root.context&&typeof root.context==="object"?root.context:{};
   const memory=root.memory&&typeof root.memory==="object"?root.memory:{};
@@ -182,10 +217,10 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const cognitiveSchedule=root.cognitiveSchedule&&typeof root.cognitiveSchedule==="object"?root.cognitiveSchedule:{};
   const semanticDedup=root.semanticDedup&&typeof root.semanticDedup==="object"?root.semanticDedup:{};
   const semanticJudge=semanticDedup.judge&&typeof semanticDedup.judge==="object"?semanticDedup.judge:{};
-  const migratedMinimumInterval=String(input.schemaVersion)!=="10"&&String(input.schemaVersion)!=="11"&&cognitiveSchedule.minIntervalMs===10_000
+  const migratedMinimumInterval=String(input.schemaVersion)!=="10"&&String(input.schemaVersion)!=="11"&&String(input.schemaVersion)!=="12"&&cognitiveSchedule.minIntervalMs===10_000
     ?defaults.cognitiveSchedule.minIntervalMs
     :(typeof cognitiveSchedule.minIntervalMs==="number"?cognitiveSchedule.minIntervalMs:defaults.cognitiveSchedule.minIntervalMs);
-  const migratedMaximumInterval=String(input.schemaVersion)!=="10"&&String(input.schemaVersion)!=="11"&&cognitiveSchedule.maxIntervalMs===900_000
+  const migratedMaximumInterval=String(input.schemaVersion)!=="10"&&String(input.schemaVersion)!=="11"&&String(input.schemaVersion)!=="12"&&cognitiveSchedule.maxIntervalMs===900_000
     ?defaults.cognitiveSchedule.maxIntervalMs
     :(typeof cognitiveSchedule.maxIntervalMs==="number"?cognitiveSchedule.maxIntervalMs:defaults.cognitiveSchedule.maxIntervalMs);
   const legacyContextBudget=typeof root.contextBudget==="number"?root.contextBudget:undefined;
@@ -205,9 +240,24 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const semanticJudgeModel=typeof semanticJudge.model==="string"?semanticJudge.model.trim():"";
   const semanticJudgeOutputMode=semanticJudge.outputMode==="structured"||semanticJudge.outputMode==="plain"||semanticJudge.outputMode==="auto"?semanticJudge.outputMode:"auto";
   const semanticJudgeLegacyPrompt=typeof semanticJudge.instructions==="string"?semanticJudge.instructions.trim():"";
-  const storedSemanticJudgePrompt=typeof semanticJudge.prompt==="string"&&semanticJudge.prompt.trim()?semanticJudge.prompt.trim():"";
+  const storedSemanticJudgePrompt=typeof semanticJudge.prompt==="string"?semanticJudge.prompt:"";
   const semanticJudgePromptIsLegacyDefault=storedSemanticJudgePrompt===LEGACY_MEMORY_JUDGE_PROMPT&&semanticJudge.defaultPromptVersion==="1";
-  const semanticJudgePrompt=semanticJudgePromptIsLegacyDefault?DEFAULT_MEMORY_JUDGE_PROMPT:(storedSemanticJudgePrompt||semanticJudgeLegacyPrompt||DEFAULT_MEMORY_JUDGE_PROMPT);
+  const promptSettings=root.prompts&&typeof root.prompts==="object"?root.prompts:{};
+  const rawPromptOverrides=promptSettings.overrides&&typeof promptSettings.overrides==="object"&&!Array.isArray(promptSettings.overrides)?promptSettings.overrides as Record<string,unknown>:{};
+  const promptOverrides:PromptOverrides={};
+  for(const [key,rawText] of Object.entries(rawPromptOverrides)){
+    if(!PROMPT_REGISTRY.some(definition=>definition.id===key))throw new Error("Unsupported prompt id: "+key+".");
+    if(typeof rawText!=="string"||rawText.length>12000)throw new Error("Prompt override must be a string up to 12000 characters.");
+    if(rawText.trim().length>0)(promptOverrides as Record<string,string>)[key]=rawText;
+  }
+  const migratedLegacyJudgePrompt=semanticJudgePromptIsLegacyDefault
+    ?DEFAULT_MEMORY_JUDGE_PROMPT
+    :(storedSemanticJudgePrompt.trim()||semanticJudgeLegacyPrompt||DEFAULT_MEMORY_JUDGE_PROMPT);
+  const hasCentralPromptSettings=Object.prototype.hasOwnProperty.call(root,"prompts");
+  if(!hasCentralPromptSettings&&!promptOverrides["memory-judge.system"]&&migratedLegacyJudgePrompt!==DEFAULT_MEMORY_JUDGE_PROMPT){
+    promptOverrides["memory-judge.system"]=migratedLegacyJudgePrompt;
+  }
+  const semanticJudgePrompt=resolvePromptText({overrides:promptOverrides},"memory-judge.system");
   const semanticJudgeBackup=typeof semanticJudge.promptBackup==="string"&&semanticJudge.promptBackup.length>0?semanticJudge.promptBackup:null;
   const semanticJudgeVersion=semanticJudgePromptIsLegacyDefault?DEFAULT_MEMORY_JUDGE_PROMPT_VERSION:(typeof semanticJudge.defaultPromptVersion==="string"&&semanticJudge.defaultPromptVersion.trim()?semanticJudge.defaultPromptVersion.trim():DEFAULT_MEMORY_JUDGE_PROMPT_VERSION);
   const next:AppSettings={
@@ -220,6 +270,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
       maxRequestsPerHour:typeof cognitiveSchedule.maxRequestsPerHour==="number"?(String(input.schemaVersion)!=="10"&&String(input.schemaVersion)!=="11"&&cognitiveSchedule.maxRequestsPerHour===120?null:cognitiveSchedule.maxRequestsPerHour):null
     },
     chat:{automaticLongTermMemory:legacyEnabled,responseMode:chat.responseMode==="plain"?"plain":"structured"},
+    prompts:{overrides:promptOverrides},
     semanticDedup:{
       enabled:semanticDedupEnabled,
       embeddingProviderPresetId:semanticEmbeddingPreset,
