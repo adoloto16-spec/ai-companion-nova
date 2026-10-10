@@ -171,6 +171,7 @@ fn validate_source(source:&ProviderPresetSource)->Result<(),String>{
     if url.scheme()!="http"&&url.scheme()!="https"{return Err("provider preset source base URL must use HTTP or HTTPS".to_string());}
     if !url.username().is_empty()||url.password().is_some(){return Err("provider preset source base URL must not contain credentials".to_string());}
     if url.query().is_some()||url.fragment().is_some(){return Err("provider preset source base URL must not contain query or fragment".to_string());}
+    if source.provider_id=="ollama"{super::ollama_http::validate_base_url(&source.base_url)?;if source.credential_reference.is_some(){return Err("Ollama provider source must not store an API credential".to_string());}}
     if source.model.trim().is_empty()||source.model.len()>200{return Err("provider preset source model is invalid".to_string());}
     if let Some(reference)=&source.credential_reference{validate_reference(reference,&source.provider_id)?;}
     if !matches!(source.health.as_str(),"healthy"|"cooldown"|"unavailable"){return Err("unsupported provider preset source health state".to_string());}
@@ -210,6 +211,7 @@ fn validate_preset(preset:&ProviderPreset)->Result<(),String>{
             if url.scheme()!="http"&&url.scheme()!="https"{return Err("single preset base URL must use HTTP or HTTPS".to_string());}
             if !url.username().is_empty()||url.password().is_some(){return Err("single preset base URL must not contain credentials".to_string());}
             if url.query().is_some()||url.fragment().is_some(){return Err("single preset base URL must not contain query or fragment".to_string());}
+            if provider=="ollama"{super::ollama_http::validate_base_url(base)?;}
             let model=preset.model.as_deref().ok_or_else(||"single preset model is required".to_string())?;
             if model.trim().is_empty()||model.len()>200{return Err("single preset model is invalid".to_string());}
             validate_ollama_options(provider,preset.num_ctx,preset.num_predict,&preset.keep_alive)?;
