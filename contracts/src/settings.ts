@@ -258,8 +258,8 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const migratedLegacyJudgePrompt=semanticJudgePromptIsLegacyDefault
     ?DEFAULT_MEMORY_JUDGE_PROMPT
     :(storedSemanticJudgePrompt.trim()||semanticJudgeLegacyPrompt||DEFAULT_MEMORY_JUDGE_PROMPT);
-  const hasCentralPromptSettings=Object.prototype.hasOwnProperty.call(root,"prompts");
-  if(!hasCentralPromptSettings&&!promptOverrides["memory-judge.system"]&&migratedLegacyJudgePrompt!==DEFAULT_MEMORY_JUDGE_PROMPT){
+  const hasJudgeOverrideSetting=Object.prototype.hasOwnProperty.call(rawPromptOverrides,"memory-judge.system");
+  if(!hasJudgeOverrideSetting&&!promptOverrides["memory-judge.system"]&&migratedLegacyJudgePrompt!==DEFAULT_MEMORY_JUDGE_PROMPT){
     promptOverrides["memory-judge.system"]=migratedLegacyJudgePrompt;
   }
   const semanticJudgePrompt=resolvePromptText({overrides:promptOverrides},"memory-judge.system");
