@@ -72,19 +72,21 @@ export class SpeechSentenceSegmenter {
     this.buffer+=delta;
     const result:string[]=[];
     for(;;){
-      const boundary=this.findBoundary();
+      const detected=this.findBoundary();
+      const safeCut=safeTextSplit(this.buffer,MAX_SENTENCE_CHARS);
+      const boundary=safeCut>0&&(detected<0||safeCut<detected)?safeCut:detected;
       if(boundary>0){
         const part=this.buffer.slice(0,boundary);
         this.buffer=this.buffer.slice(boundary);
         if(part.trim())result.push(part);
-        else this.buffer=part+this.buffer;
+        else {this.buffer=part+this.buffer;break;}
         continue;
       }
       if(this.buffer.length>MAX_SENTENCE_CHARS){
         const cut=safeTextSplit(this.buffer,MAX_SENTENCE_CHARS);
         if(cut>0){
           const part=this.buffer.slice(0,cut);this.buffer=this.buffer.slice(cut);
-          if(part.trim())result.push(part);else this.buffer=part+this.buffer;
+          if(part.trim())result.push(part);else {this.buffer=part+this.buffer;break;}
           continue;
         }
       }
