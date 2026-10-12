@@ -109,7 +109,7 @@ export class SpeechSentenceSegmenter {
       }
       if(character!=="."&&character!=="!"&&character!=="?"&&character!=="…")continue;
       if(character==="."&&i>0&&i+1<source.length&&/\d/u.test(source[i-1]!)&&/\d/u.test(source[i+1]!))continue;
-      if(character==="."&&/(?:^|[\s([{,;:])(?:т\.д|т\.е|г|др|ул|им|стр|м|см|кг|руб|гл|рис|с)\.$/iu.test(source.slice(0,i+1)))continue;
+      if(character==="."&&/(?:^|[\s(\[{,;:])(?:т\.д|т\.е|г|др|ул|им|стр|м|см|кг|руб|гл|рис|с)\.$/iu.test(source.slice(0,i+1)))continue;
       let end=i+1;
       while(end<source.length&&".!?…".includes(source[end]!))end++;
       while(end<source.length&&isCloser(source[end]!))end++;
