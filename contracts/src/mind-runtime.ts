@@ -48,18 +48,19 @@ export interface MindTurnExecutionContext {
 }
 
 export interface MindTurnSpeechEvent {
-  type:"start"|"delta"|"reset"|"clear";
+  type:"start"|"delta"|"reset"|"clear"|"emotion";
   characterId:string;
   conversationId:string;
   turnId:string;
   userMessageId?:string;
   text?:string;
+  emotion?:string;
 }
 export interface MindTurnSink {
   /** Persists the complete canonical turn exactly once in the Conversation. */
   commit(turn: NovaTurn, context: MindTurnExecutionContext): Promise<void>;
   /** Publishes only validated-incremental public speech for the active turn. */
-  streamSpeech?(event:MindTurnSpeechEvent):void;
+  streamSpeech?(event:MindTurnSpeechEvent):void|Promise<void>;
   /** Makes a failed reactive turn visible while leaving its persisted user message retryable. */
   fail?(turn: MindReactiveTurn, reason: string): void;
 }
