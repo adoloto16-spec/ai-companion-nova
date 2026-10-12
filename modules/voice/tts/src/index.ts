@@ -228,6 +228,7 @@ export class SpeechOutputController {
       for(const text of session.segmenter.finish())await this.enqueueSentence(session,text,session.emotion);
       this.ensureWorker(session);
       await this.waitForSynthesis(session);
+      this.sessions.delete(session.id);
       if(this.active===session&&!session.failed){
         this.active=undefined;
         this.setStatus({state:"ready",message:"Speech synthesis completed; audio may still be playing.",sessionId:session.id});
