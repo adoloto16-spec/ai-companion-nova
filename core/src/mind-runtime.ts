@@ -391,7 +391,7 @@ export class MindRuntime {
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
       if(streamedConversationId){
-        this.turnSink?.streamSpeech?.({
+        await this.turnSink?.streamSpeech?.({
           type:"clear",characterId,conversationId:streamedConversationId,turnId:speechTurnId,
           ...(reactiveTurn?{userMessageId:reactiveTurn.userMessageId}:{})
         });
