@@ -13,6 +13,7 @@ export interface WebAudioOutputOptions {
   maxQueuedBytes?:number;
   maxQueuedChunks?:number;
   maxScheduleAheadSeconds?:number;
+  onError?:(error:Error)=>void;
 }
 function makeAbortError():Error{const error=new Error("Audio playback was cancelled.");error.name="AbortError";return error;}
 
@@ -151,7 +152,7 @@ export class WebAudioOutputAdapter implements AudioOutputAdapter {
       this.outputFailure=error instanceof Error?error:new Error("Web Audio playback failed.");
       this.wake(this.capacityWaiters,this.outputFailure);
       this.wake(this.playbackWaiters,this.outputFailure);
-      throw this.outputFailure;
+      this.options.onError?.(this.outputFailure);
     }finally{
       this.pumping=false;
       if(this.queue.length&&this.sessionId)void this.pump();
