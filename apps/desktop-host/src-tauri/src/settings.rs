@@ -5,7 +5,7 @@ use std::{fs,io::Write,path::{Path,PathBuf}};
 use tauri::Manager;
 
 const API_VERSION:&str="1";
-const SCHEMA_VERSION:&str="12";
+const SCHEMA_VERSION:&str="13";
 const FILE_NAME:&str="app-settings-v1.json";
 const LEGACY_SCHEMA_VERSION:&str="0";
 const PREVIOUS_SCHEMA_VERSION:&str="3";
@@ -152,6 +152,59 @@ pub struct UiSettings{
     #[serde(rename="showDiagnosticsInChat")]
     pub show_diagnostics_in_chat:bool
 }
+
+#[derive(Debug,Deserialize,Serialize,Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TtsCredentialReference {
+    pub id:String,
+    pub kind:String,
+    pub provider:Option<String>,
+    pub version:Option<String>
+}
+#[derive(Debug,Deserialize,Serialize,Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TtsPreset {
+    pub id:String,
+    pub name:String,
+    #[serde(rename="providerId")]
+    pub provider_id:String,
+    pub enabled:bool,
+    #[serde(rename="baseUrl")]
+    pub base_url:String,
+    #[serde(rename="voiceProfileId")]
+    pub voice_profile_id:String,
+    pub language:String,
+    pub speed:f64,
+    #[serde(rename="credentialReference")]
+    pub credential_reference:Option<TtsCredentialReference>,
+    #[serde(rename="providerOptions",default)]
+    pub provider_options:BTreeMap<String,Value>
+}
+#[derive(Debug,Deserialize,Serialize,Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TtsSettings {
+    #[serde(rename="activePresetId")]
+    pub active_preset_id:Option<String>,
+    pub presets:Vec<TtsPreset>
+}
+fn default_tts_settings()->TtsSettings {
+    TtsSettings {
+        active_preset_id:Some("tts-preset-default".into()),
+        presets:vec![TtsPreset {
+            id:"tts-preset-default".into(),
+            name:"VoiceStudio".into(),
+            provider_id:"voice-studio".into(),
+            enabled:false,
+            base_url:"http://127.0.0.1:3900".into(),
+            voice_profile_id:String::new(),
+            language:"ru".into(),
+            speed:1.0,
+            credential_reference:None,
+            provider_options:BTreeMap::new()
+        }]
+    }
+}
+
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(deny_unknown_fields)]
 pub struct AppSettings{
@@ -172,7 +225,9 @@ pub struct AppSettings{
     pub memory:MemorySettings,
     pub retrieval:RetrievalSettings,
     pub diagnostics:DiagnosticsSettings,
-    pub ui:UiSettings
+    pub ui:UiSettings,
+    #[serde(default="default_tts_settings")]
+    pub tts:TtsSettings
 }
 
 fn default_settings()->AppSettings{
@@ -194,7 +249,8 @@ fn default_settings()->AppSettings{
         memory:MemorySettings{candidate_limit:8},
         retrieval:RetrievalSettings{candidate_limit:32,semantic_search_enabled:false,semantic_similarity_threshold:0.35,semantic_result_limit:5},
         diagnostics:DiagnosticsSettings{log_level:"normal".into(),keep_recent_entries:100},
-        ui:UiSettings{show_diagnostics_in_chat:true}
+        ui:UiSettings{show_diagnostics_in_chat:true},
+        tts:default_tts_settings()
     }
 }
 
@@ -209,13 +265,41 @@ fn valid_integer(value:i64,min:i64,max:i64,label:&str)->Result<(),String>{
     Ok(())
 }
 fn validate(settings:&AppSettings)->Result<(),String>{
-    if settings.api_version!=API_VERSION||!(settings.schema_version==SCHEMA_VERSION||matches!(settings.schema_version.as_str(),"5"|"6"|"7"|"8"|"9"|"10"|"11")){return Err("unsupported AppSettings version".into());}
+    if settings.api_version!=API_VERSION||!(settings.schema_version==SCHEMA_VERSION||matches!(settings.schema_version.as_str(),"5"|"6"|"7"|"8"|"9"|"10"|"11"|"12")){return Err("unsupported AppSettings version".into());}
     if !matches!(settings.cognitive_schedule.mode.as_str(),"adaptive"|"fixed"){return Err("Unsupported cognitive schedule mode.".into());}
     valid_integer(settings.cognitive_schedule.default_interval_ms,1000,3_600_000,"Cognitive schedule interval")?;
     valid_integer(settings.cognitive_schedule.min_interval_ms,1000,3_600_000,"Minimum cognitive interval")?;
     valid_integer(settings.cognitive_schedule.max_interval_ms,1000,3_600_000,"Maximum cognitive interval")?;
     if settings.cognitive_schedule.min_interval_ms>settings.cognitive_schedule.default_interval_ms||settings.cognitive_schedule.default_interval_ms>settings.cognitive_schedule.max_interval_ms{return Err("Cognitive schedule interval bounds are inconsistent.".into());}
     if let Some(limit)=settings.cognitive_schedule.max_requests_per_hour{valid_integer(limit,1,3_600,"Cognitive requests per hour")?;}
+
+    if settings.tts.presets.len()>32{return Err("At most 32 TTS presets are allowed.".into());}
+    let mut tts_ids=std::collections::BTreeSet::new();
+    for preset in &settings.tts.presets {
+        if preset.id.is_empty()||preset.id.len()>80||!preset.id.chars().all(|c|c.is_ascii_alphanumeric()||matches!(c,'.'|'_'|'-'))||!tts_ids.insert(preset.id.as_str()) {
+            return Err("TTS preset id is invalid or duplicated.".into());
+        }
+        if preset.name.trim().is_empty()||preset.name.len()>100{return Err("TTS preset name must contain 1 to 100 characters.".into());}
+        if preset.provider_id.is_empty()||preset.provider_id.len()>80||!preset.provider_id.chars().all(|c|c.is_ascii_lowercase()||c.is_ascii_digit()||c=='-'){return Err("TTS provider id is invalid.".into());}
+        if preset.base_url.len()>1024||preset.voice_profile_id.len()>256{return Err("TTS URL or profile id exceeds its allowed length.".into());}
+        if !(0.5..=2.0).contains(&preset.speed)||!preset.speed.is_finite(){return Err("TTS speed must be between 0.5 and 2.".into());}
+        if preset.language.len()<2||preset.language.len()>20{return Err("TTS language tag is invalid.".into());}
+        if preset.provider_options.len()>32{return Err("TTS provider options may contain at most 32 fields.".into());}
+        for (key,value) in &preset.provider_options {
+            if key.is_empty()||key.len()>80||key.to_ascii_lowercase().contains("secret")||key.to_ascii_lowercase().contains("token")||key.to_ascii_lowercase().contains("password")||key.to_ascii_lowercase().contains("credential")||key.to_ascii_lowercase().contains("api_key")||key.to_ascii_lowercase().contains("apikey"){return Err("TTS provider options must not contain secrets or invalid keys.".into());}
+            if !(value.is_null()||value.is_string()||value.is_boolean()||value.is_number()){return Err("TTS provider option values must be scalar.".into());}
+            if value.as_str().map(|s|s.len()>1000).unwrap_or(false){return Err("TTS provider option values are limited to 1000 characters.".into());}
+            if value.as_f64().map(|n|!n.is_finite()).unwrap_or(false){return Err("TTS provider option numbers must be finite.".into());}
+        }
+        if let Some(reference)=&preset.credential_reference {
+            if reference.id.trim().is_empty()||reference.id.len()>200||reference.kind.trim().is_empty()||reference.kind.len()>80||reference.provider.as_ref().map(|v|v.len()>80).unwrap_or(false)||reference.version.as_ref().map(|v|v.len()>80).unwrap_or(false){
+                return Err("TTS credential reference is invalid.".into());
+            }
+        }
+    }
+    if let Some(active)=settings.tts.active_preset_id.as_deref(){
+        if !tts_ids.contains(active){return Err("TTS active preset must reference an existing preset.".into());}
+    }
     if !matches!(settings.chat.response_mode.as_str(),"structured"|"plain"){return Err("Unsupported Chat response mode.".into());}
     valid_integer(settings.context.available_context_tokens,256,MAX_CONTEXT_TOKENS,"Context size")?;
     valid_integer(settings.context.reserved_output_tokens,0,MAX_RESERVED_OUTPUT,"Reserved response tokens")?;
@@ -359,8 +443,13 @@ fn migrate(value:Value)->Result<(AppSettings,bool),String>{
         if let Some(root)=normalized.as_object_mut(){
             migrated=migrate_memory_judge_default_prompt(root);
             let old_schema=root.get("schemaVersion").and_then(Value::as_str).unwrap_or_default().to_string();
-            if old_schema!=SCHEMA_VERSION && matches!(old_schema.as_str(),"5"|"6"|"7"|"8"|"9"|"10"|"11"){
+            if old_schema!=SCHEMA_VERSION && matches!(old_schema.as_str(),"5"|"6"|"7"|"8"|"9"|"10"|"11"|"12"){
                 root.insert("schemaVersion".into(),Value::String(SCHEMA_VERSION.to_string()));
+                migrated=true;
+            }
+            if old_schema=="13" && !root.contains_key("tts"){return Err("schema v13 settings require a TTS settings object".into());}
+            if old_schema!="13" && !root.contains_key("tts"){
+                root.insert("tts".into(),serde_json::to_value(default_tts_settings()).map_err(|e|format!("failed to encode TTS defaults: {e}"))?);
                 migrated=true;
             }
             let custom_judge_prompt=root.get("semanticDedup").and_then(Value::as_object)
