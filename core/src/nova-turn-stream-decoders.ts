@@ -45,7 +45,7 @@ function skipValue(source:string,start:number):number|undefined{
   while(i<source.length&&!/[\s,}\]]/.test(source[i]!))i++;
   return i<source.length?i:undefined;
 }
-function findSpeechString(source:string):number|undefined{
+function findTopLevelJsonString(source:string,fieldName:string):number|undefined{
   let i=skipWhitespace(source,0);
   if(source[i]!=='{')return undefined;
   i=skipWhitespace(source,i+1);
@@ -56,7 +56,7 @@ function findSpeechString(source:string):number|undefined{
     i=skipWhitespace(source,key.end);
     if(source[i]!==':')return undefined;
     i=skipWhitespace(source,i+1);
-    if(key.value==="speech")return source[i]==='"'?i:undefined;
+    if(key.value===fieldName)return source[i]==='"'?i:undefined;
     const end=skipValue(source,i);
     if(end===undefined)return undefined;
     i=skipWhitespace(source,end);
@@ -66,6 +66,7 @@ function findSpeechString(source:string):number|undefined{
   }
   return undefined;
 }
+function findSpeechString(source:string):number|undefined{return findTopLevelJsonString(source,"speech");}
 function decodeJsonSpeechPrefix(source:string,start:number):string{
   let value="",i=start+1;
   while(i<source.length){
@@ -111,6 +112,7 @@ export class NovaTurnJsonSpeechStreamDecoder{
     this.emitted=decoded;
     return delta;
   }
+  fieldOffset():number|undefined{return findTopLevelJsonString(this.source,"speech");}
   reset():void{this.source="";this.emitted="";}
 }
 function unescapeProtocolEntities(value:string):string{
@@ -118,6 +120,87 @@ function unescapeProtocolEntities(value:string):string{
     switch(name){case "lt":return "<";case "gt":return ">";case "amp":return "&";case "quot":return '"';case "apos":return "'";default:return _match;}
   });
 }
+
+/** Emits only an incrementally decoded top-level JSON emotion string. */
+export class NovaTurnJsonEmotionStreamDecoder {
+  private source="";
+  private emitted="";
+  push(chunk:string):string{
+    if(!chunk)return "";
+    this.source+=chunk;
+    const start=findTopLevelJsonString(this.source,"emotion");
+    if(start===undefined)return "";
+    const decoded=dropTrailingHighSurrogate(decodeJsonSpeechPrefix(this.source,start));
+    if(!decoded.startsWith(this.emitted))return "";
+    const delta=decoded.slice(this.emitted.length);
+    this.emitted=decoded;
+    return delta;
+  }
+  fieldOffset():number|undefined{return findTopLevelJsonString(this.source,"emotion");}
+  reset():void{this.source="";this.emitted="";}
+}
+
+function findTopLevelTaggedFieldBody(source:string,fieldName:string):number|undefined{
+  let index=0;
+  const stack:string[]=[];
+  while(index<source.length){
+    const open=source.indexOf("<",index);
+    if(open<0)return undefined;
+    const close=source.indexOf(">",open);
+    if(close<0)return undefined;
+    const tag=source.slice(open,close+1);
+    const closing=tag.match(/^<\s*\/\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*>$/);
+    const opening=tag.match(/^<\s*([A-Za-z_][A-Za-z0-9_.-]*)(?:\s+[^<>]*)?\s*>$/);
+    if(closing){
+      if(stack[stack.length-1]!==closing[1])return undefined;
+      stack.pop();
+    }else if(opening){
+      const name=opening[1]!;
+      if(stack.length===0){
+        if(name!=="NOVA_TURN")return undefined;
+        stack.push(name);
+      }else{
+        if(stack.length===1&&stack[0]==="NOVA_TURN"&&name===fieldName)return close+1;
+        stack.push(name);
+      }
+    }else return undefined;
+    index=close+1;
+  }
+  return undefined;
+}
+
+/** Emotion may appear after SPEECH in either protocol; its arrival never holds back public speech. */
+export class NovaTurnTaggedEmotionStreamDecoder {
+  private source="";
+  private emitted="";
+  push(chunk:string):string{
+    if(!chunk)return "";
+    this.source+=chunk;
+    const start=findTopLevelTaggedFieldBody(this.source,"EMOTION");
+    if(start===undefined)return "";
+    const closeTag="</EMOTION>";
+    const close=this.source.indexOf(closeTag,start);
+    const complete=close>=0;
+    let raw=this.source.slice(start,complete?close:this.source.length);
+    if(!complete){
+      const lastOpen=raw.lastIndexOf("<");
+      if(lastOpen>=0&&raw.slice(lastOpen).startsWith("</"))raw=raw.slice(0,lastOpen);
+    }
+    let safeLength=raw.length;
+    if(!complete){
+      const amp=raw.lastIndexOf("&");
+      if(amp>=0&&raw.indexOf(";",amp)<0&&raw.length-amp<=10)safeLength=amp;
+    }
+    const decoded=unescapeProtocolEntities(raw.slice(0,safeLength));
+    if(!decoded.startsWith(this.emitted))return "";
+    const delta=decoded.slice(this.emitted.length);
+    this.emitted=decoded;
+    return delta;
+  }
+  fieldOffset():number|undefined{return findTopLevelTaggedFieldBody(this.source,"EMOTION");}
+  reset():void{this.source="";this.emitted="";}
+}
+
 /** Emits only a top-level NOVA_TURN/SPEECH field, never tag-like content from private fields or TOOLS. */
 export class NovaTurnTaggedSpeechStreamDecoder{
   private beforeSpeech="";
@@ -128,10 +211,12 @@ export class NovaTurnTaggedSpeechStreamDecoder{
   private failed=false;
   private readonly tagStack:string[]=[];
   private rootSeen=false;
+  private totalSource="";
   private static readonly OPEN="<SPEECH>";
   private static readonly CLOSE="</SPEECH>";
   push(chunk:string):string{
     if(!chunk||this.done||this.failed)return "";
+    this.totalSource+=chunk;
     if(this.inSpeech){
       this.afterSpeech+=chunk;
       return this.readSpeechBody(false);
@@ -170,8 +255,9 @@ export class NovaTurnTaggedSpeechStreamDecoder{
     }
     return "";
   }
+  fieldOffset():number|undefined{const start=this.totalSource.indexOf(NovaTurnTaggedSpeechStreamDecoder.OPEN);return start<0?undefined:start+NovaTurnTaggedSpeechStreamDecoder.OPEN.length;}
   reset():void{
-    this.beforeSpeech="";this.inSpeech=false;this.afterSpeech="";this.pendingEntity="";
+    this.beforeSpeech="";this.inSpeech=false;this.afterSpeech="";this.pendingEntity="";this.totalSource="";
     this.done=false;this.failed=false;this.tagStack.length=0;this.rootSeen=false;
   }
   private readSpeechBody(final:boolean):string{
