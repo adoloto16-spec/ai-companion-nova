@@ -158,7 +158,9 @@ pub struct UiSettings{
 pub struct TtsCredentialReference {
     pub id:String,
     pub kind:String,
+    #[serde(skip_serializing_if="Option::is_none")]
     pub provider:Option<String>,
+    #[serde(skip_serializing_if="Option::is_none")]
     pub version:Option<String>
 }
 #[derive(Debug,Deserialize,Serialize,Clone)]
