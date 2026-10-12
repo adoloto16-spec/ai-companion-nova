@@ -285,10 +285,13 @@ fn validate(settings:&AppSettings)->Result<(),String>{
         if preset.provider_id.is_empty()||preset.provider_id.len()>80||!preset.provider_id.chars().next().map(|c|c.is_ascii_lowercase()).unwrap_or(false)||!preset.provider_id.chars().all(|c|c.is_ascii_lowercase()||c.is_ascii_digit()||c=='-'){return Err("TTS provider id is invalid.".into());}
         if preset.base_url.len()>1024||preset.voice_profile_id.len()>256{return Err("TTS URL or profile id exceeds its allowed length.".into());}
         if !(0.5..=2.0).contains(&preset.speed)||!preset.speed.is_finite(){return Err("TTS speed must be between 0.5 and 2.".into());}
-        if preset.language.len()<2||preset.language.len()>20{return Err("TTS language tag is invalid.".into());}
+        let mut language_parts=preset.language.split('-');
+        let language_ok=language_parts.next().map(|part|(2..=3).contains(&part.len())&&part.bytes().all(|byte|byte.is_ascii_alphabetic())).unwrap_or(false)
+            &&language_parts.all(|part|(2..=8).contains(&part.len())&&part.bytes().all(|byte|byte.is_ascii_alphanumeric()));
+        if preset.language.len()>20||!language_ok{return Err("TTS language tag is invalid.".into());}
         if preset.provider_options.len()>32{return Err("TTS provider options may contain at most 32 fields.".into());}
         for (key,value) in &preset.provider_options {
-            if key.is_empty()||key.len()>80||key.to_ascii_lowercase().contains("secret")||key.to_ascii_lowercase().contains("token")||key.to_ascii_lowercase().contains("password")||key.to_ascii_lowercase().contains("credential")||key.to_ascii_lowercase().replace(['_','-',' '], "").contains("apikey"){return Err("TTS provider options must not contain secrets or invalid keys.".into());}
+            if key.is_empty()||key.len()>80||!key.chars().next().map(|c|c.is_ascii_alphabetic()).unwrap_or(false)||!key.chars().all(|c|c.is_ascii_alphanumeric()||matches!(c,'.'|'_'|'-'))||key.to_ascii_lowercase().contains("secret")||key.to_ascii_lowercase().contains("token")||key.to_ascii_lowercase().contains("password")||key.to_ascii_lowercase().contains("credential")||key.to_ascii_lowercase().replace('_',"").replace('-',"").replace(' ',"").contains("apikey"){return Err("TTS provider options must not contain secrets or invalid keys.".into());}
             if !(value.is_null()||value.is_string()||value.is_boolean()||value.is_number()){return Err("TTS provider option values must be scalar.".into());}
             if value.as_str().map(|s|s.len()>1000).unwrap_or(false){return Err("TTS provider option values are limited to 1000 characters.".into());}
             if value.as_f64().map(|n|!n.is_finite()).unwrap_or(false){return Err("TTS provider option numbers must be finite.".into());}
