@@ -11,7 +11,6 @@ export interface TtsPreset {
   id: string;
   name: string;
   providerId: string;
-  enabled: boolean;
   baseUrl: string;
   voiceProfileId: string;
   language: string;
@@ -22,18 +21,19 @@ export interface TtsPreset {
 }
 
 export interface TtsSettings {
+  enabled: boolean;
   activePresetId: string | null;
   presets: TtsPreset[];
 }
 
 export const DEFAULT_TTS_PRESET_ID = "tts-preset-default";
 export const DEFAULT_TTS_SETTINGS: TtsSettings = {
+  enabled: false,
   activePresetId: DEFAULT_TTS_PRESET_ID,
   presets: [{
     id: DEFAULT_TTS_PRESET_ID,
     name: "VoiceStudio",
     providerId: "voice-studio",
-    enabled: false,
     baseUrl: "http://127.0.0.1:3900",
     voiceProfileId: "",
     language: "ru",
