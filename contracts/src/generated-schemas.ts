@@ -447,6 +447,7 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         "type": "object",
         "additionalProperties": false,
         "required": [
+          "enabled",
           "activePresetId",
           "presets"
         ],
@@ -473,7 +474,6 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
                 "id",
                 "name",
                 "providerId",
-                "enabled",
                 "baseUrl",
                 "voiceProfileId",
                 "language",
@@ -498,9 +498,6 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
                   "minLength": 1,
                   "maxLength": 80,
                   "pattern": "^[a-z][a-z0-9-]{0,79}$"
-                },
-                "enabled": {
-                  "type": "boolean"
                 },
                 "baseUrl": {
                   "type": "string",
@@ -570,6 +567,9 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
                 }
               }
             }
+          },
+          "enabled": {
+            "type": "boolean"
           }
         }
       }
