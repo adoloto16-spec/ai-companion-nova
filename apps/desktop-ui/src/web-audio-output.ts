@@ -150,6 +150,7 @@ export class WebAudioOutputAdapter implements AudioOutputAdapter {
       }
     }catch(error){
       this.outputFailure=error instanceof Error?error:new Error("Web Audio playback failed.");
+      this.queue=[];this.queuedBytes=0;
       this.wake(this.capacityWaiters,this.outputFailure);
       this.wake(this.playbackWaiters,this.outputFailure);
       this.options.onError?.(this.outputFailure);
