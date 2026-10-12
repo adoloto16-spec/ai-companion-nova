@@ -1,4 +1,6 @@
 import {DEFAULT_PROMPT_TEXTS,PROMPT_REGISTRY,resolvePromptText,type PromptId,type PromptOverrides} from "./prompts";
+import {DEFAULT_TTS_SETTINGS} from "./tts";
+import type {TtsPreset,TtsSettings} from "./tts";
 export type DiagnosticsLogLevel="off"|"errors"|"normal"|"verbose"|"debug";
 export type CognitiveScheduleMode="adaptive"|"fixed";
 export interface CognitiveScheduleSettings{
@@ -16,20 +18,21 @@ export const DEFAULT_COGNITIVE_SCHEDULE:CognitiveScheduleSettings={
   maxRequestsPerHour:null
 };
 export const APP_SETTINGS_API_VERSION:"1"="1";
-export const APP_SETTINGS_SCHEMA_VERSION:"12"="12";
+export const APP_SETTINGS_SCHEMA_VERSION:"13"="13";
 export const DEFAULT_MEMORY_JUDGE_PROMPT_VERSION="2";
 export const DEFAULT_MEMORY_JUDGE_PROMPT=DEFAULT_PROMPT_TEXTS["memory-judge.system"];
 const LEGACY_MEMORY_JUDGE_PROMPT="You are a memory deduplication judge.\n\nCompare NEW MEMORY with CANDIDATES.\n\nKeep the most complete and informative record.\n\nIf NEW MEMORY is less informative because its information is contained in a candidate, return NEW.\n\nIf a candidate contains all meaningful information from NEW MEMORY and adds useful information, return that candidate number.\n\nIf two records contain essentially the same information, return one of them.\n\nIf records contain different useful information, return NO_ARCHIVE.\n\nReturn only:\nNO_ARCHIVE,\nNEW,\nor candidate numbers, one per line.\n\nNever return explanations or text.\nNever invent candidate numbers.";
 
 export interface AppSettings{
   apiVersion:"1";
-  schemaVersion:"12";
+  schemaVersion:"13";
   cognitiveSchedule:CognitiveScheduleSettings;
   chat:{
     automaticLongTermMemory:boolean;
     responseMode:"structured"|"plain";
   };
   prompts:{overrides:PromptOverrides};
+  tts:TtsSettings;
   semanticDedup:{
     enabled:boolean;
     embeddingProviderPresetId:string|null;
@@ -70,12 +73,15 @@ export interface AppSettings{
   };
 }
 
+function cloneTtsSettings(settings:TtsSettings):TtsSettings{return {activePresetId:settings.activePresetId,presets:settings.presets.map(preset=>({...preset,credentialReference:preset.credentialReference?{...preset.credentialReference}:null,providerOptions:{...preset.providerOptions}}))};}
+
 export const DEFAULT_APP_SETTINGS:AppSettings={
   apiVersion:APP_SETTINGS_API_VERSION,
   schemaVersion:APP_SETTINGS_SCHEMA_VERSION,
   cognitiveSchedule:{...DEFAULT_COGNITIVE_SCHEDULE},
   chat:{automaticLongTermMemory:true,responseMode:"structured"},
   prompts:{overrides:{}},
+  tts:cloneTtsSettings(DEFAULT_TTS_SETTINGS),
   semanticDedup:{enabled:false,embeddingProviderPresetId:null,embeddingModel:"",candidateSimilarityThreshold:0.88,candidateLimit:5,judge:{enabled:true,providerPresetId:null,model:"",outputMode:"auto",prompt:DEFAULT_MEMORY_JUDGE_PROMPT,promptBackup:null,defaultPromptVersion:DEFAULT_MEMORY_JUDGE_PROMPT_VERSION}},
   context:{
     availableContextTokens:4096,
@@ -96,6 +102,7 @@ export function defaultAppSettings():AppSettings{
     cognitiveSchedule:{...DEFAULT_APP_SETTINGS.cognitiveSchedule},
     chat:{...DEFAULT_APP_SETTINGS.chat},
     prompts:{overrides:{...DEFAULT_APP_SETTINGS.prompts.overrides}},
+    tts:cloneTtsSettings(DEFAULT_APP_SETTINGS.tts),
     semanticDedup:{...DEFAULT_APP_SETTINGS.semanticDedup,judge:{...DEFAULT_APP_SETTINGS.semanticDedup.judge}},
     context:{...DEFAULT_APP_SETTINGS.context},
     memory:{...DEFAULT_APP_SETTINGS.memory},
@@ -151,6 +158,31 @@ const SECURITY_MAX={
   diagnosticsEntries:500,
 } as const;
 
+
+function normalizeTtsSettings(value:unknown):TtsSettings{
+  if(!value||typeof value!=="object"||Array.isArray(value))throw new Error("TTS settings must be an object.");
+  const root=value as Record<string,unknown>;
+  if(Object.keys(root).some(key=>key!=="activePresetId"&&key!=="presets"))throw new Error("Unsupported TTS settings field.");
+  if(root.activePresetId!==null&&typeof root.activePresetId!=="string")throw new Error("TTS active preset id must be a string or null.");
+  if(!Array.isArray(root.presets)||root.presets.length>32)throw new Error("TTS presets must be an array with at most 32 entries.");
+  const presets:TtsPreset[]=root.presets.map((value,index)=>{
+    if(!value||typeof value!=="object"||Array.isArray(value))throw new Error("TTS preset "+index+" must be an object.");
+    const preset=value as Record<string,unknown>;
+    const allowed=["id","name","providerId","enabled","baseUrl","voiceProfileId","language","speed","credentialReference","providerOptions"];
+    if(Object.keys(preset).some(key=>!allowed.includes(key)))throw new Error("Unsupported field in TTS preset "+index+".");
+    let credentialReference:TtsPreset["credentialReference"]=null;
+    if(preset.credentialReference!==null){
+      if(!preset.credentialReference||typeof preset.credentialReference!=="object"||Array.isArray(preset.credentialReference))throw new Error("TTS credential reference must be an object or null.");
+      const ref=preset.credentialReference as Record<string,unknown>;
+      if(Object.keys(ref).some(key=>!["id","kind","provider","version"].includes(key)))throw new Error("Unsupported TTS credential reference field.");
+      credentialReference={id:ref.id as string,kind:ref.kind as string,...(ref.provider===undefined?{}:{provider:ref.provider as string}),...(ref.version===undefined?{}:{version:ref.version as string})};
+    }
+    if(!preset.providerOptions||typeof preset.providerOptions!=="object"||Array.isArray(preset.providerOptions))throw new Error("TTS provider options must be an object.");
+    return {id:preset.id as string,name:preset.name as string,providerId:preset.providerId as string,enabled:preset.enabled as boolean,baseUrl:preset.baseUrl as string,voiceProfileId:preset.voiceProfileId as string,language:preset.language as string,speed:preset.speed as number,credentialReference,providerOptions:{...(preset.providerOptions as Record<string,unknown>)}};
+  });
+  return {activePresetId:root.activePresetId as string|null,presets};
+}
+
 export function validateAppSettings(settings:AppSettings):string[]{
   const errors:string[]=[];
   const integer=(value:number,label:string,min:number,max:number)=>{
@@ -202,6 +234,40 @@ export function validateAppSettings(settings:AppSettings):string[]{
   if(typeof settings.chat.automaticLongTermMemory!=="boolean")errors.push("Automatic long-term memory must be boolean.");
   if(!["structured","plain"].includes(settings.chat.responseMode))errors.push("Unsupported Chat response mode.");
   if(typeof settings.ui.showDiagnosticsInChat!=="boolean")errors.push("Chat diagnostics visibility must be boolean.");
+
+  const tts=settings.tts;
+  if(!tts||typeof tts!=="object"||!Array.isArray(tts.presets))errors.push("TTS settings must contain a preset array.");
+  else{
+    if(tts.presets.length>32)errors.push("At most 32 TTS presets are allowed.");
+    const ids=new Set<string>();
+    for(const [index,preset] of tts.presets.entries()){
+      if(!preset||typeof preset!=="object"){errors.push("TTS preset "+index+" must be an object.");continue;}
+      if(typeof preset.id!=="string"||!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(preset.id))errors.push("TTS preset id is invalid.");
+      else if(ids.has(preset.id))errors.push("TTS preset ids must be unique."); else ids.add(preset.id);
+      if(typeof preset.name!=="string"||preset.name.trim().length===0||preset.name.length>100)errors.push("TTS preset name must contain 1 to 100 characters.");
+      if(typeof preset.providerId!=="string"||!/^[a-z][a-z0-9-]{0,79}$/.test(preset.providerId))errors.push("TTS provider id is invalid.");
+      if(typeof preset.enabled!=="boolean")errors.push("TTS enabled flag must be boolean.");
+      if(typeof preset.baseUrl!=="string"||preset.baseUrl.length>1024)errors.push("TTS base URL must be a string up to 1024 characters.");
+      if(typeof preset.voiceProfileId!=="string"||preset.voiceProfileId.length>256)errors.push("TTS voice/profile id must be a string up to 256 characters.");
+      if(typeof preset.language!=="string"||!/^[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8})*$/.test(preset.language))errors.push("TTS language must be a language tag.");
+      if(typeof preset.speed!=="number"||!Number.isFinite(preset.speed)||preset.speed<0.5||preset.speed>2)errors.push("TTS speed must be between 0.5 and 2.");
+      const credential=preset.credentialReference;
+      if(credential!==null){
+        if(!credential||typeof credential!=="object"||typeof credential.id!=="string"||!credential.id.trim()||credential.id.length>200||typeof credential.kind!=="string"||!credential.kind.trim()||credential.kind.length>80)errors.push("TTS credential references must use non-empty bounded ids and kinds.");
+        if(credential&&typeof credential==="object"&&Object.keys(credential).some(key=>!["id","kind","provider","version"].includes(key)))errors.push("Unsupported TTS credential reference field.");
+      }
+      const options=preset.providerOptions;
+      if(!options||typeof options!=="object"||Array.isArray(options)||Object.keys(options).length>32)errors.push("TTS provider options must be an object with at most 32 fields.");
+      else for(const [key,value] of Object.entries(options)){
+        if(!/^[a-zA-Z][a-zA-Z0-9._-]{0,79}$/.test(key)||/(secret|token|password|api.?key|credential)/i.test(key))errors.push("TTS provider options must not contain secrets or invalid keys.");
+        if(value!==null&&!["string","number","boolean"].includes(typeof value))errors.push("TTS provider option values must be scalar.");
+        if(typeof value==="string"&&value.length>1000)errors.push("TTS provider option values are limited to 1000 characters.");
+        if(typeof value==="number"&&!Number.isFinite(value))errors.push("TTS provider option numbers must be finite.");
+      }
+    }
+    if(tts.activePresetId!==null&&(typeof tts.activePresetId!=="string"||!ids.has(tts.activePresetId)))errors.push("TTS active preset must reference an existing preset or be null.");
+  }
+
   return errors;
 }
 
@@ -211,7 +277,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const input=value as Record<string,unknown>;
   const legacy=input.schemaVersion==="0"||input.schemaVersion===undefined||input.schemaVersion==="1";
   if(input.apiVersion!==undefined&&input.apiVersion!=="1"&&!legacy)throw new Error("Unsupported AppSettings apiVersion.");
-  if(input.schemaVersion!==undefined&&!["0","1","2","3","4","5","6","7","8","9","10","11","12"].includes(String(input.schemaVersion)))throw new Error("Unsupported AppSettings schemaVersion.");
+  if(input.schemaVersion!==undefined&&!["0","1","2","3","4","5","6","7","8","9","10","11","12","13"].includes(String(input.schemaVersion)))throw new Error("Unsupported AppSettings schemaVersion.");
   const root=value as Record<string,any>;
   const context=root.context&&typeof root.context==="object"?root.context:{};
   const memory=root.memory&&typeof root.memory==="object"?root.memory:{};
@@ -311,7 +377,8 @@ export function migrateAppSettings(value:unknown):AppSettings{
       logLevel:logLevelValue as DiagnosticsLogLevel,
       keepRecentEntries:typeof diagnostics.keepRecentEntries==="number"?diagnostics.keepRecentEntries:defaults.diagnostics.keepRecentEntries
     },
-    ui:{showDiagnosticsInChat:typeof ui.showDiagnosticsInChat==="boolean"?ui.showDiagnosticsInChat:defaults.ui.showDiagnosticsInChat}
+    ui:{showDiagnosticsInChat:typeof ui.showDiagnosticsInChat==="boolean"?ui.showDiagnosticsInChat:defaults.ui.showDiagnosticsInChat},
+    tts:String(input.schemaVersion)==="13"?normalizeTtsSettings(root.tts):cloneTtsSettings(defaults.tts)
   };
   const errors=validateAppSettings(next);
   if(errors.length>0)throw new Error("Invalid AppSettings: "+errors.join(" "));
