@@ -201,6 +201,9 @@ export class SpeechOutputController {
         return;
       }
       if(event.type==="reset"||event.type==="clear"){
+        // MindRuntime emits "clear" after successful commit to clear the chat stream view.
+        // Once synthesis has been explicitly finalized, that UI cleanup must not cancel queued audio.
+        if(event.type==="clear"&&session.finishing)return;
         this.cancelSession(session,"Speech output was reset.");
         return;
       }
@@ -225,6 +228,10 @@ export class SpeechOutputController {
       for(const text of session.segmenter.finish())await this.enqueueSentence(session,text,session.emotion);
       this.ensureWorker(session);
       await this.waitForSynthesis(session);
+      if(this.active===session&&!session.failed){
+        this.active=undefined;
+        this.setStatus({state:"ready",message:"Speech synthesis completed; audio may still be playing.",sessionId:session.id});
+      }
     })().catch(error=>{
       if(!aborted(session.abort.signal)){
         this.options.onDiagnostic?.("TTS_FINISH_FAILED",safeError(error));
