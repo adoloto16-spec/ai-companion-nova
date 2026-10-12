@@ -211,7 +211,8 @@ async function voiceStudioWebSocketAndHttpFallback():Promise<void>{
       ok(init.body instanceof FormData,"HTTP fallback uses multipart FormData");
       const form=init.body as FormData;sawForm=form.get("text")==="One complete sentence"&&form.get("profile_id")==="profile-test";
       const headers=new Headers(init.headers);sawManualContentType=headers.has("content-type");
-      return new Response(pcmWav(),{status:200,headers:{"content-type":"audio/wav"}});
+      const wav=pcmWav();const body=new ArrayBuffer(wav.byteLength);new Uint8Array(body).set(wav);
+      return new Response(body,{status:200,headers:{"content-type":"audio/wav"}});
     }
   });
   const httpEvents:TtsStreamEvent[]=[];
