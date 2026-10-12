@@ -563,6 +563,10 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
                       "boolean",
                       "null"
                     ]
+                  },
+                  "propertyNames": {
+                    "pattern": "^(?!.*(?:secret|token|password|api.?key|credential)).*$",
+                    "flags": "i"
                   }
                 }
               }
