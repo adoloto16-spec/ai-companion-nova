@@ -278,7 +278,7 @@ fn validate(settings:&AppSettings)->Result<(),String>{
     if settings.tts.presets.len()>32{return Err("At most 32 TTS presets are allowed.".into());}
     let mut tts_ids=std::collections::BTreeSet::new();
     for preset in &settings.tts.presets {
-        if preset.id.is_empty()||preset.id.len()>80||!preset.id.chars().all(|c|c.is_ascii_alphanumeric()||matches!(c,'.'|'_'|'-'))||!tts_ids.insert(preset.id.as_str()) {
+        if preset.id.is_empty()||preset.id.len()>80||!preset.id.chars().next().map(|c|c.is_ascii_alphanumeric()).unwrap_or(false)||!preset.id.chars().all(|c|c.is_ascii_alphanumeric()||matches!(c,'.'|'_'|'-'))||!tts_ids.insert(preset.id.as_str()) {
             return Err("TTS preset id is invalid or duplicated.".into());
         }
         if preset.name.trim().is_empty()||preset.name.len()>100{return Err("TTS preset name must contain 1 to 100 characters.".into());}
@@ -288,7 +288,7 @@ fn validate(settings:&AppSettings)->Result<(),String>{
         if preset.language.len()<2||preset.language.len()>20{return Err("TTS language tag is invalid.".into());}
         if preset.provider_options.len()>32{return Err("TTS provider options may contain at most 32 fields.".into());}
         for (key,value) in &preset.provider_options {
-            if key.is_empty()||key.len()>80||key.to_ascii_lowercase().contains("secret")||key.to_ascii_lowercase().contains("token")||key.to_ascii_lowercase().contains("password")||key.to_ascii_lowercase().contains("credential")||key.to_ascii_lowercase().contains("api_key")||key.to_ascii_lowercase().contains("apikey"){return Err("TTS provider options must not contain secrets or invalid keys.".into());}
+            if key.is_empty()||key.len()>80||key.to_ascii_lowercase().contains("secret")||key.to_ascii_lowercase().contains("token")||key.to_ascii_lowercase().contains("password")||key.to_ascii_lowercase().contains("credential")||key.to_ascii_lowercase().replace(['_','-',' '], "").contains("apikey"){return Err("TTS provider options must not contain secrets or invalid keys.".into());}
             if !(value.is_null()||value.is_string()||value.is_boolean()||value.is_number()){return Err("TTS provider option values must be scalar.".into());}
             if value.as_str().map(|s|s.len()>1000).unwrap_or(false){return Err("TTS provider option values are limited to 1000 characters.".into());}
             if value.as_f64().map(|n|!n.is_finite()).unwrap_or(false){return Err("TTS provider option numbers must be finite.".into());}
@@ -657,6 +657,44 @@ mod tests{
         assert_eq!(settings.semantic_dedup.embedding_model,"embedding-model");
         assert_eq!(settings.context.available_context_tokens,6144);
         assert_eq!(settings.context.recent_conversation_messages,9);
+    }
+
+
+    #[test]fn migrates_schema_v12_to_v13_and_preserves_existing_settings(){
+        let mut value=serde_json::to_value(default_settings()).expect("encode defaults");
+        let root=value.as_object_mut().expect("settings object");
+        root.insert("schemaVersion".into(),Value::String("12".into()));
+        root.remove("tts");
+        root.insert("context".into(),serde_json::json!({"availableContextTokens":6144,"reservedOutputTokens":1024,"safetyMarginTokens":128,"recentConversationMessages":9}));
+        root.insert("chat".into(),serde_json::json!({"automaticLongTermMemory":false,"responseMode":"plain"}));
+        root.insert("prompts".into(),serde_json::json!({"overrides":{"nova-system-json":"preserved prompt"}}));
+        let (settings,migrated)=migrate(value).expect("schema v12 should migrate");
+        assert!(migrated);
+        assert_eq!(settings.schema_version,"13");
+        assert_eq!(settings.context.available_context_tokens,6144);
+        assert_eq!(settings.context.recent_conversation_messages,9);
+        assert!(!settings.chat.automatic_long_term_memory);
+        assert_eq!(settings.chat.response_mode,"plain");
+        assert_eq!(settings.prompts.overrides.get("nova-system-json").map(String::as_str),Some("preserved prompt"));
+        assert!(!settings.tts.enabled);
+        assert_eq!(settings.tts.active_preset_id.as_deref(),Some("tts-preset-default"));
+        assert_eq!(settings.tts.presets[0].base_url,"http://127.0.0.1:3900");
+    }
+
+    #[test]fn schema_v13_requires_explicit_tts_settings(){
+        let mut value=serde_json::to_value(default_settings()).expect("encode defaults");
+        value.as_object_mut().expect("settings object").remove("tts");
+        assert!(migrate(value).is_err());
+    }
+
+    #[test]fn validates_tts_presets_and_rejects_secret_options(){
+        let mut settings=default_settings();
+        assert!(validate(&settings).is_ok());
+        settings.tts.presets[0].speed=2.5;
+        assert!(validate(&settings).is_err());
+        settings=default_settings();
+        settings.tts.presets[0].provider_options.insert("api-key".into(),Value::String("secret".into()));
+        assert!(validate(&settings).is_err());
     }
 
     #[test]fn validates_prompt_override_ids_and_lengths(){
