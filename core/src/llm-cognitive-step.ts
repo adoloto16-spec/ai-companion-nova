@@ -2,7 +2,7 @@ import {resolvePromptText} from "../../contracts/src";
 import type {PromptId} from "../../contracts/src";
 import type {AssembledContext,Character,ChatMessage,ChatRequest,ChatRequestOptions,ChatResponse,ChatStreamHandlers,ContextBuildRequest,ContextBudget,Conversation,CognitiveScheduleSettings,MindReactiveTurn,ProviderCapabilities} from "../../contracts/src";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,CONTEXT_API_VERSION,CONTEXT_SCHEMA_VERSION,MinimalJsonSchemaValidator,parseNovaTurn,STANDARD_SCHEMAS} from "../../contracts/src";
-import {NovaTurnJsonSpeechStreamDecoder,NovaTurnTaggedSpeechStreamDecoder} from "./nova-turn-stream-decoders";
+import {NovaTurnJsonEmotionStreamDecoder,NovaTurnJsonSpeechStreamDecoder,NovaTurnTaggedEmotionStreamDecoder,NovaTurnTaggedSpeechStreamDecoder} from "./nova-turn-stream-decoders";
 import type {NovaTurn} from "../../contracts/src/nova-turn";
 import type {CognitiveStep,CognitiveStepContext,CognitiveStepResult} from "./mind-runtime";
 
@@ -155,22 +155,40 @@ export class LLMCognitiveStep implements CognitiveStep {
     const doRequest=async(format:"native-json"|"tagged"|"plain",id:string)=>{
       throwIfAborted(context.signal);
       const decoder=format==="native-json"?new NovaTurnJsonSpeechStreamDecoder():format==="tagged"?new NovaTurnTaggedSpeechStreamDecoder():undefined;
-      let rawContent="",deltaCount=0;
-      context.onSpeechEvent?.({type:"start",conversationId:conversation.id});
-      const consume=(text:string)=>{
+      const emotionDecoder=format==="native-json"?new NovaTurnJsonEmotionStreamDecoder():format==="tagged"?new NovaTurnTaggedEmotionStreamDecoder():undefined;
+      let rawContent="",deltaCount=0,accumulatedEmotion="";
+      await context.onSpeechEvent?.({type:"start",conversationId:conversation.id});
+      const consume=async(text:string)=>{
         if(!text)return;
         rawContent+=text;deltaCount++;
         const speech=format==="plain"?text:decoder instanceof NovaTurnJsonSpeechStreamDecoder?decoder.push(text):decoder instanceof NovaTurnTaggedSpeechStreamDecoder?decoder.push(text):"";
-        if(speech)context.onSpeechEvent?.({type:"delta",conversationId:conversation.id,text:speech});
+        const emotionDelta=emotionDecoder instanceof NovaTurnJsonEmotionStreamDecoder?emotionDecoder.push(text):emotionDecoder instanceof NovaTurnTaggedEmotionStreamDecoder?emotionDecoder.push(text):"";
+        const emotionOffset=emotionDecoder instanceof NovaTurnJsonEmotionStreamDecoder||emotionDecoder instanceof NovaTurnTaggedEmotionStreamDecoder?emotionDecoder.fieldOffset():undefined;
+        const speechOffset=decoder instanceof NovaTurnJsonSpeechStreamDecoder||decoder instanceof NovaTurnTaggedSpeechStreamDecoder?decoder.fieldOffset():undefined;
+        const emitEmotion=async()=>{
+          if(!emotionDelta)return;
+          accumulatedEmotion+=emotionDelta;
+          await context.onSpeechEvent?.({type:"emotion",conversationId:conversation.id,emotion:accumulatedEmotion});
+        };
+        const emitSpeech=async()=>{
+          if(speech)await context.onSpeechEvent?.({type:"delta",conversationId:conversation.id,text:speech});
+        };
+        // Field order matters when both fields arrive in one transport delta:
+        // a later emotion must not retroactively change already-emitted speech.
+        if(speech&&emotionDelta&&emotionOffset!==undefined&&speechOffset!==undefined&&emotionOffset<speechOffset){
+          await emitEmotion();await emitSpeech();
+        }else{
+          await emitSpeech();await emitEmotion();
+        }
       };
       const req=requestFor(id,format);
       let response:ChatResponse;
       if(this.options.runtime.stream){
-        response=await this.options.runtime.stream(req,{onEvent:async event=>{if(event.type==="delta")consume(event.text);}}, {signal:context.signal},providerPresetId);
-        if(deltaCount===0&&response.message.content)consume(response.message.content);
+        response=await this.options.runtime.stream(req,{onEvent:async event=>{if(event.type==="delta")await consume(event.text);}}, {signal:context.signal},providerPresetId);
+        if(deltaCount===0&&response.message.content)await consume(response.message.content);
       }else{
         response=await this.options.runtime.chat(req,providerPresetId,{signal:context.signal});
-        consume(response.message.content);
+        await consume(response.message.content);
       }
       throwIfAborted(context.signal);
       return {response,content:rawContent};
@@ -192,7 +210,7 @@ export class LLMCognitiveStep implements CognitiveStep {
         }catch(error){
           if(!explicitlyUnsupported(error))throw error;
           throwIfAborted(context.signal);
-          context.onSpeechEvent?.({type:"reset",conversationId:conversation.id});
+          await context.onSpeechEvent?.({type:"reset",conversationId:conversation.id});
           effectiveFormat="tagged";
           output=await doRequest("tagged",request+"-tag-fallback");
           protocolDiagnostics=["structured-output-fallback:explicit-unsupported"];
