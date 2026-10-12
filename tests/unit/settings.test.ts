@@ -76,7 +76,7 @@ async function main(){
   v5.chat={automaticLongTermMemory:false,responseMode:"structured"};
   const migratedV5=migrateAppSettings(v5);
   equal(migratedV5.cognitiveSchedule,DEFAULT_APP_SETTINGS.cognitiveSchedule,"schema v5 migration inserts cognitive defaults");
-  equal(migratedV5.schemaVersion,"12","legacy AppSettings migrate to the current schema");
+  equal(migratedV5.schemaVersion,"13","legacy AppSettings migrate to the current schema");
   equal(migratedV5.chat.automaticLongTermMemory,false,"legacy automatic memory setting remains a save gate");
   equal(Object.prototype.hasOwnProperty.call(migratedV5,"memoryAgent"),false,"legacy Memory Agent settings are dropped during migration");
   const oldDefaultV8=JSON.parse(JSON.stringify(defaultAppSettings())) as Record<string,any>;
