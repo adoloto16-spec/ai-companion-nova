@@ -2439,6 +2439,7 @@ function App(){
     const snapshot=chatController?.getSnapshot();
     if(!chatController||!activeCharacterId||!activeConversationId||
       snapshot?.characterId!==activeCharacterId||snapshot.conversationId!==activeConversationId){
+      speechOutputController.stop("Dialogue or character is no longer active.");
       foundation.setNovaTurnSink(undefined);
       return;
     }
@@ -2473,10 +2474,15 @@ function App(){
             if(attached)setActiveConversation(updated);
           }
         });
+        void speechOutputController.finishTurn(context.turnId);
       },
-      streamSpeech:event=>{
-        if(!attached||event.characterId!==activeCharacterId||event.conversationId!==activeConversationId)return;
-        chatController.updateNovaTurnStream(event);
+      streamSpeech:async event=>{
+        if(!attached||event.characterId!==activeCharacterId||event.conversationId!==activeConversationId){
+          speechOutputController.stop("Dialogue or character changed.");
+          return;
+        }
+        await speechOutputController.handleSpeechEvent(event);
+        if(event.type!=="emotion")chatController.updateNovaTurnStream(event);
       },
       fail:(turn,reason)=>{
         if(!attached||turn.characterId!==activeCharacterId||turn.conversationId!==activeConversationId)return;
@@ -2489,12 +2495,14 @@ function App(){
     foundation.setNovaTurnSink(sink);
     return ()=>{
       attached=false;
+      speechOutputController.stop("Dialogue or character changed.");
       chatController.clearNovaTurnStream();
       foundation.setNovaTurnSink(undefined);
     };
-  },[chatController,activeCharacterId,activeConversationId]);
+  },[chatController,activeCharacterId,activeConversationId,speechOutputController]);
 
   const clearConversation=React.useCallback(async(controller:ChatSessionController)=>{
+    speechOutputController.stop("Conversation cleared.");
     const foundation=foundationRef.current;
     if(!foundation)throw new Error("Conversation runtime is not available.");
     const snapshot=controller.getSnapshot();
@@ -2511,7 +2519,7 @@ function App(){
       await persistConversation(controller);
       throw error;
     }
-  },[controllerForConversation,loadModelProfile,persistConversation]);
+  },[controllerForConversation,loadModelProfile,persistConversation,speechOutputController]);
 
   const syncCharacters=React.useCallback(async(runtimeInstance:FoundationRuntime)=>{
     const list=await runtimeInstance.listCharacters();
