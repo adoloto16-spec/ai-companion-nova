@@ -106,6 +106,16 @@ function emotionDecodersDoNotGateSpeech():void{
   equal(jsonSpeechNext,"","speech decoder does not expose emotion/thoughts");
   equal(jsonEmotion.push(second),"whisper","emotion is decoded when its later field arrives");
   ok((jsonEmotion.fieldOffset()??Infinity)>(jsonSpeech.fieldOffset()??Infinity),"JSON emotion-after-speech order is identified");
+  const sourceText='Первая фраза. Кавычка: "да". Эмодзи 😀. Последний остаток';
+  const jsonPayload=JSON.stringify({speech:sourceText,thoughts:"не озвучивать"});
+  const streamDecoder=new NovaTurnJsonSpeechStreamDecoder(),sentenceDecoder=new SpeechSentenceSegmenter();
+  const reconstructed:string[]=[];
+  for(let i=0;i<jsonPayload.length;i++){
+    const speechDelta=streamDecoder.push(jsonPayload.slice(i,i+1));
+    reconstructed.push(...sentenceDecoder.push(speechDelta));
+  }
+  reconstructed.push(...sentenceDecoder.finish());
+  equal(reconstructed.join(""),sourceText,"JSON escape, punctuation and UTF-16 split boundaries preserve public speech");
   const tags='<NOVA_TURN version="1"><SPEECH>Public text</SPEECH><THOUGHTS>private</THOUGHTS><EMOTION>whisper</EMOTION></NOVA_TURN>';
   const tagSpeech=new NovaTurnTaggedSpeechStreamDecoder(),tagEmotion=new NovaTurnTaggedEmotionStreamDecoder();
   let visible="",expression="";
@@ -178,13 +188,19 @@ function pcmWav(sampleRate=22050,channels=1):Uint8Array{
 class MockWebSocket extends EventTarget{
   readyState=1;
   sent:string[]=[];
+  constructor(private readonly mode:"done"|"error"|"partial-close"="done"){super();}
   close(){this.readyState=3;this.dispatchEvent(new Event("close"));}
   send(value:string){
     this.sent.push(value);
     queueMicrotask(()=>{
       this.dispatchEvent(new MessageEvent("message",{data:JSON.stringify({type:"start",sample_rate:44100,channels:2,format:"pcm16"})}));
+      if(this.mode==="error"){
+        this.dispatchEvent(new MessageEvent("message",{data:JSON.stringify({type:"error",detail:"engine API key=fixture-secret"})}));
+        return;
+      }
       const pcm=new Int16Array([32767,-32768,0,500]).buffer;
       this.dispatchEvent(new MessageEvent("message",{data:pcm}));
+      if(this.mode==="partial-close"){this.close();return;}
       this.dispatchEvent(new MessageEvent("message",{data:JSON.stringify({type:"done"})}));
     });
   }
@@ -205,6 +221,20 @@ async function voiceStudioWebSocketAndHttpFallback():Promise<void>{
   const request=JSON.parse(socket.sent[0]!) as Record<string,unknown>;
   equal(request.voice,"profile-test","VoiceStudio receives the configured profile ID");
   equal(request.speed,1,"VoiceStudio receives speed");
+
+  const engineErrorProvider=new VoiceStudioTtsProvider({createWebSocket:()=>new MockWebSocket("error") as unknown as WebSocket,fetch:async()=>{throw new Error("HTTP fallback must not override an engine error frame");}});
+  const engineErrorEvents:TtsStreamEvent[]=[];
+  for await(const event of engineErrorProvider.synthesize({sessionId:"engine-error",text:"Secret test",preset:preset("voice-studio"),emotion:""},{signal:new AbortController().signal}))engineErrorEvents.push(event);
+  const engineError=engineErrorEvents.find(event=>event.type==="error");
+  ok(engineError?.type==="error"&&!engineError.error.message.includes("fixture-secret"),"engine error frames are sanitized without exposing credentials");
+
+  let fallbackAfterAudio=false;
+  const partialCloseProvider=new VoiceStudioTtsProvider({createWebSocket:()=>new MockWebSocket("partial-close") as unknown as WebSocket,fetch:async()=>{fallbackAfterAudio=true;return new Response(null,{status:500});},requestTimeoutMs:1000});
+  const partialCloseEvents:TtsStreamEvent[]=[];
+  for await(const event of partialCloseProvider.synthesize({sessionId:"partial-close",text:"Already started",preset:preset("voice-studio"),emotion:""},{signal:new AbortController().signal}))partialCloseEvents.push(event);
+  ok(partialCloseEvents.some(event=>event.type==="audio"),"binary audio queued before a socket close is drained");
+  ok(partialCloseEvents.some(event=>event.type==="error"),"socket close after partial audio reports an error");
+  ok(!fallbackAfterAudio,"HTTP fallback never repeats a sentence after websocket audio has been accepted");
 
   let sawForm=false,sawManualContentType=false;
   const fallback=new VoiceStudioTtsProvider({
