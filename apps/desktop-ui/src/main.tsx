@@ -2264,6 +2264,37 @@ function App(){
   const [providerPresets,setProviderPresets]=React.useState<readonly ProviderPreset[]>([]);
   const [activePresetId,setActivePresetId]=React.useState<string|null>(null);
   const [appSettings,setAppSettings]=React.useState<AppSettings>(()=>defaultAppSettings());
+  const appSettingsRef=React.useRef(appSettings);
+  appSettingsRef.current=appSettings;
+  const webAudioOutputRef=React.useRef<WebAudioOutputAdapter|undefined>(undefined);
+  if(!webAudioOutputRef.current)webAudioOutputRef.current=new WebAudioOutputAdapter();
+  const speechOutputControllerRef=React.useRef<SpeechOutputController|undefined>(undefined);
+  if(!speechOutputControllerRef.current){
+    speechOutputControllerRef.current=new SpeechOutputController({
+      getSettings:()=>appSettingsRef.current.tts,
+      getProvider:providerId=>foundationRef.current?.getTtsProvider(providerId),
+      output:webAudioOutputRef.current,
+      onDiagnostic:(code,message)=>foundationRef.current?.recordDiagnosticError("tts",code,message)
+    });
+  }
+  const speechOutputController=speechOutputControllerRef.current;
+  const ttsSettingsKey=JSON.stringify(appSettings.tts);
+  const previousTtsSettingsKeyRef=React.useRef(ttsSettingsKey);
+  React.useEffect(()=>{
+    if(previousTtsSettingsKeyRef.current!==ttsSettingsKey){
+      previousTtsSettingsKeyRef.current=ttsSettingsKey;
+      speechOutputController.configurationChanged();
+    }
+  },[ttsSettingsKey,speechOutputController]);
+  React.useEffect(()=>{
+    const stopBeforeUnload=()=>speechOutputController.stop("Application window is closing.");
+    window.addEventListener("beforeunload",stopBeforeUnload);
+    return ()=>{
+      window.removeEventListener("beforeunload",stopBeforeUnload);
+      speechOutputController.stop("Application UI closed.");
+      void webAudioOutputRef.current?.dispose();
+    };
+  },[speechOutputController]);
   const semanticIndexStore=React.useMemo(()=>isTauriRuntime()?new IpcMemorySemanticIndexStore(invoke):undefined,[]);
   const [settingsLoadMessage,setSettingsLoadMessage]=React.useState("");
   const credentialProfileStateRef=React.useRef<CredentialProfileStoreState>(emptyCredentialProfileState());
