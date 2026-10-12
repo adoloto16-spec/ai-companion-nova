@@ -391,8 +391,11 @@ export class VoiceStudioTtsProvider implements TtsProvider {
       cleanup(true);
     };
     const onClose=()=>{
-      if(!operation.ended)fail(new VoiceStudioError("VoiceStudio websocket disconnected before the request completed.","websocket_disconnected",true,!operation.audioSeen));
-      if(this.activeRequest===operation)cleanup(false);
+      // Finish queued message decoding before deciding whether HTTP retry could duplicate audio.
+      void operation.processing.then(()=>{
+        if(!operation.ended)fail(new VoiceStudioError("VoiceStudio websocket disconnected before the request completed.","websocket_disconnected",true,!operation.audioSeen));
+        if(this.activeRequest===operation)cleanup(false);
+      });
     };
     const onSocketError=()=>{
       if(!operation.ended)fail(new VoiceStudioError("VoiceStudio websocket connection failed.","websocket_error",true,!operation.audioSeen));
@@ -405,6 +408,7 @@ export class VoiceStudioTtsProvider implements TtsProvider {
       if(operation.ended||this.activeRequest!==operation)return;
       const size=byteLength(event.data);
       if(size===undefined){fail(new VoiceStudioError("VoiceStudio sent an unsupported message type.","invalid_message",false));cleanup(true);return;}
+      if(typeof event.data!=="string")operation.audioSeen=true;
       operation.pendingBytes+=size;
       if(operation.pendingBytes>MAX_PENDING_WEBSOCKET_BYTES){
         fail(new VoiceStudioError("VoiceStudio exceeded the bounded incoming-audio buffer.","message_buffer_limit",false));
