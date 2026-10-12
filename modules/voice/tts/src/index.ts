@@ -286,7 +286,7 @@ export class SpeechOutputController {
     try{
       const result=await provider.testConnection(presetCopy(preset),signal);
       this.setStatus({state:result.status==="healthy"?"ready":"error",message:result.message??result.status});
-      return result;
+      return {status:result.status,message:result.message??result.status};
     }catch(error){
       const message=safeError(error);
       this.setStatus({state:"error",message});
