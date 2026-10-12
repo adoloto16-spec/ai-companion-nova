@@ -282,7 +282,7 @@ fn validate(settings:&AppSettings)->Result<(),String>{
             return Err("TTS preset id is invalid or duplicated.".into());
         }
         if preset.name.trim().is_empty()||preset.name.len()>100{return Err("TTS preset name must contain 1 to 100 characters.".into());}
-        if preset.provider_id.is_empty()||preset.provider_id.len()>80||!preset.provider_id.chars().all(|c|c.is_ascii_lowercase()||c.is_ascii_digit()||c=='-'){return Err("TTS provider id is invalid.".into());}
+        if preset.provider_id.is_empty()||preset.provider_id.len()>80||!preset.provider_id.chars().next().map(|c|c.is_ascii_lowercase()).unwrap_or(false)||!preset.provider_id.chars().all(|c|c.is_ascii_lowercase()||c.is_ascii_digit()||c=='-'){return Err("TTS provider id is invalid.".into());}
         if preset.base_url.len()>1024||preset.voice_profile_id.len()>256{return Err("TTS URL or profile id exceeds its allowed length.".into());}
         if !(0.5..=2.0).contains(&preset.speed)||!preset.speed.is_finite(){return Err("TTS speed must be between 0.5 and 2.".into());}
         if preset.language.len()<2||preset.language.len()>20{return Err("TTS language tag is invalid.".into());}
