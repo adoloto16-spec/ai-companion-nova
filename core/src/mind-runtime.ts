@@ -58,9 +58,10 @@ function cloneState(state: MindState): MindState {
 }
 
 export interface CognitiveStepSpeechEvent {
-  type:"start"|"delta"|"reset";
+  type:"start"|"delta"|"reset"|"emotion";
   conversationId:string;
   text?:string;
+  emotion?:string;
 }
 export interface CognitiveStepContext {
   characterId: string;
@@ -68,7 +69,7 @@ export interface CognitiveStepContext {
   signal: AbortSignal;
   wakeReason: MindWakeReason;
   userTurn?: MindReactiveTurn;
-  onSpeechEvent?:(event:CognitiveStepSpeechEvent)=>void;
+  onSpeechEvent?:(event:CognitiveStepSpeechEvent)=>void|Promise<void>;
 }
 export interface CognitiveStepResult {
   turn: NovaTurn;
@@ -296,14 +297,15 @@ export class MindRuntime {
         result = await Promise.race([this.cognitiveStep.run({
           characterId,state:this.getState(),signal:stepController.signal,wakeReason:reason,
           ...(reactiveTurn ? {userTurn:reactiveTurn} : {}),
-          onSpeechEvent:event=>{
+          onSpeechEvent:async event=>{
             streamedConversationId=event.conversationId;
             if(stepController.signal.aborted||life.signal.aborted||contextVersion!==this.contextVersion||
               characterId!==this.activeCharacterId||(reactiveTurn&&!this.isReactiveTurnCurrent(reactiveTurn)))return;
-            this.turnSink?.streamSpeech?.({
+            await this.turnSink?.streamSpeech?.({
               type:event.type,characterId,conversationId:event.conversationId,turnId:speechTurnId,
               ...(reactiveTurn?{userMessageId:reactiveTurn.userMessageId}:{}),
-              ...(event.text!==undefined?{text:event.text}:{})
+              ...(event.text!==undefined?{text:event.text}:{}),
+              ...(event.emotion!==undefined?{emotion:event.emotion}:{})
             });
           }
         }), abortPromise]);
