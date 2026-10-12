@@ -140,6 +140,7 @@ export function normalizeVoiceExpression(text:string,emotion:string,capabilities
 export class SpeechOutputController {
   private readonly sessions=new Map<string,Session>();
   private active:Session|undefined;
+  private testAbort:AbortController|undefined;
   private sequence=0;
   private unlocked=false;
   private status:SpeechOutputStatus={state:"disabled",message:"Speech output is disabled."};
@@ -246,7 +247,8 @@ export class SpeechOutputController {
   stop(message="Speech output stopped."):void{
     const session=this.active;
     if(session)this.cancelSession(session,message);
-    else this.options.output.stop();
+    if(this.testAbort){const preview=this.testAbort;this.testAbort=undefined;preview.abort();}
+    if(!session)this.options.output.stop();
     this.setStatus({state:this.unlocked?"ready":"locked",message});
   }
 
@@ -260,6 +262,7 @@ export class SpeechOutputController {
     this.stop("Starting TTS test voice.");
     const sessionId="nova-tts-test-"+(++this.sequence);
     const abort=new AbortController();
+    this.testAbort=abort;
     let metadata:TtsAudioMetadata|undefined,sequence=0,done=false;
     this.setStatus({state:"synthesizing",message:"Synthesizing a test voice.",sessionId});
     try{
@@ -278,11 +281,12 @@ export class SpeechOutputController {
       this.setStatus({state:"ready",message:"Test voice was synthesized; playback is queued.",sessionId});
     }catch(error){
       this.options.output.stop(sessionId);
+      if(abort.signal.aborted)return;
       const message=safeError(error);
       this.reportDiagnostic("TTS_TEST_FAILED",message);
       this.setStatus({state:"error",message});
       throw new Error(message);
-    }
+    }finally{if(this.testAbort===abort)this.testAbort=undefined;}
   }
 
   async testConnection():Promise<{status:string;message:string}>{
