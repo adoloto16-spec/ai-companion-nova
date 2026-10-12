@@ -114,7 +114,7 @@ export class SpeechSentenceSegmenter {
       while(end<source.length&&".!?…".includes(source[end]!))end++;
       while(end<source.length&&isCloser(source[end]!))end++;
       if(end===source.length)continue;
-      if(isWhite(source[end]!))return end;
+      if(isWhite(source[end]!)){while(end<source.length&&isWhite(source[end]!))end++;return end;}
     }
     return -1;
   }
