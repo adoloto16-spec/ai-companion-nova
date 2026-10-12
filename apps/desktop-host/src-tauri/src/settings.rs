@@ -168,7 +168,6 @@ pub struct TtsPreset {
     pub name:String,
     #[serde(rename="providerId")]
     pub provider_id:String,
-    pub enabled:bool,
     #[serde(rename="baseUrl")]
     pub base_url:String,
     #[serde(rename="voiceProfileId")]
@@ -183,18 +182,19 @@ pub struct TtsPreset {
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TtsSettings {
+    pub enabled:bool,
     #[serde(rename="activePresetId")]
     pub active_preset_id:Option<String>,
     pub presets:Vec<TtsPreset>
 }
 fn default_tts_settings()->TtsSettings {
     TtsSettings {
+        enabled:false,
         active_preset_id:Some("tts-preset-default".into()),
         presets:vec![TtsPreset {
             id:"tts-preset-default".into(),
             name:"VoiceStudio".into(),
             provider_id:"voice-studio".into(),
-            enabled:false,
             base_url:"http://127.0.0.1:3900".into(),
             voice_profile_id:String::new(),
             language:"ru".into(),
