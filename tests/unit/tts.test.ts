@@ -122,9 +122,12 @@ async function synthesisRunsAheadOfPlaybackAndKeepsFifo():Promise<void>{
   await controller.unlockPlayback();
   await controller.handleSpeechEvent({type:"start",turnId:"turn-a"});
   await controller.handleSpeechEvent({type:"delta",turnId:"turn-a",text:"First sentence. Second sentence"});
-  await controller.finishTurn("turn-a");
+  const finishing=controller.finishTurn("turn-a");
+  await controller.handleSpeechEvent({type:"clear",turnId:"turn-a"});
+  await finishing;
   equal(provider.requests.length,2,"both sentences synthesize");
   ok(output.queued.length===2,"both audio segments are queued");
+  equal(output.queued.length,2,"successful stream clear does not cancel finalized audio");
   equal(output.queued.map(item=>item.text).join(""),"First sentence. Second sentence","FIFO audio output preserves text and order");
   ok(provider.maxActive===1,"a provider/model never receives overlapping synthesis requests");
   // The fake output deliberately keeps playback pending: enqueue only queues it, just like the Web Audio adapter.
