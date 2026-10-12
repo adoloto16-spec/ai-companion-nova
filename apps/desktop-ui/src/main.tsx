@@ -19,6 +19,12 @@ import {IpcMemorySemanticIndexStore,IpcMemoryStore,InMemoryMemoryStore} from "..
 import {IpcConversationStore,InMemoryConversationStore} from "../../../host/conversations/src/index";
 import {IpcModelProfileStore,InMemoryModelProfileStore} from "../../../host/model-profiles/src/index";
 import {IpcSettingsStore,InMemorySettingsStore} from "../../../host/settings/src/index";
+import {SpeechOutputController} from "../../../modules/voice/tts/src";
+import type {SpeechOutputStatus} from "../../../modules/voice/tts/src";
+import {WebAudioOutputAdapter} from "./web-audio-output";
+import {DEFAULT_TTS_SETTINGS} from "../../../contracts/src/tts";
+import type {TtsPreset,TtsSettings} from "../../../contracts/src/tts";
+import type {TtsProviderDescriptor} from "../../../providers/tts/registry/src";
 import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
@@ -862,6 +868,8 @@ function ProviderPresetsView({
 }:{
   presets:readonly ProviderPreset[];
   activePresetId:string|null;
+  ttsController:SpeechOutputController;
+  ttsProviders:readonly TtsProviderDescriptor[];
   credentialProfiles:readonly CredentialProfile[];
   credentialSaved:Record<string,boolean>;
   runtime:RuntimeDiagnostics;
@@ -2022,9 +2030,128 @@ class ViewErrorBoundary extends React.Component<{
   }
 }
 
+
+function TtsSettingsView({settings,onChange,onSave,saving,message,controller,providers}:{
+  settings:TtsSettings;
+  onChange:(settings:TtsSettings)=>void;
+  onSave:()=>Promise<void>;
+  saving:boolean;
+  message:string;
+  controller:SpeechOutputController;
+  providers:readonly TtsProviderDescriptor[];
+}){
+  const [status,setStatus]=React.useState<SpeechOutputStatus>(()=>controller.getStatus());
+  const [connectionMessage,setConnectionMessage]=React.useState("");
+  React.useEffect(()=>controller.subscribe(setStatus),[controller]);
+  const selected=settings.presets.find(preset=>preset.id===settings.activePresetId);
+  const update=(changes:Partial<TtsPreset>)=>{
+    if(!selected)return;
+    controller.stop("TTS preset settings changed.");
+    const updated={...selected,...changes};
+    onChange({...settings,presets:settings.presets.map(preset=>preset.id===selected.id?updated:preset)});
+  };
+  const setEnabled=(enabled:boolean)=>{
+    controller.stop(enabled?"TTS setting changed.":"Speech output disabled.");
+    onChange({...settings,enabled});
+  };
+  const selectPreset=(id:string)=>{
+    controller.stop("Active TTS preset changed.");
+    onChange({...settings,activePresetId:id});
+  };
+  const addPreset=()=>{
+    const source=selected??DEFAULT_TTS_SETTINGS.presets[0]!;
+    const id="tts-preset-"+Date.now().toString(36)+"-"+settings.presets.length.toString(36);
+    const preset:TtsPreset={...source,id,name:"VoiceStudio "+(settings.presets.length+1),credentialReference:null,providerOptions:{...source.providerOptions}};
+    controller.stop("TTS preset added.");
+    onChange({...settings,presets:[...settings.presets,preset],activePresetId:id});
+  };
+  const deletePreset=()=>{
+    if(!selected)return;
+    controller.stop("Active TTS preset removed.");
+    const presets=settings.presets.filter(preset=>preset.id!==selected.id);
+    onChange({...settings,presets,activePresetId:presets[0]?.id??null});
+  };
+  const checkConnection=async()=>{
+    setConnectionMessage("Checking the local VoiceStudio API…");
+    const result=await controller.testConnection();
+    setConnectionMessage(result.message);
+  };
+  const testVoice=async()=>{
+    try{await controller.testVoice();}
+    catch(error){setConnectionMessage(error instanceof Error?error.message:"Test voice failed.");}
+  };
+  return <div className="settings-grid tts-settings">
+    <section>
+      <div className="section-header">
+        <div><h2>Text-to-Speech</h2><p className="chat-subtitle">Only public NovaTurn speech is synthesized. The TTS preset is separate from Chat Provider Presets.</p></div>
+        <button type="button" onClick={()=>void onSave()} disabled={saving}>Save TTS settings</button>
+      </div>
+      <label className="checkbox">Enable speech output
+        <input type="checkbox" checked={settings.enabled} onChange={event=>setEnabled(event.target.checked)} disabled={saving}/>
+      </label>
+      <p className="hint">Speech is disabled by default. Audio playback must also be explicitly enabled below from a user gesture.</p>
+      <label>Active TTS preset
+        <select value={settings.activePresetId??""} onChange={event=>selectPreset(event.target.value)} disabled={saving||settings.presets.length===0}>
+          {settings.presets.map(preset=><option key={preset.id} value={preset.id}>{preset.name} ({preset.providerId})</option>)}
+        </select>
+      </label>
+      <div className="row">
+        <button type="button" onClick={addPreset} disabled={saving||settings.presets.length>=32}>Add TTS preset</button>
+        <button type="button" onClick={deletePreset} disabled={saving||!selected}>Delete active preset</button>
+      </div>
+      {selected&&<div className="tts-preset-fields">
+        <label>Preset name
+          <input value={selected.name} maxLength={100} onChange={event=>update({name:event.target.value})} disabled={saving}/>
+        </label>
+        <label>TTS provider
+          <select value={selected.providerId} onChange={event=>update({providerId:event.target.value})} disabled={saving}>
+            {providers.map(provider=><option key={provider.id} value={provider.id}>{provider.id}</option>)}
+          </select>
+        </label>
+        <label>VoiceStudio base URL
+          <input type="url" value={selected.baseUrl} maxLength={1024} onChange={event=>update({baseUrl:event.target.value})} disabled={saving}/>
+          <small>Only HTTP loopback on port 3900 is accepted by the VoiceStudio adapter.</small>
+        </label>
+        <label>Voice/profile ID
+          <input value={selected.voiceProfileId} maxLength={256} placeholder="Enter a VoiceStudio profile ID" onChange={event=>update({voiceProfileId:event.target.value})} disabled={saving}/>
+        </label>
+        <label>Language
+          <input value={selected.language} maxLength={20} placeholder="ru" onChange={event=>update({language:event.target.value})} disabled={saving}/>
+        </label>
+        <label>Speech speed
+          <input type="number" min={0.5} max={2} step={0.1} value={selected.speed} onChange={event=>update({speed:Number(event.target.value)})} disabled={saving}/>
+        </label>
+        {selected.providerId==="voice-studio"&&<label>VoiceStudio description (optional)
+          <textarea value={String(selected.providerOptions.description??"")} maxLength={1000}
+            onChange={event=>update({providerOptions:{...selected.providerOptions,description:event.target.value}})} disabled={saving}/>
+          <small>Stored as a validated provider option; secrets and credential values are not stored here.</small>
+        </label>}
+      </div>}
+      <p className="hint">CredentialStore references are reserved for future protected providers. No token, password, or API key is written to the settings JSON.</p>
+    </section>
+    <section>
+      <h3>Playback and diagnostics</h3>
+      <div className="row">
+        <button type="button" onClick={()=>void controller.unlockPlayback().catch(error=>setConnectionMessage(error instanceof Error?error.message:"Audio playback could not be enabled."))}>Enable audio playback</button>
+        <button type="button" onClick={()=>void checkConnection()} disabled={!selected}>Check connection</button>
+      </div>
+      <div className="row">
+        <button type="button" onClick={()=>void testVoice()} disabled={!selected}>Test voice</button>
+        <button type="button" onClick={()=>controller.stop("Speech stopped by the user.")}>Stop speech</button>
+      </div>
+      <p className={status.state==="error"?"error-message":"status-message"} role={status.state==="error"?"alert":"status"}>
+        {status.message}
+      </p>
+      {connectionMessage&&<p className="status-message" role="status">{connectionMessage}</p>}
+      {message&&<p className="status-message" role="status">{message}</p>}
+      <small>Connection checks use the configured loopback URL. This UI does not bundle or start VoiceStudio or its models.</small>
+    </section>
+  </div>;
+}
+
 function SettingsContainerView({
   appSettings,onAppSettingsChange,settingsLoadMessage,settingsSaving,onSaveSettings,onResetSettings,
-  runtime,providerPresets,activePresetId,credentialProfiles,credentialSavedMap,
+  runtime,providerPresets,activePresetId,credentialProfiles,credentialSavedMap,ttsController,ttsProviders,
   onSavePreset,onActivatePreset,onDeletePreset,onCreateCredential,onDeleteCredential,onRefreshModels,onTestPreset,onError
 }:{
   appSettings:AppSettings;
@@ -2047,12 +2174,13 @@ function SettingsContainerView({
   onTestPreset:(preset:ProviderPreset,sourceId:string)=>Promise<ProviderConnectionTestResult>;
   onError:(error:Error,info:React.ErrorInfo)=>void;
 }){
-  const [tab,setTab]=React.useState<"general"|"chat"|"provider-presets">("general");
+  const [tab,setTab]=React.useState<"general"|"chat"|"provider-presets"|"tts">("general");
   return <section className="settings-container" aria-label="Settings">
     <div className="settings-subnav" role="tablist" aria-label="Settings sections">
       <button type="button" role="tab" aria-selected={tab==="general"} className={tab==="general"?"nav-button active":"nav-button"} onClick={()=>setTab("general")}>General</button>
       <button type="button" role="tab" aria-selected={tab==="chat"} className={tab==="chat"?"nav-button active":"nav-button"} onClick={()=>setTab("chat")}>Chat</button>
       <button type="button" role="tab" aria-selected={tab==="provider-presets"} className={tab==="provider-presets"?"nav-button active":"nav-button"} onClick={()=>setTab("provider-presets")}>Provider Presets</button>
+      <button type="button" role="tab" aria-selected={tab==="tts"} className={tab==="tts"?"nav-button active":"nav-button"} onClick={()=>setTab("tts")}>Voice / TTS</button>
     </div>
     {tab==="general"
       ?<ViewErrorBoundary key="settings-general" view="settings-general" onError={onError}>
@@ -2062,11 +2190,16 @@ function SettingsContainerView({
         ?<ViewErrorBoundary key="settings-chat" view="settings-chat" onError={onError}>
           <ChatSettingsView settings={appSettings} onChange={onAppSettingsChange} onSave={onSaveSettings} onReset={onResetSettings} saving={settingsSaving} message={settingsLoadMessage}/>
         </ViewErrorBoundary>
-        :<ViewErrorBoundary key="settings-provider-presets" view="settings-provider-presets" onError={onError}>
-          <ProviderPresetsView presets={providerPresets} activePresetId={activePresetId} credentialProfiles={credentialProfiles} credentialSaved={credentialSavedMap}
-            runtime={runtime} onSavePreset={onSavePreset} onActivatePreset={onActivatePreset} onDeletePreset={onDeletePreset}
-            onCreateCredential={onCreateCredential} onDeleteCredential={onDeleteCredential} onRefreshModels={onRefreshModels} onTestPreset={onTestPreset}/>
-        </ViewErrorBoundary>}
+        :tab==="provider-presets"
+          ?<ViewErrorBoundary key="settings-provider-presets" view="settings-provider-presets" onError={onError}>
+            <ProviderPresetsView presets={providerPresets} activePresetId={activePresetId} credentialProfiles={credentialProfiles} credentialSaved={credentialSavedMap}
+              runtime={runtime} onSavePreset={onSavePreset} onActivatePreset={onActivatePreset} onDeletePreset={onDeletePreset}
+              onCreateCredential={onCreateCredential} onDeleteCredential={onDeleteCredential} onRefreshModels={onRefreshModels} onTestPreset={onTestPreset}/>
+          </ViewErrorBoundary>
+          :<ViewErrorBoundary key="settings-tts" view="settings-tts" onError={onError}>
+            <TtsSettingsView settings={appSettings.tts} onChange={tts=>onAppSettingsChange({...appSettings,tts})} onSave={onSaveSettings}
+              saving={settingsSaving} message={settingsLoadMessage} controller={ttsController} providers={ttsProviders}/>
+          </ViewErrorBoundary>}
   </section>;
 }
 function isTauriRuntime():boolean{
@@ -2832,6 +2965,8 @@ function App(){
           runtime={runtime}
           providerPresets={providerPresets}
           activePresetId={activePresetId}
+          ttsController={speechOutputController}
+          ttsProviders={foundationRef.current?.listTtsProviders()??[]}
           credentialProfiles={credentialProfiles}
           credentialSavedMap={credentialSavedMap}
           onSavePreset={saveProviderPreset}
