@@ -87,12 +87,12 @@ export function validateVoiceStudioBaseUrl(raw:string):string{
     throw new VoiceStudioError("VoiceStudio must use HTTP loopback on port 3900 without credentials, path, query, or fragment.","unsafe_base_url",false);
   return url.origin;
 }
-function validatePreset(preset:TtsPreset):{baseUrl:string;description?:string}{
+function validatePreset(preset:TtsPreset,requireVoiceProfile=false):{baseUrl:string;description?:string}{
   if(preset.providerId!=="voice-studio")throw new VoiceStudioError("The selected TTS preset is not a VoiceStudio preset.","wrong_provider",false);
   const baseUrl=validateVoiceStudioBaseUrl(preset.baseUrl);
   if(typeof preset.speed!=="number"||!Number.isFinite(preset.speed)||preset.speed<0.5||preset.speed>2)
     throw new VoiceStudioError("VoiceStudio speed must be between 0.5 and 2.","invalid_speed",false);
-  if(typeof preset.voiceProfileId!=="string"||preset.voiceProfileId.length>256)
+  if(typeof preset.voiceProfileId!=="string"||preset.voiceProfileId.length>256||(requireVoiceProfile&&!preset.voiceProfileId.trim()))
     throw new VoiceStudioError("VoiceStudio profile ID is invalid.","invalid_voice_profile",false);
   if(typeof preset.language!=="string"||!/^[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8})*$/.test(preset.language))
     throw new VoiceStudioError("VoiceStudio language tag is invalid.","invalid_language",false);
@@ -268,7 +268,7 @@ export class VoiceStudioTtsProvider implements TtsProvider {
   async *synthesize(request:TtsSynthesisRequest,options:TtsOperationOptions):AsyncIterable<TtsStreamEvent>{
     let validated:{baseUrl:string;description?:string};
     try{
-      validated=validatePreset(request.preset);
+      validated=validatePreset(request.preset,true);
       if(typeof request.text!=="string"||!request.text.trim()||request.text.length>MAX_TEXT_CHARS)
         throw new VoiceStudioError("TTS text must contain 1 to 4000 characters.","invalid_text",false);
       if(typeof request.sessionId!=="string"||!request.sessionId||request.sessionId.length>256)
@@ -426,7 +426,7 @@ export class VoiceStudioTtsProvider implements TtsProvider {
     signal.addEventListener("abort",onAbort,{once:true});
     try{
       const payload:Record<string,unknown>={text:request.text,language:request.preset.language,speed:request.preset.speed};
-      if(request.preset.voiceProfileId.trim())payload.voice=request.preset.voiceProfileId.trim();
+      payload.voice=request.preset.voiceProfileId.trim();
       if(description)payload.description=description;
       if(request.instruction&&this.capabilities().supportsInstruction)payload.instruct=request.instruction;
       try{socket.send(JSON.stringify(payload));}catch{throw new VoiceStudioError("VoiceStudio websocket request could not be sent; using HTTP fallback.","websocket_send_failed",true,true);}
@@ -481,7 +481,7 @@ export class VoiceStudioTtsProvider implements TtsProvider {
       form.append("text",request.text);
       form.append("language",request.preset.language);
       form.append("speed",String(request.preset.speed));
-      if(request.preset.voiceProfileId.trim())form.append("profile_id",request.preset.voiceProfileId.trim());
+      form.append("profile_id",request.preset.voiceProfileId.trim());
       if(validated.description)form.append("description",validated.description);
       if(request.instruction&&this.capabilities().supportsInstruction)form.append("instruct",request.instruction);
       const response=await this.fetcher(validated.baseUrl+"/generate",{method:"POST",body:form,signal:timeout.signal,redirect:"error"});
