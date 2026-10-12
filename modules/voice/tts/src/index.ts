@@ -212,7 +212,7 @@ export class SpeechOutputController {
       }
     }catch(error){
       // TTS is isolated from Chat/Nova Life: report an output diagnostic, never propagate failure to the turn sink.
-      this.options.onDiagnostic?.("TTS_STREAM_FAILED",safeError(error));
+      this.reportDiagnostic("TTS_STREAM_FAILED",safeError(error));
       if(error&&typeof error==="object"&&(error as {name?:unknown}).name==="AbortError")return;
       if(this.active)this.cancelSession(this.active,safeError(error),true);
       this.setStatus({state:"error",message:safeError(error)});
@@ -235,7 +235,7 @@ export class SpeechOutputController {
       }
     })().catch(error=>{
       if(!aborted(session.abort.signal)){
-        this.options.onDiagnostic?.("TTS_FINISH_FAILED",safeError(error));
+        this.reportDiagnostic("TTS_FINISH_FAILED",safeError(error));
         this.cancelSession(session,safeError(error),true);
         this.setStatus({state:"error",message:safeError(error)});
       }
@@ -279,7 +279,7 @@ export class SpeechOutputController {
     }catch(error){
       this.options.output.stop(sessionId);
       const message=safeError(error);
-      this.options.onDiagnostic?.("TTS_TEST_FAILED",message);
+      this.reportDiagnostic("TTS_TEST_FAILED",message);
       this.setStatus({state:"error",message});
       throw new Error(message);
     }
@@ -346,7 +346,7 @@ export class SpeechOutputController {
       catch(error){
         if(session.abort.signal.aborted||error&&typeof error==="object"&&(error as {name?:unknown}).name==="AbortError")return;
         const message=safeError(error);
-        this.options.onDiagnostic?.("TTS_SYNTHESIS_FAILED",message);
+        this.reportDiagnostic("TTS_SYNTHESIS_FAILED",message);
         this.cancelSession(session,message,true);
         this.setStatus({state:"error",message});
         return;
@@ -398,6 +398,8 @@ export class SpeechOutputController {
     if(this.active===session)this.active=undefined;
     if(!failed)this.setStatus({state:this.unlocked?"ready":"locked",message});
   }
+  private reportDiagnostic(code:string,message:string):void{try{this.options.onDiagnostic?.(code,message);}catch{}}
+
   private setStatus(status:SpeechOutputStatus):void{
     this.status=status;
     for(const listener of this.listeners)listener(this.getStatus());
