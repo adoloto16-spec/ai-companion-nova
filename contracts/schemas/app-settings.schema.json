@@ -483,6 +483,10 @@
                     "boolean",
                     "null"
                   ]
+                },
+                "propertyNames": {
+                  "pattern": "^(?!.*(?:secret|token|password|api.?key|credential)).*$",
+                  "flags": "i"
                 }
               }
             }
