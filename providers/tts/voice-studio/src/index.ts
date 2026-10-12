@@ -232,10 +232,12 @@ export class VoiceStudioTtsProvider implements TtsProvider {
   private readonly socketFactory:VoiceStudioWebSocketFactory;
   private readonly requestTimeoutMs:number;
   private readonly openTimeoutMs:number;
+  private readonly websocketAvailable:boolean;
 
   constructor(options:VoiceStudioTtsOptions={}){
     this.fetcher=options.fetch??((url,init)=>fetch(url,init));
     this.socketFactory=options.createWebSocket??(url=>new WebSocket(url));
+    this.websocketAvailable=options.createWebSocket!==undefined||typeof WebSocket!=="undefined";
     this.requestTimeoutMs=options.requestTimeoutMs??WS_TIMEOUT_MS;
     this.openTimeoutMs=options.openTimeoutMs??OPEN_TIMEOUT_MS;
   }
@@ -277,7 +279,7 @@ export class VoiceStudioTtsProvider implements TtsProvider {
       return;
     }
 
-    if(typeof WebSocket==="undefined"){
+    if(!this.websocketAvailable){
       yield* this.synthesizeHttp(request,options.signal,validated);
       return;
     }
@@ -369,6 +371,7 @@ export class VoiceStudioTtsProvider implements TtsProvider {
       if(bytes.byteLength>MAX_BINARY_CHUNK_BYTES||bytes.byteLength%2!==0)
         throw new VoiceStudioError("VoiceStudio sent an oversized or malformed PCM16 chunk.","invalid_audio_chunk",false);
       if(!operation.metadata)throw new VoiceStudioError("VoiceStudio sent audio before its start metadata.","missing_audio_metadata",false);
+      operation.audioSeen=true;
       await finish({type:"audio",sessionId:request.sessionId,sequence:operation.sequence++,data:bytes});
     };
     const cleanup=(closeSocket:boolean)=>{
@@ -395,7 +398,7 @@ export class VoiceStudioTtsProvider implements TtsProvider {
       if(!operation.ended)fail(new VoiceStudioError("VoiceStudio websocket connection failed.","websocket_error",true,!operation.audioSeen));
     };
     operation={
-      sessionId:request.sessionId,queue,sequence:0,timer:setTimeout(()=>fail(new VoiceStudioError("VoiceStudio synthesis timed out.","request_timeout",true,!operation.audioSeen)),timeoutMs),
+      sessionId:request.sessionId,queue,sequence:0,timer:setTimeout(()=>{fail(new VoiceStudioError("VoiceStudio synthesis timed out.","request_timeout",true,!operation.audioSeen));cleanup(true);},timeoutMs),
       processing:Promise.resolve(),pendingBytes:0,ended:false,audioSeen:false,socket,onMessage:()=>undefined,onClose,onError:onSocketError
     };
     operation.onMessage=(event:MessageEvent)=>{
@@ -422,7 +425,7 @@ export class VoiceStudioTtsProvider implements TtsProvider {
       if(request.preset.voiceProfileId.trim())payload.voice=request.preset.voiceProfileId.trim();
       if(description)payload.description=description;
       if(request.instruction&&this.capabilities().supportsInstruction)payload.instruct=request.instruction;
-      socket.send(JSON.stringify(payload));
+      try{socket.send(JSON.stringify(payload));}catch{throw new VoiceStudioError("VoiceStudio websocket request could not be sent; using HTTP fallback.","websocket_send_failed",true,true);}
       for await(const event of queue){
         yield event;
         if(event.type==="done"||event.type==="error")return;
