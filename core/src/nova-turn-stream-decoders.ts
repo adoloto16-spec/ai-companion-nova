@@ -184,7 +184,8 @@ export class NovaTurnTaggedEmotionStreamDecoder {
     let raw=this.source.slice(start,complete?close:this.source.length);
     if(!complete){
       const lastOpen=raw.lastIndexOf("<");
-      if(lastOpen>=0&&raw.slice(lastOpen).startsWith("</"))raw=raw.slice(0,lastOpen);
+      // Do not leak a partial closing-tag prefix ("<", "</E", ...) into the emotion text.
+      if(lastOpen>=0&&raw.indexOf(">",lastOpen)<0)raw=raw.slice(0,lastOpen);
     }
     let safeLength=raw.length;
     if(!complete){
