@@ -2267,7 +2267,7 @@ function App(){
   const appSettingsRef=React.useRef(appSettings);
   appSettingsRef.current=appSettings;
   const webAudioOutputRef=React.useRef<WebAudioOutputAdapter|undefined>(undefined);
-  if(!webAudioOutputRef.current)webAudioOutputRef.current=new WebAudioOutputAdapter();
+  if(!webAudioOutputRef.current)webAudioOutputRef.current=new WebAudioOutputAdapter({onError:error=>foundationRef.current?.recordDiagnosticError("tts","AUDIO_PLAYBACK_FAILED",error.message)});
   const speechOutputControllerRef=React.useRef<SpeechOutputController|undefined>(undefined);
   if(!speechOutputControllerRef.current){
     speechOutputControllerRef.current=new SpeechOutputController({
