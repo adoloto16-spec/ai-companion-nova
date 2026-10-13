@@ -2121,10 +2121,10 @@ function TtsSettingsView({settings,onChange,onSave,saving,message,controller,pro
         <label>Speech speed
           <input type="number" min={0.5} max={2} step={0.1} value={selected.speed} onChange={event=>update({speed:Number(event.target.value)})} disabled={saving}/>
         </label>
-        {selected.providerId==="voice-studio"&&<label>VoiceStudio description (optional)
-          <textarea value={String(selected.providerOptions.description??"")} maxLength={1000}
-            onChange={event=>update({providerOptions:{...selected.providerOptions,description:event.target.value}})} disabled={saving}/>
-          <small>Stored as a validated provider option; secrets and credential values are not stored here.</small>
+        {selected.providerId==="voice-studio"&&<label>VoiceStudio engine ID (optional)
+          <input value={String(selected.providerOptions.engine??"")} maxLength={80} placeholder="Use VoiceStudio active engine"
+            onChange={event=>{const options={...selected.providerOptions};const engine=event.target.value;if(engine.trim())options.engine=engine;else delete options.engine;update({providerOptions:options});}} disabled={saving}/>
+          <small>Leave empty to use the engine selected in VoiceStudio. The adapter validates and applies a configured engine to both transports.</small>
         </label>}
       </div>}
       <p className="hint">CredentialStore references are reserved for future protected providers. No token, password, or API key is written to the settings JSON.</p>
