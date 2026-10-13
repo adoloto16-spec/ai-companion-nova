@@ -207,7 +207,11 @@ class MockWebSocket extends EventTarget{
 }
 async function voiceStudioWebSocketAndHttpFallback():Promise<void>{
   equal(validateVoiceStudioBaseUrl("http://127.0.0.1:3900"),"http://127.0.0.1:3900","loopback base URL is accepted");
-  let invalidEngineRejected=false;try{new VoiceStudioTtsProvider().capabilities();const candidate={...preset("voice-studio"),providerOptions:{engine:"../../unsafe"}};for await(const _event of new VoiceStudioTtsProvider({createWebSocket:()=>new MockWebSocket() as unknown as WebSocket}).synthesize({sessionId:"bad-engine",text:"test",preset:candidate,emotion:""},{signal:new AbortController().signal})){} }catch{invalidEngineRejected=true;}
+  let invalidEngineRejected=false;
+  const invalidEngineProvider=new VoiceStudioTtsProvider({createWebSocket:()=>new MockWebSocket() as unknown as WebSocket});
+  const invalidEnginePreset={...preset("voice-studio"),providerOptions:{engine:"../../unsafe"}};
+  for await(const event of invalidEngineProvider.synthesize({sessionId:"bad-engine",text:"test",preset:invalidEnginePreset,emotion:""},{signal:new AbortController().signal}))
+    if(event.type==="error"&&event.error.code==="invalid_provider_options")invalidEngineRejected=true;
   ok(invalidEngineRejected,"invalid provider-specific engine identifiers are rejected by the adapter");
   for(const unsafe of ["https://127.0.0.1:3900","http://127.0.0.1:3901","http://127.0.0.1:3900/path","http://127.0.0.1:3900/?x=1","http://user:pass@127.0.0.1:3900","http://example.com:3900"]){
     let rejected=false;try{validateVoiceStudioBaseUrl(unsafe);}catch{rejected=true;}
