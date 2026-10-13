@@ -207,6 +207,8 @@ class MockWebSocket extends EventTarget{
 }
 async function voiceStudioWebSocketAndHttpFallback():Promise<void>{
   equal(validateVoiceStudioBaseUrl("http://127.0.0.1:3900"),"http://127.0.0.1:3900","loopback base URL is accepted");
+  let invalidEngineRejected=false;try{new VoiceStudioTtsProvider().capabilities();const candidate={...preset("voice-studio"),providerOptions:{engine:"../../unsafe"}};for await(const _event of new VoiceStudioTtsProvider({createWebSocket:()=>new MockWebSocket() as unknown as WebSocket}).synthesize({sessionId:"bad-engine",text:"test",preset:candidate,emotion:""},{signal:new AbortController().signal})){} }catch{invalidEngineRejected=true;}
+  ok(invalidEngineRejected,"invalid provider-specific engine identifiers are rejected by the adapter");
   for(const unsafe of ["https://127.0.0.1:3900","http://127.0.0.1:3901","http://127.0.0.1:3900/path","http://127.0.0.1:3900/?x=1","http://user:pass@127.0.0.1:3900","http://example.com:3900"]){
     let rejected=false;try{validateVoiceStudioBaseUrl(unsafe);}catch{rejected=true;}
     ok(rejected,"unsafe VoiceStudio URL is rejected: "+unsafe);
@@ -214,13 +216,14 @@ async function voiceStudioWebSocketAndHttpFallback():Promise<void>{
   const socket=new MockWebSocket();
   const wsProvider=new VoiceStudioTtsProvider({createWebSocket:()=>socket as unknown as WebSocket,requestTimeoutMs:1000});
   const events:TtsStreamEvent[]=[];
-  for await(const event of wsProvider.synthesize({sessionId:"ws-test",text:"Привет",preset:preset("voice-studio"),emotion:""}, {signal:new AbortController().signal}))events.push(event);
+  for await(const event of wsProvider.synthesize({sessionId:"ws-test",text:"Привет",preset:{...preset("voice-studio"),providerOptions:{engine:"omnivoice"}},emotion:""}, {signal:new AbortController().signal}))events.push(event);
   equal(events.map(event=>event.type).join(","),"start,audio,done","websocket protocol emits start, binary PCM, done");
   const start=events[0];ok(start?.type==="start"&&start.audio.sampleRate===44100&&start.audio.channels===2,"sample rate and channels come from actual start metadata");
   const audio=events[1];ok(audio?.type==="audio"&&audio.data.byteLength===8,"binary PCM16 chunk bytes are preserved");
   const request=JSON.parse(socket.sent[0]!) as Record<string,unknown>;
   equal(request.voice,"profile-test","VoiceStudio receives the configured profile ID");
   equal(request.speed,1,"VoiceStudio receives speed");
+  equal(request.engine,"omnivoice","VoiceStudio receives the validated per-preset engine override");
 
   const engineErrorProvider=new VoiceStudioTtsProvider({createWebSocket:()=>new MockWebSocket("error") as unknown as WebSocket,fetch:async()=>{throw new Error("HTTP fallback must not override an engine error frame");}});
   const engineErrorEvents:TtsStreamEvent[]=[];
@@ -242,15 +245,15 @@ async function voiceStudioWebSocketAndHttpFallback():Promise<void>{
     fetch:async(url,init)=>{
       equal(url,"http://127.0.0.1:3900/generate","HTTP fallback posts to /generate");
       ok(init.body instanceof FormData,"HTTP fallback uses multipart FormData");
-      const form=init.body as FormData;sawForm=form.get("text")==="One complete sentence"&&form.get("profile_id")==="profile-test";
+      const form=init.body as FormData;sawForm=form.get("text")==="One complete sentence"&&form.get("profile_id")==="profile-test"&&form.get("engine")==="omnivoice"&&form.get("wav_bits")==="16";
       const headers=new Headers(init.headers);sawManualContentType=headers.has("content-type");
       const wav=pcmWav();const body=new ArrayBuffer(wav.byteLength);new Uint8Array(body).set(wav);
       return new Response(body,{status:200,headers:{"content-type":"audio/wav"}});
     }
   });
   const httpEvents:TtsStreamEvent[]=[];
-  for await(const event of fallback.synthesize({sessionId:"http-test",text:"One complete sentence",preset:preset("voice-studio"),emotion:""}, {signal:new AbortController().signal}))httpEvents.push(event);
-  ok(sawForm,"HTTP fallback posts text and profile_id as multipart fields");
+  for await(const event of fallback.synthesize({sessionId:"http-test",text:"One complete sentence",preset:{...preset("voice-studio"),providerOptions:{engine:"omnivoice"}},emotion:""}, {signal:new AbortController().signal}))httpEvents.push(event);
+  ok(sawForm,"HTTP fallback posts text, profile_id, engine and PCM16 WAV format as multipart fields");
   ok(!sawManualContentType,"HTTP fallback lets the runtime supply FormData Content-Type and boundary");
   equal(httpEvents.map(event=>event.type).join(","),"start,audio,done","HTTP fallback parses WAV and exposes bounded audio chunks");
   const httpStart=httpEvents[0];ok(httpStart?.type==="start"&&httpStart.audio.sampleRate===22050,"WAV sample rate is parsed instead of guessed");
