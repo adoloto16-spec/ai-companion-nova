@@ -188,11 +188,12 @@ function pcmWav(sampleRate=22050,channels=1):Uint8Array{
 class MockWebSocket extends EventTarget{
   readyState=1;
   sent:string[]=[];
-  constructor(private readonly mode:"done"|"error"|"partial-close"|"empty-done"="done"){super();}
+  constructor(private readonly mode:"done"|"error"|"partial-close"|"empty-done"|"routing"="done"){super();}
   close(){this.readyState=3;this.dispatchEvent(new Event("close"));}
   send(value:string){
     this.sent.push(value);
     queueMicrotask(()=>{
+      if(this.mode==="routing")this.dispatchEvent(new MessageEvent("message",{data:JSON.stringify({type:"routing",status:"cpu_fallback",reason:"GPU unavailable; using CPU"})}));
       this.dispatchEvent(new MessageEvent("message",{data:JSON.stringify({type:"start",sample_rate:44100,channels:2,format:"pcm16"})}));
       if(this.mode==="error"){
         this.dispatchEvent(new MessageEvent("message",{data:JSON.stringify({type:"error",detail:"engine API key=fixture-secret"})}));
@@ -221,11 +222,12 @@ async function voiceStudioWebSocketAndHttpFallback():Promise<void>{
     let rejected=false;try{validateVoiceStudioBaseUrl(unsafe);}catch{rejected=true;}
     ok(rejected,"unsafe VoiceStudio URL is rejected: "+unsafe);
   }
-  const socket=new MockWebSocket();
+  const socket=new MockWebSocket("routing");
   const wsProvider=new VoiceStudioTtsProvider({createWebSocket:()=>socket as unknown as WebSocket,requestTimeoutMs:1000});
   const events:TtsStreamEvent[]=[];
   for await(const event of wsProvider.synthesize({sessionId:"ws-test",text:"Привет",preset:{...preset("voice-studio"),providerOptions:{engine:"omnivoice"}},emotion:""}, {signal:new AbortController().signal}))events.push(event);
-  equal(events.map(event=>event.type).join(","),"start,audio,done","websocket protocol emits start, binary PCM, done");
+  equal(events.map(event=>event.type).join(","),"routing,start,audio,done","websocket protocol forwards routing, start, binary PCM and done");
+  const routing=events[0];ok(routing?.type==="routing"&&routing.status==="cpu_fallback","VoiceStudio routing status is validated and surfaced as metadata");
   const start=events[0];ok(start?.type==="start"&&start.audio.sampleRate===44100&&start.audio.channels===2,"sample rate and channels come from actual start metadata");
   const audio=events[1];ok(audio?.type==="audio"&&audio.data.byteLength===8,"binary PCM16 chunk bytes are preserved");
   const request=JSON.parse(socket.sent[0]!) as Record<string,unknown>;
