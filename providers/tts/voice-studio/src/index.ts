@@ -266,7 +266,7 @@ export class VoiceStudioTtsProvider implements TtsProvider {
   }
 
   async *synthesize(request:TtsSynthesisRequest,options:TtsOperationOptions):AsyncIterable<TtsStreamEvent>{
-    let validated:{baseUrl:string;description?:string};
+    let validated:{baseUrl:string;engine?:string};
     try{
       validated=validatePreset(request.preset,true);
       if(typeof request.text!=="string"||!request.text.trim()||request.text.length>MAX_TEXT_CHARS)
