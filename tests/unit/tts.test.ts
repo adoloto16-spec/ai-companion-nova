@@ -222,7 +222,7 @@ async function boundedBackpressureAndCancellation():Promise<void>{
 
 async function cancelledProviderEventsCannotEnterANewSession():Promise<void>{
   const output=new RecordingOutput(),provider=new LateEventProvider();
-  const settings:TtsSettings={...DEFAULT_TTS_SETTINGS,enabled:true,activePresetId:"test-preset",presets:[preset()]};
+  const settings:TtsSettings={...DEFAULT_TTS_SETTINGS,enabled:true,activePresetId:"test-preset",presets:[preset(provider.id)]};
   const controller=new SpeechOutputController({getSettings:()=>settings,getProvider:id=>id===provider.id?provider:undefined,output});
   await controller.unlockPlayback();
   await controller.handleSpeechEvent({type:"start",turnId:"turn-old"});
