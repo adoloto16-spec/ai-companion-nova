@@ -103,8 +103,8 @@ async function explicitUnsupportedUsesOnlyOneTaggedFallback():Promise<void>{
   const calls:ChatRequest[]=[];
   let count=0;
   const response=taggedTurn("Fallback speech is streamed, not parsed as JSON.")
-    .replace(/<EMOTION>[\\s\\S]*?<\\/EMOTION>\\n?/,"")
-    .replace(/(<SPEECH>[\\s\\S]*?<\\/SPEECH>)/,"$1\\n<EMOTION>whisper</EMOTION>");
+    .replace(/<EMOTION>[\s\S]*?<\/EMOTION>\n?/,"")
+    .replace(/(<SPEECH>[\s\S]*?<\/SPEECH>)/,"$1\n<EMOTION>whisper</EMOTION>");
   const runtime={
     getChatProviderCapabilities:()=>({structuredOutput:true,streaming:true}),
     getActiveProviderPresetId:()=>undefined,getChatModel:()=>"fake-model",
