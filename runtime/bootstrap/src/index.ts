@@ -13,7 +13,7 @@ import {FakeBrowserModule,FakeCharacterModule,FakeMemoryModule} from "../../../m
 import {FakeChatProvider,FakeSTTProvider,FakeEmbeddingProvider,FakeVisionProvider} from "../../../providers/mock/src/index";
 import {TtsProviderRegistry} from "../../../providers/tts/registry/src";
 import {VoiceStudioTtsProvider} from "../../../providers/tts/voice-studio/src";
-import type {TtsProvider} from "../../../contracts/src/tts";
+import type {TtsProvider,TtsProviderDescriptor} from "../../../contracts/src/tts";
 import {
   OpenAICompatibleChatProvider,
   type HttpClient,
@@ -82,7 +82,7 @@ export interface FoundationRuntime{
   wakeMindForUserMessage(turn:MindReactiveTurn):boolean;
   subscribeMindState(listener:(state:import("../../../contracts/src/index").MindState)=>void):import("../../../contracts/src/index").Unsubscribe;
   getTtsProvider(providerId:string):TtsProvider|undefined;
-  listTtsProviders():import("../../../providers/tts/registry/src").TtsProviderDescriptor[];
+  listTtsProviders():TtsProviderDescriptor[];
   getChatProviderDiagnostics(providerPresetId?:string):{
     providerPresetId?:string;
     providerId:string;
