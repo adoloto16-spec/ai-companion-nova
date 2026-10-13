@@ -1,9 +1,5 @@
-import type {TtsProvider,TtsProviderCapabilities} from "../../../../contracts/src/tts";
+import type {TtsProvider,TtsProviderDescriptor} from "../../../../contracts/src/tts";
 
-export interface TtsProviderDescriptor {
-  id:string;
-  capabilities:TtsProviderCapabilities;
-}
 export type TtsProviderFactory=()=>TtsProvider;
 
 /** Composition-root owned registry; no concrete provider dependencies live here. */
