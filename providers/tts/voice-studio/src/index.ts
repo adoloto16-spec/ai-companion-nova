@@ -412,7 +412,7 @@ export class VoiceStudioTtsProvider implements TtsProvider {
       socket.removeEventListener("message",operation.onMessage);
       socket.removeEventListener("close",operation.onClose);
       socket.removeEventListener("error",operation.onError);
-      if(this.activeRequest===operation)this.activeRequest=undefined;
+      if(this.activeRequest===operation){this.activeRequest=undefined;this.requestPending=false;}
       if(closeSocket){
         try{socket.close();}catch{}
         if(this.socket===socket){this.socket=undefined;this.socketBaseUrl=undefined;}
@@ -430,7 +430,10 @@ export class VoiceStudioTtsProvider implements TtsProvider {
       });
     };
     const onSocketError=()=>{
-      if(!operation.ended)fail(new VoiceStudioError("VoiceStudio websocket connection failed.","websocket_error",true,!operation.audioSeen));
+      if(!operation.ended){
+        fail(new VoiceStudioError("VoiceStudio websocket connection failed.","websocket_error",true,!operation.audioSeen));
+        cleanup(true);
+      }
     };
     operation={
       sessionId:request.sessionId,queue,sequence:0,timer:setTimeout(()=>{fail(new VoiceStudioError("VoiceStudio synthesis timed out.","request_timeout",true,!operation.audioSeen));cleanup(true);},timeoutMs),
@@ -460,8 +463,11 @@ export class VoiceStudioTtsProvider implements TtsProvider {
       const payload:Record<string,unknown>={text:request.text,language:request.preset.language,speed:request.preset.speed};
       payload.voice=request.preset.voiceProfileId.trim();
       if(engine)payload.engine=engine;
-      if(request.instruction&&this.capabilitiesForPreset(request.preset).supportsInstruction)payload.instruct=request.instruction;
-      try{socket.send(JSON.stringify(payload));}catch{throw new VoiceStudioError("VoiceStudio websocket request could not be sent; using HTTP fallback.","websocket_send_failed",true,true);}
+      if(request.instruction==="whisper"&&this.capabilitiesForPreset(request.preset).supportsInstruction)payload.instruct=request.instruction;
+      try{socket.send(JSON.stringify(payload));}catch{
+        cleanup(true);
+        throw new VoiceStudioError("VoiceStudio websocket request could not be sent; using HTTP fallback.","websocket_send_failed",true,true);
+      }
       for await(const event of queue){
         yield event;
         if(event.type==="done"||event.type==="error")return;
@@ -469,7 +475,6 @@ export class VoiceStudioTtsProvider implements TtsProvider {
       if(!operation.ended)throw new VoiceStudioError("VoiceStudio ended a request without a completion event.","incomplete_response",true,!operation.audioSeen);
     }finally{
       cleanup(false);
-      this.requestPending=false;
     }
   }
 
@@ -517,7 +522,7 @@ export class VoiceStudioTtsProvider implements TtsProvider {
       form.append("profile_id",request.preset.voiceProfileId.trim());
       if(validated.engine)form.append("engine",validated.engine);
       form.append("wav_bits","16");
-      if(request.instruction&&this.capabilitiesForPreset(request.preset).supportsInstruction)form.append("instruct",request.instruction);
+      if(request.instruction==="whisper"&&this.capabilitiesForPreset(request.preset).supportsInstruction)form.append("instruct",request.instruction);
       const response=await this.fetcher(validated.baseUrl+"/generate",{method:"POST",body:form,signal:timeout.signal,redirect:"error"});
       if(!response.ok)throw new VoiceStudioError("VoiceStudio HTTP synthesis request failed with status "+response.status+".","http_error",true);
       const bytes=await readBoundedResponse(response);

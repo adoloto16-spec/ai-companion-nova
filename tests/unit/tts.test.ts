@@ -324,6 +324,14 @@ async function voiceStudioWebSocketAndHttpFallback():Promise<void>{
   const otherEngineRequest=JSON.parse(otherEngineSocket.sent[0]!) as Record<string,unknown>;
   ok(!Object.prototype.hasOwnProperty.call(otherEngineRequest,"instruct"),"provider never sends instruct to a non-OmniVoice engine, even when a caller supplies it");
 
+  const unsupportedInstructionSocket=new MockWebSocket();
+  const unsupportedInstructionProvider=new VoiceStudioTtsProvider({createWebSocket:()=>unsupportedInstructionSocket as unknown as WebSocket});
+  for await(const _event of unsupportedInstructionProvider.synthesize({
+    sessionId:"invalid-instruction",text:"Quiet",preset:{...preset("voice-studio"),providerOptions:{engine:"omnivoice"}},emotion:"custom",instruction:"use a different voice"
+  },{signal:new AbortController().signal})){}
+  const unsupportedInstructionRequest=JSON.parse(unsupportedInstructionSocket.sent[0]!) as Record<string,unknown>;
+  ok(!Object.prototype.hasOwnProperty.call(unsupportedInstructionRequest,"instruct"),"unknown caller-supplied instructions are neutral even on OmniVoice");
+
 
   const heldSocket=new MockWebSocket("hold");
   const concurrentProvider=new VoiceStudioTtsProvider({createWebSocket:()=>heldSocket as unknown as WebSocket,requestTimeoutMs:10_000});
@@ -438,6 +446,31 @@ async function voiceStudioWebSocketAndHttpFallback():Promise<void>{
 
 interface MockBuffer {duration:number;numberOfChannels:number;length:number;sampleRate:number;data:Float32Array[];getChannelData(index:number):Float32Array;}
 interface MockSource {buffer:MockBuffer|null;onended:(()=>void)|null;connect(target:unknown):void;disconnect():void;start(when?:number):void;stop():void;}
+async function websocketRequestLockReleasedBeforeCancelledIteratorSettles():Promise<void>{
+  const firstSocket=new MockWebSocket("hold"),secondSocket=new MockWebSocket("done");
+  const sockets=[firstSocket,secondSocket];
+  const provider=new VoiceStudioTtsProvider({
+    createWebSocket:()=>sockets.shift() as unknown as WebSocket,
+    requestTimeoutMs:1000
+  });
+  const abort=new AbortController();
+  const firstIterator=provider.synthesize({
+    sessionId:"cancelled-request",text:"Old request",preset:preset("voice-studio"),emotion:""
+  },{signal:abort.signal})[Symbol.asyncIterator]();
+  const firstNext=firstIterator.next();
+  await until(()=>firstSocket.sent.length===1,"old websocket request must be active before abort");
+  const oldOutcome=firstNext.then(()=> "resolved",()=> "rejected");
+  abort.abort();
+
+  const freshEvents:TtsStreamEvent[]=[];
+  for await(const event of provider.synthesize({
+    sessionId:"fresh-request",text:"New request",preset:preset("voice-studio"),emotion:""
+  },{signal:new AbortController().signal}))freshEvents.push(event);
+
+  equal(await oldOutcome,"rejected","the cancelled operation rejects its outstanding read");
+  equal(freshEvents.map(event=>event.type).join(","),"start,audio,done","a fresh request can start immediately after cancellation");
+  ok(secondSocket.sent.length===1,"the fresh request owns a new websocket");
+}
 async function webAudioSchedulesFifoWithoutOverlap():Promise<void>{
   const scheduled:Array<{when:number;duration:number;sample:number}>=[],sources:MockSource[]=[];
   const mockContext={
@@ -473,6 +506,7 @@ async function main():Promise<void>{
   await boundedBackpressureAndCancellation();
   await cancelledProviderEventsCannotEnterANewSession();
   await voiceStudioWebSocketAndHttpFallback();
+  await websocketRequestLockReleasedBeforeCancelledIteratorSettles();
   await webAudioSchedulesFifoWithoutOverlap();
   console.log("PASS TTS sentence, emotion, controller, provider and Web Audio tests");
 }
