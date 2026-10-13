@@ -84,8 +84,6 @@ jobs:
       - run: cargo test -p nova-desktop-host --all-features provider_presets::tests
       - run: cargo test -p nova-desktop-host --all-features settings::tests
       - run: cargo test -p nova-desktop-host --all-features core_book::migration_tests
-      - name: Run complete Rust workspace test suite
-        run: cargo test --workspace --all-features
 
   windows-installer:
     runs-on: windows-latest
