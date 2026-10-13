@@ -158,7 +158,7 @@ function ConversationSwitcher({conversations,activeConversationId,sending,onSele
   </div>;
 }
 
-function ChatView({controller,runtime,character,conversations,activeConversation,input,onDraftChange,onClearSubmittedDraft,onPersist,onClear,onSelectConversation,onCreateConversation,onRenameConversation,onDeleteConversation}:{
+function ChatView({controller,runtime,character,conversations,activeConversation,input,onDraftChange,onClearSubmittedDraft,onPersist,onClear,onSelectConversation,onCreateConversation,onRenameConversation,onDeleteConversation,onStopSpeech}:{
   controller:ChatSessionController;
   runtime:FoundationRuntime;
   character:Character;
@@ -173,6 +173,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
   onCreateConversation:()=>Promise<void>;
   onRenameConversation:(conversation:Conversation)=>Promise<void>;
   onDeleteConversation:(conversation:Conversation)=>Promise<void>;
+  onStopSpeech:()=>void;
 }){
   const [snapshot,setSnapshot]=React.useState(()=>controller.getSnapshot());
   const [editingId,setEditingId]=React.useState<string|undefined>();
@@ -217,10 +218,11 @@ function ChatView({controller,runtime,character,conversations,activeConversation
   },[controller,input,runtime,onPersist,onClearSubmittedDraft,persistAfterAction]);
 
   const stop=React.useCallback(async()=>{
+    onStopSpeech();
     setPersistenceError("");
     const result=await controller.stop();
     await persistAfterAction(result);
-  },[controller,persistAfterAction]);
+  },[controller,onStopSpeech,persistAfterAction]);
 
   const continueGeneration=React.useCallback(async()=>{
     setPersistenceError("");
@@ -243,6 +245,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
   },[controller,runtime,persistAfterAction]);
 
   const retry=React.useCallback(async()=>{
+    onStopSpeech();
     setPersistenceError("");
     const turn=controller.getSnapshot().lifeTurn;
     if(turn&&(turn.status==="failed"||turn.status==="cancelled")){
@@ -261,7 +264,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     }
     const result=await controller.retry(runtime.getActiveChatModel());
     await persistAfterAction(result);
-  },[controller,runtime,persistAfterAction]);
+  },[controller,onStopSpeech,runtime,persistAfterAction]);
 
   const clear=React.useCallback(async()=>{
     setPersistenceError("");
@@ -2671,6 +2674,7 @@ function App(){
   const selectCharacter=React.useCallback(async(id:string)=>{
     const foundation=foundationRef.current;
     if(!foundation||chatController?.isBusy())return;
+    speechOutputController.stop("Character changed.");
     foundation.setNovaTurnSink(undefined);
     const selected=await foundation.setActiveCharacter(id);
     const loaded=await loadActiveConversation(selected.id);
@@ -2680,12 +2684,14 @@ function App(){
     setActiveModelProfile(loaded.controller.getModelProfile()??defaultModelProfile(selected.id));
     setChatController(loaded.controller);
     setView("chat");
-  },[chatController,loadActiveConversation]);
+  },[chatController,loadActiveConversation,speechOutputController]);
 
   const selectConversation=React.useCallback(async(id:string)=>{
     const foundation=foundationRef.current;
     const character=activeCharacter;
     if(!foundation||!character||chatController?.isBusy())return;
+    if(id===activeConversation?.id)return;
+    speechOutputController.stop("Conversation changed.");
     foundation.setNovaTurnSink(undefined);
     const previousConversation=activeConversation;
     const local=conversations.find(item=>item.id===id);
@@ -2707,12 +2713,13 @@ function App(){
       }
       throw error;
     }
-  },[activeCharacter,activeConversation,activeModelProfile,chatController,controllerForConversation,conversations,loadModelProfile]);
+  },[activeCharacter,activeConversation,activeModelProfile,chatController,controllerForConversation,conversations,loadModelProfile,speechOutputController]);
 
   const createConversation=React.useCallback(async()=>{
     const foundation=foundationRef.current;
     const character=activeCharacter;
     if(!foundation||!character||chatController?.isBusy())return;
+    speechOutputController.stop("New conversation started.");
     foundation.setNovaTurnSink(undefined);
     const conversation=await foundation.createConversation(character.id);
     const profile=activeModelProfile??await loadModelProfile(character.id);
@@ -2721,7 +2728,7 @@ function App(){
     setConversations(await foundation.listConversations(character.id));
     setChatController(controller);
     setView("chat");
-  },[activeCharacter,activeModelProfile,chatController,controllerForConversation,loadModelProfile]);
+  },[activeCharacter,activeModelProfile,chatController,controllerForConversation,loadModelProfile,speechOutputController]);
 
   const renameConversation=React.useCallback(async(conversation:Conversation)=>{
     const foundation=foundationRef.current;
@@ -2738,7 +2745,10 @@ function App(){
     const foundation=foundationRef.current;
     const character=activeCharacter;
     if(!foundation||!character||chatController?.isBusy())return;
-    if(activeConversation?.id===conversation.id)foundation.setNovaTurnSink(undefined);
+    if(activeConversation?.id===conversation.id){
+      speechOutputController.stop("Active conversation deleted.");
+      foundation.setNovaTurnSink(undefined);
+    }
     const replacement=await foundation.deleteConversation(character.id,conversation.id);
     const profile=activeModelProfile??await loadModelProfile(character.id);
     const controller=controllerForConversation(replacement,profile);
@@ -2746,7 +2756,7 @@ function App(){
     setConversations(await foundation.listConversations(character.id));
     setChatController(controller);
     setActiveModelProfile(profile);
-  },[activeCharacter,activeModelProfile,chatController,controllerForConversation,loadModelProfile]);
+  },[activeCharacter,activeConversation,activeModelProfile,chatController,controllerForConversation,loadModelProfile,speechOutputController]);
 
   const createCharacter=React.useCallback(async(name:string)=>{
     const foundation=foundationRef.current;
@@ -2767,8 +2777,9 @@ function App(){
     const foundation=foundationRef.current;
     if(!foundation)return;
     if(chatController?.isBusy())throw new Error("Wait for the current Chat operation to finish before changing Character.");
-    foundation.setNovaTurnSink(undefined);
     const before=activeCharacter;
+    if(before?.id===id)speechOutputController.stop("Active character deleted.");
+    foundation.setNovaTurnSink(undefined);
     await foundation.deleteCharacter(id);
     try{await modelProfileStore.delete(id)}catch(error){modelProfileLoadErrorRef.current=safeStartupError(error)}
     const nextActive=await foundation.getActiveCharacter();
@@ -2779,7 +2790,7 @@ function App(){
     setActiveConversation(loaded.conversation);
     setActiveModelProfile(loaded.controller.getModelProfile()??defaultModelProfile(nextActive.id));
     if(before?.id===id||before?.id!==nextActive.id)setChatController(loaded.controller);
-  },[activeCharacter,chatController,loadActiveConversation,modelProfileStore]);
+  },[activeCharacter,chatController,loadActiveConversation,modelProfileStore,speechOutputController]);
 
   const configurationForPreset=(preset:ProviderPreset):ProviderConfiguration|undefined=>{
     if(preset.type==="single")return materializeSingleProviderConfiguration(preset);
@@ -2918,6 +2929,7 @@ function App(){
   },[appSettings]);
 
   const resetAppSettings=React.useCallback(async()=>{
+    speechOutputController.stop("Application settings reset.");
     const foundation=foundationRef.current;
     if(!foundation){setSettingsLoadMessage("Settings runtime is not available.");return;}
     setSaving(true);setSettingsLoadMessage("");
@@ -2927,7 +2939,7 @@ function App(){
       setSettingsLoadMessage("Settings restored to defaults.");
     }catch(error){setSettingsLoadMessage(error instanceof Error?error.message:"Settings could not be reset.");}
     finally{setSaving(false);}
-  },[]);
+  },[speechOutputController]);
 
   const savePromptOverride=React.useCallback(async(id:PromptId,text:string)=>{
     const foundation=foundationRef.current;
@@ -3033,7 +3045,8 @@ function App(){
           onSelectConversation={selectConversation}
           onCreateConversation={createConversation}
           onRenameConversation={renameConversation}
-          onDeleteConversation={deleteConversation}/>
+          onDeleteConversation={deleteConversation}
+          onStopSpeech={()=>speechOutputController.stop("Chat action cancelled speech.")}/>
       :view==="characters"&&activeCharacter
         ?<CharactersView characters={characters} activeCharacter={activeCharacter}
           onSelect={selectCharacter} onCreate={createCharacter} onRename={renameCharacter} onDelete={deleteCharacter}/>

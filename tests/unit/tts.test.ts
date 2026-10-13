@@ -34,6 +34,27 @@ class RecordingOutput implements AudioOutputAdapter{
   }
   stop(sessionId?:string){this.stops.push(sessionId);if(sessionId===undefined)this.queued=[];else this.queued=this.queued.filter(item=>item.sessionId!==sessionId);}
 }
+/** Enqueue completion is distinct from actual playback completion. */
+class PlaybackControlledOutput implements AudioOutputAdapter{
+  unlocked=false;
+  queued:Array<{sessionId:string;sequence:number;metadata:TtsAudioMetadata;text:string}>=[];
+  pendingPlayback=new Map<number,string>();
+  stops:Array<string|undefined>=[];
+  async unlock(){this.unlocked=true;}
+  startSession(_sessionId:string,_metadata:TtsAudioMetadata){}
+  async enqueue(sessionId:string,sequence:number,audio:TtsAudioMetadata,data:Uint8Array,signal:AbortSignal){
+    if(signal.aborted){const error=new Error("cancelled");error.name="AbortError";throw error;}
+    this.queued.push({sessionId,sequence,metadata:audio,text:new TextDecoder().decode(data)});
+    this.pendingPlayback.set(sequence,sessionId);
+  }
+  finishPlayback(sequence:number){this.pendingPlayback.delete(sequence);}
+  stop(sessionId?:string){
+    this.stops.push(sessionId);
+    if(sessionId===undefined){this.queued=[];this.pendingPlayback.clear();return;}
+    this.queued=this.queued.filter(item=>item.sessionId!==sessionId);
+    for(const [sequence,id] of this.pendingPlayback)if(id===sessionId)this.pendingPlayback.delete(sequence);
+  }
+}
 class RecordingProvider implements TtsProvider{
   readonly id="fake-tts";
   readonly requests:string[]=[];
@@ -53,6 +74,24 @@ class RecordingProvider implements TtsProvider{
       if(this.requests.length===1&&this.gateFirst){await this.gateFirst; if(options.signal.aborted){const error=new Error("cancelled");error.name="AbortError";throw error;}}
       yield {type:"done",sessionId:request.sessionId};
     }finally{this.active--;}
+  }
+}
+class LateEventProvider implements TtsProvider{
+  readonly id="late-tts";
+  readonly requests:string[]=[];
+  completed=0;
+  private readonly firstGate=deferred<void>();
+  releaseFirst(){this.firstGate.resolve();}
+  capabilities(){return capabilities;}
+  async testConnection(_preset:TtsPreset,_signal:AbortSignal):Promise<TtsProviderHealth>{return {status:"healthy"};}
+  async *synthesize(request:TtsSynthesisRequest,_options:{signal:AbortSignal}):AsyncIterable<TtsStreamEvent>{
+    const index=this.requests.push(request.text)-1;
+    try{
+      yield {type:"start",sessionId:request.sessionId,audio:metadata};
+      if(index===0)await this.firstGate.promise;
+      yield {type:"audio",sessionId:request.sessionId,sequence:0,data:new TextEncoder().encode(request.text)};
+      yield {type:"done",sessionId:request.sessionId};
+    }finally{this.completed++;}
   }
 }
 async function until(predicate:()=>boolean,message:string):Promise<void>{
@@ -94,6 +133,8 @@ function emotionMappingOnlyUsesSupportedActions():void{
   equal(normalizeVoiceExpression("[laughter] That's funny","laughter",capabilities).text,"[laughter] That's funny","existing laughter tags are not duplicated");
   equal(normalizeVoiceExpression("Oh","sigh",capabilities).text,"[sigh] Oh","explicit sigh maps to non-verbal action tag");
   equal(normalizeVoiceExpression("Oh","unknown state",capabilities).text,"Oh","unknown emotion remains neutral");
+  equal(normalizeVoiceExpression("Oh","not laughter",capabilities).text,"Oh","negated or unrecognized laughter phrases remain neutral");
+  equal(normalizeVoiceExpression("Quietly","sad but whispering",capabilities).instruction,undefined,"mixed unsupported labels cannot trigger a whisper instruction");
 }
 
 function emotionDecodersDoNotGateSpeech():void{
@@ -116,6 +157,12 @@ function emotionDecodersDoNotGateSpeech():void{
   }
   reconstructed.push(...sentenceDecoder.finish());
   equal(reconstructed.join(""),sourceText,"JSON escape, punctuation and UTF-16 split boundaries preserve public speech");
+  const escapedPayload="{\"speech\":\"Escaped: \\uD83D\\uDE00\\nquote: \\\"ok\\\"\"}";
+  const escapedDecoder=new NovaTurnJsonSpeechStreamDecoder();
+  let escapedSpeech="";
+  for(let i=0;i<escapedPayload.length;i++)escapedSpeech+=escapedDecoder.push(escapedPayload.slice(i,i+1));
+  equal(escapedSpeech,"Escaped: 😀\nquote: \"ok\"","incremental JSON preserves escaped surrogate pairs, newlines and quotes");
+
   const tags='<NOVA_TURN version="1"><SPEECH>Public text</SPEECH><THOUGHTS>private</THOUGHTS><EMOTION>whisper</EMOTION></NOVA_TURN>';
   const tagSpeech=new NovaTurnTaggedSpeechStreamDecoder(),tagEmotion=new NovaTurnTaggedEmotionStreamDecoder();
   let visible="",expression="";
@@ -126,31 +173,28 @@ function emotionDecodersDoNotGateSpeech():void{
 }
 
 async function synthesisRunsAheadOfPlaybackAndKeepsFifo():Promise<void>{
-  const output=new RecordingOutput(),provider=new RecordingProvider();
-  let settings:TtsSettings={...DEFAULT_TTS_SETTINGS,enabled:true,activePresetId:"test-preset",presets:[preset()]};
+  const output=new PlaybackControlledOutput(),provider=new RecordingProvider();
+  const settings:TtsSettings={...DEFAULT_TTS_SETTINGS,enabled:true,activePresetId:"test-preset",presets:[preset()]};
   const controller=new SpeechOutputController({getSettings:()=>settings,getProvider:id=>id===provider.id?provider:undefined,output});
   await controller.unlockPlayback();
   await controller.handleSpeechEvent({type:"start",turnId:"turn-a"});
   await controller.handleSpeechEvent({type:"delta",turnId:"turn-a",text:"First sentence. Second sentence"});
-  const finishing=controller.finishTurn("turn-a");
-  await controller.handleSpeechEvent({type:"clear",turnId:"turn-a"});
-  await finishing;
-  equal(provider.requests.length,2,"both sentences synthesize");
-  ok(output.queued.length===2,"both audio segments are queued");
-  equal(output.queued.length,2,"successful stream clear does not cancel finalized audio");
-  equal(output.queued.map(item=>item.text).join(""),"First sentence. Second sentence","FIFO audio output preserves text and order");
-  ok(provider.maxActive===1,"a provider/model never receives overlapping synthesis requests");
-  // The fake output deliberately keeps playback pending: enqueue only queues it, just like the Web Audio adapter.
-  let playbackFinished=false;
-  ok(!playbackFinished,"playback remains independent from synthesis completion");
-  equal(provider.requests[1],"Second sentence","sentence N+1 synthesis begins immediately after N completes");
-  playbackFinished=true;
-  void playbackFinished;
-  controller.stop();
-  settings={...settings,enabled:false};
-  ok(output.stops.length>0,"Stop clears scheduled output");
-}
+  await controller.finishTurn("turn-a");
 
+  equal(provider.requests.length,2,"both sentences synthesize before finishTurn resolves");
+  equal(provider.maxActive,1,"sentence synthesis requests remain serial");
+  equal(provider.requests[1],"Second sentence","synthesis N+1 starts after synthesis N completes");
+  equal(output.queued.map(item=>item.text).join(""),"First sentence. Second sentence","accepted playback segments preserve FIFO text order");
+  ok(output.pendingPlayback.has(0),"playback N is still pending when synthesis N+1 has started");
+  ok(output.pendingPlayback.has(1),"playback N+1 is queued before either segment has completed playback");
+  equal(output.pendingPlayback.size,2,"synthesis completion does not imply playback completion");
+
+  output.finishPlayback(0);
+  ok(!output.pendingPlayback.has(0)&&output.pendingPlayback.has(1),"playback completion advances only segment N");
+  controller.stop();
+  equal(output.pendingPlayback.size,0,"Stop cancels queued/scheduled playback after synthesis finalization");
+  ok(output.stops.some(id=>id===undefined),"Stop without an active synthesis session still stops audio");
+}
 async function boundedBackpressureAndCancellation():Promise<void>{
   const first=deferred<void>();
   const output=new RecordingOutput(),provider=new RecordingProvider(first.promise);
@@ -176,6 +220,29 @@ async function boundedBackpressureAndCancellation():Promise<void>{
   equal(provider.requests.length,before,"reset cancels the old session and stale deltas cannot restart it");
 }
 
+async function cancelledProviderEventsCannotEnterANewSession():Promise<void>{
+  const output=new RecordingOutput(),provider=new LateEventProvider();
+  const settings:TtsSettings={...DEFAULT_TTS_SETTINGS,enabled:true,activePresetId:"test-preset",presets:[preset()]};
+  const controller=new SpeechOutputController({getSettings:()=>settings,getProvider:id=>id===provider.id?provider:undefined,output});
+  await controller.unlockPlayback();
+  await controller.handleSpeechEvent({type:"start",turnId:"turn-old"});
+  await controller.handleSpeechEvent({type:"delta",turnId:"turn-old",text:"Old sentence. "});
+  await until(()=>provider.requests.length===1,"old synthesis must begin");
+  await controller.handleSpeechEvent({type:"reset",turnId:"turn-old"});
+  provider.releaseFirst();
+  await until(()=>provider.completed===1,"cancelled provider iterator must unwind after its delayed event");
+  equal(output.queued.length,0,"late PCM from an aborted provider is rejected before reaching audio output");
+
+  await controller.handleSpeechEvent({type:"start",turnId:"turn-fresh"});
+  await controller.handleSpeechEvent({type:"delta",turnId:"turn-old",text:"Stale delta. "});
+  await controller.handleSpeechEvent({type:"delta",turnId:"turn-fresh",text:"Fresh sentence. "});
+  await controller.finishTurn("turn-fresh");
+  equal(provider.requests.length,2,"stale deltas do not create a synthesis request in the new turn");
+  equal(output.queued.length,1,"only the fresh session receives PCM");
+  equal(output.queued[0]?.text,"Fresh sentence. ","fresh-session audio excludes stale events");
+  controller.stop();
+}
+
 function pcmWav(sampleRate=22050,channels=1):Uint8Array{
   const pcm=new Uint8Array(8),bytes=new Uint8Array(44+pcm.length),view=new DataView(bytes.buffer);
   const put=(offset:number,value:string)=>{for(let i=0;i<value.length;i++)bytes[offset+i]=value.charCodeAt(i);};
@@ -185,17 +252,25 @@ function pcmWav(sampleRate=22050,channels=1):Uint8Array{
   put(36,"data");view.setUint32(40,pcm.length,true);bytes.set(pcm,44);
   return bytes;
 }
+type MockWebSocketMode="done"|"error"|"partial-close"|"empty-done"|"routing"|"hold"|"malformed-json"|"unknown"|"invalid-start"|"duplicate-start"|"audio-before-start"|"done-before-start"|"close-before-audio"|"timeout-after-audio";
 class MockWebSocket extends EventTarget{
   readyState=1;
   sent:string[]=[];
-  constructor(private readonly mode:"done"|"error"|"partial-close"|"empty-done"|"routing"|"hold"="done"){super();}
+  constructor(private readonly mode:MockWebSocketMode="done"){super();}
   close(){this.readyState=3;this.dispatchEvent(new Event("close"));}
   send(value:string){
     this.sent.push(value);
     queueMicrotask(()=>{
       if(this.mode==="hold")return;
+      if(this.mode==="malformed-json"){this.dispatchEvent(new MessageEvent("message",{data:"{not-json"}));return;}
+      if(this.mode==="unknown"){this.dispatchEvent(new MessageEvent("message",{data:JSON.stringify({type:"unknown-frame"})}));return;}
+      if(this.mode==="audio-before-start"){this.dispatchEvent(new MessageEvent("message",{data:new Int16Array([1,2]).buffer}));return;}
+      if(this.mode==="done-before-start"){this.dispatchEvent(new MessageEvent("message",{data:JSON.stringify({type:"done"})}));return;}
       if(this.mode==="routing")this.dispatchEvent(new MessageEvent("message",{data:JSON.stringify({type:"routing",status:"cpu_fallback",reason:"GPU unavailable; using CPU"})}));
-      this.dispatchEvent(new MessageEvent("message",{data:JSON.stringify({type:"start",sample_rate:44100,channels:2,format:"pcm16"})}));
+      const start={type:"start",sample_rate:this.mode==="invalid-start"?1:44100,channels:2,format:"pcm16"};
+      this.dispatchEvent(new MessageEvent("message",{data:JSON.stringify(start)}));
+      if(this.mode==="duplicate-start"){this.dispatchEvent(new MessageEvent("message",{data:JSON.stringify(start)}));return;}
+      if(this.mode==="close-before-audio"){this.close();return;}
       if(this.mode==="error"){
         this.dispatchEvent(new MessageEvent("message",{data:JSON.stringify({type:"error",detail:"engine API key=fixture-secret"})}));
         return;
@@ -207,6 +282,7 @@ class MockWebSocket extends EventTarget{
       const pcm=new Int16Array([32767,-32768,0,500]).buffer;
       this.dispatchEvent(new MessageEvent("message",{data:pcm}));
       if(this.mode==="partial-close"){this.close();return;}
+      if(this.mode==="timeout-after-audio")return;
       this.dispatchEvent(new MessageEvent("message",{data:JSON.stringify({type:"done"})}));
     });
   }
@@ -262,6 +338,55 @@ async function voiceStudioWebSocketAndHttpFallback():Promise<void>{
   ok(partialCloseEvents.some(event=>event.type==="audio"),"binary audio queued before a socket close is drained");
   ok(partialCloseEvents.some(event=>event.type==="error"),"socket close after partial audio reports an error");
   ok(!fallbackAfterAudio,"HTTP fallback never repeats a sentence after websocket audio has been accepted");
+  const malformedCases:Array<[MockWebSocketMode,string]>=[
+    ["malformed-json","invalid_json_message"],
+    ["unknown","invalid_protocol_message"],
+    ["invalid-start","invalid_audio_metadata"],
+    ["duplicate-start","invalid_audio_metadata"],
+    ["audio-before-start","missing_audio_metadata"],
+    ["done-before-start","missing_audio_metadata"]
+  ];
+  for(const [mode,expectedCode] of malformedCases){
+    let unexpectedFallback=false;
+    const malformedProvider=new VoiceStudioTtsProvider({
+      createWebSocket:()=>new MockWebSocket(mode) as unknown as WebSocket,
+      fetch:async()=>{unexpectedFallback=true;throw new Error("unexpected fallback");},
+      requestTimeoutMs:500
+    });
+    const malformedEvents:TtsStreamEvent[]=[];
+    for await(const event of malformedProvider.synthesize({sessionId:"malformed-"+mode,text:"Test",preset:preset("voice-studio"),emotion:""},{signal:new AbortController().signal}))malformedEvents.push(event);
+    const failure=malformedEvents.find(event=>event.type==="error");
+    ok(failure?.type==="error"&&failure.error.code===expectedCode,mode+" produces its expected protocol error");
+    ok(!unexpectedFallback,mode+" must not silently replace invalid protocol data with HTTP output");
+  }
+
+  let earlyCloseFallback=false;
+  const earlyCloseProvider=new VoiceStudioTtsProvider({
+    createWebSocket:()=>new MockWebSocket("close-before-audio") as unknown as WebSocket,
+    fetch:async()=>{
+      earlyCloseFallback=true;
+      const wav=pcmWav();const body=new ArrayBuffer(wav.byteLength);new Uint8Array(body).set(wav);
+      return new Response(body,{status:200});
+    }
+  });
+  const earlyCloseEvents:TtsStreamEvent[]=[];
+  for await(const event of earlyCloseProvider.synthesize({sessionId:"early-close",text:"Retryable before audio",preset:preset("voice-studio"),emotion:""},{signal:new AbortController().signal}))earlyCloseEvents.push(event);
+  ok(earlyCloseFallback,"disconnect before audio permits HTTP WAV fallback");
+  equal(earlyCloseEvents.map(event=>event.type).join(","),"start,audio,done","pre-audio disconnect discards stale WebSocket metadata");
+
+  let fallbackAfterTimeout=false;
+  const timeoutProvider=new VoiceStudioTtsProvider({
+    createWebSocket:()=>new MockWebSocket("timeout-after-audio") as unknown as WebSocket,
+    fetch:async()=>{fallbackAfterTimeout=true;throw new Error("fallback would duplicate accepted audio");},
+    requestTimeoutMs:25
+  });
+  const timeoutEvents:TtsStreamEvent[]=[];
+  for await(const event of timeoutProvider.synthesize({sessionId:"timeout-after-audio",text:"Partial PCM",preset:preset("voice-studio"),emotion:""},{signal:new AbortController().signal}))timeoutEvents.push(event);
+  equal(timeoutEvents.map(event=>event.type).join(","),"start,audio,error","timeout after accepted PCM returns a terminal event");
+  const timeoutError=timeoutEvents.find(event=>event.type==="error");
+  ok(timeoutError?.type==="error"&&timeoutError.error.code==="request_timeout","synthesis timeout reports request_timeout");
+  ok(!fallbackAfterTimeout,"timeout after accepted PCM cannot trigger duplicate HTTP synthesis");
+
 
   let emptyDoneFallback=false;
   const emptyDoneProvider=new VoiceStudioTtsProvider({
@@ -333,6 +458,7 @@ async function main():Promise<void>{
   emotionDecodersDoNotGateSpeech();
   await synthesisRunsAheadOfPlaybackAndKeepsFifo();
   await boundedBackpressureAndCancellation();
+  await cancelledProviderEventsCannotEnterANewSession();
   await voiceStudioWebSocketAndHttpFallback();
   await webAudioSchedulesFifoWithoutOverlap();
   console.log("PASS TTS sentence, emotion, controller, provider and Web Audio tests");

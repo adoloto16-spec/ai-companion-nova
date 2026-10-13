@@ -131,14 +131,18 @@ export interface NormalizedVoiceExpression {
 }
 /** Maps only explicit supported actions; ordinary emotions are intentionally neutral on basic OmniVoice. */
 export function normalizeVoiceExpression(text:string,emotion:string,capabilities:TtsProviderCapabilities):NormalizedVoiceExpression{
-  const normalized=typeof emotion==="string"?emotion.normalize("NFKC").toLocaleLowerCase("ru-RU"):"";
+  const normalized=typeof emotion==="string"
+    ?emotion.normalize("NFKC").trim().replace(/\s+/gu," ").toLocaleLowerCase("ru-RU"):"";
   let prepared=text;
   const tags=capabilities.nonverbalTags;
-  if(tags.includes("laughter")&&/(?:\blaughter\b|\blaughing\b|\blaugh\b|смех|сме[её]т|сме[её]х)/iu.test(normalized)&&!/(?:^|\s)\[laughter\](?:\s|$)/iu.test(text))
+  const laughterEmotions=new Set(["laughter","laugh","laughing","laughs","смех","смеётся","смеется","смешок"]);
+  const sighEmotions=new Set(["sigh","sighing","вздох","вздохнуть","вздыхает","вздыхание"]);
+  const whisperEmotions=new Set(["whisper","whispering","шёпот","шепот","шепчет","шептать"]);
+  if(tags.includes("laughter")&&laughterEmotions.has(normalized)&&!/(?:^|\s)\[laughter\](?:\s|$)/iu.test(text))
     prepared="[laughter] "+prepared;
-  else if(tags.includes("sigh")&&/(?:\bsigh\b|\bsighing\b|вздох|вздых)/iu.test(normalized)&&!/(?:^|\s)\[sigh\](?:\s|$)/iu.test(text))
+  else if(tags.includes("sigh")&&sighEmotions.has(normalized)&&!/(?:^|\s)\[sigh\](?:\s|$)/iu.test(text))
     prepared="[sigh] "+prepared;
-  if(capabilities.supportsInstruction&&/(?:\bwhisper(?:ing)?\b|ш[её]пот|ш[её]пч)/iu.test(normalized))return {text:prepared,instruction:"whisper"};
+  if(capabilities.supportsInstruction&&whisperEmotions.has(normalized))return {text:prepared,instruction:"whisper"};
   return {text:prepared};
 }
 
