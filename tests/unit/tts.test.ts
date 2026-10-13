@@ -228,8 +228,8 @@ async function voiceStudioWebSocketAndHttpFallback():Promise<void>{
   for await(const event of wsProvider.synthesize({sessionId:"ws-test",text:"Привет",preset:{...preset("voice-studio"),providerOptions:{engine:"omnivoice"}},emotion:""}, {signal:new AbortController().signal}))events.push(event);
   equal(events.map(event=>event.type).join(","),"routing,start,audio,done","websocket protocol forwards routing, start, binary PCM and done");
   const routing=events[0];ok(routing?.type==="routing"&&routing.status==="cpu_fallback","VoiceStudio routing status is validated and surfaced as metadata");
-  const start=events[0];ok(start?.type==="start"&&start.audio.sampleRate===44100&&start.audio.channels===2,"sample rate and channels come from actual start metadata");
-  const audio=events[1];ok(audio?.type==="audio"&&audio.data.byteLength===8,"binary PCM16 chunk bytes are preserved");
+  const start=events[1];ok(start?.type==="start"&&start.audio.sampleRate===44100&&start.audio.channels===2,"sample rate and channels come from actual start metadata");
+  const audio=events[2];ok(audio?.type==="audio"&&audio.data.byteLength===8,"binary PCM16 chunk bytes are preserved");
   const request=JSON.parse(socket.sent[0]!) as Record<string,unknown>;
   equal(request.voice,"profile-test","VoiceStudio receives the configured profile ID");
   equal(request.speed,1,"VoiceStudio receives speed");
