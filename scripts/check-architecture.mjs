@@ -107,7 +107,7 @@ const ttsRequired=[
 for(const file of ttsRequired)if(!fs.existsSync(file))violations.push("missing TTS architecture component: "+file);
 
 function importSpecifiers(source){
-  return [...source.matchAll(/(?:from\\s+|import\\s*)["']([^"']+)["']/g)].map(match=>match[1]);
+  return [...source.matchAll(/(?:from\s+|import\s*)["']([^"']+)["']/g)].map(match=>match[1]);
 }
 function sourceFor(file){
   if(!fs.existsSync(file)){violations.push("missing TTS architecture source: "+file);return "";}
@@ -121,21 +121,21 @@ function assertImports(file,source,allowed,forbidden){
 }
 const ttsProviderPath="providers/tts/voice-studio/src/index.ts";
 const ttsProviderSource=sourceFor(ttsProviderPath);
-assertImports(ttsProviderPath,ttsProviderSource,/contracts\\/src\\/tts\\b/i,/\\b(?:core|modules|apps|host|runtime)\\/|^react(?:\\/|$)/i);
+assertImports(ttsProviderPath,ttsProviderSource,/contracts\/src\/tts\b/i,/\b(?:core|modules|apps|host|runtime)\/|^react(?:\/|$)/i);
 
 const ttsRegistryPath="providers/tts/registry/src/index.ts";
-assertImports(ttsRegistryPath,sourceFor(ttsRegistryPath),/contracts\\/src\\/tts\\b/i,/\\b(?:core|modules|apps|host|runtime|providers)\\/|^react(?:\\/|$)/i);
+assertImports(ttsRegistryPath,sourceFor(ttsRegistryPath),/contracts\/src\/tts\b/i,/\b(?:core|modules|apps|host|runtime|providers)\/|^react(?:\/|$)/i);
 
 const ttsControllerPath="modules/voice/tts/src/index.ts";
 const ttsControllerSource=sourceFor(ttsControllerPath);
-assertImports(ttsControllerPath,ttsControllerSource,/contracts\\/src\\/(?:tts|mind-runtime)\\b/i,/\\b(?:core|providers|apps|host|runtime)\\/|^react(?:\\/|$)/i);
-if(/127\\.0\\.0\\.1|localhost|\\/ws\\/tts|\\/generate|VoiceStudioTtsProvider|FormData|new WebSocket/i.test(ttsControllerSource))
+assertImports(ttsControllerPath,ttsControllerSource,/contracts\/src\/(?:tts|mind-runtime)\b/i,/\b(?:core|providers|apps|host|runtime)\/|^react(?:\/|$)/i);
+if(/127\.0\.0\.1|localhost|\/ws\/tts|\/generate|VoiceStudioTtsProvider|FormData|new WebSocket/i.test(ttsControllerSource))
   violations.push(ttsControllerPath+": playback/controller code must not know VoiceStudio URLs, HTTP forms or WebSocket protocol details.");
 
 const webAudioPath="apps/desktop-ui/src/web-audio-output.ts";
 const webAudioSource=sourceFor(webAudioPath);
-assertImports(webAudioPath,webAudioSource,/modules\\/voice\\/tts\\/src|contracts\\/src\\/tts\\b/i,/providers\\/tts|VoiceStudioTtsProvider|\\bcore\\/|\\bruntime\\//i);
-if(/127\\.0\\.0\\.1|localhost|\\/ws\\/tts|\\/generate|VoiceStudioTtsProvider/i.test(webAudioSource))
+assertImports(webAudioPath,webAudioSource,/modules\/voice\/tts\/src|contracts\/src\/tts\b/i,/providers\/tts|VoiceStudioTtsProvider|\bcore\/|\bruntime\//i);
+if(/127\.0\.0\.1|localhost|\/ws\/tts|\/generate|VoiceStudioTtsProvider/i.test(webAudioSource))
   violations.push(webAudioPath+": the Web Audio adapter must not contain provider-specific URLs or protocol details.");
 
 const ttsCompositionPath="runtime/bootstrap/src/index.ts";
@@ -143,15 +143,15 @@ const ttsComposition=sourceFor(ttsCompositionPath);
 if(!ttsComposition.includes("new TtsProviderRegistry()")||!ttsComposition.includes("new VoiceStudioTtsProvider()")||
    !ttsComposition.includes("ttsProviders.register(()=>new VoiceStudioTtsProvider())"))
   violations.push(ttsCompositionPath+": the TTS provider must be registered in the composition root.");
-if(/providers\\/tts\\/registry\\/src|providers\\/tts\\/voice-studio\\/src/.test(sourceFor("apps/desktop-ui/src/main.tsx")))
+if(/providers\/tts\/registry\/src|providers\/tts\/voice-studio\/src/.test(sourceFor("apps/desktop-ui/src/main.tsx")))
   violations.push("apps/desktop-ui/src/main.tsx: UI may not instantiate/import concrete TTS providers or their registry.");
 
 const appSettingsPath="contracts/src/settings.ts";
 const appSettingsSource=sourceFor(appSettingsPath);
-if(!/APP_SETTINGS_SCHEMA_VERSION:"13"/.test(appSettingsSource)||!/tts:cloneTtsSettings\\(DEFAULT_TTS_SETTINGS\\)/.test(appSettingsSource))
+if(!/APP_SETTINGS_SCHEMA_VERSION:"13"/.test(appSettingsSource)||!/tts:cloneTtsSettings\(DEFAULT_TTS_SETTINGS\.tts\)/.test(appSettingsSource))
   violations.push(appSettingsPath+": AppSettings v13 must include copied TTS defaults.");
 const ttsDefaults=sourceFor("contracts/src/tts.ts");
-if(!/enabled:\\s*false/.test(ttsDefaults))violations.push("contracts/src/tts.ts: TTS must be disabled by default.");
+if(!/enabled:\s*false/.test(ttsDefaults))violations.push("contracts/src/tts.ts: TTS must be disabled by default.");
 
 const tauriConfigPath="apps/desktop-host/src-tauri/tauri.conf.json";
 if(fs.existsSync(tauriConfigPath)){
@@ -161,8 +161,8 @@ if(fs.existsSync(tauriConfigPath)){
     if(typeof connect!=="string")violations.push(tauriConfigPath+": connect-src CSP must be a string.");
     else{
       for(const origin of ["ws://127.0.0.1:3900","ws://localhost:3900","ws://[::1]:3900"])
-        if(!connect.split(/\\s+/).includes(origin))violations.push(tauriConfigPath+": connect-src CSP is missing "+origin);
-      if(connect.split(/\\s+/).includes("ws:"))violations.push(tauriConfigPath+": connect-src CSP may not allow arbitrary WebSocket hosts.");
+        if(!connect.split(/\s+/).includes(origin))violations.push(tauriConfigPath+": connect-src CSP is missing "+origin);
+      if(connect.split(/\s+/).includes("ws:"))violations.push(tauriConfigPath+": connect-src CSP may not allow arbitrary WebSocket hosts.");
     }
   }catch(error){violations.push(tauriConfigPath+": invalid JSON: "+String(error));}
 }
