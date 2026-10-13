@@ -121,6 +121,9 @@ async function explicitUnsupportedUsesOnlyOneTaggedFallback():Promise<void>{
   const speechEvents:Array<{type:string;text?:string;emotion?:string}>=[];
   const result=await createStep(runtime,"structured",id=>"CUSTOM PROMPT: "+id).run(context(event=>{speechEvents.push({type:event.type,...(event.text===undefined?{}:{text:event.text}),...(event.emotion===undefined?{}:{emotion:event.emotion})});if(event.type==="delta")visible+=event.text??"";}));
   equal(calls.length,2,"explicit unsupported schema causes one and only one tagged retry");
+  const resetIndex=speechEvents.findIndex(event=>event.type==="reset");
+  ok(resetIndex>=0&&speechEvents[resetIndex+1]?.type==="start","tagged fallback starts a new session immediately after resetting the JSON attempt");
+  ok(speechEvents.findIndex(event=>event.type==="delta")>resetIndex+1,"fallback speech is delivered only to the new session");
   equal(calls[0]?.generation?.responseFormat?.type,"json-schema","first request uses native JSON Schema");
   equal(calls[1]?.generation?.responseFormat?.type,"text","fallback request uses tagged text protocol");
   equal(calls[1]?.context.messages.find(message=>message.role==="system")?.content,"CUSTOM PROMPT: nova-system-tagged","tagged fallback uses the edited tagged system prompt");
