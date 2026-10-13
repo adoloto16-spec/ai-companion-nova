@@ -23,8 +23,7 @@ import {SpeechOutputController} from "../../../modules/voice/tts/src";
 import type {SpeechOutputStatus} from "../../../modules/voice/tts/src";
 import {WebAudioOutputAdapter} from "./web-audio-output";
 import {DEFAULT_TTS_SETTINGS} from "../../../contracts/src/tts";
-import type {TtsPreset,TtsSettings} from "../../../contracts/src/tts";
-import type {TtsProviderDescriptor} from "../../../providers/tts/registry/src";
+import type {TtsPreset,TtsProviderDescriptor,TtsSettings} from "../../../contracts/src/tts";
 import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
