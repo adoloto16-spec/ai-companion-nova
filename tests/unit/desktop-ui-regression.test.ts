@@ -169,4 +169,18 @@ assert.equal(readChatDraft(unchangedOnFailure,draftA),"unsent A","failed or stal
 const afterSuccessfulSend=clearSubmittedChatDraft(drafts,draftA,"unsent A");
 assert.equal(readChatDraft(afterSuccessfulSend,draftA),"","successful send clears the matching submitted draft");
 assert.equal(readChatDraft(afterSuccessfulSend,draftB),"unsent B","successful send does not clear another conversation draft");
-console.log("desktop-ui-regression: ok");
+const ttsSettings=blockBetween("function TtsSettingsView(","function SettingsContainerView(");
+assert.match(ttsSettings,/Enable audio playback/,"TTS UI requires an explicit user gesture before playback");
+assert.match(settingsContainer,/ttsController:SpeechOutputController/,"settings container owns the dedicated speech controller prop");
+assert.match(settingsContainer,/ttsProviders:readonly TtsProviderDescriptor\[\]/,"settings container receives TTS providers from composition root");
+assert.doesNotMatch(providerPresets,/ttsController|ttsProviders/,"Chat Provider Presets remain independent of TTS settings");
+
+const tauriConfigPath=path.resolve(process.cwd(),"apps/desktop-host/src-tauri/tauri.conf.json");
+const tauriConfig=JSON.parse(fs.readFileSync(tauriConfigPath,"utf8")) as {app:{security:{csp:Record<string,string>}}};
+const connectSources=tauriConfig.app.security.csp["connect-src"].split(/\s+/);
+for(const origin of ["ws://127.0.0.1:3900","ws://localhost:3900","ws://[::1]:3900"]){
+  assert.ok(connectSources.includes(origin),"CSP allows only the configured loopback VoiceStudio WebSocket origin "+origin);
+}
+assert.ok(!connectSources.includes("ws:"),"CSP must not allow arbitrary WebSocket hosts");
+
+console.log("desktop-ui-regression: ok");console.log("desktop-ui-regression: ok");
