@@ -177,7 +177,9 @@ assert.doesNotMatch(providerPresets,/ttsController|ttsProviders/,"Chat Provider 
 
 const tauriConfigPath=path.resolve(process.cwd(),"apps/desktop-host/src-tauri/tauri.conf.json");
 const tauriConfig=JSON.parse(fs.readFileSync(tauriConfigPath,"utf8")) as {app:{security:{csp:Record<string,string>}}};
-const connectSources=tauriConfig.app.security.csp["connect-src"].split(/\s+/);
+const connectPolicy=tauriConfig.app.security.csp["connect-src"];
+if(typeof connectPolicy!=="string")throw new Error("Tauri connect-src CSP policy must be present");
+const connectSources=connectPolicy.split(/\s+/);
 for(const origin of ["ws://127.0.0.1:3900","ws://localhost:3900","ws://[::1]:3900"]){
   assert.ok(connectSources.includes(origin),"CSP allows only the configured loopback VoiceStudio WebSocket origin "+origin);
 }
