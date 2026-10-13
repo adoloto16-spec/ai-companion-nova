@@ -75,6 +75,12 @@ export interface TtsStreamEventStart {
   sessionId: string;
   audio: TtsAudioMetadata;
 }
+export interface TtsStreamEventRouting {
+  type: "routing";
+  sessionId: string;
+  status: string;
+  reason?: string;
+}
 export interface TtsStreamEventAudio {
   type: "audio";
   sessionId: string;
@@ -92,6 +98,7 @@ export interface TtsStreamEventError {
 }
 export type TtsStreamEvent =
   | TtsStreamEventStart
+  | TtsStreamEventRouting
   | TtsStreamEventAudio
   | TtsStreamEventDone
   | TtsStreamEventError;
