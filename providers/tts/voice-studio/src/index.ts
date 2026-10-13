@@ -287,6 +287,10 @@ export class VoiceStudioTtsProvider implements TtsProvider {
     const prelude:TtsStreamEvent[]=[];
     try{
       for await(const event of this.synthesizeWebSocket(request,options.signal,validated.baseUrl,validated.engine)){
+        if(event.type==="routing"){
+          yield event;
+          continue;
+        }
         if(event.type==="audio"){
           audioAccepted=true;
           for(const pending of prelude)yield pending;
@@ -352,7 +356,17 @@ export class VoiceStudioTtsProvider implements TtsProvider {
         let decoded:unknown;
         try{decoded=JSON.parse(data);}catch{throw new VoiceStudioError("VoiceStudio sent malformed JSON.","invalid_json_message",false);}
         if(!isRecord(decoded)||typeof decoded.type!=="string")throw new VoiceStudioError("VoiceStudio sent an invalid protocol message.","invalid_protocol_message",false);
-        if(decoded.type==="routing")return;
+        if(decoded.type==="routing"){
+          if(typeof decoded.status!=="string"||!decoded.status||decoded.status.length>80)
+            throw new VoiceStudioError("VoiceStudio returned invalid routing metadata.","invalid_routing_metadata",false);
+          if(decoded.reason!==undefined&&(typeof decoded.reason!=="string"||decoded.reason.length>240))
+            throw new VoiceStudioError("VoiceStudio returned an invalid routing reason.","invalid_routing_metadata",false);
+          await finish({
+            type:"routing",sessionId:request.sessionId,status:decoded.status,
+            ...(typeof decoded.reason==="string"&&decoded.reason?{reason:safeServerMessage(decoded.reason)}:{})
+          });
+          return;
+        }
         if(decoded.type==="start"){
           if(operation.metadata)throw new VoiceStudioError("VoiceStudio sent duplicate audio-start metadata.","invalid_audio_metadata",false);
           const metadata=readPcmMetadata(decoded);
