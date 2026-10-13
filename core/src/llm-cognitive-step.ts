@@ -212,6 +212,8 @@ export class LLMCognitiveStep implements CognitiveStep {
           throwIfAborted(context.signal);
           await context.onSpeechEvent?.({type:"reset",conversationId:conversation.id});
           effectiveFormat="tagged";
+          // Reset cancels the failed native-JSON attempt. Start a fresh speech/TTS session before fallback deltas.
+          await context.onSpeechEvent?.({type:"start",conversationId:conversation.id});
           output=await doRequest("tagged",request+"-tag-fallback");
           protocolDiagnostics=["structured-output-fallback:explicit-unsupported"];
         }
