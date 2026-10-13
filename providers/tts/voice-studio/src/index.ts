@@ -87,7 +87,7 @@ export function validateVoiceStudioBaseUrl(raw:string):string{
     throw new VoiceStudioError("VoiceStudio must use HTTP loopback on port 3900 without credentials, path, query, or fragment.","unsafe_base_url",false);
   return url.origin;
 }
-function validatePreset(preset:TtsPreset,requireVoiceProfile=false):{baseUrl:string;description?:string}{
+function validatePreset(preset:TtsPreset,requireVoiceProfile=false):{baseUrl:string;engine?:string}{
   if(preset.providerId!=="voice-studio")throw new VoiceStudioError("The selected TTS preset is not a VoiceStudio preset.","wrong_provider",false);
   const baseUrl=validateVoiceStudioBaseUrl(preset.baseUrl);
   if(typeof preset.speed!=="number"||!Number.isFinite(preset.speed)||preset.speed<0.5||preset.speed>2)
@@ -100,12 +100,12 @@ function validatePreset(preset:TtsPreset,requireVoiceProfile=false):{baseUrl:str
     throw new VoiceStudioError("VoiceStudio does not use stored credentials; remove the credential reference.","unsupported_credentials",false);
   const options=preset.providerOptions;
   if(!options||typeof options!=="object"||Array.isArray(options))throw new VoiceStudioError("VoiceStudio preset options must be an object.","invalid_provider_options",false);
-  const unknown=Object.keys(options).filter(key=>key!=="description");
+  const unknown=Object.keys(options).filter(key=>key!=="engine");
   if(unknown.length)throw new VoiceStudioError("VoiceStudio preset contains unsupported provider-specific options.","invalid_provider_options",false);
-  const description=options.description;
-  if(description!==undefined&&(typeof description!=="string"||description.length>1000))
-    throw new VoiceStudioError("VoiceStudio description must be a string up to 1000 characters.","invalid_provider_options",false);
-  return {baseUrl,...(typeof description==="string"&&description.trim()?{description}: {})};
+  const engine=options.engine;
+  if(engine!==undefined&&(typeof engine!=="string"||engine.length>80||!/^[a-z][a-z0-9._-]*$/.test(engine)))
+    throw new VoiceStudioError("VoiceStudio engine ID must be a lowercase engine identifier up to 80 characters.","invalid_provider_options",false);
+  return {baseUrl,...(typeof engine==="string"&&engine.trim()?{engine}: {})};
 }
 function wsUrl(baseUrl:string):string{
   const url=new URL(baseUrl);
@@ -286,7 +286,7 @@ export class VoiceStudioTtsProvider implements TtsProvider {
     let audioAccepted=false;
     const prelude:TtsStreamEvent[]=[];
     try{
-      for await(const event of this.synthesizeWebSocket(request,options.signal,validated.baseUrl,validated.description)){
+      for await(const event of this.synthesizeWebSocket(request,options.signal,validated.baseUrl,validated.engine)){
         if(event.type==="audio"){
           audioAccepted=true;
           for(const pending of prelude)yield pending;
@@ -316,7 +316,7 @@ export class VoiceStudioTtsProvider implements TtsProvider {
   }
 
   private async *synthesizeWebSocket(
-    request:TtsSynthesisRequest,signal:AbortSignal,baseUrl:string,description?:string
+    request:TtsSynthesisRequest,signal:AbortSignal,baseUrl:string,engine?:string
   ):AsyncIterable<TtsStreamEvent>{
     throwIfAborted(signal);
     if(this.activeRequest)throw new VoiceStudioError("VoiceStudio permits only one outstanding websocket request.","request_already_active",true);
@@ -427,7 +427,7 @@ export class VoiceStudioTtsProvider implements TtsProvider {
     try{
       const payload:Record<string,unknown>={text:request.text,language:request.preset.language,speed:request.preset.speed};
       payload.voice=request.preset.voiceProfileId.trim();
-      if(description)payload.description=description;
+      if(engine)payload.engine=engine;
       if(request.instruction&&this.capabilities().supportsInstruction)payload.instruct=request.instruction;
       try{socket.send(JSON.stringify(payload));}catch{throw new VoiceStudioError("VoiceStudio websocket request could not be sent; using HTTP fallback.","websocket_send_failed",true,true);}
       for await(const event of queue){
@@ -472,7 +472,7 @@ export class VoiceStudioTtsProvider implements TtsProvider {
   }
 
   private async *synthesizeHttp(
-    request:TtsSynthesisRequest,parentSignal:AbortSignal,validated:{baseUrl:string;description?:string}
+    request:TtsSynthesisRequest,parentSignal:AbortSignal,validated:{baseUrl:string;engine?:string}
   ):AsyncIterable<TtsStreamEvent>{
     const timeout=linkedTimeout(parentSignal,this.requestTimeoutMs);
     try{
@@ -482,7 +482,8 @@ export class VoiceStudioTtsProvider implements TtsProvider {
       form.append("language",request.preset.language);
       form.append("speed",String(request.preset.speed));
       form.append("profile_id",request.preset.voiceProfileId.trim());
-      if(validated.description)form.append("description",validated.description);
+      if(validated.engine)form.append("engine",validated.engine);
+      form.append("wav_bits","16");
       if(request.instruction&&this.capabilities().supportsInstruction)form.append("instruct",request.instruction);
       const response=await this.fetcher(validated.baseUrl+"/generate",{method:"POST",body:form,signal:timeout.signal,redirect:"error"});
       if(!response.ok)throw new VoiceStudioError("VoiceStudio HTTP synthesis request failed with status "+response.status+".","http_error",true);
