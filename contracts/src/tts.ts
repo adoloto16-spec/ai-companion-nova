@@ -49,6 +49,11 @@ export interface TtsAudioMetadata {
   channels: number;
 }
 
+export interface TtsProviderDescriptor {
+  id: string;
+  capabilities: TtsProviderCapabilities;
+}
+
 export interface TtsProviderCapabilities {
   streaming: boolean;
   audioFormats: readonly TtsAudioFormat[];
