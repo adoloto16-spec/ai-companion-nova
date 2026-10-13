@@ -293,6 +293,13 @@ export class VoiceStudioTtsProvider implements TtsProvider {
           prelude.length=0;
           yield event;
         }else if(event.type==="done"||event.type==="error"){
+          // A clean socket completion without any PCM is safe to retry over HTTP.
+          // Do not leak the websocket start event into the replacement request.
+          if(event.type==="done"&&!audioAccepted){
+            prelude.length=0;
+            yield* this.synthesizeHttp(request,options.signal,validated);
+            return;
+          }
           for(const pending of prelude)yield pending;
           prelude.length=0;
           yield event;
