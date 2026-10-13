@@ -188,11 +188,12 @@ function pcmWav(sampleRate=22050,channels=1):Uint8Array{
 class MockWebSocket extends EventTarget{
   readyState=1;
   sent:string[]=[];
-  constructor(private readonly mode:"done"|"error"|"partial-close"|"empty-done"|"routing"="done"){super();}
+  constructor(private readonly mode:"done"|"error"|"partial-close"|"empty-done"|"routing"|"hold"="done"){super();}
   close(){this.readyState=3;this.dispatchEvent(new Event("close"));}
   send(value:string){
     this.sent.push(value);
     queueMicrotask(()=>{
+      if(this.mode==="hold")return;
       if(this.mode==="routing")this.dispatchEvent(new MessageEvent("message",{data:JSON.stringify({type:"routing",status:"cpu_fallback",reason:"GPU unavailable; using CPU"})}));
       this.dispatchEvent(new MessageEvent("message",{data:JSON.stringify({type:"start",sample_rate:44100,channels:2,format:"pcm16"})}));
       if(this.mode==="error"){
@@ -234,6 +235,19 @@ async function voiceStudioWebSocketAndHttpFallback():Promise<void>{
   equal(request.voice,"profile-test","VoiceStudio receives the configured profile ID");
   equal(request.speed,1,"VoiceStudio receives speed");
   equal(request.engine,"omnivoice","VoiceStudio receives the validated per-preset engine override");
+
+  const heldSocket=new MockWebSocket("hold");
+  const concurrentProvider=new VoiceStudioTtsProvider({createWebSocket:()=>heldSocket as unknown as WebSocket,requestTimeoutMs:10_000});
+  const firstAbort=new AbortController();
+  const firstIterator=concurrentProvider.synthesize({sessionId:"one-in-flight",text:"Still rendering",preset:preset("voice-studio"),emotion:""},{signal:firstAbort.signal})[Symbol.asyncIterator]();
+  const firstNext=firstIterator.next();
+  await until(()=>heldSocket.sent.length===1,"first websocket request should be sent before the competing request");
+  const secondEvents:TtsStreamEvent[]=[];
+  for await(const event of concurrentProvider.synthesize({sessionId:"must-not-overlap",text:"Concurrent request",preset:preset("voice-studio"),emotion:""},{signal:new AbortController().signal}))secondEvents.push(event);
+  const concurrencyError=secondEvents.find(event=>event.type==="error");
+  ok(concurrencyError?.type==="error"&&concurrencyError.error.code==="request_already_active","provider rejects a second request while the first websocket request is unfinished");
+  firstAbort.abort();
+  await firstNext.catch(()=>({value:undefined,done:true}));
 
   const engineErrorProvider=new VoiceStudioTtsProvider({createWebSocket:()=>new MockWebSocket("error") as unknown as WebSocket,fetch:async()=>{throw new Error("HTTP fallback must not override an engine error frame");}});
   const engineErrorEvents:TtsStreamEvent[]=[];
