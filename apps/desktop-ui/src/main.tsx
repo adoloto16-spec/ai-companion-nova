@@ -868,8 +868,6 @@ function ProviderPresetsView({
 }:{
   presets:readonly ProviderPreset[];
   activePresetId:string|null;
-  ttsController:SpeechOutputController;
-  ttsProviders:readonly TtsProviderDescriptor[];
   credentialProfiles:readonly CredentialProfile[];
   credentialSaved:Record<string,boolean>;
   runtime:RuntimeDiagnostics;
@@ -2163,6 +2161,8 @@ function SettingsContainerView({
   runtime:RuntimeDiagnostics;
   providerPresets:readonly ProviderPreset[];
   activePresetId:string|null;
+  ttsController:SpeechOutputController;
+  ttsProviders:readonly TtsProviderDescriptor[];
   credentialProfiles:readonly CredentialProfile[];
   credentialSavedMap:Record<string,boolean>;
   onSavePreset:(preset:ProviderPreset,activate:boolean)=>Promise<void>;
