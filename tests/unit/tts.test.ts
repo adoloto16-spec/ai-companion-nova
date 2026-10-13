@@ -188,7 +188,7 @@ function pcmWav(sampleRate=22050,channels=1):Uint8Array{
 class MockWebSocket extends EventTarget{
   readyState=1;
   sent:string[]=[];
-  constructor(private readonly mode:"done"|"error"|"partial-close"="done"){super();}
+  constructor(private readonly mode:"done"|"error"|"partial-close"|"empty-done"="done"){super();}
   close(){this.readyState=3;this.dispatchEvent(new Event("close"));}
   send(value:string){
     this.sent.push(value);
@@ -196,6 +196,10 @@ class MockWebSocket extends EventTarget{
       this.dispatchEvent(new MessageEvent("message",{data:JSON.stringify({type:"start",sample_rate:44100,channels:2,format:"pcm16"})}));
       if(this.mode==="error"){
         this.dispatchEvent(new MessageEvent("message",{data:JSON.stringify({type:"error",detail:"engine API key=fixture-secret"})}));
+        return;
+      }
+      if(this.mode==="empty-done"){
+        this.dispatchEvent(new MessageEvent("message",{data:JSON.stringify({type:"done"})}));
         return;
       }
       const pcm=new Int16Array([32767,-32768,0,500]).buffer;
@@ -242,6 +246,21 @@ async function voiceStudioWebSocketAndHttpFallback():Promise<void>{
   ok(partialCloseEvents.some(event=>event.type==="audio"),"binary audio queued before a socket close is drained");
   ok(partialCloseEvents.some(event=>event.type==="error"),"socket close after partial audio reports an error");
   ok(!fallbackAfterAudio,"HTTP fallback never repeats a sentence after websocket audio has been accepted");
+
+  let emptyDoneFallback=false;
+  const emptyDoneProvider=new VoiceStudioTtsProvider({
+    createWebSocket:()=>new MockWebSocket("empty-done") as unknown as WebSocket,
+    fetch:async(_url,init)=>{
+      emptyDoneFallback=true;
+      ok(init.body instanceof FormData,"empty websocket completion falls back using multipart form");
+      const wav=pcmWav();const body=new ArrayBuffer(wav.byteLength);new Uint8Array(body).set(wav);
+      return new Response(body,{status:200});
+    }
+  });
+  const emptyDoneEvents:TtsStreamEvent[]=[];
+  for await(const event of emptyDoneProvider.synthesize({sessionId:"empty-done",text:"No websocket audio",preset:preset("voice-studio"),emotion:""},{signal:new AbortController().signal}))emptyDoneEvents.push(event);
+  ok(emptyDoneFallback,"clean websocket completion without audio uses the HTTP fallback");
+  equal(emptyDoneEvents.map(event=>event.type).join(","),"start,audio,done","empty websocket metadata is discarded before HTTP fallback");
 
   let sawForm=false,sawManualContentType=false;
   const fallback=new VoiceStudioTtsProvider({
