@@ -140,8 +140,8 @@ function wavPcm16(bytes:Uint8Array):{metadata:TtsAudioMetadata;data:Uint8Array}{
   }
   if(formatCode!==1||bits!==16)throw new VoiceStudioError("VoiceStudio HTTP fallback must return uncompressed PCM16 WAV audio.","unsupported_audio_format",false);
   const metadata=readPcmMetadata({sample_rate:sampleRate,channels,format:"pcm16"});
-  if(dataOffset<0||dataSize===0||dataOffset+dataSize>bytes.length||dataSize%2!==0)
-    throw new VoiceStudioError("VoiceStudio WAV audio data is missing or malformed.","invalid_wav",false);
+  if(dataOffset<0||dataSize===0||dataOffset+dataSize>bytes.length||dataSize%(channels*2)!==0)
+    throw new VoiceStudioError("VoiceStudio WAV audio data is missing, malformed, or not frame-aligned.","invalid_wav",false);
   return {metadata,data:bytes.slice(dataOffset,dataOffset+dataSize)};
 }
 async function readBoundedResponse(response:Response):Promise<Uint8Array>{
@@ -400,8 +400,8 @@ export class VoiceStudioTtsProvider implements TtsProvider {
       }
       const bytes=await asBytes(data);
       if(bytes.byteLength===0)return;
-      if(bytes.byteLength>MAX_BINARY_CHUNK_BYTES||bytes.byteLength%2!==0)
-        throw new VoiceStudioError("VoiceStudio sent an oversized or malformed PCM16 chunk.","invalid_audio_chunk",false);
+      if(bytes.byteLength>MAX_BINARY_CHUNK_BYTES||bytes.byteLength%((operation.metadata?.channels??1)*2)!==0)
+        throw new VoiceStudioError("VoiceStudio sent an oversized or non-frame-aligned PCM16 chunk.","invalid_audio_chunk",false);
       if(!operation.metadata)throw new VoiceStudioError("VoiceStudio sent audio before its start metadata.","missing_audio_metadata",false);
       operation.audioSeen=true;
       await finish({type:"audio",sessionId:request.sessionId,sequence:operation.sequence++,data:bytes});

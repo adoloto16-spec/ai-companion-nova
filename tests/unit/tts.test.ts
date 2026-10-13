@@ -252,7 +252,7 @@ function pcmWav(sampleRate=22050,channels=1):Uint8Array{
   put(36,"data");view.setUint32(40,pcm.length,true);bytes.set(pcm,44);
   return bytes;
 }
-type MockWebSocketMode="done"|"error"|"partial-close"|"empty-done"|"routing"|"hold"|"malformed-json"|"unknown"|"invalid-start"|"duplicate-start"|"audio-before-start"|"done-before-start"|"close-before-audio"|"timeout-after-audio";
+type MockWebSocketMode="done"|"error"|"partial-close"|"empty-done"|"routing"|"hold"|"malformed-json"|"unknown"|"invalid-start"|"duplicate-start"|"audio-before-start"|"done-before-start"|"misaligned-pcm"|"close-before-audio"|"timeout-after-audio";
 class MockWebSocket extends EventTarget{
   readyState=1;
   sent:string[]=[];
@@ -279,8 +279,9 @@ class MockWebSocket extends EventTarget{
         this.dispatchEvent(new MessageEvent("message",{data:JSON.stringify({type:"done"})}));
         return;
       }
-      const pcm=new Int16Array([32767,-32768,0,500]).buffer;
+      const pcm=(this.mode==="misaligned-pcm"?new Int16Array([32767]):new Int16Array([32767,-32768,0,500])).buffer;
       this.dispatchEvent(new MessageEvent("message",{data:pcm}));
+      if(this.mode==="misaligned-pcm")return;
       if(this.mode==="partial-close"){this.close();return;}
       if(this.mode==="timeout-after-audio")return;
       this.dispatchEvent(new MessageEvent("message",{data:JSON.stringify({type:"done"})}));
@@ -365,7 +366,8 @@ async function voiceStudioWebSocketAndHttpFallback():Promise<void>{
     ["invalid-start","invalid_audio_metadata"],
     ["duplicate-start","invalid_audio_metadata"],
     ["audio-before-start","missing_audio_metadata"],
-    ["done-before-start","missing_audio_metadata"]
+    ["done-before-start","missing_audio_metadata"],
+    ["misaligned-pcm","invalid_audio_chunk"]
   ];
   for(const [mode,expectedCode] of malformedCases){
     let unexpectedFallback=false;
@@ -394,6 +396,28 @@ async function voiceStudioWebSocketAndHttpFallback():Promise<void>{
   for await(const event of earlyCloseProvider.synthesize({sessionId:"early-close",text:"Retryable before audio",preset:preset("voice-studio"),emotion:""},{signal:new AbortController().signal}))earlyCloseEvents.push(event);
   ok(earlyCloseFallback,"disconnect before audio permits HTTP WAV fallback");
   equal(earlyCloseEvents.map(event=>event.type).join(","),"start,audio,done","pre-audio disconnect discards stale WebSocket metadata");
+
+  let malformedWavCalled=false;
+  const malformedWavProvider=new VoiceStudioTtsProvider({
+    createWebSocket:()=>{throw new Error("force HTTP WAV path");},
+    fetch:async()=>{
+      malformedWavCalled=true;
+      const source=pcmWav(22050,2);
+      const bytes=source.slice(0,46);
+      const view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+      view.setUint32(4,bytes.byteLength-8,true);
+      view.setUint32(40,2,true);
+      return new Response(bytes,{status:200,headers:{"content-type":"audio/wav"}});
+    }
+  });
+  const malformedWavEvents:TtsStreamEvent[]=[];
+  for await(const event of malformedWavProvider.synthesize({
+    sessionId:"misaligned-wav",text:"Malformed stereo WAV",preset:preset("voice-studio"),emotion:""
+  },{signal:new AbortController().signal}))malformedWavEvents.push(event);
+  ok(malformedWavCalled,"malformed stereo WAV reaches the HTTP fallback parser");
+  equal(malformedWavEvents.map(event=>event.type).join(","),"error","WAV with an incomplete stereo frame is rejected before start/audio");
+  const malformedWavError=malformedWavEvents[0];
+  ok(malformedWavError?.type==="error"&&malformedWavError.error.code==="invalid_wav","WAV frame misalignment is reported at the provider boundary");
 
   let fallbackAfterTimeout=false;
   const timeoutProvider=new VoiceStudioTtsProvider({
