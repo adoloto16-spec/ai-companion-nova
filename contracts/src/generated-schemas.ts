@@ -565,8 +565,7 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
                     ]
                   },
                   "propertyNames": {
-                    "pattern": "^(?!.*(?:secret|token|password|api.?key|credential)).*$",
-                    "flags": "i"
+                    "pattern": "^(?!.*(?:[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN]|[pP][aA][sS][sS][wW][oO][rR][dD]|[aA][pP][iI][_. -]?[kK][eE][yY]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL])).*$"
                   }
                 }
               }
