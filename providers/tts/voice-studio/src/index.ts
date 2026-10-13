@@ -228,6 +228,7 @@ export class VoiceStudioTtsProvider implements TtsProvider {
   private socket:WebSocket|undefined;
   private socketBaseUrl:string|undefined;
   private activeRequest:SocketRequest|undefined;
+  private requestPending=false;
   private readonly fetcher:VoiceStudioFetch;
   private readonly socketFactory:VoiceStudioWebSocketFactory;
   private readonly requestTimeoutMs:number;
@@ -330,8 +331,11 @@ export class VoiceStudioTtsProvider implements TtsProvider {
     request:TtsSynthesisRequest,signal:AbortSignal,baseUrl:string,engine?:string
   ):AsyncIterable<TtsStreamEvent>{
     throwIfAborted(signal);
-    if(this.activeRequest)throw new VoiceStudioError("VoiceStudio permits only one outstanding websocket request.","request_already_active",true);
-    const socket=await this.ensureSocket(baseUrl,signal);
+    if(this.requestPending||this.activeRequest)throw new VoiceStudioError("VoiceStudio permits only one outstanding websocket request.","request_already_active",true);
+    this.requestPending=true;
+    let socket:WebSocket;
+    try{socket=await this.ensureSocket(baseUrl,signal);}
+    catch(error){this.requestPending=false;throw error;}
     const queue=new BoundedAsyncQueue<TtsStreamEvent>(24);
     const timeoutMs=this.requestTimeoutMs;
     let operation:SocketRequest;
@@ -458,6 +462,7 @@ export class VoiceStudioTtsProvider implements TtsProvider {
       if(!operation.ended)throw new VoiceStudioError("VoiceStudio ended a request without a completion event.","incomplete_response",true,!operation.audioSeen);
     }finally{
       cleanup(false);
+      this.requestPending=false;
     }
   }
 
