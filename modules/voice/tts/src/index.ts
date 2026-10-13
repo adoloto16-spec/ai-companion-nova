@@ -371,7 +371,8 @@ export class SpeechOutputController {
     }
   }
   private async synthesizeSentence(session:Session,task:SentenceTask):Promise<void>{
-    const expression=normalizeVoiceExpression(task.text,task.emotion,session.provider.capabilities());
+    const capabilities=session.provider.capabilitiesForPreset?.(session.preset)??session.provider.capabilities();
+    const expression=normalizeVoiceExpression(task.text,task.emotion,capabilities);
     const request:TtsSynthesisRequest={
       sessionId:session.id,text:expression.text,preset:session.preset,emotion:task.emotion,
       ...(expression.instruction?{instruction:expression.instruction}:{})

@@ -311,6 +311,19 @@ async function voiceStudioWebSocketAndHttpFallback():Promise<void>{
   equal(request.voice,"profile-test","VoiceStudio receives the configured profile ID");
   equal(request.speed,1,"VoiceStudio receives speed");
   equal(request.engine,"omnivoice","VoiceStudio receives the validated per-preset engine override");
+  const omniVoiceCapabilities=wsProvider.capabilitiesForPreset({...preset("voice-studio"),providerOptions:{engine:"omnivoice"}});
+  ok(omniVoiceCapabilities.supportsInstruction&&omniVoiceCapabilities.nonverbalTags.includes("laughter"),"only explicitly selected OmniVoice enables its supported expressions");
+  const unknownEngineCapabilities=wsProvider.capabilitiesForPreset({...preset("voice-studio"),providerOptions:{engine:"other-engine"}});
+  ok(!unknownEngineCapabilities.supportsInstruction&&unknownEngineCapabilities.nonverbalTags.length===0,"other engines expose no OmniVoice-specific expression capabilities");
+
+  const otherEngineSocket=new MockWebSocket();
+  const otherEngineProvider=new VoiceStudioTtsProvider({createWebSocket:()=>otherEngineSocket as unknown as WebSocket,requestTimeoutMs:1000});
+  for await(const _event of otherEngineProvider.synthesize({
+    sessionId:"other-engine",text:"Quietly",preset:{...preset("voice-studio"),providerOptions:{engine:"other-engine"}},emotion:"whisper",instruction:"whisper"
+  },{signal:new AbortController().signal})){}
+  const otherEngineRequest=JSON.parse(otherEngineSocket.sent[0]!) as Record<string,unknown>;
+  ok(!Object.prototype.hasOwnProperty.call(otherEngineRequest,"instruct"),"provider never sends instruct to a non-OmniVoice engine, even when a caller supplies it");
+
 
   const heldSocket=new MockWebSocket("hold");
   const concurrentProvider=new VoiceStudioTtsProvider({createWebSocket:()=>heldSocket as unknown as WebSocket,requestTimeoutMs:10_000});

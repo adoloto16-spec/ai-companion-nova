@@ -124,6 +124,8 @@ export interface TtsProviderHealth {
 export interface TtsProvider {
   readonly id: string;
   capabilities(): TtsProviderCapabilities;
+  /** Capabilities that depend on the selected model/engine, when the provider has such constraints. */
+  capabilitiesForPreset?(preset: TtsPreset): TtsProviderCapabilities;
   synthesize(request: TtsSynthesisRequest, options: TtsOperationOptions): AsyncIterable<TtsStreamEvent>;
   testConnection(preset: TtsPreset, signal: AbortSignal): Promise<TtsProviderHealth>;
 }

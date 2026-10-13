@@ -244,8 +244,15 @@ export class VoiceStudioTtsProvider implements TtsProvider {
   }
 
   capabilities():TtsProviderCapabilities{
+    // Without a selected engine, report only capabilities safe for every engine.
     return {streaming:true,audioFormats:["pcm16le"],supportsVoiceProfiles:true,supportsLanguage:true,
-      supportsSpeed:true,supportsInstruction:true,nonverbalTags:["laughter","sigh"],maxTextChars:MAX_TEXT_CHARS};
+      supportsSpeed:true,supportsInstruction:false,nonverbalTags:[],maxTextChars:MAX_TEXT_CHARS};
+  }
+
+  capabilitiesForPreset(preset:TtsPreset):TtsProviderCapabilities{
+    const base=this.capabilities();
+    if(preset.providerOptions?.engine!=="omnivoice")return base;
+    return {...base,supportsInstruction:true,nonverbalTags:["laughter","sigh"]};
   }
 
   async testConnection(preset:TtsPreset,signal:AbortSignal):Promise<TtsProviderHealth>{
@@ -453,7 +460,7 @@ export class VoiceStudioTtsProvider implements TtsProvider {
       const payload:Record<string,unknown>={text:request.text,language:request.preset.language,speed:request.preset.speed};
       payload.voice=request.preset.voiceProfileId.trim();
       if(engine)payload.engine=engine;
-      if(request.instruction&&this.capabilities().supportsInstruction)payload.instruct=request.instruction;
+      if(request.instruction&&this.capabilitiesForPreset(request.preset).supportsInstruction)payload.instruct=request.instruction;
       try{socket.send(JSON.stringify(payload));}catch{throw new VoiceStudioError("VoiceStudio websocket request could not be sent; using HTTP fallback.","websocket_send_failed",true,true);}
       for await(const event of queue){
         yield event;
@@ -510,7 +517,7 @@ export class VoiceStudioTtsProvider implements TtsProvider {
       form.append("profile_id",request.preset.voiceProfileId.trim());
       if(validated.engine)form.append("engine",validated.engine);
       form.append("wav_bits","16");
-      if(request.instruction&&this.capabilities().supportsInstruction)form.append("instruct",request.instruction);
+      if(request.instruction&&this.capabilitiesForPreset(request.preset).supportsInstruction)form.append("instruct",request.instruction);
       const response=await this.fetcher(validated.baseUrl+"/generate",{method:"POST",body:form,signal:timeout.signal,redirect:"error"});
       if(!response.ok)throw new VoiceStudioError("VoiceStudio HTTP synthesis request failed with status "+response.status+".","http_error",true);
       const bytes=await readBoundedResponse(response);
