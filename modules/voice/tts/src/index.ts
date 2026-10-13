@@ -55,6 +55,11 @@ function safeError(error:unknown):string{
 }
 function isCloser(character:string):boolean{return /[\u0022'”’»›)\]}]/u.test(character);}
 function isWhite(character:string):boolean{return /\s/u.test(character);}
+function safeRoutingMessage(status:string,reason?:string):string{
+  const safe=(reason??"").replace(/https?:\/\/\S+/gi,"[url]").replace(/(?:token|secret|password|api.?key)\s*[:=]\s*\S+/gi,"[redacted]").replace(/[\r\n\t]+/g," ").slice(0,200);
+  return "VoiceStudio routing: "+status+(safe?" — "+safe:"");
+}
+
 function safeTextSplit(text:string,limit:number):number{
   if(text.length<=limit)return -1;
   let index=text.lastIndexOf(" ",limit);
@@ -269,7 +274,11 @@ export class SpeechOutputController {
       const expression=normalizeVoiceExpression(text,"",provider.capabilities());
       for await(const event of provider.synthesize({sessionId,text:expression.text,preset:presetCopy(preset),emotion:"",...(expression.instruction?{instruction:expression.instruction}:{})},{signal:abort.signal})){
         if(event.sessionId!==sessionId)continue;
-        if(event.type==="start"){metadata=event.audio;this.options.output.startSession(sessionId,metadata);}
+        if(event.type==="routing"){
+          const message=safeRoutingMessage(event.status,event.reason);
+          this.reportDiagnostic("TTS_ROUTING",message);
+          this.setStatus({state:"synthesizing",message,sessionId});
+        }else if(event.type==="start"){metadata=event.audio;this.options.output.startSession(sessionId,metadata);}
         else if(event.type==="audio"){
           if(!metadata)throw new Error("TTS provider sent audio before format metadata.");
           if(event.data.byteLength>MAX_AUDIO_EVENT_BYTES)throw new Error("TTS provider exceeded the audio chunk limit.");
@@ -366,7 +375,11 @@ export class SpeechOutputController {
     let metadata:TtsAudioMetadata|undefined,done=false;
     for await(const event of session.provider.synthesize(request,{signal:session.abort.signal})){
       if(session.abort.signal.aborted||this.active!==session||event.sessionId!==session.id)throw abortError();
-      if(event.type==="start"){
+      if(event.type==="routing"){
+        const message=safeRoutingMessage(event.status,event.reason);
+        this.reportDiagnostic("TTS_ROUTING",message);
+        this.setStatus({state:"synthesizing",message,sessionId:session.id});
+      }else if(event.type==="start"){
         metadata=event.audio;
         this.options.output.startSession(session.id,metadata);
         this.setStatus({state:"synthesizing",message:"Synthesizing public Nova speech.",sessionId:session.id});
