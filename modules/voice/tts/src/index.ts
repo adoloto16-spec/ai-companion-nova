@@ -335,8 +335,8 @@ export class SpeechOutputController {
       session.worker=undefined;
       if(session.queue.length>0&&!session.failed&&!session.abort.signal.aborted)this.ensureWorker(session);
       this.wakeQueueWaiters(session);
-      if(session.finishing&&session.queue.length===0&&!session.failed){
-        if(this.active===session)this.active=undefined;
+      if(this.active===session&&session.finishing&&session.queue.length===0&&!session.failed&&!session.abort.signal.aborted){
+        this.active=undefined;
         this.setStatus({state:"ready",message:"Speech synthesis completed; audio may still be playing.",sessionId:session.id});
       }
     });
