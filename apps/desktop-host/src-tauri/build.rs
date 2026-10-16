@@ -49,6 +49,8 @@ fn main() {
                     "ollama_http_request",
                     "ollama_http_stream",
                     "ollama_http_cancel",
+                    "silero_http_request",
+                    "silero_http_cancel",
                 ]),
             ),
     )
