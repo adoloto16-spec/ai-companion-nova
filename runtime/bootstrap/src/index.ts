@@ -13,6 +13,7 @@ import {FakeBrowserModule,FakeCharacterModule,FakeMemoryModule} from "../../../m
 import {FakeChatProvider,FakeSTTProvider,FakeEmbeddingProvider,FakeVisionProvider} from "../../../providers/mock/src/index";
 import {TtsProviderRegistry} from "../../../providers/tts/registry/src";
 import {VoiceStudioTtsProvider} from "../../../providers/tts/voice-studio/src";
+import {SileroTtsProvider} from "../../../providers/tts/silero/src";
 import type {TtsProvider,TtsProviderDescriptor} from "../../../contracts/src/tts";
 import {
   OpenAICompatibleChatProvider,
@@ -203,6 +204,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const ttsProviders=new TtsProviderRegistry();
   // Concrete TTS adapters are registered only at the composition root.
   ttsProviders.register(()=>new VoiceStudioTtsProvider());
+  ttsProviders.register(()=>new SileroTtsProvider());
   const characterStore=options.characterStore??new InMemoryCharacterStore();
   const characterManager=new CharacterManager(characterStore,{events,clock:{now:()=>new Date().toISOString()}});
   const coreBookStore=options.coreBookStore??new InMemoryCoreBookStore();

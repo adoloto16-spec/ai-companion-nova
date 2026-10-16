@@ -3,6 +3,7 @@ import type {AudioOutputAdapter} from "../../modules/voice/tts/src";
 import type {TtsAudioMetadata,TtsPreset,TtsProvider,TtsProviderCapabilities,TtsProviderHealth,TtsSettings,TtsStreamEvent,TtsSynthesisRequest} from "../../contracts/src/tts";
 import {DEFAULT_TTS_SETTINGS} from "../../contracts/src/tts";
 import {VoiceStudioTtsProvider,validateVoiceStudioBaseUrl} from "../../providers/tts/voice-studio/src";
+import {SileroTtsProvider} from "../../providers/tts/silero/src";
 import {NovaTurnJsonEmotionStreamDecoder,NovaTurnJsonSpeechStreamDecoder,NovaTurnTaggedEmotionStreamDecoder,NovaTurnTaggedSpeechStreamDecoder} from "../../core/src/nova-turn-stream-decoders";
 import {WebAudioOutputAdapter} from "../../apps/desktop-ui/src/web-audio-output";
 
@@ -522,6 +523,163 @@ async function webAudioSchedulesFifoWithoutOverlap():Promise<void>{
   await output.dispose();
 }
 
+
+function sileroWav(sampleRate=44100,channels=2,pcmBytes=8,withExtraChunk=false):Uint8Array{
+  const extraSize=withExtraChunk?12:0;
+  const bytes=new Uint8Array(44+extraSize+pcmBytes+(pcmBytes%2));
+  const view=new DataView(bytes.buffer);
+  const put=(offset:number,value:string)=>{for(let i=0;i<value.length;i++)bytes[offset+i]=value.charCodeAt(i);};
+  put(0,"RIFF");view.setUint32(4,bytes.length-8,true);put(8,"WAVE");
+  put(12,"fmt ");view.setUint32(16,16,true);
+  view.setUint16(20,1,true);view.setUint16(22,channels,true);
+  view.setUint32(24,sampleRate,true);view.setUint32(28,sampleRate*channels*2,true);
+  view.setUint16(32,channels*2,true);view.setUint16(34,16,true);
+  let offset=36;
+  if(withExtraChunk){put(offset,"JUNK");view.setUint32(offset+4,3,true);bytes.set([1,2,3],offset+8);offset+=12;}
+  put(offset,"data");view.setUint32(offset+4,pcmBytes,true);
+  return bytes;
+}
+function sileroPreset(overrides:Partial<TtsPreset>={}):TtsPreset{
+  return {
+    ...preset("silero"),baseUrl:"http://127.0.0.1:9123",voiceProfileId:"kseniya",
+    speed:1.25,credentialReference:null,providerOptions:{model:"tts-fixture"},...overrides
+  };
+}
+async function collectSilero(
+  provider:SileroTtsProvider,
+  selectedPreset:TtsPreset=sileroPreset(),
+  textValue="Привет!",
+  signal:AbortSignal=new AbortController().signal
+):Promise<TtsStreamEvent[]>{
+  const events:TtsStreamEvent[]=[];
+  for await(const event of provider.synthesize({sessionId:"silero-test",text:textValue,preset:selectedPreset,emotion:""}, {signal}))events.push(event);
+  return events;
+}
+function sileroError(events:TtsStreamEvent[],code:string,message:string):void{
+  const event=events[0];
+  ok(event?.type==="error",message+" must emit an error event");
+  equal(event.error.code,code,message+" error code");
+}
+async function sileroProviderProtocolAndWav():Promise<void>{
+  const requests:Array<{url:string;init:RequestInit}>=[];
+  const audio=sileroWav(44100,2,8,true);
+  const provider=new SileroTtsProvider({
+    fetch:async(url,init)=>{requests.push({url,init});return new Response(audio,{status:200,headers:{"content-type":"audio/wav"}});},
+    requestTimeoutMs:1000
+  });
+  const events=await collectSilero(provider);
+  equal(requests.length,1,"one Silero HTTP request is made per supplied sentence");
+  equal(requests[0]!.url,"http://127.0.0.1:9123/v1/audio/speech","Silero uses the preset URL with a configurable port");
+  equal(requests[0]!.init.method,"POST","Silero synthesis uses POST");
+  equal(requests[0]!.init.redirect,"error","Silero requests reject redirects");
+  const payload=JSON.parse(String(requests[0]!.init.body)) as Record<string,unknown>;
+  equal(payload.model,"tts-fixture","Silero model comes from providerOptions.model");
+  equal(payload.input,"Привет!","Silero receives request.text without splitting or collecting text");
+  equal(payload.voice,"kseniya","Silero voice comes from voiceProfileId");
+  equal(payload.response_format,"wav","Silero requests WAV for its private decoder");
+  equal(payload.speed,1.25,"Silero speed comes from the selected preset");
+  ok(!Object.prototype.hasOwnProperty.call(payload,"language"),"Silero does not send the non-operative language setting");
+  ok(!Object.keys(requests[0]!.init.headers as Record<string,string>).some(key=>key.toLowerCase()==="authorization"),"Silero does not add API authorization");
+  equal(events.map(event=>event.type).join(","),"start,audio,done","Silero emits start, raw PCM audio, then done");
+  const start=events[0];ok(start?.type==="start","Silero start metadata is present");
+  equal(start.audio.sampleRate,44100,"WAV sample rate is preserved");
+  equal(start.audio.channels,2,"WAV channel count is preserved");
+  equal(start.audio.format,"pcm16le","WAV metadata is converted to pcm16le");
+  const audioEvent=events[1];ok(audioEvent?.type==="audio","PCM audio event is present");
+  equal(audioEvent.data.byteLength,8,"PCM data excludes RIFF/WAVE headers and chunk metadata");
+  equal(audioEvent.sequence,0,"the first PCM event sequence is zero");
+  ok(!provider.capabilities().streaming,"Silero is not advertised as streaming because its API returns a complete WAV");
+
+  const chunkRequests:Array<{url:string;init:RequestInit}>=[];
+  const longPcmLength=150_000;
+  const largeProvider=new SileroTtsProvider({
+    fetch:async(url,init)=>{chunkRequests.push({url,init});return new Response(sileroWav(22050,2,longPcmLength),{status:200});},
+    requestTimeoutMs:1000
+  });
+  const chunks=await collectSilero(largeProvider);
+  equal(chunks.map(event=>event.type).join(","),"start,audio,audio,audio,done","large PCM is split into bounded audio events");
+  const audioChunks=chunks.filter((event):event is Extract<TtsStreamEvent,{type:"audio"}>=>event.type==="audio");
+  equal(audioChunks.reduce((sum,event)=>sum+event.data.byteLength,0),longPcmLength,"PCM chunking preserves every audio byte");
+  for(let i=0;i<audioChunks.length;i++){
+    ok(audioChunks[i]!.data.byteLength<=64*1024,"Silero audio chunk stays under 64 KiB");
+    equal(audioChunks[i]!.data.byteLength%4,0,"stereo PCM chunks are aligned to complete audio frames");
+    equal(audioChunks[i]!.sequence,i,"PCM chunk sequence increases in order");
+  }
+}
+async function sileroProviderFailuresAndHealth():Promise<void>{
+  const invalidPreset={...sileroPreset(),baseUrl:"http://example.com:9123"};
+  let unsafeFetchCalled=false;
+  const unsafeProvider=new SileroTtsProvider({fetch:async()=>{unsafeFetchCalled=true;return new Response(sileroWav());}});
+  const unsafeEvents=await collectSilero(unsafeProvider,invalidPreset);
+  sileroError(unsafeEvents,"unsafe_base_url","Non-loopback Silero URLs");
+  ok(!unsafeFetchCalled,"unsafe base URLs are rejected before fetch");
+  for(const unsafe of [
+    "https://127.0.0.1:9123","http://user:pass@127.0.0.1:9123",
+    "http://127.0.0.1:9123/path","http://127.0.0.1:9123/?x=1","http://127.0.0.1:9123/#fragment"
+  ]){
+    const result=await collectSilero(unsafeProvider,{...sileroPreset(),baseUrl:unsafe});
+    sileroError(result,unsafe.startsWith("http://user:")||unsafe.includes("/path")||unsafe.includes("?")||unsafe.includes("#")||unsafe.startsWith("https:")
+      ?"unsafe_base_url":"unsafe_base_url","Unsafe Silero URL "+unsafe);
+  }
+
+  for(const [name,body] of [["empty WAV",new Uint8Array(0)],["truncated WAV",new Uint8Array([82,73,70,70,4,0,0,0,87,65,86,69])] as const){
+    const provider=new SileroTtsProvider({fetch:async()=>new Response(body,{status:200}),requestTimeoutMs:1000});
+    sileroError(await collectSilero(provider),"invalid_wav",name);
+  }
+  const httpProvider=new SileroTtsProvider({fetch:async()=>new Response("fixture server failure",{status:503})});
+  const httpEvents=await collectSilero(httpProvider);
+  sileroError(httpEvents,"http_error","Silero HTTP 503");
+  const httpError=httpEvents[0];
+  ok(httpError?.type==="error"&&!httpError.error.message.includes("fixture server failure"),"HTTP response body is not leaked in diagnostics");
+  const networkProvider=new SileroTtsProvider({fetch:async()=>{throw new Error("http://127.0.0.1:9123 private connection text");}});
+  const networkEvents=await collectSilero(networkProvider);
+  sileroError(networkEvents,"transport_error","Silero connection failure");
+  const networkError=networkEvents[0];
+  ok(networkError?.type==="error"&&!networkError.error.message.includes("9123"),"network errors do not expose the local URL");
+
+  const waitsForAbort:SileroFetch=async(_url,init)=>await new Promise<Response>((_resolve,reject)=>{
+    const signal=init.signal;
+    if(!signal)throw new Error("Expected timeout signal.");
+    const cancel=()=>{const error=new Error("aborted");error.name="AbortError";reject(error);};
+    signal.addEventListener("abort",cancel,{once:true});
+  });
+  const timeoutProvider=new SileroTtsProvider({fetch:waitsForAbort,requestTimeoutMs:5});
+  sileroError(await collectSilero(timeoutProvider),"timeout","Silero synthesis timeout");
+  const cancelController=new AbortController();
+  let started!:()=>void;
+  const fetchStarted=new Promise<void>(resolve=>{started=resolve;});
+  const cancellableProvider=new SileroTtsProvider({
+    fetch:async(_url,init)=>await new Promise<Response>((_resolve,reject)=>{
+      const signal=init.signal;
+      if(!signal)throw new Error("Expected cancellation signal.");
+      signal.addEventListener("abort",()=>{const error=new Error("aborted");error.name="AbortError";reject(error);},{once:true});
+      started();
+    }),
+    requestTimeoutMs:10_000
+  });
+  const cancelPromise=collectSilero(cancellableProvider,sileroPreset(),"Cancel me",cancelController.signal);
+  await fetchStarted;
+  cancelController.abort();
+  sileroError(await cancelPromise,"cancelled","External cancellation");
+
+  const healthRequests:Array<{url:string;init:RequestInit}>=[];
+  const healthProvider=new SileroTtsProvider({
+    fetch:async(url,init)=>{healthRequests.push({url,init});return new Response("{}",{status:200});}
+  });
+  const health=await healthProvider.testConnection(sileroPreset(),new AbortController().signal);
+  equal(health.status,"healthy","Silero connection test returns existing healthy status");
+  equal(healthRequests.length,1,"connection test sends exactly one request");
+  equal(healthRequests[0]!.url,"http://127.0.0.1:9123/openapi.json","connection test uses the selected preset URL");
+  equal(healthRequests[0]!.init.method,"GET","connection test uses GET");
+  equal(healthRequests[0]!.init.redirect,"error","connection test rejects redirects");
+  ok(!healthRequests[0]!.init.body,"connection test never requests synthesis");
+
+  const healthTimeoutProvider=new SileroTtsProvider({fetch:waitsForAbort,connectionTimeoutMs:5});
+  const healthTimeout=await healthTimeoutProvider.testConnection(sileroPreset(),new AbortController().signal);
+  equal(healthTimeout.status,"unavailable","connection timeout uses existing unavailable status");
+  equal(healthTimeout.message,"Silero connection check timed out.","connection timeout has a safe diagnostic");
+}
+
 async function main():Promise<void>{
   sentenceBoundariesPreserveEveryCharacter();
   emotionMappingOnlyUsesSupportedActions();
@@ -530,6 +688,8 @@ async function main():Promise<void>{
   await boundedBackpressureAndCancellation();
   await cancelledProviderEventsCannotEnterANewSession();
   await voiceStudioWebSocketAndHttpFallback();
+  await sileroProviderProtocolAndWav();
+  await sileroProviderFailuresAndHealth();
   await websocketRequestLockReleasedBeforeCancelledIteratorSettles();
   await webAudioSchedulesFifoWithoutOverlap();
   console.log("PASS TTS sentence, emotion, controller, provider and Web Audio tests");

@@ -13,6 +13,7 @@
     "modules/voice/tts/src/**/*.ts",
     "providers/tts/registry/src/**/*.ts",
     "providers/tts/voice-studio/src/**/*.ts",
+    "providers/tts/silero/src/**/*.ts",
     "providers/mock/src/**/*.ts",
     "providers/chat/openai-compatible/src/**/*.ts",
     "providers/chat/gemini/src/**/*.ts",

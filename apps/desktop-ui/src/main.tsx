@@ -2050,6 +2050,32 @@ function TtsSettingsView({settings,onChange,onSave,saving,message,controller,pro
     const updated={...selected,...changes};
     onChange({...settings,presets:settings.presets.map(preset=>preset.id===selected.id?updated:preset)});
   };
+  const selectProvider=(providerId:string)=>{
+    if(!selected||providerId===selected.providerId)return;
+    controller.stop("TTS provider changed.");
+    if(providerId==="silero"){
+      const keepSilero=selected.providerId==="silero";
+      const options:Record<string,unknown>={};
+      if(keepSilero&&typeof selected.providerOptions.model==="string")options.model=selected.providerOptions.model;
+      else options.model="tts-1";
+      const updated:TtsPreset={
+        ...selected,providerId,baseUrl:keepSilero?selected.baseUrl:"http://127.0.0.1:8081",
+        voiceProfileId:keepSilero&&selected.voiceProfileId?selected.voiceProfileId:"xenia",
+        language:"ru",speed:keepSilero?selected.speed:1,credentialReference:null,providerOptions:options
+      };
+      onChange({...settings,presets:settings.presets.map(preset=>preset.id===selected.id?updated:preset)});
+      return;
+    }
+    const keepVoiceStudio=selected.providerId==="voice-studio";
+    const voiceStudioOptions:Record<string,unknown>={};
+    if(keepVoiceStudio&&typeof selected.providerOptions.engine==="string")voiceStudioOptions.engine=selected.providerOptions.engine;
+    const updated:TtsPreset={
+      ...selected,providerId,baseUrl:keepVoiceStudio?selected.baseUrl:"http://127.0.0.1:3900",
+      voiceProfileId:keepVoiceStudio?selected.voiceProfileId:"",language:"ru",
+      speed:keepVoiceStudio?selected.speed:1,credentialReference:null,providerOptions:voiceStudioOptions
+    };
+    onChange({...settings,presets:settings.presets.map(preset=>preset.id===selected.id?updated:preset)});
+  };
   const setEnabled=(enabled:boolean)=>{
     controller.stop(enabled?"TTS setting changed.":"Speech output disabled.");
     onChange({...settings,enabled});
@@ -2072,7 +2098,7 @@ function TtsSettingsView({settings,onChange,onSave,saving,message,controller,pro
     onChange({...settings,presets,activePresetId:presets[0]?.id??null});
   };
   const checkConnection=async()=>{
-    setConnectionMessage("Checking the local VoiceStudio API…");
+    setConnectionMessage("Checking the local "+(selected?.providerId==="silero"?"Silero":"VoiceStudio")+" API…");
     const result=await controller.testConnection();
     setConnectionMessage(result.message);
   };
@@ -2104,22 +2130,30 @@ function TtsSettingsView({settings,onChange,onSave,saving,message,controller,pro
           <input value={selected.name} maxLength={100} onChange={event=>update({name:event.target.value})} disabled={saving}/>
         </label>
         <label>TTS provider
-          <select value={selected.providerId} onChange={event=>update({providerId:event.target.value})} disabled={saving}>
+          <select value={selected.providerId} onChange={event=>selectProvider(event.target.value)} disabled={saving}>
             {providers.map(provider=><option key={provider.id} value={provider.id}>{provider.id}</option>)}
           </select>
         </label>
-        <label>VoiceStudio base URL
+        <label>{selected.providerId==="silero"?"Silero base URL":"VoiceStudio base URL"}
           <input type="url" value={selected.baseUrl} maxLength={1024} onChange={event=>update({baseUrl:event.target.value})} disabled={saving}/>
-          <small>Only HTTP loopback on port 3900 is accepted by the VoiceStudio adapter.</small>
+          <small>{selected.providerId==="silero"?"Use HTTP loopback (127.0.0.1, localhost, or IPv6 loopback); the local port is configurable.":"Only HTTP loopback on port 3900 is accepted by the VoiceStudio adapter."}</small>
         </label>
-        <label>Voice/profile ID
-          <input value={selected.voiceProfileId} maxLength={256} placeholder="Enter a VoiceStudio profile ID" onChange={event=>update({voiceProfileId:event.target.value})} disabled={saving}/>
+        {selected.providerId==="silero"&&<label>Silero model
+          <input value={String(selected.providerOptions.model??"tts-1")} maxLength={120} placeholder="tts-1"
+            onChange={event=>{const options:Record<string,unknown>={...selected.providerOptions};const model=event.target.value;if(model.trim())options.model=model;else delete options.model;update({providerOptions:options});}} disabled={saving}/>
+        </label>}
+        <label>{selected.providerId==="silero"?"Silero voice ID":"Voice/profile ID"}
+          <input value={selected.voiceProfileId} maxLength={256} placeholder={selected.providerId==="silero"?"xenia":"Enter a VoiceStudio profile ID"} onChange={event=>update({voiceProfileId:event.target.value})} disabled={saving}/>
+          {selected.providerId==="silero"&&<small>Russian voices: xenia, kseniya, aidar, baya, eugene, random.</small>}
         </label>
-        <label>Language
-          <input value={selected.language} maxLength={20} placeholder="ru" onChange={event=>update({language:event.target.value})} disabled={saving}/>
-        </label>
+        {selected.providerId==="silero"
+          ?<p className="hint">Silero language is configured on the local server with SILERO_LANGUAGE=ru.</p>
+          :<label>Language
+            <input value={selected.language} maxLength={20} placeholder="ru" onChange={event=>update({language:event.target.value})} disabled={saving}/>
+          </label>}
         <label>Speech speed
           <input type="number" min={0.5} max={2} step={0.1} value={selected.speed} onChange={event=>update({speed:Number(event.target.value)})} disabled={saving}/>
+          {selected.providerId==="silero"&&<small>Recommended: 1.0. The local server may reject other speeds if its FFmpeg support is unavailable.</small>}
         </label>
         {selected.providerId==="voice-studio"&&<label>VoiceStudio engine ID (optional)
           <input value={String(selected.providerOptions.engine??"")} maxLength={80} placeholder="Use VoiceStudio active engine"
