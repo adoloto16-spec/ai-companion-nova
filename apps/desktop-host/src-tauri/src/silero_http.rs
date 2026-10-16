@@ -163,7 +163,7 @@ mod tests{
   assert!(validated_request("http://127.0.0.1:8081","/v1/audio/speech","POST",Some(&"x".repeat(MAX_REQUEST_BODY_BYTES+1))).is_err());
  }
  #[tokio::test]async fn local_server_checks_openapi_with_native_transport(){
-  let body=br#"{"openapi":"3.1.0","paths":{"/v1/audio/speech":{"post":{"requestBody":{"content":{"application/json":{"schema":{"$ref":"#/components/schemas/SpeechRequest"}}}}}}},"components":{"schemas":{"SpeechRequest":{"type":"object","required":["model","input","voice"],"properties":{"model":{"type":"string"},"input":{"type":"string"},"voice":{"type":"string"},"response_format":{"type":"string"},"speed":{"type":"number"}}}}}"#;
+  let body=br##"{"openapi":"3.1.0","paths":{"/v1/audio/speech":{"post":{"requestBody":{"content":{"application/json":{"schema":{"$ref":"#/components/schemas/SpeechRequest"}}}}}}},"components":{"schemas":{"SpeechRequest":{"type":"object","required":["model","input","voice"],"properties":{"model":{"type":"string"},"input":{"type":"string"},"voice":{"type":"string"},"response_format":{"type":"string"},"speed":{"type":"number"}}}}}"##;
   let(base,server)=fixture(wire("200 OK","application/json",body));let req=validated_request(&base,"/openapi.json","GET",None).unwrap();let mut events=Vec::new();
   perform_request(req,Arc::new(AtomicBool::new(false)),|e|{events.push(e);Ok(())}).await.unwrap();
   let request=server.join().unwrap();assert!(String::from_utf8_lossy(&request).starts_with("GET /openapi.json HTTP/1.1"));
