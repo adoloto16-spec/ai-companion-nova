@@ -614,7 +614,7 @@ async function sileroProviderProtocolAndWav():Promise<void>{
 async function sileroProviderFailuresAndHealth():Promise<void>{
   const invalidPreset={...sileroPreset(),baseUrl:"http://example.com:9123"};
   let unsafeFetchCalled=false;
-  const unsafeProvider=new SileroTtsProvider({fetch:async()=>{unsafeFetchCalled=true;return new Response(sileroWav());}});
+  const unsafeProvider=new SileroTtsProvider({fetch:async()=>{unsafeFetchCalled=true;return new Response(responseBody(sileroWav()));}});
   const unsafeEvents=await collectSilero(unsafeProvider,invalidPreset);
   sileroError(unsafeEvents,"unsafe_base_url","Non-loopback Silero URLs");
   ok(!unsafeFetchCalled,"unsafe base URLs are rejected before fetch");
