@@ -40,7 +40,7 @@
     ],
     "windows": {
       "webviewInstallMode": {
-        "type": "skip"
+        "type": "downloadBootstrapper"
       },
       "nsis": {
         "startMenuFolder": "AI Companion Nova"

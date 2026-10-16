@@ -3,6 +3,7 @@ import PromptRegistryView from "./prompt-registry-view";
 import {createRoot} from "react-dom/client";
 import {invoke} from "@tauri-apps/api/core";
 import {NovaHttpClient} from "./ollama-http-client";
+import {createSileroNativeFetch} from "./silero-http-client";
 import {validateOllamaBaseUrl} from "../../../providers/chat/ollama/src";
 import {passiveDiagnosticsOptions} from "./provider-health-polling";
 import {ChatSessionController,ConversationSession,InMemoryCharacterStore} from "../../../core/src/index";
@@ -38,6 +39,7 @@ import "./styles.css";
 
 const preview:RuntimeDiagnostics={schemaVersion:"1",timestamp:new Date().toISOString(),runtimeStatus:"stopped",coreStatus:"stopped",modules:[],providers:[],recentErrors:[],capabilities:[]};
 const ollamaHttpClient=new NovaHttpClient(600_000);
+const sileroNativeFetch=createSileroNativeFetch();
 type ConfigurableChatProviderId="openai-compatible"|"gemini"|"ollama";
 function defaultProviderBaseUrl(providerId:ConfigurableChatProviderId):string{
   if(providerId==="gemini")return "https://generativelanguage.googleapis.com/v1beta";
@@ -2631,6 +2633,7 @@ function App(){
     const next=await startFoundationRuntime({
       providerConfiguration:config,credentialStore,characterStore,coreBookStore,memoryStore,semanticIndexStore,conversationStore,retriever,retrievalIndexWriter:retriever,
       httpClient:ollamaHttpClient,
+      sileroFetch:sileroNativeFetch,
       providerPresetConfigurations:materializePresetConfigurations(presetState.presets),
       providerPresetPools:presetState.presets,
       onProviderPresetPoolStateChange:persistProviderPresetPoolState,

@@ -631,11 +631,14 @@ async function sileroProviderFailuresAndHealth():Promise<void>{
     const provider=new SileroTtsProvider({fetch:async()=>new Response(responseBody(body),{status:200}),requestTimeoutMs:1000});
     sileroError(await collectSilero(provider),"invalid_wav",name);
   }
-  const httpProvider=new SileroTtsProvider({fetch:async()=>new Response("fixture server failure",{status:503})});
-  const httpEvents=await collectSilero(httpProvider);
-  sileroError(httpEvents,"http_error","Silero HTTP 503");
-  const httpError=httpEvents[0];
-  ok(httpError?.type==="error"&&!httpError.error.message.includes("fixture server failure"),"HTTP response body is not leaked in diagnostics");
+  for(const status of [401,403,404,422,503]){
+    const httpProvider=new SileroTtsProvider({fetch:async()=>new Response("fixture server failure",{status})});
+    const httpEvents=await collectSilero(httpProvider);
+    sileroError(httpEvents,"http_error","Silero HTTP "+status);
+    const httpError=httpEvents[0];
+    ok(httpError?.type==="error"&&!httpError.error.message.includes("fixture server failure"),"HTTP "+status+" response body is not leaked");
+    if(status===401||status===403)ok(httpError?.type==="error"&&httpError.error.message.includes("authorization"),"HTTP "+status+" indicates authorization is required");
+  }
   const networkProvider=new SileroTtsProvider({fetch:async()=>{throw new Error("http://127.0.0.1:9123 private connection text");}});
   const networkEvents=await collectSilero(networkProvider);
   sileroError(networkEvents,"transport_error","Silero connection failure");
@@ -668,16 +671,51 @@ async function sileroProviderFailuresAndHealth():Promise<void>{
   sileroError(await cancelPromise,"cancelled","External cancellation");
 
   const healthRequests:Array<{url:string;init:RequestInit}>=[];
+  const sileroOpenApiFixture={
+    openapi:"3.1.0",
+    paths:{"/v1/audio/speech":{post:{
+      requestBody:{required:true,content:{"application/json":{schema:{$ref:"#/components/schemas/SpeechRequest"}}}}
+    }}},
+    components:{schemas:{SpeechRequest:{
+      type:"object",required:["model","input","voice"],
+      properties:{model:{type:"string"},input:{type:"string"},voice:{type:"string"},response_format:{type:"string"},speed:{type:"number"}}
+    }}}
+  };
   const healthProvider=new SileroTtsProvider({
-    fetch:async(url,init)=>{healthRequests.push({url,init});return new Response("{}",{status:200});}
+    fetch:async(url,init)=>{
+      healthRequests.push({url,init});
+      if(url.endsWith("/openapi.json"))
+        return new Response(JSON.stringify(sileroOpenApiFixture),{status:200,headers:{"content-type":"application/json"}});
+      return new Response(responseBody(sileroWav()),{status:200,headers:{"content-type":"audio/wav"}});
+    }
   });
   const health=await healthProvider.testConnection(sileroPreset(),new AbortController().signal);
-  equal(health.status,"healthy","Silero connection test returns existing healthy status");
-  equal(healthRequests.length,1,"connection test sends exactly one request");
-  equal(healthRequests[0]!.url,"http://127.0.0.1:9123/openapi.json","connection test uses the selected preset URL");
-  equal(healthRequests[0]!.init.method,"GET","connection test uses GET");
-  equal(healthRequests[0]!.init.redirect,"error","connection test rejects redirects");
-  ok(!healthRequests[0]!.init.body,"connection test never requests synthesis");
+  equal(health.status,"healthy","connection test confirms a compatible API and a PCM16 WAV probe");
+  equal(healthRequests.length,2,"connection test checks OpenAPI and the actual speech endpoint");
+  equal(healthRequests[0]!.url,"http://127.0.0.1:9123/openapi.json","OpenAPI uses selected preset URL");
+  equal(healthRequests[0]!.init.method,"GET","OpenAPI check uses GET");
+  equal(healthRequests[0]!.init.redirect,"error","OpenAPI check rejects redirects");
+  ok(!healthRequests[0]!.init.body,"OpenAPI check has no body");
+  equal(healthRequests[1]!.url,"http://127.0.0.1:9123/v1/audio/speech","health probe calls the speech endpoint");
+  equal(healthRequests[1]!.init.method,"POST","speech probe uses POST");
+  equal(healthRequests[1]!.init.redirect,"error","speech probe rejects redirects");
+  const probePayload=JSON.parse(String(healthRequests[1]!.init.body)) as Record<string,unknown>;
+  equal(probePayload.model,"tts-fixture","health probe uses selected model");
+  equal(probePayload.input," ","health probe avoids speaking a phrase");
+  equal(probePayload.voice,"kseniya","health probe uses selected voice");
+  equal(probePayload.response_format,"wav","health probe requests WAV");
+  equal(probePayload.speed,1,"health probe avoids FFmpeg for speed changes");
+
+  let authProbeReached=false;
+  const authOnSpeechProvider=new SileroTtsProvider({fetch:async(url)=>{
+    if(url.endsWith("/openapi.json"))
+      return new Response(JSON.stringify(sileroOpenApiFixture),{status:200,headers:{"content-type":"application/json"}});
+    authProbeReached=true;return new Response("unauthorized",{status:401});
+  }});
+  const authHealth=await authOnSpeechProvider.testConnection(sileroPreset(),new AbortController().signal);
+  ok(authProbeReached,"health check tests the auth-protected speech endpoint");
+  equal(authHealth.status,"unavailable","public OpenAPI cannot mask POST authorization errors");
+  ok(authHealth.message?.includes("authorization"),"POST auth error is explained");
 
   const healthTimeoutProvider=new SileroTtsProvider({fetch:waitsForAbort,connectionTimeoutMs:5});
   const healthTimeout=await healthTimeoutProvider.testConnection(sileroPreset(),new AbortController().signal);

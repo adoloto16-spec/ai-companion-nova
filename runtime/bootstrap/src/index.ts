@@ -14,6 +14,7 @@ import {FakeChatProvider,FakeSTTProvider,FakeEmbeddingProvider,FakeVisionProvide
 import {TtsProviderRegistry} from "../../../providers/tts/registry/src";
 import {VoiceStudioTtsProvider} from "../../../providers/tts/voice-studio/src";
 import {SileroTtsProvider} from "../../../providers/tts/silero/src";
+import type {SileroFetch} from "../../../providers/tts/silero/src";
 import type {TtsProvider,TtsProviderDescriptor} from "../../../contracts/src/tts";
 import {
   OpenAICompatibleChatProvider,
@@ -48,6 +49,8 @@ export interface FoundationRuntimeOptions{
   memoryStore?:MemoryStore;
   conversationStore?:ConversationStore;
   httpClient?:HttpClient;
+  /** Optional native local transport; omitted by tests and non-desktop runtimes. */
+  sileroFetch?:SileroFetch;
   openAICompatible?:OpenAICompatibleRuntimeConfig;
   contextEngine?:ContextEngine;
   retriever?:Retriever;
@@ -204,7 +207,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const ttsProviders=new TtsProviderRegistry();
   // Concrete TTS adapters are registered only at the composition root.
   ttsProviders.register(()=>new VoiceStudioTtsProvider());
-  ttsProviders.register(()=>new SileroTtsProvider());
+  ttsProviders.register(()=>new SileroTtsProvider({fetch:options.sileroFetch}));
   const characterStore=options.characterStore??new InMemoryCharacterStore();
   const characterManager=new CharacterManager(characterStore,{events,clock:{now:()=>new Date().toISOString()}});
   const coreBookStore=options.coreBookStore??new InMemoryCoreBookStore();

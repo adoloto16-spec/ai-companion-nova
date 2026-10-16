@@ -4,12 +4,13 @@ import type {
 } from "../../../../contracts/src/tts";
 
 const MAX_WAV_BYTES=64*1024*1024;
+const MAX_OPENAPI_BYTES=4*1024*1024;
 const MAX_AUDIO_CHUNK_BYTES=64*1024;
 const MIN_AUDIO_SAMPLE_RATE=8_000;
 const MAX_AUDIO_SAMPLE_RATE=192_000;
 const MAX_TEXT_CHARS=4_000;
 const DEFAULT_REQUEST_TIMEOUT_MS=120_000;
-const DEFAULT_CONNECTION_TIMEOUT_MS=5_000;
+const DEFAULT_CONNECTION_TIMEOUT_MS=15_000;
 
 export type SileroFetch=(url:string,init:RequestInit)=>Promise<Response>;
 export interface SileroTtsOptions {
@@ -92,6 +93,8 @@ function publicError(error:unknown):{code:string;message:string;retryable:boolea
     return {code:error.code,message:error.message,retryable:error.retryable};
   if(error instanceof Error&&error.name==="AbortError")
     return {code:"cancelled",message:"Silero operation was cancelled.",retryable:true};
+  if(error instanceof Error&&error.name==="SileroTransportError"&&"code" in error&&typeof (error as {code?:unknown}).code==="string")
+    return {code:(error as {code:string}).code,message:error.message.slice(0,240),retryable:true};
   return {code:"transport_error",message:"Silero connection or synthesis failed.",retryable:true};
 }
 
@@ -152,35 +155,60 @@ function wavPcm16(bytes:Uint8Array):{metadata:TtsAudioMetadata;data:Uint8Array} 
   };
 }
 
-async function readBoundedResponse(response:Response):Promise<Uint8Array> {
+async function readBoundedResponse(response:Response,maxBytes=MAX_WAV_BYTES):Promise<Uint8Array> {
+  const tooLarge=()=>new SileroError(maxBytes===MAX_OPENAPI_BYTES
+    ?"Silero OpenAPI response exceeds the 4 MiB limit."
+    :"Silero WAV response exceeds the 64 MiB limit.","response_too_large",false);
   const length=response.headers.get("content-length");
-  if(length&&/^\d+$/u.test(length)&&Number(length)>MAX_WAV_BYTES)
-    throw new SileroError("Silero WAV response exceeds the 64 MiB limit.","response_too_large",false);
+  if(length&&/^\d+$/u.test(length)&&Number(length)>maxBytes){
+    if(response.body)await response.body.cancel().catch(()=>undefined);
+    throw tooLarge();
+  }
   if(response.body?.getReader){
-    const reader=response.body.getReader();
-    const chunks:Uint8Array[]=[];
+    const reader=response.body.getReader(),chunks:Uint8Array[]=[];
     let total=0;
     try{
       for(;;){
-        const next=await reader.read();
-        if(next.done)break;
+        const next=await reader.read();if(next.done)break;
         total+=next.value.byteLength;
-        if(total>MAX_WAV_BYTES){
-          await reader.cancel().catch(()=>undefined);
-          throw new SileroError("Silero WAV response exceeds the 64 MiB limit.","response_too_large",false);
-        }
+        if(total>maxBytes){await reader.cancel().catch(()=>undefined);throw tooLarge();}
         chunks.push(next.value);
       }
     }finally{reader.releaseLock();}
-    const merged=new Uint8Array(total);
-    let offset=0;
+    const merged=new Uint8Array(total);let offset=0;
     for(const chunk of chunks){merged.set(chunk,offset);offset+=chunk.byteLength;}
     return merged;
   }
   const bytes=new Uint8Array(await response.arrayBuffer());
-  if(bytes.byteLength>MAX_WAV_BYTES)
-    throw new SileroError("Silero WAV response exceeds the 64 MiB limit.","response_too_large",false);
+  if(bytes.byteLength>maxBytes)throw tooLarge();
   return bytes;
+}
+
+function isRecord(value:unknown):value is Record<string,unknown> {
+  return value!==null&&typeof value==="object"&&!Array.isArray(value);
+}
+function isCompatibleSileroOpenApi(document:unknown):boolean {
+  if(!isRecord(document)||!isRecord(document.paths))return false;
+  const item=document.paths["/v1/audio/speech"];
+  if(!isRecord(item)||!isRecord(item.post))return false;
+  const operation=item.post;
+  if(!isRecord(operation.requestBody)||!isRecord(operation.requestBody.content))return false;
+  const json=operation.requestBody.content["application/json"];
+  if(!isRecord(json)||!isRecord(json.schema))return false;
+  let schema=json.schema;const reference=schema["$ref"];
+  if(typeof reference==="string"){
+    const match=/^#\/components\/schemas\/([A-Za-z0-9_.-]+)$/u.exec(reference);
+    if(!match||!isRecord(document.components)||!isRecord(document.components.schemas))return false;
+    const resolved=document.components.schemas[match[1]!];if(!isRecord(resolved))return false;schema=resolved;
+  }
+  if(!isRecord(schema.properties)||!Array.isArray(schema.required))return false;
+  return ["model","input","voice","response_format","speed"].every(key=>isRecord(schema.properties[key]))&&
+    ["model","input","voice"].every(key=>schema.required.includes(key));
+}
+function connectionHttpMessage(status:number):string {
+  if(status===401||status===403)return "Silero API requires authorization. Check the local server's REQUIRE_AUTH setting.";
+  if(status===404)return "Silero OpenAI-compatible speech API was not found at the configured local URL.";
+  return "Silero API check returned HTTP "+status+".";
 }
 
 export class SileroTtsProvider implements TtsProvider {
@@ -205,17 +233,44 @@ export class SileroTtsProvider implements TtsProvider {
   async testConnection(preset:TtsPreset,signal:AbortSignal):Promise<TtsProviderHealth> {
     let timeout:{signal:AbortSignal;dispose:()=>void}|undefined;
     try{
-      const {baseUrl}=validatePreset(preset,false);
+      const {baseUrl,model,voice}=validatePreset(preset);
       throwIfAborted(signal);
       timeout=linkedTimeout(signal,this.connectionTimeoutMs);
-      const response=await this.fetcher(baseUrl+"/openapi.json",{
-        method:"GET",signal:timeout.signal,redirect:"error"
+      const response=await this.fetcher(baseUrl+"/openapi.json",{method:"GET",signal:timeout.signal,redirect:"error"});
+      throwIfAborted(timeout.signal);
+      if(!response.ok){
+        if(response.body)void response.body.cancel().catch(()=>undefined);
+        return {status:"unavailable",message:connectionHttpMessage(response.status)};
+      }
+      const bytes=await readBoundedResponse(response,MAX_OPENAPI_BYTES);
+      throwIfAborted(timeout.signal);
+      let document:unknown;
+      try{document=JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(bytes));}
+      catch{return {status:"unavailable",message:"Silero returned an invalid OpenAPI document."};}
+      if(!isCompatibleSileroOpenApi(document))
+        return {status:"unavailable",message:"The local service does not expose a compatible Silero speech API."};
+      // OpenAPI may be public while POST /v1/audio/speech is protected by REQUIRE_AUTH.
+      // Probe whitespace, not a spoken phrase, and request speed 1 to avoid FFmpeg.
+      const probe=await this.fetcher(baseUrl+"/v1/audio/speech",{
+        method:"POST",headers:{"content-type":"application/json","accept":"audio/wav"},
+        body:JSON.stringify({model,input:" ",voice,response_format:"wav",speed:1.0}),
+        signal:timeout.signal,redirect:"error"
       });
       throwIfAborted(timeout.signal);
-      if(response.body)void response.body.cancel().catch(()=>undefined);
-      if(!response.ok)
-        return {status:"unavailable",message:"Silero local API check failed."};
-      return {status:"healthy",message:"Silero local API is reachable."};
+      if(!probe.ok){
+        if(probe.body)void probe.body.cancel().catch(()=>undefined);
+        return {status:"unavailable",message:connectionHttpMessage(probe.status)};
+      }
+      const contentType=(probe.headers.get("content-type")??"").split(";",1)[0]!.trim().toLowerCase();
+      if(contentType!=="audio/wav"&&contentType!=="audio/x-wav"){
+        if(probe.body)void probe.body.cancel().catch(()=>undefined);
+        return {status:"unavailable",message:"Silero speech endpoint did not return WAV audio."};
+      }
+      const probeBytes=await readBoundedResponse(probe);
+      throwIfAborted(timeout.signal);
+      try{wavPcm16(probeBytes);}
+      catch{return {status:"unavailable",message:"Silero speech endpoint did not return a supported PCM16 WAV response."};}
+      return {status:"healthy",message:"Compatible Silero API and speech endpoint are available."};
     }catch(error){
       if(signal.aborted)return {status:"unavailable",message:"Silero connection check was cancelled."};
       if(timeout?.signal.aborted)return {status:"unavailable",message:"Silero connection check timed out."};
@@ -245,7 +300,12 @@ export class SileroTtsProvider implements TtsProvider {
       throwIfAborted(timeout.signal);
       if(!response.ok){
         if(response.body)void response.body.cancel().catch(()=>undefined);
-        throw new SileroError("Silero API returned HTTP "+response.status+".","http_error",response.status===429||response.status>=500);
+        const message=response.status===401||response.status===403
+          ?"Silero API requires authorization. Check the local server's REQUIRE_AUTH setting."
+          :response.status===404
+            ?"Silero speech endpoint was not found; check the local API URL."
+            :"Silero API returned HTTP "+response.status+".";
+        throw new SileroError(message,"http_error",response.status===429||response.status>=500);
       }
       const wavBytes=await readBoundedResponse(response);
       throwIfAborted(timeout.signal);
