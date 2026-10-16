@@ -211,6 +211,7 @@ export class SileroTtsProvider implements TtsProvider {
       const response=await this.fetcher(baseUrl+"/openapi.json",{
         method:"GET",signal:timeout.signal,redirect:"error"
       });
+      throwIfAborted(timeout.signal);
       if(response.body)void response.body.cancel().catch(()=>undefined);
       if(!response.ok)
         return {status:"unavailable",message:"Silero local API check failed."};
@@ -241,17 +242,22 @@ export class SileroTtsProvider implements TtsProvider {
         signal:timeout.signal,
         redirect:"error"
       });
+      throwIfAborted(timeout.signal);
       if(!response.ok){
         if(response.body)void response.body.cancel().catch(()=>undefined);
         throw new SileroError("Silero API returned HTTP "+response.status+".","http_error",response.status===429||response.status>=500);
       }
-      const wav=wavPcm16(await readBoundedResponse(response));
+      const wavBytes=await readBoundedResponse(response);
+      throwIfAborted(timeout.signal);
+      const wav=wavPcm16(wavBytes);
+      throwIfAborted(timeout.signal);
       throwIfAborted(options.signal);
       yield {type:"start",sessionId:request.sessionId,audio:wav.metadata};
       const frameBytes=wav.metadata.channels*2;
       const chunkBytes=Math.floor(MAX_AUDIO_CHUNK_BYTES/frameBytes)*frameBytes;
       let sequence=0;
       for(let offset=0;offset<wav.data.byteLength;offset+=chunkBytes){
+        throwIfAborted(timeout.signal);
         throwIfAborted(options.signal);
         yield {
           type:"audio",sessionId:request.sessionId,sequence:sequence++,

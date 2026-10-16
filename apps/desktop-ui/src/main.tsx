@@ -2139,8 +2139,8 @@ function TtsSettingsView({settings,onChange,onSave,saving,message,controller,pro
           <small>{selected.providerId==="silero"?"Use HTTP loopback (127.0.0.1, localhost, or IPv6 loopback); the local port is configurable.":"Only HTTP loopback on port 3900 is accepted by the VoiceStudio adapter."}</small>
         </label>
         {selected.providerId==="silero"&&<label>Silero model
-          <input value={String(selected.providerOptions.model??"tts-1")} maxLength={120} placeholder="tts-1"
-            onChange={event=>{const options:Record<string,unknown>={...selected.providerOptions};const model=event.target.value;if(model.trim())options.model=model;else delete options.model;update({providerOptions:options});}} disabled={saving}/>
+          <input value={String(selected.providerOptions.model??"")} maxLength={120} placeholder="tts-1"
+            onChange={event=>{const options:Record<string,unknown>={...selected.providerOptions};options.model=event.target.value;update({providerOptions:options});}} disabled={saving}/>
         </label>}
         <label>{selected.providerId==="silero"?"Silero voice ID":"Voice/profile ID"}
           <input value={selected.voiceProfileId} maxLength={256} placeholder={selected.providerId==="silero"?"xenia":"Enter a VoiceStudio profile ID"} onChange={event=>update({voiceProfileId:event.target.value})} disabled={saving}/>

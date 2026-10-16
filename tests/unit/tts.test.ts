@@ -524,6 +524,11 @@ async function webAudioSchedulesFifoWithoutOverlap():Promise<void>{
 }
 
 
+function responseBody(bytes:Uint8Array):ArrayBuffer{
+  const copy=new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(copy).set(bytes);
+  return copy;
+}
 function sileroWav(sampleRate=44100,channels=2,pcmBytes=8,withExtraChunk=false):Uint8Array{
   const extraSize=withExtraChunk?12:0;
   const bytes=new Uint8Array(44+extraSize+pcmBytes+(pcmBytes%2));
@@ -564,7 +569,7 @@ async function sileroProviderProtocolAndWav():Promise<void>{
   const requests:Array<{url:string;init:RequestInit}>=[];
   const audio=sileroWav(44100,2,8,true);
   const provider=new SileroTtsProvider({
-    fetch:async(url,init)=>{requests.push({url,init});return new Response(audio,{status:200,headers:{"content-type":"audio/wav"}});},
+    fetch:async(url,init)=>{requests.push({url,init});return new Response(responseBody(audio),{status:200,headers:{"content-type":"audio/wav"}});},
     requestTimeoutMs:1000
   });
   const events=await collectSilero(provider);
@@ -593,7 +598,7 @@ async function sileroProviderProtocolAndWav():Promise<void>{
   const chunkRequests:Array<{url:string;init:RequestInit}>=[];
   const longPcmLength=150_000;
   const largeProvider=new SileroTtsProvider({
-    fetch:async(url,init)=>{chunkRequests.push({url,init});return new Response(sileroWav(22050,2,longPcmLength),{status:200});},
+    fetch:async(url,init)=>{chunkRequests.push({url,init});return new Response(responseBody(sileroWav(22050,2,longPcmLength)),{status:200});},
     requestTimeoutMs:1000
   });
   const chunks=await collectSilero(largeProvider);
@@ -623,7 +628,7 @@ async function sileroProviderFailuresAndHealth():Promise<void>{
   }
 
   for(const [name,body] of [["empty WAV",new Uint8Array(0)],["truncated WAV",new Uint8Array([82,73,70,70,4,0,0,0,87,65,86,69])]] as const){
-    const provider=new SileroTtsProvider({fetch:async()=>new Response(body,{status:200}),requestTimeoutMs:1000});
+    const provider=new SileroTtsProvider({fetch:async()=>new Response(responseBody(body),{status:200}),requestTimeoutMs:1000});
     sileroError(await collectSilero(provider),"invalid_wav",name);
   }
   const httpProvider=new SileroTtsProvider({fetch:async()=>new Response("fixture server failure",{status:503})});
