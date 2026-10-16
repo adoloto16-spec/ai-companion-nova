@@ -701,7 +701,7 @@ async function sileroProviderFailuresAndHealth():Promise<void>{
   equal(healthRequests[1]!.init.redirect,"error","speech probe rejects redirects");
   const probePayload=JSON.parse(String(healthRequests[1]!.init.body)) as Record<string,unknown>;
   equal(probePayload.model,"tts-fixture","health probe uses selected model");
-  equal(probePayload.input," ","health probe avoids speaking a phrase");
+  equal(probePayload.input,"Привет.","health probe synthesizes non-empty audio to validate the real endpoint");
   equal(probePayload.voice,"kseniya","health probe uses selected voice");
   equal(probePayload.response_format,"wav","health probe requests WAV");
   equal(probePayload.speed,1,"health probe avoids FFmpeg for speed changes");

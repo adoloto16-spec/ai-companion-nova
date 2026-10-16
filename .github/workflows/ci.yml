@@ -213,11 +213,11 @@ jobs:
             }
             Add-Content -Path $logPath -Value "Installer exit code: $($installerProcess.ExitCode)"
             if ($installerProcess.ExitCode -ne 0) { throw "NSIS installer failed with exit code $($installerProcess.ExitCode)." }
-            $installedApp = Get-ChildItem -LiteralPath $installRoot -Recurse -File -Filter "AI Companion Nova.exe" | Select-Object -First 1
+            $installedApp = Get-ChildItem -LiteralPath $installRoot -Recurse -File -Filter "nova-desktop-host.exe" | Select-Object -First 1
             if (-not $installedApp) {
               Get-ChildItem -LiteralPath $installRoot -Recurse -Force | Select-Object FullName, Length, Mode |
                 Format-Table -AutoSize | Out-String | Add-Content -Path $logPath
-              throw "Installed AI Companion Nova.exe was not found under $installRoot."
+              throw "Installed nova-desktop-host.exe was not found under $installRoot."
             }
             Add-Content -Path $logPath -Value "Installed executable: $($installedApp.FullName)"
             $env:APPDATA = Join-Path $profileRoot "Roaming"

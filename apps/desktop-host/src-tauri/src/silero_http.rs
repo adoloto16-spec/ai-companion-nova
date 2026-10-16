@@ -53,7 +53,7 @@ impl SileroHttpEvent{
  fn end()->Self{Self{kind:"end".into(),status:None,content_type:None,content_length:None,chunk:None,code:None,message:None}}
  fn error(c:&str,m:&str)->Self{Self{kind:"error".into(),status:None,content_type:None,content_length:None,chunk:None,code:Some(c.into()),message:Some(m.into())}}
 }
-#[derive(Clone,Copy)]
+#[derive(Debug,Clone,Copy)]
 struct TransportFailure{code:&'static str,message:&'static str}
 impl TransportFailure{
  fn timeout()->Self{Self{code:"timeout",message:"Silero local API request timed out."}}

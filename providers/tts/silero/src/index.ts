@@ -10,7 +10,7 @@ const MIN_AUDIO_SAMPLE_RATE=8_000;
 const MAX_AUDIO_SAMPLE_RATE=192_000;
 const MAX_TEXT_CHARS=4_000;
 const DEFAULT_REQUEST_TIMEOUT_MS=120_000;
-const DEFAULT_CONNECTION_TIMEOUT_MS=15_000;
+const DEFAULT_CONNECTION_TIMEOUT_MS=30_000;
 
 export type SileroFetch=(url:string,init:RequestInit)=>Promise<Response>;
 export interface SileroTtsOptions {
@@ -252,10 +252,11 @@ export class SileroTtsProvider implements TtsProvider {
       if(!isCompatibleSileroOpenApi(document))
         return {status:"unavailable",message:"The local service does not expose a compatible Silero speech API."};
       // OpenAPI may be public while POST /v1/audio/speech is protected by REQUIRE_AUTH.
-      // Probe whitespace, not a spoken phrase, and request speed 1 to avoid FFmpeg.
+      // Synthesize a short probe, discarded here; whitespace is rejected by the local API
+      // and can produce an empty WAV. Speed 1 avoids requiring FFmpeg for this check.
       const probe=await this.fetcher(baseUrl+"/v1/audio/speech",{
         method:"POST",headers:{"content-type":"application/json","accept":"audio/wav"},
-        body:JSON.stringify({model,input:" ",voice,response_format:"wav",speed:1.0}),
+        body:JSON.stringify({model,input:"Привет.",voice,response_format:"wav",speed:1.0}),
         signal:timeout.signal,redirect:"error"
       });
       throwIfAborted(timeout.signal);
