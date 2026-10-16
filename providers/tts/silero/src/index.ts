@@ -201,9 +201,11 @@ function isCompatibleSileroOpenApi(document:unknown):boolean {
     if(!match||!isRecord(document.components)||!isRecord(document.components.schemas))return false;
     const resolved=document.components.schemas[match[1]!];if(!isRecord(resolved))return false;schema=resolved;
   }
-  if(!isRecord(schema.properties)||!Array.isArray(schema.required))return false;
-  return ["model","input","voice","response_format","speed"].every(key=>isRecord(schema.properties[key]))&&
-    ["model","input","voice"].every(key=>schema.required.includes(key));
+  const properties=schema.properties;
+  const required=schema.required;
+  if(!isRecord(properties)||!Array.isArray(required))return false;
+  return ["model","input","voice","response_format","speed"].every(key=>isRecord(properties[key]))&&
+    ["model","input","voice"].every(key=>required.includes(key));
 }
 function connectionHttpMessage(status:number):string {
   if(status===401||status===403)return "Silero API requires authorization. Check the local server's REQUIRE_AUTH setting.";
