@@ -3,7 +3,7 @@ import type {AudioOutputAdapter} from "../../modules/voice/tts/src";
 import type {TtsAudioMetadata,TtsPreset,TtsProvider,TtsProviderCapabilities,TtsProviderHealth,TtsSettings,TtsStreamEvent,TtsSynthesisRequest} from "../../contracts/src/tts";
 import {DEFAULT_TTS_SETTINGS} from "../../contracts/src/tts";
 import {VoiceStudioTtsProvider,validateVoiceStudioBaseUrl} from "../../providers/tts/voice-studio/src";
-import {SileroTtsProvider} from "../../providers/tts/silero/src";
+import {SileroTtsProvider,type SileroFetch} from "../../providers/tts/silero/src";
 import {NovaTurnJsonEmotionStreamDecoder,NovaTurnJsonSpeechStreamDecoder,NovaTurnTaggedEmotionStreamDecoder,NovaTurnTaggedSpeechStreamDecoder} from "../../core/src/nova-turn-stream-decoders";
 import {WebAudioOutputAdapter} from "../../apps/desktop-ui/src/web-audio-output";
 
@@ -622,7 +622,7 @@ async function sileroProviderFailuresAndHealth():Promise<void>{
       ?"unsafe_base_url":"unsafe_base_url","Unsafe Silero URL "+unsafe);
   }
 
-  for(const [name,body] of [["empty WAV",new Uint8Array(0)],["truncated WAV",new Uint8Array([82,73,70,70,4,0,0,0,87,65,86,69])] as const){
+  for(const [name,body] of [["empty WAV",new Uint8Array(0)],["truncated WAV",new Uint8Array([82,73,70,70,4,0,0,0,87,65,86,69])]] as const){
     const provider=new SileroTtsProvider({fetch:async()=>new Response(body,{status:200}),requestTimeoutMs:1000});
     sileroError(await collectSilero(provider),"invalid_wav",name);
   }
