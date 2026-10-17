@@ -573,7 +573,7 @@ async function streamingTimeoutIsInactivityDeadlineTest(){
   let streamed="";
   const response=await provider(http,new FakeCredentialStore(),25).stream(request(),{onEvent:event=>{if(event.type==="delta")streamed+=event.text;}});
   equal(streamed,"still streaming after thirty seconds in total","OpenAI-compatible stream emits all speech across multiple inactivity windows");
-  equal(response.message.content,"","stream adapter preserves its existing contract of delivering content through deltas");
+  equal(response.message.content,streamed,"completed stream also returns its assembled content for the next native tool round");
 }
 async function streamingUsageTest(){
   const http=new FakeHttpClient();
