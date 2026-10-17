@@ -7,6 +7,7 @@ import type {
   MindToolExecutor,NovaToolCall,NovaToolResult
 } from "../../contracts/src";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,CONTEXT_API_VERSION,CONTEXT_SCHEMA_VERSION,parseNovaTurn} from "../../contracts/src";
+import {NOVA_TURN_MAX_SERIALIZED_CHARS} from "../../contracts/src/nova-turn";
 import type {NovaTurn} from "../../contracts/src/nova-turn";
 import type {CognitiveStep,CognitiveStepContext,CognitiveStepResult} from "./mind-runtime";
 
@@ -28,7 +29,6 @@ export interface LLMCognitiveStepOptions {
   getChatModel:()=>string;
   getChatModelForPreset:(providerPresetId:string)=>Promise<string>;
   getCognitiveSchedule?:()=>CognitiveScheduleSettings;
-  getOutputMode?:()=> "structured"|"plain";
   getPrompt?:(id:PromptId)=>string;
   getAvailableTools?:()=>readonly {name:string;description:string;parameters:unknown}[];
   executeTool?:MindToolExecutor["execute"];
@@ -130,7 +130,7 @@ export class LLMCognitiveStep implements CognitiveStep {
       ?advertised.map(tool=>({name:tool.name,description:tool.description,parameters:tool.parameters as JsonSchema}))
       :[];
     const allowedToolNames=new Set(toolDefinitions.map(tool=>tool.name));
-    const reasoningOptions=this.options.getReasoningOptions?.();
+    const reasoningOptions=capabilities?.reasoning?this.options.getReasoningOptions?.():undefined;
     const history:ChatMessage[]=[];
     let output:{response:ChatResponse;content:string}={response:undefined as unknown as ChatResponse,content:""};
     let combinedReasoning="";
@@ -156,7 +156,7 @@ export class LLMCognitiveStep implements CognitiveStep {
         if(!text)return;
         rawContent+=text;
         deltaCount++;
-        if(rawContent.length>MAX_TOOL_RESULT_CHARS)throw new Error("Nova's plain-text response exceeds the 4000-character speech limit.");
+        if(rawContent.length>NOVA_TURN_MAX_SERIALIZED_CHARS)throw new Error("Nova's plain-text response exceeds the existing 32000-character cognitive reply safety limit.");
         await context.onSpeechEvent?.({type:"delta",conversationId:conversation.id,text});
       };
       let response:ChatResponse;
