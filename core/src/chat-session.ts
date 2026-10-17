@@ -856,6 +856,8 @@ function cloneGeneration(generation:ChatGenerationOptions):ChatGenerationOptions
     ...(generation.temperature===undefined?{}:{temperature:generation.temperature}),
     ...(generation.maxTokens===undefined?{}:{maxTokens:generation.maxTokens}),
     ...(generation.topP===undefined?{}:{topP:generation.topP}),
+    ...(generation.repeatPenalty===undefined?{}:{repeatPenalty:generation.repeatPenalty}),
+    ...(generation.repeatLastN===undefined?{}:{repeatLastN:generation.repeatLastN}),
     ...(generation.responseFormat===undefined?{}:{responseFormat:generation.responseFormat.type==="text"?{type:"text"}:{type:"json",schema:{...generation.responseFormat.schema}}})
   };
 }

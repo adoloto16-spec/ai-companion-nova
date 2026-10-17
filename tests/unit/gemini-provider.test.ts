@@ -73,6 +73,20 @@ async function main(){
   }
 
   {
+    const http=new FakeHttpClient([{status:200,body:JSON.stringify({
+      candidates:[{content:{role:"model",parts:[{text:"Gemini response"}]},finishReason:"STOP"}]
+    })}]);
+    const provider=new GeminiChatProvider({
+      baseUrl:"https://generativelanguage.googleapis.com/v1beta",
+      model:"gemini-test-model",
+      credential
+    },new FakeCredentialStore(),http);
+    await provider.chat({...request,generation:{repeatPenalty:1.2,repeatLastN:0}});
+    const body=JSON.parse(http.requests[0]!.body??"{}") as Record<string,unknown>;
+    ok(!("generationConfig" in body),"Ollama-only repeat settings do not create an empty Gemini generationConfig");
+  }
+
+  {
     const http=new FakeHttpClient([{status:401,body:JSON.stringify({error:{code:401,status:"UNAUTHENTICATED",message:"bad api key"}})}]);
     const provider=new GeminiChatProvider({
       baseUrl:"https://generativelanguage.googleapis.com/v1beta",

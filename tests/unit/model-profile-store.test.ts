@@ -10,13 +10,15 @@ const nova=():ModelProfile=>({
   providerId:"fake.chat",
   providerPresetId:"provider-preset:main:1",
   model:"nova-model",
-  generation:{temperature:0.7,topP:0.9,maxTokens:256}
+  generation:{temperature:0.7,topP:0.9,maxTokens:256,repeatPenalty:1.15,repeatLastN:-1}
 });
 
 async function main(){
   const validator=new StandardContractValidator();
   const profile=nova();
   equal(validator.validate(profile,STANDARD_SCHEMAS["model-profile"]!).valid,true,"canonical model profile validates");
+  equal(validator.validate({...profile,generation:{...profile.generation,repeatPenalty:0}},STANDARD_SCHEMAS["model-profile"]!).valid,false,"model profile rejects a non-positive repeat penalty");
+  equal(validator.validate({...profile,generation:{...profile.generation,repeatLastN:-2}},STANDARD_SCHEMAS["model-profile"]!).valid,false,"model profile rejects repeat windows below -1");
   equal(validator.validate({...profile,characterId:"",providerId:""} as never,STANDARD_SCHEMAS["model-profile"]!).valid,false,"invalid model profile is rejected");
 
   const store=new InMemoryModelProfileStore();
@@ -24,6 +26,8 @@ async function main(){
   await store.save(profile);
   equal((await store.load(profile.characterId))?.model,"nova-model","saved model profile reloads");
   equal((await store.load(profile.characterId))?.providerPresetId,"provider-preset:main:1","saved model profile preserves pinned provider preset");
+  equal((await store.load(profile.characterId))?.generation.repeatPenalty,1.15,"saved model profile preserves repeatPenalty");
+  equal((await store.load(profile.characterId))?.generation.repeatLastN,-1,"saved model profile preserves repeatLastN");
 
   const gm={...defaultModelProfile("character.gm.v1","2026-09-28T10:00:00.000Z"),model:"gm-model",generation:{temperature:1.1}};
   await store.save(gm);
