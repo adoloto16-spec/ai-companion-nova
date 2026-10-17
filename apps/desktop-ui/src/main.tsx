@@ -1394,9 +1394,12 @@ function ModelProfileView({
 
   const selectedPresetAvailable=!draft.providerPresetId||presets.some(preset=>preset.id===draft.providerPresetId);
 
-  const updateGeneration=(key:"temperature"|"topP"|"maxTokens",value:string)=>{
+  const updateGeneration=(key:"temperature"|"topP"|"maxTokens"|"repeatPenalty"|"repeatLastN",value:string)=>{
     const numeric=value.trim()===""?undefined:Number(value);
-    setDraft(current=>({...current,generation:{...current.generation,...(numeric===undefined?{}:{[key]:numeric})}}));
+    setDraft(current=>({...current,generation:{
+      ...current.generation,
+      ...(numeric===undefined?(key==="repeatPenalty"||key==="repeatLastN"?{[key]:undefined}:{}):{[key]:numeric})
+    }}));
   };
 
   const save=async()=>{
@@ -1406,6 +1409,8 @@ function ModelProfileView({
         ...(draft.generation.temperature!==undefined?{temperature:draft.generation.temperature}:{}),
         ...(draft.generation.topP!==undefined?{topP:draft.generation.topP}:{}),
         ...(draft.generation.maxTokens!==undefined?{maxTokens:draft.generation.maxTokens}:{}),
+        ...(draft.generation.repeatPenalty!==undefined?{repeatPenalty:draft.generation.repeatPenalty}:{}),
+        ...(draft.generation.repeatLastN!==undefined?{repeatLastN:draft.generation.repeatLastN}:{}),
         ...(draft.generation.responseFormat!==undefined?{responseFormat:draft.generation.responseFormat}:{}),
       };
       const next:ModelProfile={
@@ -1458,6 +1463,16 @@ function ModelProfileView({
         <input type="number" min="1" step="1" value={draft.generation.maxTokens??""}
           onChange={event=>updateGeneration("maxTokens",event.target.value)} placeholder="Runtime default" disabled={busy}/>
       </label>
+      <label>Штраф за повторение (repeat_penalty)
+        <input type="number" step="0.1" value={draft.generation.repeatPenalty??""}
+          onChange={event=>updateGeneration("repeatPenalty",event.target.value)} placeholder="Runtime default" disabled={busy}/>
+      </label>
+      <p className="hint">Регулирует, насколько сильно модель избегает повторного использования токенов. Значение 1.0 обычно отключает дополнительный штраф. Используется нативным провайдером Ollama.</p>
+      <label>Окно повторения (repeat_last_n)
+        <input type="number" min="-1" step="1" value={draft.generation.repeatLastN??""}
+          onChange={event=>updateGeneration("repeatLastN",event.target.value)} placeholder="Runtime default" disabled={busy}/>
+      </label>
+      <p className="hint">Количество последних токенов, учитываемых при штрафе за повторение. Значение 0 отключает штраф, а -1 использует размер контекста. Используется нативным провайдером Ollama.</p>
       <div className="actions"><button onClick={()=>void save()} disabled={busy}>{busy?"Saving…":"Save Model Profile"}</button></div>
       {message&&<div className="notice" role="status">{message}</div>}
       <p className="hint">No API keys, credentials or base URLs are stored in a Model Profile.</p>
