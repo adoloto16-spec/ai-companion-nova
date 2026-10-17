@@ -535,16 +535,31 @@ async function main(){
   const failedTurnContext:import("../../contracts/src").MindTurnExecutionContext={
     characterId:"character.life-failed",conversationId:"life-failed-conversation",turnId:"failed-life-1",userMessageId:"failed-life-1:user",signal:new AbortController().signal
   };
+  const failedStream={characterId:"character.life-failed",conversationId:"life-failed-conversation",turnId:"failed-life-1",userMessageId:"failed-life-1:user"};
+  failedController.updateNovaTurnStream({type:"start",...failedStream});
+  failedController.updateNovaTurnStream({type:"delta",...failedStream,text:"Привет, я Тоня."});
   let persistenceFailure=false;
-  try{await failedController.commitNovaTurn({...turn,speech:"This must not be delivered"},failedTurnContext,async()=>{throw new Error("controlled persistence failure");});}
+  try{await failedController.commitNovaTurn({...turn,speech:"Привет, я Тоня."},failedTurnContext,async()=>{throw new Error("controlled persistence failure");});}
   catch{persistenceFailure=true;}
   equal(persistenceFailure,true,"storage failure rejects NovaTurn commit explicitly");
   equal(failedController.getSnapshot().messages.map(message=>message.role).join("|"),"user","unpersisted assistant is absent from Chat");
+  equal(failedController.getSnapshot().lifeStreamingSpeech?.text,"Привет, я Тоня.","public provisional speech remains visible after persist failure");
+  equal(failedController.getSnapshot().lifeTurn?.status,"awaiting","a failed commit is not mislabeled as a completed assistant turn");
   equal(failedController.isBusy(),false,"failed persistence releases Chat busy state");
   failedController.failLifeTurn(failedTurnContext.userMessageId!,"PERSIST_FAILED");
   equal(failedController.getSnapshot().lifeTurn?.status,"failed","failed persistence leaves the turn retryable rather than complete");
   const retryAfterFailure=failedController.retryLife(()=>true);
   equal(retryAfterFailure.status,"awaiting-life","storage failure can be retried against the retained user message");
+  failedController.updateNovaTurnStream({type:"start",...failedStream});
+  equal(failedController.getSnapshot().lifeStreamingSpeech?.text,"","retry start replaces the previous incomplete speech buffer");
+  failedController.updateNovaTurnStream({type:"delta",...failedStream,text:"Повторный ответ."});
+  let retryPersistedSpeech="";
+  await failedController.commitNovaTurn({...turn,speech:"Повторный ответ."},failedTurnContext,async snapshot=>{
+    retryPersistedSpeech=snapshot.messages.at(-1)?.content??"";
+  });
+  equal(parseNovaTurn(retryPersistedSpeech).turn?.speech,"Повторный ответ.","successful retry persists the replacement public speech");
+  equal(failedController.getSnapshot().messages.filter(message=>message.role==="assistant").length,1,"retry creates exactly one committed assistant message");
+  equal(failedController.getSnapshot().lifeStreamingSpeech,undefined,"successful retry clears provisional speech only after commit");
 
   console.log("PASS Chat session/controller unit tests");
 }

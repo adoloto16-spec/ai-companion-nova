@@ -249,6 +249,8 @@ export class MindRuntime {
     let cancellation: CancellationKind | undefined;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let streamedConversationId:string|undefined;
+    let streamedPublicSpeech=false;
+    let preserveFailedReactiveSpeech=false;
     const speechTurnId=reactiveTurn?.turnId??runId;
     const finishTrace = (result: MindTraceEntry["result"], extra: Partial<MindTraceEntry> = {}) => {
       const entry: MindTraceEntry = {
@@ -301,6 +303,8 @@ export class MindRuntime {
             streamedConversationId=event.conversationId;
             if(stepController.signal.aborted||life.signal.aborted||contextVersion!==this.contextVersion||
               characterId!==this.activeCharacterId||(reactiveTurn&&!this.isReactiveTurnCurrent(reactiveTurn)))return;
+            if(event.type==="start"||event.type==="reset")streamedPublicSpeech=false;
+            else if(event.type==="delta"&&event.text?.trim())streamedPublicSpeech=true;
             await this.turnSink?.streamSpeech?.({
               type:event.type,characterId,conversationId:event.conversationId,turnId:speechTurnId,
               ...(reactiveTurn?{userMessageId:reactiveTurn.userMessageId}:{}),
@@ -376,21 +380,24 @@ export class MindRuntime {
       }
       finishTrace("success", {protocolDiagnostics});
     } catch (error) {
-      const stale = cancellation === "cancelled" || cancellation === "superseded" || life.signal.aborted || contextVersion !== this.contextVersion || characterId !== this.activeCharacterId;
+      const stale = cancellation === "cancelled" || cancellation === "superseded" || life.signal.aborted || contextVersion !== this.contextVersion || characterId !== this.activeCharacterId || (reactiveTurn && !this.isReactiveTurnCurrent(reactiveTurn));
       if (stale) {
         if (reactiveTurn && this.isReactiveTurnCurrent(reactiveTurn)) this.failReactiveTurn(reactiveTurn, cancellation === "superseded" ? "superseded" : "cancelled");
         finishTrace("cancelled", {errorCode:cancellation === "timeout" ? "STEP_TIMEOUT" : "CANCELLED"});
         return;
       }
       this.consecutiveErrors += 1;
-      if (reactiveTurn) this.failReactiveTurn(reactiveTurn, error instanceof Error ? error.name : "COGNITIVE_STEP_FAILED");
+      if (reactiveTurn) {
+        this.failReactiveTurn(reactiveTurn, error instanceof Error ? error.name : "COGNITIVE_STEP_FAILED");
+        preserveFailedReactiveSpeech=streamedPublicSpeech;
+      }
       applied = this.errorBackoffMs(); decision = "error-backoff"; nextDelay = applied; nextReason = "error-backoff";
       const errorCode = cancellation === "timeout" ? "STEP_TIMEOUT" : error instanceof Error ? error.name : "COGNITIVE_STEP_FAILED";
       this.safeOnError(error);
       finishTrace("error", {errorCode});
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
-      if(streamedConversationId){
+      if(streamedConversationId&&!preserveFailedReactiveSpeech){
         await this.turnSink?.streamSpeech?.({
           type:"clear",characterId,conversationId:streamedConversationId,turnId:speechTurnId,
           ...(reactiveTurn?{userMessageId:reactiveTurn.userMessageId}:{})

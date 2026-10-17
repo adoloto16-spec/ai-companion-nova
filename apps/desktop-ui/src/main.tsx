@@ -2519,14 +2519,16 @@ function App(){
           speechOutputController.stop("Dialogue or character changed.");
           return;
         }
-        await speechOutputController.handleSpeechEvent(event);
         if(event.type!=="emotion")chatController.updateNovaTurnStream(event);
+        await speechOutputController.handleSpeechEvent(event);
       },
       fail:(turn,reason)=>{
         if(!attached||turn.characterId!==activeCharacterId||turn.conversationId!==activeConversationId)return;
         const current=chatController.getSnapshot();
         if(current.characterId===turn.characterId&&current.conversationId===turn.conversationId){
           chatController.failLifeTurn(turn.userMessageId,reason);
+          // Keep audio aligned with visible incomplete speech after a real failure; cancellations are cleared below.
+          if(!/cancel|superseded|stale-context|character-change|life-off/i.test(reason))void speechOutputController.finishTurn(turn.turnId);
         }
       }
     };

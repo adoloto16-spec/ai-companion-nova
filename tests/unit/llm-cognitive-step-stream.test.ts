@@ -146,14 +146,20 @@ async function ordinaryErrorsAndMalformedJsonNeverFallback():Promise<void>{
         if(failure==="timeout")throw new Error("request timed out");
         if(failure==="network")throw new Error("network connection refused");
         if(failure==="auth")throw Object.assign(new Error("unauthorized"),{chatError:{message:"Unauthorized",details:{category:"authorization"}}});
-        const content='{"speech":"unterminated';
+        const content='{"speech":"Привет, я Тоня.","thoughts":"private-thoughts"';
         await handlers.onEvent(delta(request,content));
         return responseFor(request,content);
       }
     };
     let rejected=false;
-    try{await createStep(runtime).run(context(()=>{}));}catch{rejected=true;}
+    const speechEvents:Array<{type:string;text?:string}> = [];
+    try{await createStep(runtime).run(context(event=>speechEvents.push({type:event.type,...(event.text===undefined?{}:{text:event.text})})));}catch{rejected=true;}
     ok(rejected,failure+" failure rejects the turn");
+    if(failure==="invalid-json"){
+      const publicSpeech=speechEvents.filter(event=>event.type==="delta").map(event=>event.text??"").join("");
+      equal(publicSpeech,"Привет, я Тоня.","malformed final JSON leaves only already-streamed public speech visible");
+      ok(!publicSpeech.includes("private-thoughts")&&!publicSpeech.includes('{"speech"'),"malformed protocol never streams private fields or raw JSON into the public reply");
+    }
     equal(calls.length,1,failure+" never triggers a format fallback");
     equal(calls[0]?.generation?.responseFormat?.type,"json-schema",failure+" keeps the attempted format as native JSON Schema");
   }

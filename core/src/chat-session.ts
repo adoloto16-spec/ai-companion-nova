@@ -393,7 +393,8 @@ export class ChatSessionController{
         }
       }
     }finally{
-      this.clearNovaStreamingSpeech(context.turnId,false);
+      // Successful commits clear the provisional speech before adding the stored message.
+      // MindRuntime owns cleanup for failures, cancellation, and stale turns.
       this.committingNovaTurn=false;this.notify();
     }
   }
@@ -444,6 +445,7 @@ export class ChatSessionController{
 
   clearFailedLifeTurnForOrdinaryChat():void{
     if(!this.lifeTurn||(this.lifeTurn.status!=="failed"&&this.lifeTurn.status!=="cancelled"))return;
+    this.clearNovaStreamingSpeech(this.lifeTurn.turnId,false);
     this.lifeTurn=undefined;this.error=undefined;this.errorCode=undefined;
     this.recomputeStatus();this.notify();
   }
