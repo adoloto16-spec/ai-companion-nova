@@ -102,7 +102,8 @@ async function main(){
     equal(memory.length,1,"dedicated Memory Agent accepts a useful fact after a native answer");
     equal(memory[0]?.content,"The table is green.","the agent's fact is returned after MemoryBroker persistence");
     equal((await agentRuntime.listMemory(character.id)).filter(item=>item.content==="The table is green.").length,1,"the accepted fact is stored for the active character");
-    ok((await agentRuntime.listMemory("another-character")).length===0,"the agent does not write into another character's memory");
+    const otherCharacter=await agentRuntime.createCharacter({name:"Other memory scope"});
+    equal((await agentRuntime.listMemory(otherCharacter.id)).length,0,"the agent does not write into another character's memory");
   }finally{await agentRuntime.stop()}
 
   class FailingLongMemoryStore extends InMemoryMemoryStore{
