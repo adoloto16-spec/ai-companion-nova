@@ -87,6 +87,19 @@ export class WebAudioOutputAdapter implements AudioOutputAdapter {
     void this.pump();
   }
 
+  /** Waits for every queued PCM chunk and scheduled source in this session to finish playing. */
+  async waitForPlayback(sessionId:string,signal:AbortSignal):Promise<void>{
+    while(true){
+      if(signal.aborted||this.sessionId!==sessionId)throw makeAbortError();
+      if(this.queue.length===0&&this.sources.size===0&&!this.pumping)return;
+      await new Promise<void>((resolve,reject)=>{
+        const onAbort=()=>{signal.removeEventListener("abort",onAbort);reject(makeAbortError());};
+        signal.addEventListener("abort",onAbort,{once:true});
+        this.playbackWaiters.push({resolve:()=>{signal.removeEventListener("abort",onAbort);resolve();},reject});
+      });
+    }
+  }
+
   stop(sessionId?:string):void{
     if(sessionId&&this.sessionId!==sessionId)return;
     this.queue=[];
