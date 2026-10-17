@@ -2,7 +2,7 @@ import type {
   AssembledContext,ChatErrorCode,ChatGenerationOptions,ChatMessage,ChatRequest,ChatResponse,ChatStreamEvent,
   ChatStreamHandlers,ChatStreamOptions,ChatUsage,CharacterId,ChatTraceStore,ContextBuildRequest,ContextBudget,MemoryExtractionRequest,MindReactiveTurn,MindTurnExecutionContext,ModelProfile,Unsubscribe
 } from "../../contracts/src/index";
-import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,DEFAULT_APP_SETTINGS,parseNovaTurn,serializeNovaTurn} from "../../contracts/src/index";
+import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,DEFAULT_APP_SETTINGS,parseNovaTurn} from "../../contracts/src/index";
 import type {NovaTurn} from "../../contracts/src/nova-turn";
 
 export interface ChatRuntimeBoundary{
@@ -310,7 +310,7 @@ export class ChatSessionController{
     const messageId="nova-turn:"+context.turnId;
     const existing=this.session.getMessages().find(message=>message.id===messageId);
     if(existing){
-      if(existing.metadata?.novaTurnVersion!==1)throw new Error("NovaTurn id collides with an existing non-protocol message.");
+      if(existing.metadata?.novaTurnVersion!==1&&existing.metadata?.novaTurnProtocolVersion!==2)throw new Error("NovaTurn id collides with an existing non-protocol message.");
       this.clearNovaStreamingSpeech(context.turnId,false);
       if(context.userMessageId&&this.lifeTurn?.turnId===context.turnId&&this.lifeTurn.status==="awaiting"){
         const completed={...this.lifeTurn,status:"completed"} as LifeTurnSnapshot;delete completed.error;this.lifeTurn=completed;
@@ -341,12 +341,17 @@ export class ChatSessionController{
       const latestAssistantIndex=messages.map(message=>message.role).lastIndexOf("assistant");
       if(latestUserIndex>latestAssistantIndex)throw new Error("Background NovaTurn was superseded by a newer unanswered user message.");
     }
+    if(!reactive&&!turn.speech.trim()){
+      this.clearNovaStreamingSpeech(context.turnId,false);
+      this.status="completed";this.error=undefined;this.errorCode=undefined;this.notify();
+      return;
+    }
     if(this.committingNovaTurn)throw new Error("Another NovaTurn commit is already in progress.");
     this.committingNovaTurn=true;this.notify();
     const before=this.getSnapshot();
     const message:ChatMessage={
-      id:messageId,role:"assistant",content:serializeNovaTurn(turn),
-      metadata:{streamStatus:"complete",source:"nova-life",novaTurnVersion:1,novaTurnId:context.turnId,
+      id:messageId,role:"assistant",content:turn.speech,
+      metadata:{streamStatus:"complete",source:"nova-life",novaTurnProtocolVersion:2,novaTurnId:context.turnId,
         ...(reactive?{turnId:context.turnId,userMessageId:context.userMessageId}:{})}
     };
     const candidate:ConversationSnapshot={...before,messages:[...before.messages,message],status:"completed",committingNovaTurn:false};
@@ -367,8 +372,8 @@ export class ChatSessionController{
         const completed={...this.lifeTurn,status:"completed"} as LifeTurnSnapshot;delete completed.error;this.lifeTurn=completed;
       }
       this.notify();
-      // LONGMEMORY is produced by the same NovaTurn call. Never schedule persistence for an
-      // empty, malformed, cancelled, or stale candidate, and never send SPEECH to memory extraction.
+      // Historical cognitive implementations may still supply LONGMEMORY; the native tool path does not.
+      // Keep this guarded compatibility path for historical callers, but never send SPEECH to memory extraction.
       if(reactive&&this.memoryExtractor&&(this.memoryExtractionEnabled?.()??true)&&turn.longMemory?.trim()&&!context.signal.aborted){
         const messages=this.session.getMessages();
         const userIndex=messages.findIndex(item=>item.id===context.userMessageId&&item.role==="user");

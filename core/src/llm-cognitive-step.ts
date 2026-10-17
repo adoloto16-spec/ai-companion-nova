@@ -6,7 +6,7 @@ import type {
   Conversation,CognitiveScheduleSettings,MindReactiveTurn,ProviderCapabilities,JsonSchema,
   MindToolExecutor,NovaToolCall,NovaToolResult
 } from "../../contracts/src";
-import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,CONTEXT_API_VERSION,CONTEXT_SCHEMA_VERSION,parseNovaTurn} from "../../contracts/src";
+import {CHAT_API_VERSION,CONTEXT_API_VERSION,CONTEXT_SCHEMA_VERSION,parseNovaTurn} from "../../contracts/src";
 import type {NovaTurn} from "../../contracts/src/nova-turn";
 import type {CognitiveStep,CognitiveStepContext,CognitiveStepResult} from "./mind-runtime";
 
@@ -232,7 +232,7 @@ export class LLMCognitiveStep implements CognitiveStep {
     return {
       turn,conversationId:conversation.id,requestId:output.response.requestId||request,providerId:output.response.providerId,model:output.response.model,
       ...(providerPresetId?{providerPresetId}:{}),
-      ...(this.options.getShowReasoningInDiagnostics?.()&&combinedReasoning?{reasoning:combinedReasoning.slice(0,32_000)}:{}),
+      ...(this.options.getShowReasoningInDiagnostics?.()&&combinedReasoning?{reasoning:combinedReasoning.slice(0,8_000)}:{}),
       protocolDiagnostics:["native-tool-protocol"],
     };
   }

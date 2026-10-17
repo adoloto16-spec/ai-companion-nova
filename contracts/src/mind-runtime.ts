@@ -30,6 +30,7 @@ export interface MindTraceEntry {
   intervalDecision?: string;
   requestId?: string;
   providerId?: string;
+  reasoning?:string;
   errorCode?: string;
   protocolDiagnostics?: readonly string[];
 }
