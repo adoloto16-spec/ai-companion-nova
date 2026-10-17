@@ -5,7 +5,7 @@ use std::{fs,io::Write,path::{Path,PathBuf}};
 use tauri::Manager;
 
 const API_VERSION:&str="1";
-const SCHEMA_VERSION:&str="13";
+const SCHEMA_VERSION:&str="14";
 const FILE_NAME:&str="app-settings-v1.json";
 const LEGACY_SCHEMA_VERSION:&str="0";
 const PREVIOUS_SCHEMA_VERSION:&str="3";
@@ -29,13 +29,17 @@ const DEFAULT_MEMORY_JUDGE_INSTRUCTIONS:&str="You are a memory deduplication jud
 const LEGACY_MEMORY_JUDGE_INSTRUCTIONS:&str="You are a memory deduplication judge.\n\nCompare NEW MEMORY with CANDIDATES.\n\nKeep the most complete and informative record.\n\nIf NEW MEMORY is less informative because its information is contained in a candidate, return NEW.\n\nIf a candidate contains all meaningful information from NEW MEMORY and adds useful information, return that candidate number.\n\nIf two records contain essentially the same information, return one of them.\n\nIf records contain different useful information, return NO_ARCHIVE.\n\nReturn only:\nNO_ARCHIVE,\nNEW,\nor candidate numbers, one per line.\n\nNever return explanations or text.\nNever invent candidate numbers.";
 
 fn default_response_mode()->String{"structured".into()}
+fn default_reasoning_mode()->String{"provider-default".into()}
+fn default_show_reasoning_in_diagnostics()->bool{false}
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ChatSettings{
     #[serde(rename="automaticLongTermMemory")]
     pub automatic_long_term_memory:bool,
     #[serde(rename="responseMode",default="default_response_mode")]
-    pub response_mode:String
+    pub response_mode:String,
+    #[serde(rename="reasoningMode",default="default_reasoning_mode")]
+    pub reasoning_mode:String
 }
 fn default_cognitive_schedule()->CognitiveScheduleSettings{
     CognitiveScheduleSettings{mode:"adaptive".into(),default_interval_ms:30000,min_interval_ms:3000,max_interval_ms:300000,max_requests_per_hour:None}
@@ -150,7 +154,9 @@ pub struct DiagnosticsSettings{
 #[serde(deny_unknown_fields)]
 pub struct UiSettings{
     #[serde(rename="showDiagnosticsInChat")]
-    pub show_diagnostics_in_chat:bool
+    pub show_diagnostics_in_chat:bool,
+    #[serde(rename="showReasoningInDiagnostics",default="default_show_reasoning_in_diagnostics")]
+    pub show_reasoning_in_diagnostics:bool
 }
 
 #[derive(Debug,Deserialize,Serialize,Clone)]
@@ -236,7 +242,7 @@ fn default_settings()->AppSettings{
     AppSettings{
         api_version:API_VERSION.into(),schema_version:SCHEMA_VERSION.into(),
         cognitive_schedule:default_cognitive_schedule(),
-        chat:ChatSettings{automatic_long_term_memory:true,response_mode:default_response_mode()},
+        chat:ChatSettings{automatic_long_term_memory:true,response_mode:default_response_mode(),reasoning_mode:default_reasoning_mode()},
         prompts:PromptSettings::default(),
         memory_agent:MemoryAgentSettings{enabled:true,provider_preset_id:None,model:String::new(),output_mode:"auto".into(),prompt:DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS.to_string(),prompt_backup:None,default_prompt_version:DEFAULT_MEMORY_AGENT_PROMPT_VERSION.into()},
         semantic_dedup:SemanticDedupSettings{
@@ -251,7 +257,7 @@ fn default_settings()->AppSettings{
         memory:MemorySettings{candidate_limit:8},
         retrieval:RetrievalSettings{candidate_limit:32,semantic_search_enabled:false,semantic_similarity_threshold:0.35,semantic_result_limit:5},
         diagnostics:DiagnosticsSettings{log_level:"normal".into(),keep_recent_entries:100},
-        ui:UiSettings{show_diagnostics_in_chat:true},
+        ui:UiSettings{show_diagnostics_in_chat:true,show_reasoning_in_diagnostics:default_show_reasoning_in_diagnostics()},
         tts:default_tts_settings()
     }
 }
@@ -267,7 +273,7 @@ fn valid_integer(value:i64,min:i64,max:i64,label:&str)->Result<(),String>{
     Ok(())
 }
 fn validate(settings:&AppSettings)->Result<(),String>{
-    if settings.api_version!=API_VERSION||!(settings.schema_version==SCHEMA_VERSION||matches!(settings.schema_version.as_str(),"5"|"6"|"7"|"8"|"9"|"10"|"11"|"12")){return Err("unsupported AppSettings version".into());}
+    if settings.api_version!=API_VERSION||!(settings.schema_version==SCHEMA_VERSION||matches!(settings.schema_version.as_str(),"5"|"6"|"7"|"8"|"9"|"10"|"11"|"12"|"13")){return Err("unsupported AppSettings version".into());}
     if !matches!(settings.cognitive_schedule.mode.as_str(),"adaptive"|"fixed"){return Err("Unsupported cognitive schedule mode.".into());}
     valid_integer(settings.cognitive_schedule.default_interval_ms,1000,3_600_000,"Cognitive schedule interval")?;
     valid_integer(settings.cognitive_schedule.min_interval_ms,1000,3_600_000,"Minimum cognitive interval")?;
@@ -306,6 +312,7 @@ fn validate(settings:&AppSettings)->Result<(),String>{
         if !tts_ids.contains(active){return Err("TTS active preset must reference an existing preset.".into());}
     }
     if !matches!(settings.chat.response_mode.as_str(),"structured"|"plain"){return Err("Unsupported Chat response mode.".into());}
+    if !matches!(settings.chat.reasoning_mode.as_str(),"provider-default"|"enabled"|"disabled"){return Err("Unsupported reasoning mode.".into());}
     valid_integer(settings.context.available_context_tokens,256,MAX_CONTEXT_TOKENS,"Context size")?;
     valid_integer(settings.context.reserved_output_tokens,0,MAX_RESERVED_OUTPUT,"Reserved response tokens")?;
     valid_integer(settings.context.safety_margin_tokens,0,MAX_SAFETY_MARGIN,"Safety margin")?;
@@ -448,12 +455,12 @@ fn migrate(value:Value)->Result<(AppSettings,bool),String>{
         if let Some(root)=normalized.as_object_mut(){
             migrated=migrate_memory_judge_default_prompt(root);
             let old_schema=root.get("schemaVersion").and_then(Value::as_str).unwrap_or_default().to_string();
-            if old_schema!=SCHEMA_VERSION && matches!(old_schema.as_str(),"5"|"6"|"7"|"8"|"9"|"10"|"11"|"12"){
+            if old_schema!=SCHEMA_VERSION && matches!(old_schema.as_str(),"5"|"6"|"7"|"8"|"9"|"10"|"11"|"12"|"13"){
                 root.insert("schemaVersion".into(),Value::String(SCHEMA_VERSION.to_string()));
                 migrated=true;
             }
-            if old_schema=="13" && !root.contains_key("tts"){return Err("schema v13 settings require a TTS settings object".into());}
-            if old_schema!="13" && !root.contains_key("tts"){
+            if matches!(old_schema.as_str(),"13"|"14") && !root.contains_key("tts"){return Err("schema v13+ settings require a TTS settings object".into());}
+            if !matches!(old_schema.as_str(),"13"|"14") && !root.contains_key("tts"){
                 root.insert("tts".into(),serde_json::to_value(default_tts_settings()).map_err(|e|format!("failed to encode TTS defaults: {e}"))?);
                 migrated=true;
             }
@@ -663,7 +670,7 @@ mod tests{
     }
 
 
-    #[test]fn migrates_schema_v12_to_v13_and_preserves_existing_settings(){
+    #[test]fn migrates_schema_v12_to_v14_and_preserves_existing_settings(){
         let mut value=serde_json::to_value(default_settings()).expect("encode defaults");
         let root=value.as_object_mut().expect("settings object");
         root.insert("schemaVersion".into(),Value::String("12".into()));
@@ -673,11 +680,13 @@ mod tests{
         root.insert("prompts".into(),serde_json::json!({"overrides":{"nova-system-json":"preserved prompt"}}));
         let (settings,migrated)=migrate(value).expect("schema v12 should migrate");
         assert!(migrated);
-        assert_eq!(settings.schema_version,"13");
+        assert_eq!(settings.schema_version,"14");
         assert_eq!(settings.context.available_context_tokens,6144);
         assert_eq!(settings.context.recent_conversation_messages,9);
         assert!(!settings.chat.automatic_long_term_memory);
         assert_eq!(settings.chat.response_mode,"plain");
+        assert_eq!(settings.chat.reasoning_mode,"provider-default");
+        assert!(!settings.ui.show_reasoning_in_diagnostics);
         assert_eq!(settings.prompts.overrides.get("nova-system-json").map(String::as_str),Some("preserved prompt"));
         assert!(!settings.tts.enabled);
         assert_eq!(settings.tts.active_preset_id.as_deref(),Some("tts-preset-default"));
