@@ -28,6 +28,10 @@ pub struct ChatGenerationOptions{
     pub max_tokens:Option<i64>,
     #[serde(rename="topP",skip_serializing_if="Option::is_none")]
     pub top_p:Option<f64>,
+    #[serde(rename="repeatPenalty",skip_serializing_if="Option::is_none")]
+    pub repeat_penalty:Option<f64>,
+    #[serde(rename="repeatLastN",skip_serializing_if="Option::is_none")]
+    pub repeat_last_n:Option<i64>,
     #[serde(rename="responseFormat",skip_serializing_if="Option::is_none")]
     pub response_format:Option<ResponseFormat>,
 }
@@ -84,6 +88,12 @@ fn validate_generation(generation:&ChatGenerationOptions)->Result<(),String>{
     }
     if let Some(value)=generation.max_tokens{
         if value<1{return Err("maxTokens must be at least 1".to_string());}
+    }
+    if let Some(value)=generation.repeat_penalty{
+        if !value.is_finite()||value<=0.0{return Err("repeatPenalty must be greater than 0".to_string());}
+    }
+    if let Some(value)=generation.repeat_last_n{
+        if value < -1{return Err("repeatLastN must be at least -1".to_string());}
     }
     Ok(())
 }
@@ -212,7 +222,7 @@ mod tests{
             provider_id:Some("fake.chat".to_string()),
             provider_preset_id:None,
             model:Some("fake-chat".to_string()),
-            generation:ChatGenerationOptions{temperature:Some(0.7),max_tokens:Some(200),top_p:Some(0.9),response_format:None},
+            generation:ChatGenerationOptions{temperature:Some(0.7),max_tokens:Some(200),top_p:Some(0.9),repeat_penalty:Some(1.15),repeat_last_n:Some(-1),response_format:None},
             created_at:"2026-09-28T10:00:00.000Z".to_string(),
             updated_at:"2026-09-28T10:00:01.000Z".to_string()
         }
@@ -241,6 +251,8 @@ mod tests{
             temperature:Some(0.55),
             max_tokens:Some(321),
             top_p:Some(0.75),
+            repeat_penalty:Some(1.15),
+            repeat_last_n:Some(-1),
             response_format:Some(ResponseFormat{format_type:ResponseFormatType::Json,schema:Some(schema)})
         };
         let value=serde_json::to_value(&generation).expect("serialize");
@@ -248,14 +260,20 @@ mod tests{
         assert_eq!(object.get("temperature").and_then(Value::as_f64),Some(0.55));
         assert_eq!(object.get("maxTokens").and_then(Value::as_i64),Some(321));
         assert_eq!(object.get("topP").and_then(Value::as_f64),Some(0.75));
+        assert_eq!(object.get("repeatPenalty").and_then(Value::as_f64),Some(1.15));
+        assert_eq!(object.get("repeatLastN").and_then(Value::as_i64),Some(-1));
         assert!(object.get("responseFormat").is_some());
         assert!(object.get("top_p").is_none());
+        assert!(object.get("repeat_penalty").is_none());
+        assert!(object.get("repeat_last_n").is_none());
         assert!(object.get("max_tokens").is_none());
         assert!(object.get("response_format").is_none());
         let decoded:ChatGenerationOptions=serde_json::from_value(value).expect("deserialize");
         assert_eq!(decoded.temperature,Some(0.55));
         assert_eq!(decoded.max_tokens,Some(321));
         assert_eq!(decoded.top_p,Some(0.75));
+        assert_eq!(decoded.repeat_penalty,Some(1.15));
+        assert_eq!(decoded.repeat_last_n,Some(-1));
         assert!(decoded.response_format.is_some());
     }
 
@@ -272,6 +290,8 @@ mod tests{
                 "temperature":0.55,
                 "maxTokens":321,
                 "topP":0.75,
+                "repeatPenalty":1.15,
+                "repeatLastN":0,
                 "responseFormat":{"type":"json","schema":{"kind":"example"}}
             },
             "createdAt":"2026-09-28T10:00:00.000Z",
@@ -283,6 +303,8 @@ mod tests{
         assert_eq!(profile.generation.temperature,Some(0.55));
         assert_eq!(profile.generation.max_tokens,Some(321));
         assert_eq!(profile.generation.top_p,Some(0.75));
+        assert_eq!(profile.generation.repeat_penalty,Some(1.15));
+        assert_eq!(profile.generation.repeat_last_n,Some(0));
         assert!(profile.generation.response_format.is_some());
         assert!(validate_profile(&profile).is_ok());
     }
@@ -301,6 +323,8 @@ mod tests{
         assert!(raw.contains("\"providerId\""));
         assert!(raw.contains("\"maxTokens\""));
         assert!(raw.contains("\"topP\""));
+        assert!(raw.contains("\"repeatPenalty\""));
+        assert!(raw.contains("\"repeatLastN\""));
         assert!(!raw.contains("\"top_p\""));
         let loaded=load_from_path(&path).expect("load").expect("state");
         let restored=&loaded.profiles[0];
@@ -314,6 +338,8 @@ mod tests{
         assert_eq!(restored.generation.temperature,profile.generation.temperature);
         assert_eq!(restored.generation.max_tokens,profile.generation.max_tokens);
         assert_eq!(restored.generation.top_p,profile.generation.top_p);
+        assert_eq!(restored.generation.repeat_penalty,profile.generation.repeat_penalty);
+        assert_eq!(restored.generation.repeat_last_n,profile.generation.repeat_last_n);
         assert_eq!(restored.created_at,profile.created_at);
         assert_eq!(restored.updated_at,profile.updated_at);
         assert_eq!(
