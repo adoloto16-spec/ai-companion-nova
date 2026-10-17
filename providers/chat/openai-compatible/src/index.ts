@@ -6,6 +6,7 @@ import type {
   ChatRequest,
   ChatRequestOptions,
   ChatResponse,
+  ChatToolCall,
   ChatStreamDone,
   ChatStreamHandlers,
   ChatStreamOptions,
@@ -164,8 +165,11 @@ export class OpenAICompatibleProviderError extends Error{
 }
 
 interface OpenAIChatMessage{
-  role:"system"|"user"|"assistant";
-  content:string;
+  role:"system"|"user"|"assistant"|"tool";
+  content:string|null;
+  tool_call_id?:string;
+  name?:string;
+  tool_calls?:{id:string;type:"function";function:{name:string;arguments:string}}[];
 }
 
 export function validateOpenAICompatibleProviderConfig(config:OpenAICompatibleProviderConfig,options:{allowEmptyModel?:boolean}={}):string[]{
@@ -230,7 +234,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
   capabilities():ProviderCapabilities{
     return {
       streaming:true,
-      toolCalling:false,
+      toolCalling:true,
       structuredOutput:true,
       reasoning:false
     };
@@ -333,6 +337,9 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       let finishReason:ChatResponse["finishReason"]="unknown";
       let model=request.model;
       let usage:ChatUsage|undefined;
+      let streamedContent="";
+      let streamedReasoning="";
+      const streamedToolCalls=new Map<number,{id?:string;name?:string;arguments:string}>();
       let completed=false;
 
       const emitCompleted=async()=>{
@@ -423,8 +430,9 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
 
         const delta=choice.delta;
         if(delta&&typeof delta==="object"&&!Array.isArray(delta)){
-          const content=(delta as Record<string,unknown>).content;
-          if(content!==undefined&&typeof content!=="string"){
+          const deltaRecord=delta as Record<string,unknown>;
+          const content=deltaRecord.content;
+          if(content!==undefined&&content!==null&&typeof content!=="string"){
             throw this.failure({
               code:"INVALID_RESPONSE",
               message:"OpenAI-compatible provider returned non-text streaming content.",
@@ -433,7 +441,14 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
               details:{category:"malformed_stream_delta",durationMs:Date.now()-started}
             });
           }
+          const reasoning=typeof deltaRecord.reasoning_content==="string"?deltaRecord.reasoning_content:
+            typeof deltaRecord.reasoning==="string"?deltaRecord.reasoning:"";
+          if(reasoning){
+            streamedReasoning+=reasoning;
+            await handlers.onEvent({apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:this.id,model,type:"reasoning",text:reasoning});
+          }
           if(typeof content==="string"&&content.length>0){
+            streamedContent+=content;
             await handlers.onEvent({
               apiVersion:"1",
               schemaVersion:"1",
@@ -444,6 +459,19 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
               type:"delta",
               text:content
             });
+          }
+          if(Array.isArray(deltaRecord.tool_calls)){
+            for(const rawCall of deltaRecord.tool_calls){
+              if(!rawCall||typeof rawCall!=="object"||Array.isArray(rawCall))continue;
+              const part=rawCall as Record<string,unknown>;
+              const index=typeof part.index==="number"&&Number.isInteger(part.index)&&part.index>=0?part.index:streamedToolCalls.size;
+              const acc=streamedToolCalls.get(index)??{arguments:""};
+              if(typeof part.id==="string"&&part.id)acc.id=part.id;
+              const fn=part.function&&typeof part.function==="object"&&!Array.isArray(part.function)?part.function as Record<string,unknown>:undefined;
+              if(typeof fn?.name==="string")acc.name=(acc.name??"")+fn.name;
+              if(typeof fn?.arguments==="string")acc.arguments+=fn.arguments;
+              streamedToolCalls.set(index,acc);
+            }
           }
         }
       };
@@ -532,9 +560,13 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
           conversationId:request.context.conversationId,
           providerId:this.id,
           model,
-          message:{id:request.requestId+":assistant",role:"assistant",content:""},
+          message:{
+            id:request.requestId+":assistant",role:"assistant",content:streamedContent,
+            ...(streamedToolCalls.size?{toolCalls:this.mapToolCalls([...streamedToolCalls.entries()].sort((a,b)=>a[0]-b[0]).map(([index,call])=>({id:call.id??request.requestId+":tool:"+index,type:"function",function:{name:call.name??"",arguments:call.arguments||"{}"}})),request)}:{})
+          },
           finishReason,
           ...(usage?{usage}: {}),
+          ...(streamedReasoning?{reasoning:streamedReasoning}:{}),
           metadata:{streaming:true,durationMs:Date.now()-started}
         };
       }finally{
@@ -692,23 +724,22 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
   private mapMessages(messages:readonly ChatMessage[],request:ChatRequest):OpenAIChatMessage[]{
     return messages.map(message=>{
       if(message.role==="tool"){
-        throw this.failure({
-          code:"UNSUPPORTED",
-          message:"Tool messages are not supported by this provider.",
-          request,
-          retryable:false,
-          details:{category:"unsupported_message",role:"tool"}
+        if(!message.toolCallId||!message.toolName)throw this.failure({
+          code:"INVALID_REQUEST",message:"Tool result is missing its call id or name.",request,retryable:false,
+          details:{category:"invalid_tool_message"}
         });
+        return {role:"tool",tool_call_id:message.toolCallId,name:message.toolName,content:message.content};
       }
-      if(message.toolCallId){
-        throw this.failure({
-          code:"UNSUPPORTED",
-          message:"Tool-call metadata is not supported by this provider.",
-          request,
-          retryable:false,
-          details:{category:"unsupported_message",role:message.role}
-        });
+      if(message.role==="assistant"&&message.toolCalls?.length){
+        return {
+          role:"assistant",content:message.content||null,
+          tool_calls:message.toolCalls.map(call=>({id:call.id,type:"function" as const,function:{name:call.name,arguments:JSON.stringify(call.arguments)}}))
+        };
       }
+      if(message.toolCallId)throw this.failure({
+        code:"INVALID_REQUEST",message:"Tool-call id is only valid on tool result messages.",request,retryable:false,
+        details:{category:"invalid_tool_message",role:message.role}
+      });
       return {role:message.role,content:message.content};
     });
   }
@@ -731,10 +762,12 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       max_tokens?:number;
       top_p?:number;
       response_format?:Record<string,unknown>;
+      tools?:{type:"function";function:{name:string;description:string;parameters:unknown}}[];
     }={
       model:request.model,
       messages:[...messages],
-      stream
+      stream,
+      ...(request.tools?.length?{tools:request.tools.map(tool=>({type:"function" as const,function:{name:tool.name,description:tool.description,parameters:tool.parameters}}))}:{})
     };
     if(generation?.temperature!==undefined)payload.temperature=generation.temperature;
     if(generation?.maxTokens!==undefined)payload.max_tokens=generation.maxTokens;
@@ -889,9 +922,13 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     if(message.role!==undefined&&message.role!=="assistant"){
       throw this.failure({code:"INVALID_RESPONSE",message:"OpenAI-compatible provider returned a non-assistant message.",request,retryable:false,details:{category:"invalid_assistant_message",durationMs}});
     }
-    if(typeof message.content!=="string"||message.content.length===0){
-      throw this.failure({code:"INVALID_RESPONSE",message:"OpenAI-compatible provider response is missing assistant text content.",request,retryable:false,details:{category:"missing_assistant_content",durationMs}});
+    const toolCalls=this.mapToolCalls(message.tool_calls,request);
+    if((typeof message.content!=="string"||message.content.length===0)&&toolCalls.length===0){
+      throw this.failure({code:"INVALID_RESPONSE",message:"OpenAI-compatible provider response is missing assistant text and tool calls.",request,retryable:false,details:{category:"missing_assistant_content",durationMs}});
     }
+    const content=typeof message.content==="string"?message.content:"";
+    const reasoning=typeof message.reasoning_content==="string"?message.reasoning_content:
+      typeof message.reasoning==="string"?message.reasoning:undefined;
 
     const usage=this.mapUsage(object.usage,request,durationMs);
     const model=typeof object.model==="string"&&object.model.length>0?object.model:request.model;
@@ -905,11 +942,32 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       conversationId:request.context.conversationId,
       providerId:this.id,
       model,
-      message:{id,role:"assistant",content:message.content},
+      message:{id,role:"assistant",content,...(toolCalls.length?{toolCalls}:{})},
       finishReason,
       ...(usage?{usage}:{}),
+      ...(reasoning?{reasoning}:{}),
       metadata:{durationMs}
     };
+  }
+
+  private mapToolCalls(raw:unknown,request:ChatRequest):ChatToolCall[]{
+    if(raw===undefined||raw===null)return [];
+    if(!Array.isArray(raw))throw this.failure({code:"INVALID_RESPONSE",message:"OpenAI-compatible provider returned malformed native tool calls.",request,retryable:false,details:{category:"malformed_tool_calls"}});
+    if(raw.length>32)throw this.failure({code:"INVALID_RESPONSE",message:"OpenAI-compatible provider returned too many tool calls.",request,retryable:false,details:{category:"tool_call_limit"}});
+    return raw.map((entry,index)=>{
+      const item=entry&&typeof entry==="object"&&!Array.isArray(entry)?entry as Record<string,unknown>:undefined;
+      const fn=item?.function&&typeof item.function==="object"&&!Array.isArray(item.function)?item.function as Record<string,unknown>:undefined;
+      const name=typeof fn?.name==="string"?fn.name:"";
+      let args:unknown=fn?.arguments;
+      if(typeof args==="string"){
+        if(args.length>4000)throw this.failure({code:"INVALID_RESPONSE",message:"OpenAI-compatible tool arguments exceed the input limit.",request,retryable:false,details:{category:"tool_arguments_limit"}});
+        try{args=JSON.parse(args);}catch{throw this.failure({code:"INVALID_RESPONSE",message:"OpenAI-compatible provider returned invalid JSON in tool arguments.",request,retryable:false,details:{category:"invalid_tool_arguments"}});}
+      }
+      if(!name||!args||typeof args!=="object"||Array.isArray(args))throw this.failure({code:"INVALID_RESPONSE",message:"OpenAI-compatible provider returned an invalid native tool call.",request,retryable:false,details:{category:"malformed_tool_call"}});
+      if(JSON.stringify(args).length>4000)throw this.failure({code:"INVALID_RESPONSE",message:"OpenAI-compatible tool arguments exceed the input limit.",request,retryable:false,details:{category:"tool_arguments_limit"}});
+      const id=typeof item?.id==="string"&&item.id.trim()?item.id:request.requestId+":tool:"+index;
+      return {id,name,arguments:args as Record<string,unknown>};
+    });
   }
 
   private mapUsage(value:unknown,request:ChatRequest,durationMs:number):ChatUsage|undefined{
@@ -943,6 +1001,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       case "length":return "length";
       case "content_filter":return "content_filter";
       case "error":return "error";
+      case "tool_calls":case "function_call":return "stop";
       default:return "unknown";
     }
   }
