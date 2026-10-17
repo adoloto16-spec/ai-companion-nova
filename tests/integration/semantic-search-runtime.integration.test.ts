@@ -50,6 +50,27 @@ async function main(){
   const output=JSON.stringify(action.output);
   ok(output.includes("core_book")&&output.includes("memory")&&output.includes("conversation"),"MEMORY_SEARCH returns results across the three source families");
   ok(output.includes(modelSearch.id),"explicit MEMORY_SEARCH can find model_search Core Book entries");
+  const savedFact="For the native tool integration test, the user prefers mint tea over coffee.";
+  const saveAction=await runtime.invoke({id:"memory-save.integration",schemaVersion:"1",tool:"memory.save",
+    arguments:{content:savedFact,type:"preference",tags:["native-tool-test"],importance:70,confidence:95},
+    metadata:{characterId:character.id,conversationId:active.id,turnId:"memory-save-turn",callId:"memory-save-call"}});
+  eq(saveAction.status,"success","memory.save passes the existing Tool Registry and Action Broker");
+  if(saveAction.status!=="success")throw new Error("memory.save was rejected: "+saveAction.error.code);
+  const savedOutput=JSON.stringify(saveAction.output);
+  ok(savedOutput.includes('"saved":true')&&savedOutput.includes('"memoryId"'),"memory.save reports the created character memory ID");
+  const readBack=await runtime.invoke({id:"memory-save-readback.integration",schemaVersion:"1",tool:"read_memory",
+    arguments:{query:"native tool integration mint tea coffee"},
+    metadata:{characterId:character.id,conversationId:active.id,turnId:"memory-save-readback",callId:"memory-save-readback-call"}});
+  eq(readBack.status,"success","existing read_memory tool can read a native memory.save result");
+  if(readBack.status!=="success")throw new Error("read_memory readback failed: "+readBack.error.code);
+  ok(JSON.stringify(readBack.output).includes(savedFact),"saved fact is retrievable from the active character's existing MemoryBroker");
+  const duplicateSave=await runtime.invoke({id:"memory-save-duplicate.integration",schemaVersion:"1",tool:"memory.save",
+    arguments:{content:savedFact,type:"preference",tags:["native-tool-test"],importance:70,confidence:95},
+    metadata:{characterId:character.id,conversationId:active.id,turnId:"memory-save-duplicate",callId:"memory-save-duplicate-call"}});
+  eq(duplicateSave.status,"success","an exact duplicate memory request is handled as a successful tool result");
+  if(duplicateSave.status!=="success")throw new Error("Duplicate memory request failed: "+duplicateSave.error.code);
+  const duplicateOutput=JSON.stringify(duplicateSave.output);
+  ok(duplicateOutput.includes('"saved":false')&&duplicateOutput.includes('"reason":"duplicate"'),"repeated facts are deduplicated without creating unbounded memory entries");
   // A strict raw-cosine threshold isolates the exact historical vector for full-document assertions,
   // instead of making an assertion depend on the tool's bounded multi-result payload budget.
   const strictSearchSettings=runtime.getSettings();
