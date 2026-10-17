@@ -17,6 +17,10 @@ ok(source.includes('disabled={chatBusy}'),"composer must disable while streaming
 ok(source.includes('role="status">Nova is thinking…</p>'),"pending Life turn must show an explicit thinking state");
 ok(!source.includes("Thinking…"),"UI must render the live assistant message instead of a fake Thinking placeholder");
 ok(source.includes('snapshot.status==="streaming"'),"streaming state controls must be state-driven");
+const streamHandler=source.indexOf("streamSpeech:async event=>{");
+const streamUiUpdate=source.indexOf('if(event.type!=="emotion")chatController.updateNovaTurnStream(event);',streamHandler);
+const streamTtsAwait=source.indexOf("await speechOutputController.handleSpeechEvent(event);",streamHandler);
+ok(streamHandler>=0&&streamUiUpdate>streamHandler&&streamTtsAwait>streamUiUpdate,"public streaming UI updates before awaited TTS processing so TTS delay cannot hide received text");
 ok(source.includes('showContinue'),"interrupted state must expose Continue");
 ok(source.includes('showRegenerate'),"completed/interrupted state must expose Regenerate");
 ok(source.includes('showRetry'),"error state must expose Retry");

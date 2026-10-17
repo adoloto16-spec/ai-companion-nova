@@ -3,6 +3,7 @@ import PromptRegistryView from "./prompt-registry-view";
 import {createRoot} from "react-dom/client";
 import {invoke} from "@tauri-apps/api/core";
 import {NovaHttpClient} from "./ollama-http-client";
+import {createSileroNativeFetch} from "./silero-http-client";
 import {validateOllamaBaseUrl} from "../../../providers/chat/ollama/src";
 import {passiveDiagnosticsOptions} from "./provider-health-polling";
 import {ChatSessionController,ConversationSession,InMemoryCharacterStore} from "../../../core/src/index";
@@ -19,6 +20,11 @@ import {IpcMemorySemanticIndexStore,IpcMemoryStore,InMemoryMemoryStore} from "..
 import {IpcConversationStore,InMemoryConversationStore} from "../../../host/conversations/src/index";
 import {IpcModelProfileStore,InMemoryModelProfileStore} from "../../../host/model-profiles/src/index";
 import {IpcSettingsStore,InMemorySettingsStore} from "../../../host/settings/src/index";
+import {SpeechOutputController} from "../../../modules/voice/tts/src";
+import type {SpeechOutputStatus} from "../../../modules/voice/tts/src";
+import {WebAudioOutputAdapter} from "./web-audio-output";
+import {DEFAULT_TTS_SETTINGS} from "../../../contracts/src/tts";
+import type {TtsPreset,TtsProviderDescriptor,TtsSettings} from "../../../contracts/src/tts";
 import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
@@ -33,6 +39,7 @@ import "./styles.css";
 
 const preview:RuntimeDiagnostics={schemaVersion:"1",timestamp:new Date().toISOString(),runtimeStatus:"stopped",coreStatus:"stopped",modules:[],providers:[],recentErrors:[],capabilities:[]};
 const ollamaHttpClient=new NovaHttpClient(600_000);
+const sileroNativeFetch=createSileroNativeFetch();
 type ConfigurableChatProviderId="openai-compatible"|"gemini"|"ollama";
 function defaultProviderBaseUrl(providerId:ConfigurableChatProviderId):string{
   if(providerId==="gemini")return "https://generativelanguage.googleapis.com/v1beta";
@@ -153,7 +160,7 @@ function ConversationSwitcher({conversations,activeConversationId,sending,onSele
   </div>;
 }
 
-function ChatView({controller,runtime,character,conversations,activeConversation,input,onDraftChange,onClearSubmittedDraft,onPersist,onClear,onSelectConversation,onCreateConversation,onRenameConversation,onDeleteConversation}:{
+function ChatView({controller,runtime,character,conversations,activeConversation,input,onDraftChange,onClearSubmittedDraft,onPersist,onClear,onSelectConversation,onCreateConversation,onRenameConversation,onDeleteConversation,onStopSpeech}:{
   controller:ChatSessionController;
   runtime:FoundationRuntime;
   character:Character;
@@ -168,6 +175,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
   onCreateConversation:()=>Promise<void>;
   onRenameConversation:(conversation:Conversation)=>Promise<void>;
   onDeleteConversation:(conversation:Conversation)=>Promise<void>;
+  onStopSpeech:()=>void;
 }){
   const [snapshot,setSnapshot]=React.useState(()=>controller.getSnapshot());
   const [editingId,setEditingId]=React.useState<string|undefined>();
@@ -212,10 +220,11 @@ function ChatView({controller,runtime,character,conversations,activeConversation
   },[controller,input,runtime,onPersist,onClearSubmittedDraft,persistAfterAction]);
 
   const stop=React.useCallback(async()=>{
+    onStopSpeech();
     setPersistenceError("");
     const result=await controller.stop();
     await persistAfterAction(result);
-  },[controller,persistAfterAction]);
+  },[controller,onStopSpeech,persistAfterAction]);
 
   const continueGeneration=React.useCallback(async()=>{
     setPersistenceError("");
@@ -238,6 +247,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
   },[controller,runtime,persistAfterAction]);
 
   const retry=React.useCallback(async()=>{
+    onStopSpeech();
     setPersistenceError("");
     const turn=controller.getSnapshot().lifeTurn;
     if(turn&&(turn.status==="failed"||turn.status==="cancelled")){
@@ -256,7 +266,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     }
     const result=await controller.retry(runtime.getActiveChatModel());
     await persistAfterAction(result);
-  },[controller,runtime,persistAfterAction]);
+  },[controller,onStopSpeech,runtime,persistAfterAction]);
 
   const clear=React.useCallback(async()=>{
     setPersistenceError("");
@@ -2022,9 +2032,162 @@ class ViewErrorBoundary extends React.Component<{
   }
 }
 
+
+function TtsSettingsView({settings,onChange,onSave,saving,message,controller,providers}:{
+  settings:TtsSettings;
+  onChange:(settings:TtsSettings)=>void;
+  onSave:()=>Promise<void>;
+  saving:boolean;
+  message:string;
+  controller:SpeechOutputController;
+  providers:readonly TtsProviderDescriptor[];
+}){
+  const [status,setStatus]=React.useState<SpeechOutputStatus>(()=>controller.getStatus());
+  const [connectionMessage,setConnectionMessage]=React.useState("");
+  React.useEffect(()=>controller.subscribe(setStatus),[controller]);
+  const selected=settings.presets.find(preset=>preset.id===settings.activePresetId);
+  const update=(changes:Partial<TtsPreset>)=>{
+    if(!selected)return;
+    controller.stop("TTS preset settings changed.");
+    const updated={...selected,...changes};
+    onChange({...settings,presets:settings.presets.map(preset=>preset.id===selected.id?updated:preset)});
+  };
+  const selectProvider=(providerId:string)=>{
+    if(!selected||providerId===selected.providerId)return;
+    controller.stop("TTS provider changed.");
+    if(providerId==="silero"){
+      const keepSilero=selected.providerId==="silero";
+      const options:Record<string,unknown>={};
+      if(keepSilero&&typeof selected.providerOptions.model==="string")options.model=selected.providerOptions.model;
+      else options.model="tts-1";
+      const updated:TtsPreset={
+        ...selected,providerId,baseUrl:keepSilero?selected.baseUrl:"http://127.0.0.1:8081",
+        voiceProfileId:keepSilero&&selected.voiceProfileId?selected.voiceProfileId:"xenia",
+        language:"ru",speed:keepSilero?selected.speed:1,credentialReference:null,providerOptions:options
+      };
+      onChange({...settings,presets:settings.presets.map(preset=>preset.id===selected.id?updated:preset)});
+      return;
+    }
+    const keepVoiceStudio=selected.providerId==="voice-studio";
+    const voiceStudioOptions:Record<string,unknown>={};
+    if(keepVoiceStudio&&typeof selected.providerOptions.engine==="string")voiceStudioOptions.engine=selected.providerOptions.engine;
+    const updated:TtsPreset={
+      ...selected,providerId,baseUrl:keepVoiceStudio?selected.baseUrl:"http://127.0.0.1:3900",
+      voiceProfileId:keepVoiceStudio?selected.voiceProfileId:"",language:"ru",
+      speed:keepVoiceStudio?selected.speed:1,credentialReference:null,providerOptions:voiceStudioOptions
+    };
+    onChange({...settings,presets:settings.presets.map(preset=>preset.id===selected.id?updated:preset)});
+  };
+  const setEnabled=(enabled:boolean)=>{
+    controller.stop(enabled?"TTS setting changed.":"Speech output disabled.");
+    onChange({...settings,enabled});
+  };
+  const selectPreset=(id:string)=>{
+    controller.stop("Active TTS preset changed.");
+    onChange({...settings,activePresetId:id});
+  };
+  const addPreset=()=>{
+    const source=selected??DEFAULT_TTS_SETTINGS.presets[0]!;
+    const id="tts-preset-"+Date.now().toString(36)+"-"+settings.presets.length.toString(36);
+    const preset:TtsPreset={...source,id,name:"VoiceStudio "+(settings.presets.length+1),credentialReference:null,providerOptions:{...source.providerOptions}};
+    controller.stop("TTS preset added.");
+    onChange({...settings,presets:[...settings.presets,preset],activePresetId:id});
+  };
+  const deletePreset=()=>{
+    if(!selected)return;
+    controller.stop("Active TTS preset removed.");
+    const presets=settings.presets.filter(preset=>preset.id!==selected.id);
+    onChange({...settings,presets,activePresetId:presets[0]?.id??null});
+  };
+  const checkConnection=async()=>{
+    setConnectionMessage("Checking the local "+(selected?.providerId==="silero"?"Silero":"VoiceStudio")+" API…");
+    const result=await controller.testConnection();
+    setConnectionMessage(result.message);
+  };
+  const testVoice=async()=>{
+    try{await controller.testVoice();}
+    catch(error){setConnectionMessage(error instanceof Error?error.message:"Test voice failed.");}
+  };
+  return <div className="settings-grid tts-settings">
+    <section>
+      <div className="section-header">
+        <div><h2>Text-to-Speech</h2><p className="chat-subtitle">Only public NovaTurn speech is synthesized. The TTS preset is separate from Chat Provider Presets.</p></div>
+        <button type="button" onClick={()=>void onSave()} disabled={saving}>Save TTS settings</button>
+      </div>
+      <label className="checkbox">Enable speech output
+        <input type="checkbox" checked={settings.enabled} onChange={event=>setEnabled(event.target.checked)} disabled={saving}/>
+      </label>
+      <p className="hint">Speech is disabled by default. Audio playback must also be explicitly enabled below from a user gesture.</p>
+      <label>Active TTS preset
+        <select value={settings.activePresetId??""} onChange={event=>selectPreset(event.target.value)} disabled={saving||settings.presets.length===0}>
+          {settings.presets.map(preset=><option key={preset.id} value={preset.id}>{preset.name} ({preset.providerId})</option>)}
+        </select>
+      </label>
+      <div className="row">
+        <button type="button" onClick={addPreset} disabled={saving||settings.presets.length>=32}>Add TTS preset</button>
+        <button type="button" onClick={deletePreset} disabled={saving||!selected}>Delete active preset</button>
+      </div>
+      {selected&&<div className="tts-preset-fields">
+        <label>Preset name
+          <input value={selected.name} maxLength={100} onChange={event=>update({name:event.target.value})} disabled={saving}/>
+        </label>
+        <label>TTS provider
+          <select value={selected.providerId} onChange={event=>selectProvider(event.target.value)} disabled={saving}>
+            {providers.map(provider=><option key={provider.id} value={provider.id}>{provider.id}</option>)}
+          </select>
+        </label>
+        <label>{selected.providerId==="silero"?"Silero base URL":"VoiceStudio base URL"}
+          <input type="url" value={selected.baseUrl} maxLength={1024} onChange={event=>update({baseUrl:event.target.value})} disabled={saving}/>
+          <small>{selected.providerId==="silero"?"Use HTTP loopback (127.0.0.1, localhost, or IPv6 loopback); the local port is configurable.":"Only HTTP loopback on port 3900 is accepted by the VoiceStudio adapter."}</small>
+        </label>
+        {selected.providerId==="silero"&&<label>Silero model
+          <input value={String(selected.providerOptions.model??"")} maxLength={120} placeholder="tts-1"
+            onChange={event=>{const options:Record<string,unknown>={...selected.providerOptions};options.model=event.target.value;update({providerOptions:options});}} disabled={saving}/>
+        </label>}
+        <label>{selected.providerId==="silero"?"Silero voice ID":"Voice/profile ID"}
+          <input value={selected.voiceProfileId} maxLength={256} placeholder={selected.providerId==="silero"?"xenia":"Enter a VoiceStudio profile ID"} onChange={event=>update({voiceProfileId:event.target.value})} disabled={saving}/>
+          {selected.providerId==="silero"&&<small>Russian voices: xenia, kseniya, aidar, baya, eugene, random.</small>}
+        </label>
+        {selected.providerId==="silero"
+          ?<p className="hint">Silero language is configured on the local server with SILERO_LANGUAGE=ru.</p>
+          :<label>Language
+            <input value={selected.language} maxLength={20} placeholder="ru" onChange={event=>update({language:event.target.value})} disabled={saving}/>
+          </label>}
+        <label>Speech speed
+          <input type="number" min={0.5} max={2} step={0.1} value={selected.speed} onChange={event=>update({speed:Number(event.target.value)})} disabled={saving}/>
+          {selected.providerId==="silero"&&<small>Recommended: 1.0. The local server may reject other speeds if its FFmpeg support is unavailable.</small>}
+        </label>
+        {selected.providerId==="voice-studio"&&<label>VoiceStudio engine ID (optional)
+          <input value={String(selected.providerOptions.engine??"")} maxLength={80} placeholder="Use VoiceStudio active engine"
+            onChange={event=>{const options={...selected.providerOptions};const engine=event.target.value;if(engine.trim())options.engine=engine;else delete options.engine;update({providerOptions:options});}} disabled={saving}/>
+          <small>Leave empty to use the engine selected in VoiceStudio. The adapter validates and applies a configured engine to both transports.</small>
+        </label>}
+      </div>}
+      <p className="hint">CredentialStore references are reserved for future protected providers. No token, password, or API key is written to the settings JSON.</p>
+    </section>
+    <section>
+      <h3>Playback and diagnostics</h3>
+      <div className="row">
+        <button type="button" onClick={()=>void controller.unlockPlayback().catch(error=>setConnectionMessage(error instanceof Error?error.message:"Audio playback could not be enabled."))}>Enable audio playback</button>
+        <button type="button" onClick={()=>void checkConnection()} disabled={!selected}>Check connection</button>
+      </div>
+      <div className="row">
+        <button type="button" onClick={()=>void testVoice()} disabled={!selected}>Test voice</button>
+        <button type="button" onClick={()=>controller.stop("Speech stopped by the user.")}>Stop speech</button>
+      </div>
+      <p className={status.state==="error"?"error-message":"status-message"} role={status.state==="error"?"alert":"status"}>
+        {status.message}
+      </p>
+      {connectionMessage&&<p className="status-message" role="status">{connectionMessage}</p>}
+      {message&&<p className="status-message" role="status">{message}</p>}
+      <small>Connection checks use the configured loopback URL. This UI does not bundle or start VoiceStudio or its models.</small>
+    </section>
+  </div>;
+}
+
 function SettingsContainerView({
   appSettings,onAppSettingsChange,settingsLoadMessage,settingsSaving,onSaveSettings,onResetSettings,
-  runtime,providerPresets,activePresetId,credentialProfiles,credentialSavedMap,
+  runtime,providerPresets,activePresetId,credentialProfiles,credentialSavedMap,ttsController,ttsProviders,
   onSavePreset,onActivatePreset,onDeletePreset,onCreateCredential,onDeleteCredential,onRefreshModels,onTestPreset,onError
 }:{
   appSettings:AppSettings;
@@ -2036,6 +2199,8 @@ function SettingsContainerView({
   runtime:RuntimeDiagnostics;
   providerPresets:readonly ProviderPreset[];
   activePresetId:string|null;
+  ttsController:SpeechOutputController;
+  ttsProviders:readonly TtsProviderDescriptor[];
   credentialProfiles:readonly CredentialProfile[];
   credentialSavedMap:Record<string,boolean>;
   onSavePreset:(preset:ProviderPreset,activate:boolean)=>Promise<void>;
@@ -2047,12 +2212,13 @@ function SettingsContainerView({
   onTestPreset:(preset:ProviderPreset,sourceId:string)=>Promise<ProviderConnectionTestResult>;
   onError:(error:Error,info:React.ErrorInfo)=>void;
 }){
-  const [tab,setTab]=React.useState<"general"|"chat"|"provider-presets">("general");
+  const [tab,setTab]=React.useState<"general"|"chat"|"provider-presets"|"tts">("general");
   return <section className="settings-container" aria-label="Settings">
     <div className="settings-subnav" role="tablist" aria-label="Settings sections">
       <button type="button" role="tab" aria-selected={tab==="general"} className={tab==="general"?"nav-button active":"nav-button"} onClick={()=>setTab("general")}>General</button>
       <button type="button" role="tab" aria-selected={tab==="chat"} className={tab==="chat"?"nav-button active":"nav-button"} onClick={()=>setTab("chat")}>Chat</button>
       <button type="button" role="tab" aria-selected={tab==="provider-presets"} className={tab==="provider-presets"?"nav-button active":"nav-button"} onClick={()=>setTab("provider-presets")}>Provider Presets</button>
+      <button type="button" role="tab" aria-selected={tab==="tts"} className={tab==="tts"?"nav-button active":"nav-button"} onClick={()=>setTab("tts")}>Voice / TTS</button>
     </div>
     {tab==="general"
       ?<ViewErrorBoundary key="settings-general" view="settings-general" onError={onError}>
@@ -2062,11 +2228,16 @@ function SettingsContainerView({
         ?<ViewErrorBoundary key="settings-chat" view="settings-chat" onError={onError}>
           <ChatSettingsView settings={appSettings} onChange={onAppSettingsChange} onSave={onSaveSettings} onReset={onResetSettings} saving={settingsSaving} message={settingsLoadMessage}/>
         </ViewErrorBoundary>
-        :<ViewErrorBoundary key="settings-provider-presets" view="settings-provider-presets" onError={onError}>
-          <ProviderPresetsView presets={providerPresets} activePresetId={activePresetId} credentialProfiles={credentialProfiles} credentialSaved={credentialSavedMap}
-            runtime={runtime} onSavePreset={onSavePreset} onActivatePreset={onActivatePreset} onDeletePreset={onDeletePreset}
-            onCreateCredential={onCreateCredential} onDeleteCredential={onDeleteCredential} onRefreshModels={onRefreshModels} onTestPreset={onTestPreset}/>
-        </ViewErrorBoundary>}
+        :tab==="provider-presets"
+          ?<ViewErrorBoundary key="settings-provider-presets" view="settings-provider-presets" onError={onError}>
+            <ProviderPresetsView presets={providerPresets} activePresetId={activePresetId} credentialProfiles={credentialProfiles} credentialSaved={credentialSavedMap}
+              runtime={runtime} onSavePreset={onSavePreset} onActivatePreset={onActivatePreset} onDeletePreset={onDeletePreset}
+              onCreateCredential={onCreateCredential} onDeleteCredential={onDeleteCredential} onRefreshModels={onRefreshModels} onTestPreset={onTestPreset}/>
+          </ViewErrorBoundary>
+          :<ViewErrorBoundary key="settings-tts" view="settings-tts" onError={onError}>
+            <TtsSettingsView settings={appSettings.tts} onChange={tts=>onAppSettingsChange({...appSettings,tts})} onSave={onSaveSettings}
+              saving={settingsSaving} message={settingsLoadMessage} controller={ttsController} providers={ttsProviders}/>
+          </ViewErrorBoundary>}
   </section>;
 }
 function isTauriRuntime():boolean{
@@ -2131,6 +2302,37 @@ function App(){
   const [providerPresets,setProviderPresets]=React.useState<readonly ProviderPreset[]>([]);
   const [activePresetId,setActivePresetId]=React.useState<string|null>(null);
   const [appSettings,setAppSettings]=React.useState<AppSettings>(()=>defaultAppSettings());
+  const appSettingsRef=React.useRef(appSettings);
+  appSettingsRef.current=appSettings;
+  const webAudioOutputRef=React.useRef<WebAudioOutputAdapter|undefined>(undefined);
+  if(!webAudioOutputRef.current)webAudioOutputRef.current=new WebAudioOutputAdapter({onError:error=>foundationRef.current?.recordDiagnosticError("tts","AUDIO_PLAYBACK_FAILED",error.message)});
+  const speechOutputControllerRef=React.useRef<SpeechOutputController|undefined>(undefined);
+  if(!speechOutputControllerRef.current){
+    speechOutputControllerRef.current=new SpeechOutputController({
+      getSettings:()=>appSettingsRef.current.tts,
+      getProvider:providerId=>foundationRef.current?.getTtsProvider(providerId),
+      output:webAudioOutputRef.current,
+      onDiagnostic:(code,message)=>foundationRef.current?.recordDiagnosticError("tts",code,message)
+    });
+  }
+  const speechOutputController=speechOutputControllerRef.current;
+  const ttsSettingsKey=JSON.stringify(appSettings.tts);
+  const previousTtsSettingsKeyRef=React.useRef(ttsSettingsKey);
+  React.useEffect(()=>{
+    if(previousTtsSettingsKeyRef.current!==ttsSettingsKey){
+      previousTtsSettingsKeyRef.current=ttsSettingsKey;
+      speechOutputController.configurationChanged();
+    }
+  },[ttsSettingsKey,speechOutputController]);
+  React.useEffect(()=>{
+    const stopBeforeUnload=()=>speechOutputController.stop("Application window is closing.");
+    window.addEventListener("beforeunload",stopBeforeUnload);
+    return ()=>{
+      window.removeEventListener("beforeunload",stopBeforeUnload);
+      speechOutputController.stop("Application UI closed.");
+      void webAudioOutputRef.current?.dispose();
+    };
+  },[speechOutputController]);
   const semanticIndexStore=React.useMemo(()=>isTauriRuntime()?new IpcMemorySemanticIndexStore(invoke):undefined,[]);
   const [settingsLoadMessage,setSettingsLoadMessage]=React.useState("");
   const credentialProfileStateRef=React.useRef<CredentialProfileStoreState>(emptyCredentialProfileState());
@@ -2275,6 +2477,7 @@ function App(){
     const snapshot=chatController?.getSnapshot();
     if(!chatController||!activeCharacterId||!activeConversationId||
       snapshot?.characterId!==activeCharacterId||snapshot.conversationId!==activeConversationId){
+      speechOutputController.stop("Dialogue or character is no longer active.");
       foundation.setNovaTurnSink(undefined);
       return;
     }
@@ -2309,28 +2512,37 @@ function App(){
             if(attached)setActiveConversation(updated);
           }
         });
+        void speechOutputController.finishTurn(context.turnId);
       },
-      streamSpeech:event=>{
-        if(!attached||event.characterId!==activeCharacterId||event.conversationId!==activeConversationId)return;
-        chatController.updateNovaTurnStream(event);
+      streamSpeech:async event=>{
+        if(!attached||event.characterId!==activeCharacterId||event.conversationId!==activeConversationId){
+          speechOutputController.stop("Dialogue or character changed.");
+          return;
+        }
+        if(event.type!=="emotion")chatController.updateNovaTurnStream(event);
+        await speechOutputController.handleSpeechEvent(event);
       },
       fail:(turn,reason)=>{
         if(!attached||turn.characterId!==activeCharacterId||turn.conversationId!==activeConversationId)return;
         const current=chatController.getSnapshot();
         if(current.characterId===turn.characterId&&current.conversationId===turn.conversationId){
           chatController.failLifeTurn(turn.userMessageId,reason);
+          // Keep audio aligned with visible incomplete speech after a real failure; cancellations are cleared below.
+          if(!/cancel|superseded|stale-context|character-change|life-off/i.test(reason))void speechOutputController.finishTurn(turn.turnId);
         }
       }
     };
     foundation.setNovaTurnSink(sink);
     return ()=>{
       attached=false;
+      speechOutputController.stop("Dialogue or character changed.");
       chatController.clearNovaTurnStream();
       foundation.setNovaTurnSink(undefined);
     };
-  },[chatController,activeCharacterId,activeConversationId]);
+  },[chatController,activeCharacterId,activeConversationId,speechOutputController]);
 
   const clearConversation=React.useCallback(async(controller:ChatSessionController)=>{
+    speechOutputController.stop("Conversation cleared.");
     const foundation=foundationRef.current;
     if(!foundation)throw new Error("Conversation runtime is not available.");
     const snapshot=controller.getSnapshot();
@@ -2347,7 +2559,7 @@ function App(){
       await persistConversation(controller);
       throw error;
     }
-  },[controllerForConversation,loadModelProfile,persistConversation]);
+  },[controllerForConversation,loadModelProfile,persistConversation,speechOutputController]);
 
   const syncCharacters=React.useCallback(async(runtimeInstance:FoundationRuntime)=>{
     const list=await runtimeInstance.listCharacters();
@@ -2423,6 +2635,7 @@ function App(){
     const next=await startFoundationRuntime({
       providerConfiguration:config,credentialStore,characterStore,coreBookStore,memoryStore,semanticIndexStore,conversationStore,retriever,retrievalIndexWriter:retriever,
       httpClient:ollamaHttpClient,
+      sileroFetch:sileroNativeFetch,
       providerPresetConfigurations:materializePresetConfigurations(presetState.presets),
       providerPresetPools:presetState.presets,
       onProviderPresetPoolStateChange:persistProviderPresetPoolState,
@@ -2500,6 +2713,7 @@ function App(){
   const selectCharacter=React.useCallback(async(id:string)=>{
     const foundation=foundationRef.current;
     if(!foundation||chatController?.isBusy())return;
+    speechOutputController.stop("Character changed.");
     foundation.setNovaTurnSink(undefined);
     const selected=await foundation.setActiveCharacter(id);
     const loaded=await loadActiveConversation(selected.id);
@@ -2509,12 +2723,14 @@ function App(){
     setActiveModelProfile(loaded.controller.getModelProfile()??defaultModelProfile(selected.id));
     setChatController(loaded.controller);
     setView("chat");
-  },[chatController,loadActiveConversation]);
+  },[chatController,loadActiveConversation,speechOutputController]);
 
   const selectConversation=React.useCallback(async(id:string)=>{
     const foundation=foundationRef.current;
     const character=activeCharacter;
     if(!foundation||!character||chatController?.isBusy())return;
+    if(id===activeConversation?.id)return;
+    speechOutputController.stop("Conversation changed.");
     foundation.setNovaTurnSink(undefined);
     const previousConversation=activeConversation;
     const local=conversations.find(item=>item.id===id);
@@ -2536,12 +2752,13 @@ function App(){
       }
       throw error;
     }
-  },[activeCharacter,activeConversation,activeModelProfile,chatController,controllerForConversation,conversations,loadModelProfile]);
+  },[activeCharacter,activeConversation,activeModelProfile,chatController,controllerForConversation,conversations,loadModelProfile,speechOutputController]);
 
   const createConversation=React.useCallback(async()=>{
     const foundation=foundationRef.current;
     const character=activeCharacter;
     if(!foundation||!character||chatController?.isBusy())return;
+    speechOutputController.stop("New conversation started.");
     foundation.setNovaTurnSink(undefined);
     const conversation=await foundation.createConversation(character.id);
     const profile=activeModelProfile??await loadModelProfile(character.id);
@@ -2550,7 +2767,7 @@ function App(){
     setConversations(await foundation.listConversations(character.id));
     setChatController(controller);
     setView("chat");
-  },[activeCharacter,activeModelProfile,chatController,controllerForConversation,loadModelProfile]);
+  },[activeCharacter,activeModelProfile,chatController,controllerForConversation,loadModelProfile,speechOutputController]);
 
   const renameConversation=React.useCallback(async(conversation:Conversation)=>{
     const foundation=foundationRef.current;
@@ -2567,7 +2784,10 @@ function App(){
     const foundation=foundationRef.current;
     const character=activeCharacter;
     if(!foundation||!character||chatController?.isBusy())return;
-    if(activeConversation?.id===conversation.id)foundation.setNovaTurnSink(undefined);
+    if(activeConversation?.id===conversation.id){
+      speechOutputController.stop("Active conversation deleted.");
+      foundation.setNovaTurnSink(undefined);
+    }
     const replacement=await foundation.deleteConversation(character.id,conversation.id);
     const profile=activeModelProfile??await loadModelProfile(character.id);
     const controller=controllerForConversation(replacement,profile);
@@ -2575,7 +2795,7 @@ function App(){
     setConversations(await foundation.listConversations(character.id));
     setChatController(controller);
     setActiveModelProfile(profile);
-  },[activeCharacter,activeModelProfile,chatController,controllerForConversation,loadModelProfile]);
+  },[activeCharacter,activeConversation,activeModelProfile,chatController,controllerForConversation,loadModelProfile,speechOutputController]);
 
   const createCharacter=React.useCallback(async(name:string)=>{
     const foundation=foundationRef.current;
@@ -2596,8 +2816,9 @@ function App(){
     const foundation=foundationRef.current;
     if(!foundation)return;
     if(chatController?.isBusy())throw new Error("Wait for the current Chat operation to finish before changing Character.");
-    foundation.setNovaTurnSink(undefined);
     const before=activeCharacter;
+    if(before?.id===id)speechOutputController.stop("Active character deleted.");
+    foundation.setNovaTurnSink(undefined);
     await foundation.deleteCharacter(id);
     try{await modelProfileStore.delete(id)}catch(error){modelProfileLoadErrorRef.current=safeStartupError(error)}
     const nextActive=await foundation.getActiveCharacter();
@@ -2608,7 +2829,7 @@ function App(){
     setActiveConversation(loaded.conversation);
     setActiveModelProfile(loaded.controller.getModelProfile()??defaultModelProfile(nextActive.id));
     if(before?.id===id||before?.id!==nextActive.id)setChatController(loaded.controller);
-  },[activeCharacter,chatController,loadActiveConversation,modelProfileStore]);
+  },[activeCharacter,chatController,loadActiveConversation,modelProfileStore,speechOutputController]);
 
   const configurationForPreset=(preset:ProviderPreset):ProviderConfiguration|undefined=>{
     if(preset.type==="single")return materializeSingleProviderConfiguration(preset);
@@ -2747,6 +2968,7 @@ function App(){
   },[appSettings]);
 
   const resetAppSettings=React.useCallback(async()=>{
+    speechOutputController.stop("Application settings reset.");
     const foundation=foundationRef.current;
     if(!foundation){setSettingsLoadMessage("Settings runtime is not available.");return;}
     setSaving(true);setSettingsLoadMessage("");
@@ -2756,7 +2978,7 @@ function App(){
       setSettingsLoadMessage("Settings restored to defaults.");
     }catch(error){setSettingsLoadMessage(error instanceof Error?error.message:"Settings could not be reset.");}
     finally{setSaving(false);}
-  },[]);
+  },[speechOutputController]);
 
   const savePromptOverride=React.useCallback(async(id:PromptId,text:string)=>{
     const foundation=foundationRef.current;
@@ -2832,6 +3054,8 @@ function App(){
           runtime={runtime}
           providerPresets={providerPresets}
           activePresetId={activePresetId}
+          ttsController={speechOutputController}
+          ttsProviders={foundationRef.current?.listTtsProviders()??[]}
           credentialProfiles={credentialProfiles}
           credentialSavedMap={credentialSavedMap}
           onSavePreset={saveProviderPreset}
@@ -2860,7 +3084,8 @@ function App(){
           onSelectConversation={selectConversation}
           onCreateConversation={createConversation}
           onRenameConversation={renameConversation}
-          onDeleteConversation={deleteConversation}/>
+          onDeleteConversation={deleteConversation}
+          onStopSpeech={()=>speechOutputController.stop("Chat action cancelled speech.")}/>
       :view==="characters"&&activeCharacter
         ?<CharactersView characters={characters} activeCharacter={activeCharacter}
           onSelect={selectCharacter} onCreate={createCharacter} onRename={renameCharacter} onDelete={deleteCharacter}/>

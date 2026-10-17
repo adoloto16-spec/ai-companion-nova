@@ -73,7 +73,8 @@ async function nativeSchemaStreamsBeforeCompletion():Promise<void>{
     }
   };
   let visible="";
-  const run=createStep(runtime,"structured",id=>"CUSTOM PROMPT: "+id).run(context(event=>{if(event.type==="delta")visible+=event.text??"";}));
+  const speechEvents:Array<{type:string;text?:string;emotion?:string}>=[];
+  const run=createStep(runtime,"structured",id=>"CUSTOM PROMPT: "+id).run(context(event=>{speechEvents.push({type:event.type,...(event.text===undefined?{}:{text:event.text}),...(event.emotion===undefined?{}:{emotion:event.emotion})});if(event.type==="delta")visible+=event.text??"";}));
   await firstChunk;
   ok(visible.length>0,"public speech is visible before stream completion");
   ok(visible.length<payload.length,"raw JSON was not sent as visible text");
@@ -90,6 +91,7 @@ async function nativeSchemaStreamsBeforeCompletion():Promise<void>{
   resume();
   const result=await run;
   equal(visible,"The answer is arriving while the model is still generating the rest.","streamed native output is only SPEECH and has no duplicated final text");
+  ok(speechEvents.findIndex(event=>event.type==="delta")<speechEvents.findIndex(event=>event.type==="emotion"),"native JSON emits public speech before an emotion field that appears later");
   equal(result.turn.situation,"situation-private","native JSON preserves situation");
   equal(result.turn.thoughts,"thoughts-private","native JSON preserves thoughts");
   equal(result.turn.emotion,"emotion-private","native JSON preserves emotion");
@@ -100,7 +102,9 @@ async function nativeSchemaStreamsBeforeCompletion():Promise<void>{
 async function explicitUnsupportedUsesOnlyOneTaggedFallback():Promise<void>{
   const calls:ChatRequest[]=[];
   let count=0;
-  const response=taggedTurn("Fallback speech is streamed, not parsed as JSON.");
+  const response=taggedTurn("Fallback speech is streamed, not parsed as JSON.")
+    .replace(/<EMOTION>[\s\S]*?<\/EMOTION>\n?/,"")
+    .replace(/(<SPEECH>[\s\S]*?<\/SPEECH>)/,"$1\n<EMOTION>whisper</EMOTION>");
   const runtime={
     getChatProviderCapabilities:()=>({structuredOutput:true,streaming:true}),
     getActiveProviderPresetId:()=>undefined,getChatModel:()=>"fake-model",
@@ -114,14 +118,20 @@ async function explicitUnsupportedUsesOnlyOneTaggedFallback():Promise<void>{
     }
   };
   let visible="";
-  const result=await createStep(runtime,"structured",id=>"CUSTOM PROMPT: "+id).run(context(event=>{if(event.type==="delta")visible+=event.text??"";}));
+  const speechEvents:Array<{type:string;text?:string;emotion?:string}>=[];
+  const result=await createStep(runtime,"structured",id=>"CUSTOM PROMPT: "+id).run(context(event=>{speechEvents.push({type:event.type,...(event.text===undefined?{}:{text:event.text}),...(event.emotion===undefined?{}:{emotion:event.emotion})});if(event.type==="delta")visible+=event.text??"";}));
   equal(calls.length,2,"explicit unsupported schema causes one and only one tagged retry");
+  const resetIndex=speechEvents.findIndex(event=>event.type==="reset");
+  ok(resetIndex>=0&&speechEvents[resetIndex+1]?.type==="start","tagged fallback starts a new session immediately after resetting the JSON attempt");
+  ok(speechEvents.findIndex(event=>event.type==="delta")>resetIndex+1,"fallback speech is delivered only to the new session");
   equal(calls[0]?.generation?.responseFormat?.type,"json-schema","first request uses native JSON Schema");
   equal(calls[1]?.generation?.responseFormat?.type,"text","fallback request uses tagged text protocol");
   equal(calls[1]?.context.messages.find(message=>message.role==="system")?.content,"CUSTOM PROMPT: nova-system-tagged","tagged fallback uses the edited tagged system prompt");
   equal(calls[1]?.context.messages.find(message=>message.id?.endsWith(":user-cue"))?.content,"CUSTOM PROMPT: nova-cue-reactive-tagged","tagged fallback uses the edited reactive tagged cue");
   equal(result.turn.speech,"Fallback speech is streamed, not parsed as JSON.","tag fallback validates final protocol");
   equal(visible,result.turn.speech,"tag fallback streams only speech without final duplication");
+  equal(speechEvents.find(event=>event.type==="emotion")?.emotion,"whisper","tagged emotion metadata is delivered separately from displayed speech");
+  ok(speechEvents.findIndex(event=>event.type==="delta")<speechEvents.findIndex(event=>event.type==="emotion"),"tagged mode emits speech before a later emotion field");
 }
 async function ordinaryErrorsAndMalformedJsonNeverFallback():Promise<void>{
   for(const failure of ["timeout","network","auth","invalid-json"] as const){
@@ -136,14 +146,20 @@ async function ordinaryErrorsAndMalformedJsonNeverFallback():Promise<void>{
         if(failure==="timeout")throw new Error("request timed out");
         if(failure==="network")throw new Error("network connection refused");
         if(failure==="auth")throw Object.assign(new Error("unauthorized"),{chatError:{message:"Unauthorized",details:{category:"authorization"}}});
-        const content='{"speech":"unterminated';
+        const content='{"speech":"Привет, я Тоня.","thoughts":"private-thoughts"';
         await handlers.onEvent(delta(request,content));
         return responseFor(request,content);
       }
     };
     let rejected=false;
-    try{await createStep(runtime).run(context(()=>{}));}catch{rejected=true;}
+    const speechEvents:Array<{type:string;text?:string}> = [];
+    try{await createStep(runtime).run(context(event=>{speechEvents.push({type:event.type,...(event.text===undefined?{}:{text:event.text})});}));}catch{rejected=true;}
     ok(rejected,failure+" failure rejects the turn");
+    if(failure==="invalid-json"){
+      const publicSpeech=speechEvents.filter(event=>event.type==="delta").map(event=>event.text??"").join("");
+      equal(publicSpeech,"Привет, я Тоня.","malformed final JSON leaves only already-streamed public speech visible");
+      ok(!publicSpeech.includes("private-thoughts")&&!publicSpeech.includes('{"speech"'),"malformed protocol never streams private fields or raw JSON into the public reply");
+    }
     equal(calls.length,1,failure+" never triggers a format fallback");
     equal(calls[0]?.generation?.responseFormat?.type,"json-schema",failure+" keeps the attempted format as native JSON Schema");
   }

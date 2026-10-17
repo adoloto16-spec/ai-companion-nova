@@ -80,8 +80,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
   },
   "app-settings": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v12",
-    "title": "AI Companion Nova App Settings v12",
+    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v13",
+    "title": "AI Companion Nova App Settings v13",
     "type": "object",
     "additionalProperties": false,
     "required": [
@@ -95,14 +95,15 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       "diagnostics",
       "ui",
       "semanticDedup",
-      "prompts"
+      "prompts",
+      "tts"
     ],
     "properties": {
       "apiVersion": {
         "const": "1"
       },
       "schemaVersion": {
-        "const": "12"
+        "const": "13"
       },
       "chat": {
         "type": "object",
@@ -439,6 +440,139 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
                 "maxLength": 12000
               }
             }
+          }
+        }
+      },
+      "tts": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "enabled",
+          "activePresetId",
+          "presets"
+        ],
+        "properties": {
+          "activePresetId": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              }
+            ]
+          },
+          "presets": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "name",
+                "providerId",
+                "baseUrl",
+                "voiceProfileId",
+                "language",
+                "speed",
+                "credentialReference",
+                "providerOptions"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80,
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$"
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "providerId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80,
+                  "pattern": "^[a-z][a-z0-9-]{0,79}$"
+                },
+                "baseUrl": {
+                  "type": "string",
+                  "maxLength": 1024
+                },
+                "voiceProfileId": {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                "language": {
+                  "type": "string",
+                  "minLength": 2,
+                  "maxLength": 20,
+                  "pattern": "^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})*$"
+                },
+                "speed": {
+                  "type": "number",
+                  "minimum": 0.5,
+                  "maximum": 2
+                },
+                "credentialReference": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "id",
+                        "kind"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "kind": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 80
+                        },
+                        "provider": {
+                          "type": "string",
+                          "maxLength": 80
+                        },
+                        "version": {
+                          "type": "string",
+                          "maxLength": 80
+                        }
+                      }
+                    }
+                  ]
+                },
+                "providerOptions": {
+                  "type": "object",
+                  "maxProperties": 32,
+                  "additionalProperties": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "propertyNames": {
+                    "pattern": "^(?!.*(?:[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN]|[pP][aA][sS][sS][wW][oO][rR][dD]|[aA][pP][iI][_. -]?[kK][eE][yY]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL])).*$"
+                  }
+                }
+              }
+            }
+          },
+          "enabled": {
+            "type": "boolean"
           }
         }
       }

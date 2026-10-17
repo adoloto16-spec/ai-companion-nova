@@ -9,7 +9,7 @@ function makeTurn(speech:string,nextWakeMs=20,tools:NovaTurn["tools"]=[]):NovaTu
 function schedule(){return {mode:"adaptive" as const,defaultIntervalMs:20,minIntervalMs:10,maxIntervalMs:40,maxRequestsPerHour:null};}
 function responseFor(request:ChatRequest,content:string):ChatResponse{return {apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.cognitive",model:request.model,message:{role:"assistant",content},finishReason:"stop"};}
 function abortWait(signal:AbortSignal):Promise<never>{return new Promise((_,reject)=>{const abort=()=>{const error=new Error("aborted");error.name="AbortError";reject(error);};if(signal.aborted)abort();else signal.addEventListener("abort",abort,{once:true});});}
-function sinkFixture(){const committed:{turn:NovaTurn;context:MindTurnExecutionContext}[]=[];const failed:{turn:MindReactiveTurn;reason:string}[]=[];const sink:MindTurnSink={async commit(turn,context){committed.push({turn,context});},fail(turn,reason){failed.push({turn,reason});}};return {sink,committed,failed};}
+function sinkFixture(){const committed:{turn:NovaTurn;context:MindTurnExecutionContext}[]=[];const failed:{turn:MindReactiveTurn;reason:string}[]=[];const streamed:{type:string;turnId:string;text?:string}[]=[];const sink:MindTurnSink={async commit(turn,context){committed.push({turn,context});},streamSpeech(event){streamed.push({type:event.type,turnId:event.turnId,...(event.text===undefined?{}:{text:event.text})});},fail(turn,reason){failed.push({turn,reason});}};return {sink,committed,failed,streamed};}
 
 async function backgroundSchedulingAndSerializationTest(){
  let active=0,maxActive=0,calls=0;const fixture=sinkFixture();
@@ -31,7 +31,11 @@ async function userPriorityAndStaleCancellationTest(){
  const step:CognitiveStep={async run(context){
   starts++;running++;maxRunning=Math.max(maxRunning,running);
   try{
-   if(!context.userTurn&&starts===1)await abortWait(context.signal);
+   if(!context.userTurn&&starts===1){
+    await context.onSpeechEvent?.({type:"start",conversationId:"conversation.runtime"});
+    await context.onSpeechEvent?.({type:"delta",conversationId:"conversation.runtime",text:"stale background speech"});
+    await abortWait(context.signal);
+   }
    if(context.userTurn){seen.push({...context.userTurn});return {turn:makeTurn("reply to exact user",20),conversationId:context.userTurn.conversationId};}
    return {turn:makeTurn("must be cancelled",20),conversationId:"conversation.runtime"};
   }finally{running--;}
@@ -39,12 +43,15 @@ async function userPriorityAndStaleCancellationTest(){
  const runtime=new MindRuntime({cognitiveStep:step,schedule:schedule(),turnSink:fixture.sink});
  runtime.setActiveCharacter("character.runtime");
  try{
-  await runtime.start();await waitFor(()=>starts===1);
+  await runtime.start();await waitFor(()=>fixture.streamed.some(event=>event.type==="delta"&&event.text==="stale background speech"));
+  const staleStreamTurnId=fixture.streamed.find(event=>event.type==="delta"&&event.text==="stale background speech")?.turnId;
+  ok(staleStreamTurnId,"the superseded background turn streamed public speech before cancellation");
   const userTurn:MindReactiveTurn={characterId:"character.runtime",conversationId:"conversation.reactive",userMessageId:"user-message-17",turnId:"turn-17"};
   ok(runtime.wakeForUserMessage(userTurn),"a newly persisted user turn queues and supersedes stale background cognition");
   await waitFor(()=>fixture.committed.some(item=>item.context.turnId==="turn-17"));
   equal(maxRunning,1,"user priority does not overlap the cancelled request");
   equal(fixture.committed.length,1,"cancelled stale background result is never committed");
+  equal(fixture.streamed.some(event=>event.type==="clear"&&event.turnId===staleStreamTurnId),true,"stale background speech is cleared when a newer user turn supersedes it");
   equal(fixture.committed[0]?.turn.speech,"reply to exact user","reactive speech is committed directly from the returned NovaTurn");
   equal(fixture.committed[0]?.context.userMessageId,"user-message-17","commit remains tied to the exact persisted user message");
   equal(fixture.committed[0]?.context.conversationId,"conversation.reactive","commit remains tied to the exact Conversation");
@@ -70,6 +77,45 @@ async function reactiveSpeechFailureAndRetryTest(){
   await waitFor(()=>fixture.committed.some(item=>item.context.turnId===turn.turnId));
   equal(fixture.committed.find(item=>item.context.turnId===turn.turnId)?.turn.speech,"retry succeeded","retry commits the corrected reply");
   equal(reactiveCalls,2,"retry repeats only the failed reactive cognitive request");
+ }finally{await runtime.stop();}
+}
+
+async function failedReactiveFinalizationPreservesSpeechForRetryTest(){
+ const fixture=sinkFixture();const errors:unknown[]=[];let reactiveCalls=0;
+ const userTurn:MindReactiveTurn={characterId:"character.finalization",conversationId:"conversation.finalization",userMessageId:"user-finalization",turnId:"turn-finalization"};
+ const step:CognitiveStep={async run(context){
+  if(context.userTurn){
+   reactiveCalls++;
+   await context.onSpeechEvent?.({type:"start",conversationId:context.userTurn.conversationId});
+   await context.onSpeechEvent?.({type:"delta",conversationId:context.userTurn.conversationId,text:reactiveCalls===1?"Привет, я Тоня.":"Повторный ответ."});
+   return {turn:makeTurn(reactiveCalls===1?"Привет, я Тоня.":"Повторный ответ."),conversationId:context.userTurn.conversationId};
+  }
+  return {turn:makeTurn("background",1000),conversationId:"conversation.finalization"};
+ }};
+ const sink:MindTurnSink={
+  async commit(turn,context){
+   if(context.userMessageId&&reactiveCalls===1)throw new Error("controlled persist failure");
+   fixture.committed.push({turn,context});
+  },
+  streamSpeech(event){fixture.streamed.push({type:event.type,turnId:event.turnId,...(event.text===undefined?{}:{text:event.text})});},
+  fail(turn,reason){fixture.failed.push({turn,reason});}
+ };
+ const runtime=new MindRuntime({cognitiveStep:step,schedule:{mode:"adaptive",defaultIntervalMs:1000,minIntervalMs:1000,maxIntervalMs:2000,maxRequestsPerHour:null},turnSink:sink,onError:error=>errors.push(error)});
+ runtime.setActiveCharacter(userTurn.characterId);
+ try{
+  await runtime.start();await waitFor(()=>runtime.getState().lifecycleState==="waiting");
+  ok(runtime.wakeForUserMessage(userTurn),"failed-finalization fixture accepts a user turn");
+  await waitFor(()=>fixture.failed.length===1&&runtime.getState().lifecycleState==="waiting");
+  equal(fixture.failed[0]?.reason,"Error","persistence failure remains an explicit reactive-turn failure");
+  equal((errors[0] as Error|undefined)?.message,"controlled persist failure","finalization cause is reported to diagnostics");
+  ok(fixture.streamed.some(event=>event.type==="delta"&&event.turnId===userTurn.turnId&&event.text==="Привет, я Тоня."),"public speech is streamed before persistence fails");
+  equal(fixture.streamed.some(event=>event.type==="clear"&&event.turnId===userTurn.turnId),false,"failed finalization preserves its public stream instead of clearing it");
+  ok(runtime.wakeForUserMessage(userTurn),"the failed turn remains eligible for retry");
+  await waitFor(()=>fixture.committed.some(item=>item.context.turnId===userTurn.turnId));
+  equal(reactiveCalls,2,"retry actually runs the cognitive step again");
+  equal(fixture.committed.filter(item=>item.context.turnId===userTurn.turnId).length,1,"only the successful retry is committed");
+  equal(fixture.streamed.filter(event=>event.type==="clear"&&event.turnId===userTurn.turnId).length,1,"the successful retry clears its provisional stream after commit");
+  equal(errors.length,1,"ordinary UI remains healthy while the persistence failure is diagnosed");
  }finally{await runtime.stop();}
 }
 
@@ -181,6 +227,7 @@ async function main(){
  await backgroundSchedulingAndSerializationTest();
  await userPriorityAndStaleCancellationTest();
  await reactiveSpeechFailureAndRetryTest();
+ await failedReactiveFinalizationPreservesSpeechForRetryTest();
  await toolsAndToolResultWakeTest();
  await lifeOffRejectsLateResponsesTest();
  await llmUsesTaggedProtocolAndPreservesContextTest();

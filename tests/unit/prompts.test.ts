@@ -88,7 +88,7 @@ async function main():Promise<void>{
   legacy.semanticDedup.embeddingModel="legacy-embedding-model";
   legacy.context.availableContextTokens=6144;
   const migrated=migrateAppSettings(legacy);
-  equal(migrated.schemaVersion,"12","previous AppSettings version migrates to v12");
+  equal(migrated.schemaVersion,"13","previous AppSettings version migrates to v13");
   equal(migrated.prompts.overrides["memory-judge.system"],"Legacy user-authored Judge prompt","migration promotes custom Judge text into the central registry");
   equal(migrated.semanticDedup.judge.prompt,"Legacy user-authored Judge prompt","migration preserves prior custom Judge prompt");
   equal(migrated.semanticDedup.judge.providerPresetId,"legacy-judge-preset","migration preserves Judge provider selection");

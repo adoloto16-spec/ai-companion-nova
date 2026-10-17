@@ -4,6 +4,8 @@ packages:
   - "sdk/typescript"
   - "core"
   - "modules/mock"
+  - "modules/voice/tts"
+  - "providers/tts/*"
   - "providers/mock"
   - "host/ipc"
   - "host/credentials"

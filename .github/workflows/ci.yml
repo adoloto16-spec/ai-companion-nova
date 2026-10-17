@@ -83,10 +83,12 @@ jobs:
       - run: cargo test -p nova-desktop-host --all-features credential_profiles::tests
       - run: cargo test -p nova-desktop-host --all-features provider_presets::tests
       - run: cargo test -p nova-desktop-host --all-features settings::tests
+      - run: cargo test -p nova-desktop-host --all-features silero_http::tests
       - run: cargo test -p nova-desktop-host --all-features core_book::migration_tests
 
   windows-installer:
     runs-on: windows-latest
+    timeout-minutes: 40
     needs:
       - typescript-foundation
       - react-ui
@@ -188,6 +190,102 @@ jobs:
 
           Write-Host "Installer: $($installer.FullName)"
           Write-Host "Artifact: $artifactPath"
+
+      - name: Install and smoke-test the staged Windows application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installer = (Resolve-Path "artifacts/AI Companion Nova_x64-setup.exe").Path
+          $installRoot = Join-Path $env:RUNNER_TEMP "nova-installer-smoke-install"
+          $profileRoot = Join-Path $env:RUNNER_TEMP "nova-installer-smoke-profile"
+          $logsRoot = Join-Path $PWD "artifacts/windows-smoke-logs"
+          $logPath = Join-Path $logsRoot "smoke-test.log"
+          New-Item -ItemType Directory -Force -Path $logsRoot, $profileRoot | Out-Null
+          $startedAt = Get-Date
+          $installerProcess = $null
+          $appProcess = $null
+          try {
+            Write-Host "Installing $installer into $installRoot"
+            $installerProcess = Start-Process -FilePath $installer -ArgumentList "/S /D=$installRoot" -PassThru
+            if (-not $installerProcess.WaitForExit(300000)) {
+              Stop-Process -Id $installerProcess.Id -Force -ErrorAction SilentlyContinue
+              throw "Silent NSIS install did not finish within 300 seconds."
+            }
+            Add-Content -Path $logPath -Value "Installer exit code: $($installerProcess.ExitCode)"
+            if ($installerProcess.ExitCode -ne 0) { throw "NSIS installer failed with exit code $($installerProcess.ExitCode)." }
+            $installedApp = Get-ChildItem -LiteralPath $installRoot -Recurse -File -Filter "nova-desktop-host.exe" | Select-Object -First 1
+            if (-not $installedApp) {
+              Get-ChildItem -LiteralPath $installRoot -Recurse -Force | Select-Object FullName, Length, Mode |
+                Format-Table -AutoSize | Out-String | Add-Content -Path $logPath
+              throw "Installed nova-desktop-host.exe was not found under $installRoot."
+            }
+            Add-Content -Path $logPath -Value "Installed executable: $($installedApp.FullName)"
+            $env:APPDATA = Join-Path $profileRoot "Roaming"
+            $env:LOCALAPPDATA = Join-Path $profileRoot "Local"
+            $env:TEMP = Join-Path $profileRoot "Temp"
+            $env:TMP = $env:TEMP
+            New-Item -ItemType Directory -Force -Path $env:APPDATA, $env:LOCALAPPDATA, $env:TEMP | Out-Null
+            Write-Host "Launching installed application: $($installedApp.FullName)"
+            $appProcess = Start-Process -FilePath $installedApp.FullName -WorkingDirectory $installRoot -PassThru
+            Add-Content -Path $logPath -Value "Application PID: $($appProcess.Id)"
+            for ($second = 1; $second -le 20; $second++) {
+              Start-Sleep -Seconds 1
+              $appProcess.Refresh()
+              if ($appProcess.HasExited) {
+                Add-Content -Path $logPath -Value "Application exited after $second second(s), exit code: $($appProcess.ExitCode)"
+                throw "Installed application exited during startup smoke test (exit code $($appProcess.ExitCode))."
+              }
+            }
+            $appProcess.Refresh()
+            if ($appProcess.HasExited) { throw "Installed application did not remain running for the 20-second startup check." }
+            Add-Content -Path $logPath -Value "PASS: installed application remained running for 20 seconds."
+            Write-Host "PASS: installed Windows application remained running for 20 seconds."
+          } catch {
+            Add-Content -Path $logPath -Value "FAIL: $($_.Exception.Message)"
+            Add-Content -Path $logPath -Value ($_ | Out-String)
+            try {
+              Get-WinEvent -FilterHashtable @{ LogName = "Application"; StartTime = $startedAt } -ErrorAction SilentlyContinue |
+                Where-Object { $_.ProviderName -match "Application Error|Windows Error Reporting|.NET Runtime" } |
+                Select-Object TimeCreated, ProviderName, Id, Message | Format-List | Out-String |
+                Set-Content -Path (Join-Path $logsRoot "application-events.log")
+            } catch { Add-Content -Path $logPath -Value "Could not collect Application event log: $($_.Exception.Message)" }
+            throw
+          } finally {
+            if ($appProcess) {
+              try {
+                $appProcess.Refresh()
+                if (-not $appProcess.HasExited) {
+                  $null = $appProcess.CloseMainWindow()
+                  if (-not $appProcess.WaitForExit(5000)) {
+                    Stop-Process -Id $appProcess.Id -Force -ErrorAction SilentlyContinue
+                    $appProcess.WaitForExit()
+                    Add-Content -Path $logPath -Value "Application was force-stopped during cleanup."
+                  } else { Add-Content -Path $logPath -Value "Application closed during cleanup." }
+                }
+              } catch { Add-Content -Path $logPath -Value "Application cleanup warning: $($_.Exception.Message)" }
+            }
+            if (Test-Path -LiteralPath $installRoot) {
+              $uninstaller = Get-ChildItem -LiteralPath $installRoot -Recurse -File -Filter "uninstall.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($uninstaller) {
+                try {
+                  $uninstallProcess = Start-Process -FilePath $uninstaller.FullName -ArgumentList "/S" -PassThru
+                  if ($uninstallProcess.WaitForExit(120000)) { Add-Content -Path $logPath -Value "Uninstaller exit code: $($uninstallProcess.ExitCode)" }
+                  else {
+                    Stop-Process -Id $uninstallProcess.Id -Force -ErrorAction SilentlyContinue
+                    Add-Content -Path $logPath -Value "Uninstaller exceeded the 120-second cleanup limit."
+                  }
+                } catch { Add-Content -Path $logPath -Value "Uninstall cleanup warning: $($_.Exception.Message)" }
+              } else { Add-Content -Path $logPath -Value "NSIS uninstaller was not found for cleanup." }
+            }
+          }
+
+      - name: Upload Windows installer startup diagnostics (failure only)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-smoke-failure-logs
+          path: artifacts/windows-smoke-logs/**
+          if-no-files-found: ignore
 
       - uses: actions/upload-artifact@v4
         with:
