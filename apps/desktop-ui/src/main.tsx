@@ -1396,9 +1396,9 @@ function ModelProfileView({
 
   const selectedPresetAvailable=!draft.providerPresetId||presets.some(preset=>preset.id===draft.providerPresetId);
 
-  const updateGeneration=(key:"temperature"|"topP"|"maxTokens",value:string)=>{
+  const updateGeneration=(key:"temperature"|"topP"|"maxTokens"|"repeatPenalty"|"repeatLastN",value:string)=>{
     const numeric=value.trim()===""?undefined:Number(value);
-    setDraft(current=>({...current,generation:{...current.generation,...(numeric===undefined?{}:{[key]:numeric})}}));
+    setDraft(current=>({...current,generation:{...current.generation,[key]:numeric}}));
   };
 
   const save=async()=>{
@@ -1408,6 +1408,8 @@ function ModelProfileView({
         ...(draft.generation.temperature!==undefined?{temperature:draft.generation.temperature}:{}),
         ...(draft.generation.topP!==undefined?{topP:draft.generation.topP}:{}),
         ...(draft.generation.maxTokens!==undefined?{maxTokens:draft.generation.maxTokens}:{}),
+        ...(draft.generation.repeatPenalty!==undefined?{repeatPenalty:draft.generation.repeatPenalty}:{}),
+        ...(draft.generation.repeatLastN!==undefined?{repeatLastN:draft.generation.repeatLastN}:{}),
         ...(draft.generation.responseFormat!==undefined?{responseFormat:draft.generation.responseFormat}:{}),
       };
       const next:ModelProfile={
@@ -1454,6 +1456,14 @@ function ModelProfileView({
         <label>Top P
           <input type="number" min="0" max="1" step="0.01" value={draft.generation.topP??""}
             onChange={event=>updateGeneration("topP",event.target.value)} placeholder="Runtime default" disabled={busy}/>
+        </label>
+        <label>Repeat penalty (Ollama only)
+          <input type="number" min="0.01" step="0.05" value={draft.generation.repeatPenalty??""}
+            onChange={event=>updateGeneration("repeatPenalty",event.target.value)} placeholder="Provider default" disabled={busy}/>
+        </label>
+        <label>Repeat last N (Ollama only; -1 = all)
+          <input type="number" min="-1" step="1" value={draft.generation.repeatLastN??""}
+            onChange={event=>updateGeneration("repeatLastN",event.target.value)} placeholder="Provider default" disabled={busy}/>
         </label>
       </div>
       <label>Max Tokens
@@ -1763,6 +1773,16 @@ function ChatSettingsView({settings,onChange,onSave,onReset,saving,message}:{
         </select>
       </label>
       <p className="hint">Only provider- and model-supported settings are sent. Provider-default is recommended when a model does not expose reasoning controls; effort levels remain model-specific.</p>
+      <label>Reasoning effort
+        <select value={settings.chat.reasoningEffort}
+          onChange={event=>onChange({...settings,chat:{...settings.chat,reasoningEffort:event.target.value as AppSettings["chat"]["reasoningEffort"]}})} disabled={saving}>
+          <option value="provider-default">Provider default</option>
+          <option value="low">Low (recommended)</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+        </select>
+      </label>
+      <p className="hint">Effort is applied only where the provider/model supports it. Current APIs do not guarantee a separate hard 120-token reasoning cap; low effort is best-effort and model-dependent.</p>
       <div className="actions">
         <button type="button" onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save Settings"}</button>
       </div>
@@ -2961,6 +2981,7 @@ function App(){
       return current;
     });
   },[modelProfileStore]);
+  React.useEffect(()=>{foundationRef.current?.setActiveModelProfile(activeModelProfile);},[activeModelProfile]);
 
   const saveAppSettings=React.useCallback(async()=>{
     const errors=validateAppSettings(appSettings);

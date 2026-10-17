@@ -30,6 +30,7 @@ const LEGACY_MEMORY_JUDGE_INSTRUCTIONS:&str="You are a memory deduplication judg
 
 fn default_response_mode()->String{"structured".into()}
 fn default_reasoning_mode()->String{"provider-default".into()}
+fn default_reasoning_effort()->String{"provider-default".into()}
 fn default_show_reasoning_in_diagnostics()->bool{false}
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(deny_unknown_fields)]
@@ -39,7 +40,9 @@ pub struct ChatSettings{
     #[serde(rename="responseMode",default="default_response_mode")]
     pub response_mode:String,
     #[serde(rename="reasoningMode",default="default_reasoning_mode")]
-    pub reasoning_mode:String
+    pub reasoning_mode:String,
+    #[serde(rename="reasoningEffort",default="default_reasoning_effort")]
+    pub reasoning_effort:String
 }
 fn default_cognitive_schedule()->CognitiveScheduleSettings{
     CognitiveScheduleSettings{mode:"adaptive".into(),default_interval_ms:30000,min_interval_ms:3000,max_interval_ms:300000,max_requests_per_hour:None}
@@ -242,7 +245,7 @@ fn default_settings()->AppSettings{
     AppSettings{
         api_version:API_VERSION.into(),schema_version:SCHEMA_VERSION.into(),
         cognitive_schedule:default_cognitive_schedule(),
-        chat:ChatSettings{automatic_long_term_memory:true,response_mode:default_response_mode(),reasoning_mode:default_reasoning_mode()},
+        chat:ChatSettings{automatic_long_term_memory:true,response_mode:default_response_mode(),reasoning_mode:default_reasoning_mode(),reasoning_effort:"low".into()},
         prompts:PromptSettings::default(),
         memory_agent:MemoryAgentSettings{enabled:true,provider_preset_id:None,model:String::new(),output_mode:"auto".into(),prompt:DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS.to_string(),prompt_backup:None,default_prompt_version:DEFAULT_MEMORY_AGENT_PROMPT_VERSION.into()},
         semantic_dedup:SemanticDedupSettings{
@@ -313,6 +316,7 @@ fn validate(settings:&AppSettings)->Result<(),String>{
     }
     if !matches!(settings.chat.response_mode.as_str(),"structured"|"plain"){return Err("Unsupported Chat response mode.".into());}
     if !matches!(settings.chat.reasoning_mode.as_str(),"provider-default"|"enabled"|"disabled"){return Err("Unsupported reasoning mode.".into());}
+    if !matches!(settings.chat.reasoning_effort.as_str(),"provider-default"|"low"|"medium"|"high"){return Err("Unsupported reasoning effort.".into());}
     valid_integer(settings.context.available_context_tokens,256,MAX_CONTEXT_TOKENS,"Context size")?;
     valid_integer(settings.context.reserved_output_tokens,0,MAX_RESERVED_OUTPUT,"Reserved response tokens")?;
     valid_integer(settings.context.safety_margin_tokens,0,MAX_SAFETY_MARGIN,"Safety margin")?;

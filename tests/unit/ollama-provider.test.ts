@@ -166,7 +166,7 @@ async function modelDiscoveryAndNoKeyTest(): Promise<void> {
 async function ordinaryRequestMappingTest(): Promise<void> {
   const http = new FakeOllamaHttpClient();
   const response = await provider(http).chat(chatRequest({
-    generation: {temperature: 0.35, topP: 0.75, maxTokens: 120, responseFormat: {type: "text"}}
+    generation: {temperature: 0.35, topP: 0.75, maxTokens: 120, repeatPenalty: 1.12, repeatLastN: 64, responseFormat: {type: "text"}}
   }));
   equal(response.message.content, "hello from Ollama", "ordinary response content");
   equal(response.finishReason, "stop", "done maps to stop");
@@ -177,7 +177,7 @@ async function ordinaryRequestMappingTest(): Promise<void> {
   equal(body.stream, false, "ordinary request disables streaming");
   equal(body.think, undefined, "provider-default reasoning is left to Ollama");
   equal(body.format, undefined, "text generation omits JSON format");
-  deepEqual(body.options, {temperature: 0.35, top_p: 0.75, num_predict: 120}, "generation parameters map without invented context window");
+  deepEqual(body.options, {temperature: 0.35, top_p: 0.75, num_predict: 120, repeat_penalty: 1.12, repeat_last_n: 64}, "generation params map to supported Ollama fields without an invented context window");
   equal(body.model, "llama3.2:latest", "model tag preserved");
   const sentMessages = body.messages as Array<{role: string; content: string}>;
   deepEqual(sentMessages, [

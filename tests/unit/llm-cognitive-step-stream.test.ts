@@ -18,7 +18,7 @@ function context(onSpeechEvent:CognitiveStepContext["onSpeechEvent"]):CognitiveS
   return {characterId:character.id,state:{lifecycleState:"thinking",nextWakeAt:null,recentTrace:[]},signal:new AbortController().signal,wakeReason:"user-message",
     userTurn:{characterId:character.id,conversationId:conversation.id,userMessageId:userMessage.id!,turnId:"turn.stream"},onSpeechEvent};
 }
-function createStep(runtime:unknown,getPrompt?:(id:import("../../contracts/src").PromptId)=>string,overrides:Partial<Pick<LLMCognitiveStepOptions,"getAvailableTools"|"executeTool"|"getReasoningOptions"|"getShowReasoningInDiagnostics">>={}):LLMCognitiveStep{
+function createStep(runtime:unknown,getPrompt?:(id:import("../../contracts/src").PromptId)=>string,overrides:Partial<Pick<LLMCognitiveStepOptions,"getAvailableTools"|"executeTool"|"getReasoningOptions"|"getShowReasoningInDiagnostics"|"getGenerationOptions">>={}):LLMCognitiveStep{
   return new LLMCognitiveStep({
     runtime:runtime as never,
     getCharacter:async()=>character,
@@ -40,7 +40,15 @@ function event(request:ChatRequest,type:"delta"|"reasoning",text:string):ChatStr
   return {apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.stream",model:request.model,type,text} as ChatStreamEvent;
 }
 
-async function ordinaryTextStreamsSeparatelyFromReasoning():Promise<void>{
+async function ordinaryTextStreamsSeparatelyFromReasoning():Promise<void>{async function profileGenerationOptionsReachNativeRequests():Promise<void>{
+  const requests:ChatRequest[]=[];
+  const runtime={async chat(request:ChatRequest):Promise<ChatResponse>{requests.push(request);return responseFor(request,"Completed answer.");}};
+  const generation={temperature:0.45,topP:0.8,maxTokens:777,repeatPenalty:1.1,repeatLastN:48};
+  await createStep(runtime,undefined,{getGenerationOptions:()=>generation}).run(context(()=>{}));
+  equal(requests[0]?.generation,generation,"Model Profile generation settings reach actual native request bodies");
+}
+
+
   const text="The answer is arriving while the model is still generating the rest.";
   const cut=23;
   let firstChunkSeen!:()=>void;
@@ -184,6 +192,7 @@ async function backgroundStepMayReturnNoSpeech():Promise<void>{
 }
 
 async function main():Promise<void>{
+  await profileGenerationOptionsReachNativeRequests();
   await ordinaryTextStreamsSeparatelyFromReasoning();
   await nativeToolRoundsReturnResultsBeforeFinalSpeech();
   await plainContentIsNeverParsedAsCommands();

@@ -469,8 +469,8 @@ export class OllamaChatProvider implements ChatProvider {
     if(!options||options.mode==="provider-default")return undefined;
     const values=metadata?.thinking?.values;
     if(!values||values.length===0)return undefined;
-    if(options.effort&&values.includes(options.effort))return options.effort;
     if(options.mode==="disabled")return values.includes(false)?false:undefined;
+    if(options.effort&&values.includes(options.effort))return options.effort;
     if(values.includes(true))return true;
     const defaultValue=metadata?.thinking?.default;
     if(typeof defaultValue==="string"&&values.includes(defaultValue))return defaultValue;
@@ -530,6 +530,8 @@ export class OllamaChatProvider implements ChatProvider {
     const topP = generation?.topP ?? this.config.topP;
     if (temperature !== undefined) options.temperature = temperature;
     if (topP !== undefined) options.top_p = topP;
+    if (generation?.repeatPenalty !== undefined) options.repeat_penalty = generation.repeatPenalty;
+    if (generation?.repeatLastN !== undefined) options.repeat_last_n = generation.repeatLastN;
     const numPredict = generation?.maxTokens ?? this.config.numPredict;
     if (numPredict !== undefined) options.num_predict = numPredict;
     if (this.config.numCtx !== undefined) options.num_ctx = this.config.numCtx;

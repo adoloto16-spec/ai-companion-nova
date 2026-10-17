@@ -3,7 +3,7 @@ import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore,MindReactiveTurn,MindTurnSink,MindToolExecutionContext,NovaToolCall,NovaToolResult,PromptId} from "../../../contracts/src/index";
 import type {Conversation,ConversationCreateInput,ConversationId,ConversationStore,ConversationUpdateInput} from "../../../contracts/src/index";
 import {
-  AiRuntime,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,MemorySemanticDeduplicator,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,MindRuntime,LLMCognitiveStep,
+  AiRuntime,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,MemorySemanticDeduplicator,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,MindRuntime,LLMCognitiveStep,AutomaticMemoryAgent,
   InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,
   DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
   InMemoryActorIdentityResolver,createMemoryConfig,SettingsManager,InMemoryChatTraceStore
@@ -66,6 +66,7 @@ export interface FoundationRuntimeOptions{
 
 export interface FoundationRuntime{
   start():Promise<void>;
+  setActiveModelProfile(profile:import("../../../contracts/src/index").ModelProfile|undefined):void;
   stop():Promise<void>;
   diagnostics(options?:{skipProviderHealthFor?:readonly string[]}):Promise<RuntimeDiagnostics>;
   recordDiagnosticError(source:string,code:string,message:string,metadata?:Record<string,unknown>):void;
@@ -424,6 +425,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     return pool?.getModel()??resolveChatModelForPreset(providerPresetId);
   };
 
+  let activeModelProfile:import("../../../contracts/src/index").ModelProfile|undefined;
   const mindRuntime=new MindRuntime({
     cognitiveStep:new LLMCognitiveStep({
       runtime:extractionChatRuntime,
@@ -441,7 +443,11 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       getPrompt:(id:PromptId)=>resolvePromptText(settingsManager.get().prompts,id),
       getAvailableTools:()=>tools.list().map(tool=>({name:tool.name,description:tool.description,parameters:tool.parameters})),
       executeTool:executeRegisteredTool,
-      getReasoningOptions:()=>({mode:settingsManager.get().chat.reasoningMode} as ChatReasoningOptions),
+      getReasoningOptions:()=>{
+        const chat=settingsManager.get().chat;
+        return {mode:chat.reasoningMode,...(chat.reasoningEffort!=="provider-default"?{effort:chat.reasoningEffort}:{})} as ChatReasoningOptions;
+      },
+      getGenerationOptions:()=>activeModelProfile?.generation,
       getShowReasoningInDiagnostics:()=>settingsManager.get().ui.showReasoningInDiagnostics,
       consumeRequestedWakeInterval:turnId=>{const interval=pendingWakeIntervalRequests.get(turnId);pendingWakeIntervalRequests.delete(turnId);return interval;},
       clock:()=>new Date().toISOString()
@@ -937,6 +943,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     getChatModelForPreset,
     applyProviderConfiguration:async(configuration)=>{await applyProvider(configuration);},
     getSettings:()=>settingsManager.get(),
+    setActiveModelProfile:profile=>{activeModelProfile=profile?{...profile,generation:{...profile.generation}}:undefined;},
     getTtsProvider:providerId=>ttsProviders.get(providerId),
     listTtsProviders:()=>ttsProviders.list(),
     getSemanticSearchStatus:()=>semanticSearch.getStatus(),

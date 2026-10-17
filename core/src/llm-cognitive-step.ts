@@ -34,6 +34,7 @@ export interface LLMCognitiveStepOptions {
   executeTool?:MindToolExecutor["execute"];
   getReasoningOptions?:()=>ChatReasoningOptions;
   getShowReasoningInDiagnostics?:()=>boolean;
+  getGenerationOptions?:()=>import("../../contracts/src/index").ChatGenerationOptions|undefined;
   consumeRequestedWakeInterval?:(turnId:string)=>number|undefined;
   clock?:()=>string;
 }
@@ -136,10 +137,18 @@ export class LLMCognitiveStep implements CognitiveStep {
     let combinedReasoning="";
     let executedCallCount=0;
     let roundsWithToolCalls=0;
+    const configuredGeneration=this.options.getGenerationOptions?.();
+    const requestGeneration:import("../../contracts/src/index").ChatGenerationOptions={
+      ...(configuredGeneration?.temperature!==undefined?{temperature:configuredGeneration.temperature}:{}),
+      ...(configuredGeneration?.topP!==undefined?{topP:configuredGeneration.topP}:{}),
+      maxTokens:configuredGeneration?.maxTokens??1800,
+      ...(configuredGeneration?.repeatPenalty!==undefined?{repeatPenalty:configuredGeneration.repeatPenalty}:{}),
+      ...(configuredGeneration?.repeatLastN!==undefined?{repeatLastN:configuredGeneration.repeatLastN}:{}),
+    };
     const reqFor=(id:string):ChatRequest=>({
       apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION,requestId:id,model,
       context:{conversationId:conversation.id,messages:[...baseMessages.map(cloneMessage),...history.map(cloneMessage)]},
-      generation:{maxTokens:1800},
+      generation:requestGeneration,
       ...(toolDefinitions.length?{tools:toolDefinitions}:{}),
       ...(reasoningOptions?{reasoning:reasoningOptions}:{}),
       metadata:{cognition:true,protocol:"NATIVE_TOOL_CALLS",protocolVersion:2,outputMode:"plain"},
