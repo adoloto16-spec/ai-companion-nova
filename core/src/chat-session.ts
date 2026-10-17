@@ -259,6 +259,9 @@ export class ChatSessionController{
     if(event.type==="clear"){
       if(this.novaStreamingSpeech&&this.novaStreamingSpeech.turnId===event.turnId&&
         this.novaStreamingSpeech.characterId===event.characterId&&this.novaStreamingSpeech.conversationId===event.conversationId){
+        // Failed non-cancelled turns retain already-visible public speech even if a late
+        // runtime cleanup event arrives. Explicit retry/ordinary-chat transitions clear it.
+        if(this.lifeTurn?.turnId===event.turnId&&this.lifeTurn.status==="failed"&&this.novaStreamingSpeech.text.trim())return;
         this.novaStreamingSpeech=undefined;this.notify();
       }
       return;

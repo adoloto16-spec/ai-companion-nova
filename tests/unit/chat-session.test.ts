@@ -572,6 +572,8 @@ async function main(){
   equal(failedController.isBusy(),false,"failed persistence releases Chat busy state");
   failedController.failLifeTurn(failedTurnContext.userMessageId!,"PERSIST_FAILED");
   equal(failedController.getSnapshot().lifeTurn?.status,"failed","failed persistence leaves the turn retryable rather than complete");
+  failedController.updateNovaTurnStream({type:"clear",...failedStream});
+  equal(failedController.getSnapshot().lifeStreamingSpeech?.text,"Привет, я Тоня.","a late terminal clear cannot erase visible speech after a non-cancelled failure");
   const retryAfterFailure=failedController.retryLife(()=>true);
   equal(retryAfterFailure.status,"awaiting-life","storage failure can be retried against the retained user message");
   failedController.updateNovaTurnStream({type:"start",...failedStream});
