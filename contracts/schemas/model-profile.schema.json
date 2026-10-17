@@ -73,6 +73,14 @@
               "additionalProperties": true
             }
           }
+        },
+        "repeatPenalty": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "repeatLastN": {
+          "type": "integer",
+          "minimum": -1
         }
       }
     },

@@ -96,7 +96,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       "ui",
       "semanticDedup",
       "prompts",
-      "tts"
+      "tts",
+      "memoryAgent"
     ],
     "properties": {
       "apiVersion": {
@@ -111,7 +112,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         "required": [
           "automaticLongTermMemory",
           "responseMode",
-          "reasoningMode"
+          "reasoningMode",
+          "reasoningEffort"
         ],
         "properties": {
           "automaticLongTermMemory": {
@@ -130,6 +132,15 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
               "provider-default",
               "enabled",
               "disabled"
+            ]
+          },
+          "reasoningEffort": {
+            "type": "string",
+            "enum": [
+              "provider-default",
+              "low",
+              "medium",
+              "high"
             ]
           }
         }
@@ -586,6 +597,58 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           },
           "enabled": {
             "type": "boolean"
+          }
+        }
+      },
+      "memoryAgent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "enabled",
+          "providerPresetId",
+          "model",
+          "outputMode",
+          "prompt",
+          "promptBackup",
+          "defaultPromptVersion"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "providerPresetId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "outputMode": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "structured",
+              "plain"
+            ]
+          },
+          "prompt": {
+            "type": "string",
+            "maxLength": 12000
+          },
+          "promptBackup": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 12000
+          },
+          "defaultPromptVersion": {
+            "type": "string",
+            "minLength": 1
           }
         }
       }
@@ -1213,6 +1276,14 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             }
           }
         ]
+      },
+      "repeatPenalty": {
+        "type": "number",
+        "exclusiveMinimum": 0
+      },
+      "repeatLastN": {
+        "type": "integer",
+        "minimum": -1
       }
     }
   },
@@ -3272,6 +3343,14 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
                 "additionalProperties": true
               }
             }
+          },
+          "repeatPenalty": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "repeatLastN": {
+            "type": "integer",
+            "minimum": -1
           }
         }
       },

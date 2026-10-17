@@ -20,6 +20,9 @@ async function main():Promise<void>{
     ok(prompt.title.length>0&&prompt.purpose.length>0&&prompt.defaultText.length>0,"registry entries include human-readable metadata and full default text: "+prompt.id);
     equal(resolvePromptText(undefined,prompt.id),prompt.defaultText,"unconfigured prompt resolves to factory default: "+prompt.id);
   }
+  const nativePlain=DEFAULT_PROMPT_TEXTS["nova-system-plain"];
+  ok(!nativePlain.includes("memory.save")&&!nativePlain.includes("NOVA_TURN")&&!nativePlain.includes("nextWakeMs")&&!nativePlain.includes("longMemory"),"native plain runtime prompt does not require legacy memory tools or tagged/JSON response fields");
+  ok(nativePlain.includes("separate background Memory Agent"),"native plain runtime routes durable-memory decisions to the separate agent");
   const validator=new StandardContractValidator();
   const store=new InMemorySettingsStore(validator);
   const manager=new SettingsManager(store,validator);

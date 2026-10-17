@@ -16,7 +16,8 @@
     "ui",
     "semanticDedup",
     "prompts",
-    "tts"
+    "tts",
+    "memoryAgent"
   ],
   "properties": {
     "apiVersion": {
@@ -31,7 +32,8 @@
       "required": [
         "automaticLongTermMemory",
         "responseMode",
-        "reasoningMode"
+        "reasoningMode",
+        "reasoningEffort"
       ],
       "properties": {
         "automaticLongTermMemory": {
@@ -50,6 +52,15 @@
             "provider-default",
             "enabled",
             "disabled"
+          ]
+        },
+        "reasoningEffort": {
+          "type": "string",
+          "enum": [
+            "provider-default",
+            "low",
+            "medium",
+            "high"
           ]
         }
       }
@@ -506,6 +517,58 @@
         },
         "enabled": {
           "type": "boolean"
+        }
+      }
+    },
+    "memoryAgent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "providerPresetId",
+        "model",
+        "outputMode",
+        "prompt",
+        "promptBackup",
+        "defaultPromptVersion"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "providerPresetId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "model": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "outputMode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "structured",
+            "plain"
+          ]
+        },
+        "prompt": {
+          "type": "string",
+          "maxLength": 12000
+        },
+        "promptBackup": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 12000
+        },
+        "defaultPromptVersion": {
+          "type": "string",
+          "minLength": 1
         }
       }
     }

@@ -20,9 +20,20 @@ export const DEFAULT_COGNITIVE_SCHEDULE:CognitiveScheduleSettings={
 export const APP_SETTINGS_API_VERSION:"1"="1";
 export const APP_SETTINGS_SCHEMA_VERSION:"14"="14";
 export const DEFAULT_MEMORY_JUDGE_PROMPT_VERSION="2";
+export const DEFAULT_AUTOMATIC_MEMORY_PROMPT_VERSION="1";
+export const DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS="You are a long-term memory agent.\nDecide whether the exchange contains durable information worth remembering after this conversation ends.\nReturn only the requested output.\nGood memories are brief, self-contained, durable, and understandable without the original conversation.\nDo not invent ids or metadata; the application supplies all internal state.";
 export const DEFAULT_MEMORY_JUDGE_PROMPT=DEFAULT_PROMPT_TEXTS["memory-judge.system"];
 const LEGACY_MEMORY_JUDGE_PROMPT="You are a memory deduplication judge.\n\nCompare NEW MEMORY with CANDIDATES.\n\nKeep the most complete and informative record.\n\nIf NEW MEMORY is less informative because its information is contained in a candidate, return NEW.\n\nIf a candidate contains all meaningful information from NEW MEMORY and adds useful information, return that candidate number.\n\nIf two records contain essentially the same information, return one of them.\n\nIf records contain different useful information, return NO_ARCHIVE.\n\nReturn only:\nNO_ARCHIVE,\nNEW,\nor candidate numbers, one per line.\n\nNever return explanations or text.\nNever invent candidate numbers.";
 
+export interface AutomaticMemoryAgentSettings{
+  enabled:boolean;
+  providerPresetId:string|null;
+  model:string;
+  outputMode:"auto"|"structured"|"plain";
+  prompt:string;
+  promptBackup:string|null;
+  defaultPromptVersion:string;
+}
 export interface AppSettings{
   apiVersion:"1";
   schemaVersion:"14";
@@ -31,7 +42,9 @@ export interface AppSettings{
     automaticLongTermMemory:boolean;
     responseMode:"structured"|"plain";
     reasoningMode:"provider-default"|"enabled"|"disabled";
+    reasoningEffort:"provider-default"|"low"|"medium"|"high";
   };
+  memoryAgent:AutomaticMemoryAgentSettings;
   prompts:{overrides:PromptOverrides};
   tts:TtsSettings;
   semanticDedup:{
@@ -81,7 +94,8 @@ export const DEFAULT_APP_SETTINGS:AppSettings={
   apiVersion:APP_SETTINGS_API_VERSION,
   schemaVersion:APP_SETTINGS_SCHEMA_VERSION,
   cognitiveSchedule:{...DEFAULT_COGNITIVE_SCHEDULE},
-  chat:{automaticLongTermMemory:true,responseMode:"structured",reasoningMode:"provider-default"},
+  chat:{automaticLongTermMemory:true,responseMode:"structured",reasoningMode:"provider-default",reasoningEffort:"low"},
+  memoryAgent:{enabled:true,providerPresetId:null,model:"",outputMode:"auto",prompt:DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS,promptBackup:null,defaultPromptVersion:DEFAULT_AUTOMATIC_MEMORY_PROMPT_VERSION},
   prompts:{overrides:{}},
   tts:cloneTtsSettings(DEFAULT_TTS_SETTINGS),
   semanticDedup:{enabled:false,embeddingProviderPresetId:null,embeddingModel:"",candidateSimilarityThreshold:0.88,candidateLimit:5,judge:{enabled:true,providerPresetId:null,model:"",outputMode:"auto",prompt:DEFAULT_MEMORY_JUDGE_PROMPT,promptBackup:null,defaultPromptVersion:DEFAULT_MEMORY_JUDGE_PROMPT_VERSION}},
@@ -103,6 +117,7 @@ export function defaultAppSettings():AppSettings{
     schemaVersion:DEFAULT_APP_SETTINGS.schemaVersion,
     cognitiveSchedule:{...DEFAULT_APP_SETTINGS.cognitiveSchedule},
     chat:{...DEFAULT_APP_SETTINGS.chat},
+    memoryAgent:{...DEFAULT_APP_SETTINGS.memoryAgent},
     prompts:{overrides:{...DEFAULT_APP_SETTINGS.prompts.overrides}},
     tts:cloneTtsSettings(DEFAULT_APP_SETTINGS.tts),
     semanticDedup:{...DEFAULT_APP_SETTINGS.semanticDedup,judge:{...DEFAULT_APP_SETTINGS.semanticDedup.judge}},
@@ -236,7 +251,19 @@ export function validateAppSettings(settings:AppSettings):string[]{
   integer(settings.diagnostics.keepRecentEntries,"Recent diagnostic entries",1,SECURITY_MAX.diagnosticsEntries);
   if(typeof settings.chat.automaticLongTermMemory!=="boolean")errors.push("Automatic long-term memory must be boolean.");
   if(!["provider-default","enabled","disabled"].includes(settings.chat.reasoningMode))errors.push("Unsupported reasoning mode.");
+  if(!["provider-default","low","medium","high"].includes(settings.chat.reasoningEffort))errors.push("Unsupported reasoning effort.");
   if(!["structured","plain"].includes(settings.chat.responseMode))errors.push("Unsupported Chat response mode.");
+  if(!settings.memoryAgent||typeof settings.memoryAgent!="object")errors.push("Automatic Memory Agent settings must be an object.");
+  else{
+    const agent=settings.memoryAgent;
+    if(typeof agent.enabled!=="boolean")errors.push("Automatic Memory Agent enabled state must be boolean.");
+    if(agent.providerPresetId!==null&&(typeof agent.providerPresetId!=="string"||!agent.providerPresetId.trim()||agent.providerPresetId.length>200))errors.push("Automatic Memory Agent provider preset must be empty or a bounded id.");
+    if(typeof agent.model!=="string"||agent.model.length>200)errors.push("Automatic Memory Agent model must be a string up to 200 characters.");
+    if(!["auto","structured","plain"].includes(agent.outputMode))errors.push("Unsupported Automatic Memory Agent output mode.");
+    if(typeof agent.prompt!=="string"||Array.from(agent.prompt).length>12000)errors.push("Automatic Memory Agent prompt must be a string up to 12000 characters.");
+    if(agent.promptBackup!==null&&(typeof agent.promptBackup!=="string"||Array.from(agent.promptBackup).length>12000))errors.push("Automatic Memory Agent prompt backup must be null or a string up to 12000 characters.");
+    if(typeof agent.defaultPromptVersion!=="string"||!agent.defaultPromptVersion.trim())errors.push("Automatic Memory Agent prompt version must be a non-empty string.");
+  }
   if(typeof settings.ui.showDiagnosticsInChat!=="boolean")errors.push("Chat diagnostics visibility must be boolean.");
   if(typeof settings.ui.showReasoningInDiagnostics!=="boolean")errors.push("Reasoning diagnostics visibility must be boolean.");
 
@@ -289,6 +316,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const retrieval=root.retrieval&&typeof root.retrieval==="object"?root.retrieval:{};
   const diagnostics=root.diagnostics&&typeof root.diagnostics==="object"?root.diagnostics:{};
   const chat=root.chat&&typeof root.chat==="object"?root.chat:{};
+  const storedMemoryAgent=root.memoryAgent&&typeof root.memoryAgent==="object"?root.memoryAgent:{};
   const ui=root.ui&&typeof root.ui==="object"?root.ui:{};
   const cognitiveSchedule=root.cognitiveSchedule&&typeof root.cognitiveSchedule==="object"?root.cognitiveSchedule:{};
   const semanticDedup=root.semanticDedup&&typeof root.semanticDedup==="object"?root.semanticDedup:{};
@@ -306,6 +334,14 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const logLevelValue=(typeof diagnostics.logLevel==="string"?diagnostics.logLevel:legacyLog)??defaults.diagnostics.logLevel;
   if(!["off","errors","normal","verbose","debug"].includes(logLevelValue))throw new Error("Unsupported diagnostics log level.");
   const legacyEnabled=typeof chat.automaticLongTermMemory==="boolean"?chat.automaticLongTermMemory:defaults.chat.automaticLongTermMemory;
+  const memoryAgentEnabled=typeof storedMemoryAgent.enabled==="boolean"?storedMemoryAgent.enabled:legacyEnabled;
+  const memoryAgentPreset=typeof storedMemoryAgent.providerPresetId==="string"&&storedMemoryAgent.providerPresetId.trim()?storedMemoryAgent.providerPresetId.trim():null;
+  const memoryAgentModel=typeof storedMemoryAgent.model==="string"?storedMemoryAgent.model.trim():"";
+  const memoryAgentOutputMode=["auto","structured","plain"].includes(storedMemoryAgent.outputMode)?storedMemoryAgent.outputMode:defaults.memoryAgent.outputMode;
+  const memoryAgentPromptRaw=typeof storedMemoryAgent.prompt==="string"?storedMemoryAgent.prompt:(typeof storedMemoryAgent.instructions==="string"?storedMemoryAgent.instructions:defaults.memoryAgent.prompt);
+  const memoryAgentPrompt=memoryAgentPromptRaw.trim()?memoryAgentPromptRaw.slice(0,12000):defaults.memoryAgent.prompt;
+  const memoryAgentBackup=typeof storedMemoryAgent.promptBackup==="string"&&storedMemoryAgent.promptBackup.length?storedMemoryAgent.promptBackup.slice(0,12000):null;
+  const memoryAgentPromptVersion=typeof storedMemoryAgent.defaultPromptVersion==="string"&&storedMemoryAgent.defaultPromptVersion.trim()?storedMemoryAgent.defaultPromptVersion.trim():DEFAULT_AUTOMATIC_MEMORY_PROMPT_VERSION;
   const semanticDedupEnabled=typeof semanticDedup.enabled==="boolean"?semanticDedup.enabled:defaults.semanticDedup.enabled;
   const semanticEmbeddingPreset=typeof semanticDedup.embeddingProviderPresetId==="string"&&semanticDedup.embeddingProviderPresetId.trim()?semanticDedup.embeddingProviderPresetId.trim():null;
   const semanticEmbeddingModel=typeof semanticDedup.embeddingModel==="string"?semanticDedup.embeddingModel.trim():"";
@@ -345,7 +381,8 @@ export function migrateAppSettings(value:unknown):AppSettings{
       maxIntervalMs:migratedMaximumInterval,
       maxRequestsPerHour:typeof cognitiveSchedule.maxRequestsPerHour==="number"?(String(input.schemaVersion)!=="10"&&String(input.schemaVersion)!=="11"&&String(input.schemaVersion)!=="12"&&cognitiveSchedule.maxRequestsPerHour===120?null:cognitiveSchedule.maxRequestsPerHour):null
     },
-    chat:{automaticLongTermMemory:legacyEnabled,responseMode:chat.responseMode==="plain"?"plain":"structured",reasoningMode:["provider-default","enabled","disabled"].includes(chat.reasoningMode)?chat.reasoningMode:defaults.chat.reasoningMode},
+    chat:{automaticLongTermMemory:memoryAgentEnabled,responseMode:chat.responseMode==="plain"?"plain":"structured",reasoningMode:["provider-default","enabled","disabled"].includes(chat.reasoningMode)?chat.reasoningMode:defaults.chat.reasoningMode,reasoningEffort:["provider-default","low","medium","high"].includes(chat.reasoningEffort)?chat.reasoningEffort:"provider-default"},
+    memoryAgent:{enabled:memoryAgentEnabled,providerPresetId:memoryAgentPreset,model:memoryAgentModel,outputMode:memoryAgentOutputMode,prompt:memoryAgentPrompt,promptBackup:memoryAgentBackup,defaultPromptVersion:memoryAgentPromptVersion},
     prompts:{overrides:promptOverrides},
     semanticDedup:{
       enabled:semanticDedupEnabled,

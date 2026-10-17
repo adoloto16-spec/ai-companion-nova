@@ -577,7 +577,7 @@ export interface ChatContext{conversationId:string;messages:readonly ChatMessage
 export interface StructuredResponseFormat{type:"json-schema";schema:JsonSchema;name?:string;strict?:boolean}
 export type AgentOutputMode="auto"|"structured"|"plain";
 export type ResponseFormat={type:"text"}|{type:"json";schema?:Record<string,unknown>}|StructuredResponseFormat;
-export interface ChatGenerationOptions{temperature?:number;maxTokens?:number;topP?:number;responseFormat?:ResponseFormat}
+export interface ChatGenerationOptions{temperature?:number;maxTokens?:number;topP?:number;repeatPenalty?:number;repeatLastN?:number;responseFormat?:ResponseFormat}
 export interface ChatUsage{promptTokens?:number;completionTokens?:number;totalTokens?:number}
 export type ChatFinishReason="stop"|"length"|"content_filter"|"error"|"unknown"
 export type ChatErrorCode="INVALID_REQUEST"|"PROVIDER_NOT_FOUND"|"PROVIDER_UNAVAILABLE"|"PROVIDER_ERROR"|"INVALID_RESPONSE"|"UNSUPPORTED"
