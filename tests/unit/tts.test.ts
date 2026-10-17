@@ -41,6 +41,7 @@ class PlaybackControlledOutput implements AudioOutputAdapter{
   queued:Array<{sessionId:string;sequence:number;metadata:TtsAudioMetadata;text:string}>=[];
   pendingPlayback=new Map<number,string>();
   stops:Array<string|undefined>=[];
+  private playbackWaiters=new Set<()=>void>();
   async unlock(){this.unlocked=true;}
   startSession(_sessionId:string,_metadata:TtsAudioMetadata){}
   async enqueue(sessionId:string,sequence:number,audio:TtsAudioMetadata,data:Uint8Array,signal:AbortSignal){
@@ -48,12 +49,27 @@ class PlaybackControlledOutput implements AudioOutputAdapter{
     this.queued.push({sessionId,sequence,metadata:audio,text:new TextDecoder().decode(data)});
     this.pendingPlayback.set(sequence,sessionId);
   }
-  finishPlayback(sequence:number){this.pendingPlayback.delete(sequence);}
+  async waitForPlayback(sessionId:string,signal:AbortSignal):Promise<void>{
+    while([...this.pendingPlayback.values()].some(id=>id===sessionId)){
+      if(signal.aborted){const error=new Error("cancelled");error.name="AbortError";throw error;}
+      await new Promise<void>((resolve,reject)=>{
+        const wake=()=>{this.playbackWaiters.delete(wake);signal.removeEventListener("abort",onAbort);resolve();};
+        const onAbort=()=>{this.playbackWaiters.delete(wake);reject(Object.assign(new Error("cancelled"),{name:"AbortError"}));};
+        this.playbackWaiters.add(wake);
+        signal.addEventListener("abort",onAbort,{once:true});
+      });
+    }
+    if(signal.aborted){const error=new Error("cancelled");error.name="AbortError";throw error;}
+  }
+  finishPlayback(sequence:number){this.pendingPlayback.delete(sequence);for(const wake of [...this.playbackWaiters])wake();}
   stop(sessionId?:string){
     this.stops.push(sessionId);
-    if(sessionId===undefined){this.queued=[];this.pendingPlayback.clear();return;}
-    this.queued=this.queued.filter(item=>item.sessionId!==sessionId);
-    for(const [sequence,id] of this.pendingPlayback)if(id===sessionId)this.pendingPlayback.delete(sequence);
+    if(sessionId===undefined){this.queued=[];this.pendingPlayback.clear();}
+    else{
+      this.queued=this.queued.filter(item=>item.sessionId!==sessionId);
+      for(const [sequence,id] of this.pendingPlayback)if(id===sessionId)this.pendingPlayback.delete(sequence);
+    }
+    for(const wake of [...this.playbackWaiters])wake();
   }
 }
 class RecordingProvider implements TtsProvider{
@@ -180,21 +196,67 @@ async function synthesisRunsAheadOfPlaybackAndKeepsFifo():Promise<void>{
   await controller.unlockPlayback();
   await controller.handleSpeechEvent({type:"start",turnId:"turn-a"});
   await controller.handleSpeechEvent({type:"delta",turnId:"turn-a",text:"First sentence. Second sentence"});
-  await controller.finishTurn("turn-a");
-
-  equal(provider.requests.length,2,"both sentences synthesize before finishTurn resolves");
+  let finished=false;
+  const finish=controller.finishTurn("turn-a").then(()=>{finished=true;});
+  await until(()=>provider.requests.length===2&&output.pendingPlayback.size===2,"both sentence synthesis requests should complete");
   equal(provider.maxActive,1,"sentence synthesis requests remain serial");
   equal(provider.requests[1],"Second sentence","synthesis N+1 starts after synthesis N completes");
   equal(output.queued.map(item=>item.text).join(""),"First sentence. Second sentence","accepted playback segments preserve FIFO text order");
-  ok(output.pendingPlayback.has(0),"playback N is still pending when synthesis N+1 has started");
-  ok(output.pendingPlayback.has(1),"playback N+1 is queued before either segment has completed playback");
-  equal(output.pendingPlayback.size,2,"synthesis completion does not imply playback completion");
-
+  ok(!finished,"turn finalization waits after synthesis while playback is still pending");
   output.finishPlayback(0);
-  ok(!output.pendingPlayback.has(0)&&output.pendingPlayback.has(1),"playback completion advances only segment N");
+  await Promise.resolve();
+  ok(!finished&&output.pendingPlayback.has(1),"first playback completion must not finish the turn while the second segment remains");
+  output.finishPlayback(1);
+  await finish;
+  ok(finished,"turn finalization resolves after the final audio segment physically ends");
   controller.stop();
-  equal(output.pendingPlayback.size,0,"Stop cancels queued/scheduled playback after synthesis finalization");
-  ok(output.stops.some(id=>id===undefined),"Stop without an active synthesis session still stops audio");
+  ok(output.stops.some(id=>id===undefined),"explicit Stop cancels output even when synthesis has finalized");
+}
+async function assistantTurnsWaitForPlaybackAndInterruptionClearsQueue():Promise<void>{
+  const output=new PlaybackControlledOutput(),provider=new RecordingProvider();
+  const settings:TtsSettings={...DEFAULT_TTS_SETTINGS,enabled:true,activePresetId:"test-preset",presets:[preset()]};
+  const controller=new SpeechOutputController({getSettings:()=>settings,getProvider:id=>id===provider.id?provider:undefined,output});
+  await controller.unlockPlayback();
+  await controller.handleSpeechEvent({type:"start",turnId:"turn-one"});
+  await controller.handleSpeechEvent({type:"delta",turnId:"turn-one",text:"First message."});
+  let firstFinished=false;
+  const first=controller.finishTurn("turn-one").then(()=>{firstFinished=true;});
+  await until(()=>output.pendingPlayback.size===1,"first message audio should be awaiting playback");
+  await controller.handleSpeechEvent({type:"start",turnId:"turn-two"});
+  await controller.handleSpeechEvent({type:"delta",turnId:"turn-two",text:"Second message."});
+  let secondFinished=false;
+  const second=controller.finishTurn("turn-two").then(()=>{secondFinished=true;});
+  await Promise.resolve();
+  equal(provider.requests.length,1,"second message is not synthesized over active playback");
+  ok(!firstFinished&&!secondFinished,"neither queued message finalizes while the first audio is playing");
+  output.finishPlayback(0);
+  await first;
+  await until(()=>provider.requests.length===2&&output.pendingPlayback.size===1,"second message starts only after the first playback ends");
+  ok(!secondFinished,"second message remains pending until its own playback ends");
+  output.finishPlayback(0);
+  await second;
+  ok(secondFinished,"queued second message completes in FIFO order");
+  controller.stop();
+
+  await controller.handleSpeechEvent({type:"start",turnId:"turn-interrupt"});
+  await controller.handleSpeechEvent({type:"delta",turnId:"turn-interrupt",text:"This audio must stop."});
+  const interrupted=controller.finishTurn("turn-interrupt");
+  await until(()=>output.pendingPlayback.size===1,"interrupted turn audio should begin");
+  await controller.handleSpeechEvent({type:"start",turnId:"turn-stale-queued"});
+  await controller.handleSpeechEvent({type:"delta",turnId:"turn-stale-queued",text:"This queued audio must never play."});
+  const staleQueued=controller.finishTurn("turn-stale-queued");
+  controller.stop("User interrupted Nova.");
+  await Promise.all([interrupted,staleQueued]);
+  equal(output.pendingPlayback.size,0,"interruption cancels active playback and all queued segments");
+  const requestCount=provider.requests.length;
+  await controller.handleSpeechEvent({type:"start",turnId:"turn-fresh"});
+  await controller.handleSpeechEvent({type:"delta",turnId:"turn-fresh",text:"Fresh message."});
+  const fresh=controller.finishTurn("turn-fresh");
+  await until(()=>provider.requests.length===requestCount+1&&output.pendingPlayback.size===1,"fresh speech works after interruption");
+  output.finishPlayback(0);
+  await fresh;
+  equal(provider.requests.length,requestCount+1,"stale queued speech does not resume after interruption");
+  controller.stop();
 }
 async function boundedBackpressureAndCancellation():Promise<void>{
   const first=deferred<void>();
@@ -728,6 +790,7 @@ async function main():Promise<void>{
   emotionMappingOnlyUsesSupportedActions();
   emotionDecodersDoNotGateSpeech();
   await synthesisRunsAheadOfPlaybackAndKeepsFifo();
+  await assistantTurnsWaitForPlaybackAndInterruptionClearsQueue();
   await boundedBackpressureAndCancellation();
   await cancelledProviderEventsCannotEnterANewSession();
   await voiceStudioWebSocketAndHttpFallback();
