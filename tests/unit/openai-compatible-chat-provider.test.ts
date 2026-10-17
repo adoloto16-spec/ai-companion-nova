@@ -128,7 +128,7 @@ async function metadataAndCapabilitiesTest(){
   equal(metadata.version,"1.0.0","provider metadata version");
   const capabilities=p.capabilities();
   equal(capabilities.streaming,true,"streaming capability");
-  equal(capabilities.toolCalling,false,"tool calling capability");
+  equal(capabilities.toolCalling,true,"standard native tool calling capability");
   equal(capabilities.structuredOutput,true,"structured output adapter capability");
   equal(capabilities.reasoning,false,"reasoning capability");
 }
@@ -302,6 +302,22 @@ async function successResponseMappingTest(){
   equal(response.usage?.totalTokens,8,"total usage mapping");
 }
 
+async function nativeToolCallResponseTest(){
+  const http=new FakeHttpClient();
+  http.next={status:200,body:JSON.stringify({
+    id:"chatcmpl-tool",model:"openai-compatible-test-model",
+    choices:[{message:{role:"assistant",content:null,tool_calls:[{id:"call-native-1",type:"function",function:{name:"memory.search",arguments:"{\"query\":\"tea\"}"}}]},finish_reason:"tool_calls"}]
+  })};
+  const definition={name:"memory.search",description:"Search active character memories",parameters:{type:"object",properties:{query:{type:"string"}},required:["query"]}};
+  const response=await provider(http).chat({...request(),tools:[definition]});
+  equal(response.message.content,"","tool-only response has no invented speech");
+  equal(response.message.toolCalls?.length,1,"native tool call is parsed");
+  equal(response.message.toolCalls?.[0]?.id,"call-native-1","native tool call id is preserved");
+  equal(response.message.toolCalls?.[0]?.name,"memory.search","native tool name is preserved");
+  equal(response.message.toolCalls?.[0]?.arguments.query,"tea","native tool arguments are parsed as JSON");
+  equal(response.finishReason,"stop","native tool_calls finish reason is normalized");
+}
+
 async function finishReasonTest(){
   const reasons:Array<[string, "stop"|"length"|"content_filter"|"error"|"unknown"]>=[
     ["stop","stop"],["length","length"],["content_filter","content_filter"],["error","error"],["unexpected","unknown"]
@@ -415,14 +431,21 @@ async function credentialAndUnsupportedTest(){
     "missing credential"
   );
 
-  await throwsAsync(
-    ()=>provider(new FakeHttpClient()).chat({
-      ...request(),
-      context:{...request().context,messages:[...request().context.messages,{role:"tool",content:"tool output",toolCallId:"call-1"}]}
-    }),
-    error=>error instanceof OpenAICompatibleProviderError&&error.chatError.code==="UNSUPPORTED",
-    "unsupported tool message"
-  );
+  const toolHttp=new FakeHttpClient();
+  await provider(toolHttp).chat({
+    ...request(),
+    tools:[{name:"memory.search",description:"Search active character memories",parameters:{type:"object",properties:{query:{type:"string"}},required:["query"]}}],
+    context:{...request().context,messages:[...request().context.messages,
+      {role:"assistant",content:"",toolCalls:[{id:"call-1",name:"memory.search",arguments:{query:"tea"}}]},
+      {role:"tool",content:"{\"matches\":[]}",toolCallId:"call-1",toolName:"memory.search"}
+    ]}
+  });
+  const toolBody=JSON.parse(toolHttp.requests[0]!.body!) as {tools:Array<{function:{name:string}}>;messages:Array<{role:string;tool_call_id?:string;name?:string}>};
+  equal(toolBody.tools[0]!.function.name,"memory.search","native function schema is advertised");
+  equal(toolBody.messages.at(-2)?.role,"assistant","native assistant tool-call history is preserved");
+  equal(toolBody.messages.at(-1)?.role,"tool","native tool result role is supported");
+  equal(toolBody.messages.at(-1)?.tool_call_id,"call-1","native tool result preserves call id");
+  equal(toolBody.messages.at(-1)?.name,"memory.search","native tool result preserves tool name");
 
   const jsonModeHttp=new FakeHttpClient();
   await provider(jsonModeHttp).chat({...request(),generation:{responseFormat:{type:"json",schema:{type:"object"}}}});
@@ -469,6 +492,7 @@ async function streamingTest(){
   equal(events.filter(event=>event.type==="completed").length,1,"SSE emits one completion");
   equal(events.find(event=>event.type==="completed"&&event.type==="completed")?.finishReason,"stop","SSE finish reason");
   equal(response.providerId,OPENAI_COMPATIBLE_PROVIDER_ID,"stream response provider");
+  equal(response.message.content,"hello from stream","stream response retains the content for subsequent native tool rounds");
   equal(http.requests.length,1,"stream uses one POST");
   equal(http.requests[0]!.method,"POST","stream request method");
   equal(http.requests[0]!.url,"https://provider.example.test/v1/chat/completions","stream endpoint");
@@ -696,6 +720,7 @@ void (async()=>{
     ["Plain request mapping",plainRequestOmitsResponseFormatTest],
     ["Structured unsupported classification",structuredUnsupportedClassificationTest],
     ["Success response mapping",successResponseMappingTest],
+    ["Native tool call response",nativeToolCallResponseTest],
     ["Finish reasons",finishReasonTest],
     ["Malformed response",malformedResponseTest],
     ["HTTP status normalization",httpStatusTest],

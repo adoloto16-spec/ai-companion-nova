@@ -159,8 +159,8 @@ async function modelDiscoveryAndNoKeyTest(): Promise<void> {
   ok(http.requests.every(item => !("Authorization" in item.headers) && !("authorization" in item.headers)), "no API key is sent");
   equal(provider(http).capabilities().structuredOutput, true, "structured output capability is explicit");
   equal(provider(http).capabilities().vision, false, "vision capability remains disabled");
-  equal(provider(http).capabilities().toolCalling, false, "tool calling capability remains disabled");
-  equal(provider(http).capabilities().reasoning, false, "reasoning capability remains disabled");
+  equal(provider(http).capabilities().toolCalling, true, "native tool calling is supported by this adapter");
+  equal(provider(http).capabilities().reasoning, true, "native reasoning is supported by this adapter");
 }
 
 async function ordinaryRequestMappingTest(): Promise<void> {
@@ -175,7 +175,7 @@ async function ordinaryRequestMappingTest(): Promise<void> {
   equal(req.url, "http://127.0.0.1:11434/api/chat", "native chat endpoint");
   const body = JSON.parse(req.body!) as Record<string, unknown>;
   equal(body.stream, false, "ordinary request disables streaming");
-  equal(body.think, false, "native /api/chat explicitly disables thinking");
+  equal(body.think, undefined, "provider-default reasoning is left to Ollama");
   equal(body.format, undefined, "text generation omits JSON format");
   deepEqual(body.options, {temperature: 0.35, top_p: 0.75, num_predict: 120}, "generation parameters map without invented context window");
   equal(body.model, "llama3.2:latest", "model tag preserved");
@@ -354,13 +354,15 @@ async function thinkingIsNotAssistantContentTest(): Promise<void> {
   });
 
   equal(response.message.content, "Here is the answer.", "only message.content is returned as the assistant answer");
+  equal(response.reasoning, "internal reasoning that must not be shown", "native reasoning is returned in a separate field");
   deepEqual(
     events.filter(event => event.type === "delta").map(event => event.text),
     ["Here is the answer."],
-    "message.thinking is neither accumulated nor emitted as a user-facing delta"
+    "message.thinking is never emitted as a user-facing delta"
   );
+  deepEqual(events.filter(event=>event.type==="reasoning").map(event=>event.text),["internal reasoning that must not be shown"],"reasoning has its own stream event");
   const body = JSON.parse(http.streamRequests[0]!.body!) as Record<string, unknown>;
-  equal(body.think, false, "streaming /api/chat also disables thinking");
+  equal(body.think, undefined, "streaming keeps the provider-default thinking mode");
 }
 
 async function streamSchemaViolationTest(): Promise<void> {

@@ -62,6 +62,8 @@ async function main(){
   equal((await manager.get()).memory.candidateLimit,3,"custom memory candidate limit persists");
   equal((await manager.get()).chat.automaticLongTermMemory,false,"custom extraction toggle persists");
   equal((await manager.get()).chat.responseMode,"plain","Chat response mode persists");
+  equal((await manager.get()).chat.reasoningMode,"enabled","provider reasoning setting persists");
+  equal((await manager.get()).ui.showReasoningInDiagnostics,true,"reasoning diagnostics preference persists");
   equal(persistedIpcSettings?.chat.responseMode,"plain","IPC settings store persists Chat response mode");
   equal((await manager.get()).semanticDedup.candidateSimilarityThreshold,0.91,"semantic candidate threshold persists");
   equal((await manager.get()).semanticDedup.candidateLimit,7,"semantic candidate limit persists");
@@ -76,7 +78,7 @@ async function main(){
   v5.chat={automaticLongTermMemory:false,responseMode:"structured"};
   const migratedV5=migrateAppSettings(v5);
   equal(migratedV5.cognitiveSchedule,DEFAULT_APP_SETTINGS.cognitiveSchedule,"schema v5 migration inserts cognitive defaults");
-  equal(migratedV5.schemaVersion,"13","legacy AppSettings migrate to the current schema");
+  equal(migratedV5.schemaVersion,"14","legacy AppSettings migrate to the current schema");
   equal(migratedV5.chat.automaticLongTermMemory,false,"legacy automatic memory setting remains a save gate");
   equal(Object.prototype.hasOwnProperty.call(migratedV5,"memoryAgent"),false,"legacy Memory Agent settings are dropped during migration");
   const oldDefaultV8=JSON.parse(JSON.stringify(defaultAppSettings())) as Record<string,any>;
@@ -106,13 +108,13 @@ async function main(){
   const migratedV10=migrateAppSettings(v10);
   equal(migratedV10.chat.responseMode,"plain","schema v10 persists the selected Chat response mode");
   equal(migratedV10.cognitiveSchedule.maxRequestsPerHour,120,"explicit quota in the old schema is preserved");
-  equal(migratedV10.schemaVersion,"13","schema v10 upgrades to schema v13");
+  equal(migratedV10.schemaVersion,"14","schema v10 upgrades to schema v14");
   equal(Object.prototype.hasOwnProperty.call(migratedV10,"memoryAgent"),false,"schema v10 Memory Agent configuration is removed safely");
   const v6=JSON.parse(JSON.stringify(defaultAppSettings())) as Record<string,unknown>;
   v6.schemaVersion="6";
   v6.memoryAgent={enabled:false,providerPresetId:"preset.legacy",model:"legacy-model",outputMode:"plain",prompt:"old prompt",promptBackup:"backup",defaultPromptVersion:"9"};
   const migratedV6=migrateAppSettings(v6);
-  equal(migratedV6.schemaVersion,"13","older settings schemas migrate to current AppSettings");
+  equal(migratedV6.schemaVersion,"14","older settings schemas migrate to current AppSettings");
   equal(Object.prototype.hasOwnProperty.call(migratedV6,"memoryAgent"),false,"legacy Memory Agent bindings do not return through migration");
   const currentSettings={...defaultAppSettings(),chat:{...defaultAppSettings().chat,automaticLongTermMemory:false,responseMode:"plain" as const}};
   await manager.set(currentSettings);
@@ -158,9 +160,11 @@ async function main(){
   v12.chat.responseMode="plain";
   v12.prompts.overrides={"nova-system-json":"preserved v12 prompt override"};
   const migratedV12=migrateAppSettings(v12);
-  equal(migratedV12.schemaVersion,"13","schema v12 migrates to v13");
+  equal(migratedV12.schemaVersion,"14","schema v12 migrates to v14");
   equal(migratedV12.context.availableContextTokens,6144,"v12 migration preserves the existing context settings");
   equal(migratedV12.chat.responseMode,"plain","v12 migration preserves the existing chat settings");
+  equal(migratedV12.chat.reasoningMode,"provider-default","v12 migration defaults unsupported reasoning settings safely");
+  equal(migratedV12.ui.showReasoningInDiagnostics,false,"reasoning visibility defaults off");
   equal(migratedV12.prompts.overrides["nova-system-json"],"preserved v12 prompt override","v12 migration preserves prompt registry overrides");
   equal(migratedV12.tts.enabled,false,"v12 migration leaves TTS disabled");
   equal(migratedV12.tts.presets[0]?.baseUrl,"http://127.0.0.1:3900","v12 migration uses safe loopback TTS defaults");
