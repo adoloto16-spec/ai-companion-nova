@@ -18,18 +18,19 @@ export const DEFAULT_COGNITIVE_SCHEDULE:CognitiveScheduleSettings={
   maxRequestsPerHour:null
 };
 export const APP_SETTINGS_API_VERSION:"1"="1";
-export const APP_SETTINGS_SCHEMA_VERSION:"13"="13";
+export const APP_SETTINGS_SCHEMA_VERSION:"14"="14";
 export const DEFAULT_MEMORY_JUDGE_PROMPT_VERSION="2";
 export const DEFAULT_MEMORY_JUDGE_PROMPT=DEFAULT_PROMPT_TEXTS["memory-judge.system"];
 const LEGACY_MEMORY_JUDGE_PROMPT="You are a memory deduplication judge.\n\nCompare NEW MEMORY with CANDIDATES.\n\nKeep the most complete and informative record.\n\nIf NEW MEMORY is less informative because its information is contained in a candidate, return NEW.\n\nIf a candidate contains all meaningful information from NEW MEMORY and adds useful information, return that candidate number.\n\nIf two records contain essentially the same information, return one of them.\n\nIf records contain different useful information, return NO_ARCHIVE.\n\nReturn only:\nNO_ARCHIVE,\nNEW,\nor candidate numbers, one per line.\n\nNever return explanations or text.\nNever invent candidate numbers.";
 
 export interface AppSettings{
   apiVersion:"1";
-  schemaVersion:"13";
+  schemaVersion:"14";
   cognitiveSchedule:CognitiveScheduleSettings;
   chat:{
     automaticLongTermMemory:boolean;
     responseMode:"structured"|"plain";
+    reasoningMode:"provider-default"|"enabled"|"disabled";
   };
   prompts:{overrides:PromptOverrides};
   tts:TtsSettings;
@@ -70,6 +71,7 @@ export interface AppSettings{
   };
   ui:{
     showDiagnosticsInChat:boolean;
+    showReasoningInDiagnostics:boolean;
   };
 }
 
@@ -79,7 +81,7 @@ export const DEFAULT_APP_SETTINGS:AppSettings={
   apiVersion:APP_SETTINGS_API_VERSION,
   schemaVersion:APP_SETTINGS_SCHEMA_VERSION,
   cognitiveSchedule:{...DEFAULT_COGNITIVE_SCHEDULE},
-  chat:{automaticLongTermMemory:true,responseMode:"structured"},
+  chat:{automaticLongTermMemory:true,responseMode:"structured",reasoningMode:"provider-default"},
   prompts:{overrides:{}},
   tts:cloneTtsSettings(DEFAULT_TTS_SETTINGS),
   semanticDedup:{enabled:false,embeddingProviderPresetId:null,embeddingModel:"",candidateSimilarityThreshold:0.88,candidateLimit:5,judge:{enabled:true,providerPresetId:null,model:"",outputMode:"auto",prompt:DEFAULT_MEMORY_JUDGE_PROMPT,promptBackup:null,defaultPromptVersion:DEFAULT_MEMORY_JUDGE_PROMPT_VERSION}},
@@ -92,7 +94,7 @@ export const DEFAULT_APP_SETTINGS:AppSettings={
   memory:{candidateLimit:8},
   retrieval:{candidateLimit:32,semanticSearchEnabled:false,semanticSimilarityThreshold:0.35,semanticResultLimit:5},
   diagnostics:{logLevel:"normal",keepRecentEntries:100},
-  ui:{showDiagnosticsInChat:true}
+  ui:{showDiagnosticsInChat:true,showReasoningInDiagnostics:false}
 };
 
 export function defaultAppSettings():AppSettings{
@@ -233,8 +235,10 @@ export function validateAppSettings(settings:AppSettings):string[]{
   if(!["off","errors","normal","verbose","debug"].includes(settings.diagnostics.logLevel))errors.push("Unsupported diagnostics log level.");
   integer(settings.diagnostics.keepRecentEntries,"Recent diagnostic entries",1,SECURITY_MAX.diagnosticsEntries);
   if(typeof settings.chat.automaticLongTermMemory!=="boolean")errors.push("Automatic long-term memory must be boolean.");
+  if(!["provider-default","enabled","disabled"].includes(settings.chat.reasoningMode))errors.push("Unsupported reasoning mode.");
   if(!["structured","plain"].includes(settings.chat.responseMode))errors.push("Unsupported Chat response mode.");
   if(typeof settings.ui.showDiagnosticsInChat!=="boolean")errors.push("Chat diagnostics visibility must be boolean.");
+  if(typeof settings.ui.showReasoningInDiagnostics!=="boolean")errors.push("Reasoning diagnostics visibility must be boolean.");
 
   const tts=settings.tts;
   if(!tts||typeof tts!=="object"||!Array.isArray(tts.presets))errors.push("TTS settings must contain a preset array.");
@@ -278,7 +282,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const input=value as Record<string,unknown>;
   const legacy=input.schemaVersion==="0"||input.schemaVersion===undefined||input.schemaVersion==="1";
   if(input.apiVersion!==undefined&&input.apiVersion!=="1"&&!legacy)throw new Error("Unsupported AppSettings apiVersion.");
-  if(input.schemaVersion!==undefined&&!["0","1","2","3","4","5","6","7","8","9","10","11","12","13"].includes(String(input.schemaVersion)))throw new Error("Unsupported AppSettings schemaVersion.");
+  if(input.schemaVersion!==undefined&&!["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14"].includes(String(input.schemaVersion)))throw new Error("Unsupported AppSettings schemaVersion.");
   const root=value as Record<string,any>;
   const context=root.context&&typeof root.context==="object"?root.context:{};
   const memory=root.memory&&typeof root.memory==="object"?root.memory:{};
@@ -333,7 +337,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const semanticJudgeBackup=typeof semanticJudge.promptBackup==="string"&&semanticJudge.promptBackup.length>0?semanticJudge.promptBackup:null;
   const semanticJudgeVersion=semanticJudgePromptIsLegacyDefault?DEFAULT_MEMORY_JUDGE_PROMPT_VERSION:(typeof semanticJudge.defaultPromptVersion==="string"&&semanticJudge.defaultPromptVersion.trim()?semanticJudge.defaultPromptVersion.trim():DEFAULT_MEMORY_JUDGE_PROMPT_VERSION);
   const next:AppSettings={
-    apiVersion:"1",schemaVersion:"13",
+    apiVersion:"1",schemaVersion:"14",
     cognitiveSchedule:{
       mode:typeof cognitiveSchedule.mode==="string"?cognitiveSchedule.mode as CognitiveScheduleMode:defaults.cognitiveSchedule.mode,
       defaultIntervalMs:typeof cognitiveSchedule.defaultIntervalMs==="number"?cognitiveSchedule.defaultIntervalMs:defaults.cognitiveSchedule.defaultIntervalMs,
@@ -341,7 +345,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
       maxIntervalMs:migratedMaximumInterval,
       maxRequestsPerHour:typeof cognitiveSchedule.maxRequestsPerHour==="number"?(String(input.schemaVersion)!=="10"&&String(input.schemaVersion)!=="11"&&String(input.schemaVersion)!=="12"&&cognitiveSchedule.maxRequestsPerHour===120?null:cognitiveSchedule.maxRequestsPerHour):null
     },
-    chat:{automaticLongTermMemory:legacyEnabled,responseMode:chat.responseMode==="plain"?"plain":"structured"},
+    chat:{automaticLongTermMemory:legacyEnabled,responseMode:chat.responseMode==="plain"?"plain":"structured",reasoningMode:["provider-default","enabled","disabled"].includes(chat.reasoningMode)?chat.reasoningMode:defaults.chat.reasoningMode},
     prompts:{overrides:promptOverrides},
     semanticDedup:{
       enabled:semanticDedupEnabled,
@@ -378,8 +382,8 @@ export function migrateAppSettings(value:unknown):AppSettings{
       logLevel:logLevelValue as DiagnosticsLogLevel,
       keepRecentEntries:typeof diagnostics.keepRecentEntries==="number"?diagnostics.keepRecentEntries:defaults.diagnostics.keepRecentEntries
     },
-    ui:{showDiagnosticsInChat:typeof ui.showDiagnosticsInChat==="boolean"?ui.showDiagnosticsInChat:defaults.ui.showDiagnosticsInChat},
-    tts:String(input.schemaVersion)==="13"?normalizeTtsSettings(root.tts):cloneTtsSettings(defaults.tts)
+    ui:{showDiagnosticsInChat:typeof ui.showDiagnosticsInChat==="boolean"?ui.showDiagnosticsInChat:defaults.ui.showDiagnosticsInChat,showReasoningInDiagnostics:typeof ui.showReasoningInDiagnostics==="boolean"?ui.showReasoningInDiagnostics:defaults.ui.showReasoningInDiagnostics},
+    tts:["13","14"].includes(String(input.schemaVersion))?normalizeTtsSettings(root.tts):cloneTtsSettings(defaults.tts)
   };
   const errors=validateAppSettings(next);
   if(errors.length>0)throw new Error("Invalid AppSettings: "+errors.join(" "));

@@ -80,8 +80,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
   },
   "app-settings": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v13",
-    "title": "AI Companion Nova App Settings v13",
+    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v14",
+    "title": "AI Companion Nova App Settings v14",
     "type": "object",
     "additionalProperties": false,
     "required": [
@@ -103,14 +103,15 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         "const": "1"
       },
       "schemaVersion": {
-        "const": "13"
+        "const": "14"
       },
       "chat": {
         "type": "object",
         "additionalProperties": false,
         "required": [
           "automaticLongTermMemory",
-          "responseMode"
+          "responseMode",
+          "reasoningMode"
         ],
         "properties": {
           "automaticLongTermMemory": {
@@ -121,6 +122,14 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             "enum": [
               "structured",
               "plain"
+            ]
+          },
+          "reasoningMode": {
+            "type": "string",
+            "enum": [
+              "provider-default",
+              "enabled",
+              "disabled"
             ]
           }
         }
@@ -230,10 +239,14 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "showDiagnosticsInChat"
+          "showDiagnosticsInChat",
+          "showReasoningInDiagnostics"
         ],
         "properties": {
           "showDiagnosticsInChat": {
+            "type": "boolean"
+          },
+          "showReasoningInDiagnostics": {
             "type": "boolean"
           }
         }
