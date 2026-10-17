@@ -6,7 +6,7 @@ import type {
   Conversation,CognitiveScheduleSettings,MindReactiveTurn,ProviderCapabilities,JsonSchema,
   MindToolExecutor,NovaToolCall,NovaToolResult
 } from "../../contracts/src";
-import {CHAT_API_VERSION,CONTEXT_API_VERSION,CONTEXT_SCHEMA_VERSION,parseNovaTurn} from "../../contracts/src";
+import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,CONTEXT_API_VERSION,CONTEXT_SCHEMA_VERSION,parseNovaTurn} from "../../contracts/src";
 import type {NovaTurn} from "../../contracts/src/nova-turn";
 import type {CognitiveStep,CognitiveStepContext,CognitiveStepResult} from "./mind-runtime";
 
