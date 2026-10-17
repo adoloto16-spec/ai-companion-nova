@@ -85,7 +85,7 @@ async function main(){
     const conversation=await agentRuntime.getActiveConversation(character.id);
     agentRuntime.setProviderPresetConfigurations([{
       presetId:"preset.memory-agent",
-      configuration:{providerId:"openai-compatible",baseUrl:"https://memory-agent.example/v1",model:"memory-model",credentialReference:null,enabled:true,timeoutMs:1000}
+      configuration:{apiVersion:"1",schemaVersion:"1",providerId:"openai-compatible",baseUrl:"https://memory-agent.example/v1",model:"memory-model",credentialReference:null,enabled:true,timeoutMs:1000}
     }],"preset.memory-agent");
     await agentRuntime.updateSettings({
       ...agentRuntime.getSettings(),
