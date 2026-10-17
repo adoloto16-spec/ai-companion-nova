@@ -202,6 +202,8 @@ function ChatView({controller,runtime,character,conversations,activeConversation
 
   const send=React.useCallback(async()=>{
     const submittedDraft=input;
+    // Sending a user message is an explicit interruption of ongoing and queued speech.
+    onStopSpeech();
     setPersistenceError("");
     if(runtime.getMindState().lifecycleState!=="off"){
       try{
@@ -217,7 +219,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     const result=await controller.submit(submittedDraft,runtime.getActiveChatModel());
     if(result.status==="sent")onClearSubmittedDraft(submittedDraft);
     await persistAfterAction(result);
-  },[controller,input,runtime,onPersist,onClearSubmittedDraft,persistAfterAction]);
+  },[controller,input,runtime,onPersist,onClearSubmittedDraft,persistAfterAction,onStopSpeech]);
 
   const stop=React.useCallback(async()=>{
     onStopSpeech();
