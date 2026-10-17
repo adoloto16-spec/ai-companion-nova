@@ -410,9 +410,11 @@ export class ChatSessionController{
     this.status="awaiting-life";this.error=undefined;this.errorCode=undefined;this.notify();
     try{await persist(this.getSnapshot());}
     catch(error){
-      this.session.removeMessage(turn.userMessageId);this.lifeTurn=undefined;this.recomputeStatus();
-      const normalized=userMessageForError(error);
-      this.status="error";this.error=normalized.message;this.errorCode=normalized.code;this.notify();throw error;
+      // Keep the user's only in-memory copy when storage fails. Retry Nova Life can persist
+      // this same message together with the eventual assistant reply.
+      const message="User message could not be saved. Retry Nova Life to try again.";
+      this.lifeTurn={...turn,status:"failed",error:message};
+      this.status="error";this.error=message;this.errorCode=undefined;this.notify();throw error;
     }
     if(this.lifeTurn?.turnId!==turn.turnId)return {status:"life-failed",turn,message:this.lifeTurn?.error??"Nova Life could not complete this reply. Retry Nova Life."};
     this.lifeTurn={...turn,status:"awaiting"};this.notify();

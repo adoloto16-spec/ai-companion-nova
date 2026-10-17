@@ -528,6 +528,30 @@ async function main(){
   equal(cancelledCandidateWrites,0,"cancelled NovaTurn never dispatches LONGMEMORY to persistence");
   equal(cancelledCommitController.getSnapshot().messages.some(message=>message.role==="assistant"),false,"cancelled NovaTurn is not exposed as a committed assistant message");
 
+  const unsavedUserSession=new ConversationSession("unsaved-user-conversation","character.unsaved-user");
+  unsavedUserSession.addMessage({id:"earlier-user",role:"user",content:"Earlier question"});
+  unsavedUserSession.addMessage({id:"earlier-assistant",role:"assistant",content:"Earlier answer"});
+  const unsavedUserController=new ChatSessionController(unsavedUserSession,{async chat(request){return responseFor(request);}}, {requestIdFactory:()=>"unsaved-user-1"});
+  let initialUserPersistFailure=false;
+  try{
+    await unsavedUserController.submitToLife("Keep this message",async()=>{throw new Error("controlled initial persist failure");},()=>{throw new Error("Life must not wake before user persistence succeeds");});
+  }catch{initialUserPersistFailure=true;}
+  equal(initialUserPersistFailure,true,"initial user-message persistence failure is surfaced");
+  equal(unsavedUserSession.getMessages().map(message=>message.content).join("|"),"Earlier question|Earlier answer|Keep this message","failed pre-send persistence must not delete the user's message or prior history");
+  equal(unsavedUserController.getSnapshot().lifeTurn?.status,"failed","unsaved user turn stays retryable after the persistence error");
+  const unsavedUserRetry=unsavedUserController.retryLife(()=>true);
+  equal(unsavedUserRetry.status,"awaiting-life","the retained user turn can be retried without re-entering its text");
+  const unsavedUserContext:import("../../contracts/src").MindTurnExecutionContext={
+    characterId:"character.unsaved-user",conversationId:"unsaved-user-conversation",turnId:"unsaved-user-1",userMessageId:"unsaved-user-1:user",signal:new AbortController().signal
+  };
+  let recoveredMessages:readonly import("../../contracts/src").ChatMessage[]=[];
+  await unsavedUserController.commitNovaTurn({...turn,speech:"Recovered reply"},unsavedUserContext,async snapshot=>{
+    recoveredMessages=snapshot.messages;
+  });
+  equal(recoveredMessages.map(message=>message.content).join("|").includes("Keep this message"),true,"successful retry persists the original user text");
+  equal(recoveredMessages.map(message=>message.content).join("|").includes("Recovered reply"),true,"successful retry persists its assistant reply");
+  equal(unsavedUserSession.getMessages().length,4,"successful retry retains previous history, user message, and one assistant reply");
+
   const failedSession=new ConversationSession("life-failed-conversation","character.life-failed");
   const failedController=new ChatSessionController(failedSession,{async chat(request){return responseFor(request);}}, {requestIdFactory:()=>"failed-life-1"});
   const failedSubmit=await failedController.submitToLife("Persist before reply",async()=>{},()=>true);
