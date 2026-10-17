@@ -1937,89 +1937,6 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       "recent_conversation"
     ]
   },
-  "conversation": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/conversation/v2",
-    "title": "AI Companion Nova Conversation v2",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "apiVersion",
-      "schemaVersion",
-      "id",
-      "characterId",
-      "title",
-      "messages",
-      "createdAt",
-      "updatedAt"
-    ],
-    "properties": {
-      "apiVersion": {
-        "const": "1"
-      },
-      "schemaVersion": {
-        "const": "2"
-      },
-      "id": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200
-      },
-      "characterId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "title": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200
-      },
-      "messages": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "role",
-            "content"
-          ],
-          "properties": {
-            "id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "role": {
-              "enum": [
-                "system",
-                "user",
-                "assistant",
-                "tool"
-              ]
-            },
-            "content": {
-              "type": "string"
-            },
-            "toolCallId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "metadata": {
-              "type": "object",
-              "additionalProperties": true
-            }
-          }
-        }
-      },
-      "createdAt": {
-        "type": "string",
-        "minLength": 1
-      },
-      "updatedAt": {
-        "type": "string",
-        "minLength": 1
-      }
-    }
-  },
   "conversation-store-state": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://schemas.ai-companion-nova.dev/conversation-store-state/v2",
@@ -2131,6 +2048,89 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           "type": "string",
           "minLength": 1
         }
+      }
+    }
+  },
+  "conversation": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.ai-companion-nova.dev/conversation/v2",
+    "title": "AI Companion Nova Conversation v2",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "apiVersion",
+      "schemaVersion",
+      "id",
+      "characterId",
+      "title",
+      "messages",
+      "createdAt",
+      "updatedAt"
+    ],
+    "properties": {
+      "apiVersion": {
+        "const": "1"
+      },
+      "schemaVersion": {
+        "const": "2"
+      },
+      "id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "characterId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "title": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "messages": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "role",
+            "content"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "role": {
+              "enum": [
+                "system",
+                "user",
+                "assistant",
+                "tool"
+              ]
+            },
+            "content": {
+              "type": "string"
+            },
+            "toolCallId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        }
+      },
+      "createdAt": {
+        "type": "string",
+        "minLength": 1
+      },
+      "updatedAt": {
+        "type": "string",
+        "minLength": 1
       }
     }
   },
@@ -2332,6 +2332,32 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       }
     }
   },
+  "credential-profile-store-state": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.ai-companion-nova.dev/credential-profile-store-state/v1",
+    "title": "AI Companion Nova Credential Profile Store State v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "apiVersion",
+      "schemaVersion",
+      "profiles"
+    ],
+    "properties": {
+      "apiVersion": {
+        "const": "1"
+      },
+      "schemaVersion": {
+        "const": "1"
+      },
+      "profiles": {
+        "type": "array",
+        "items": {
+          "$ref": "https://schemas.ai-companion-nova.dev/credential-profile/v1"
+        }
+      }
+    }
+  },
   "credential-profile": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://schemas.ai-companion-nova.dev/credential-profile/v1",
@@ -2394,32 +2420,6 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       "updatedAt": {
         "type": "string",
         "minLength": 1
-      }
-    }
-  },
-  "credential-profile-store-state": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/credential-profile-store-state/v1",
-    "title": "AI Companion Nova Credential Profile Store State v1",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "apiVersion",
-      "schemaVersion",
-      "profiles"
-    ],
-    "properties": {
-      "apiVersion": {
-        "const": "1"
-      },
-      "schemaVersion": {
-        "const": "1"
-      },
-      "profiles": {
-        "type": "array",
-        "items": {
-          "$ref": "https://schemas.ai-companion-nova.dev/credential-profile/v1"
-        }
       }
     }
   },
@@ -3171,6 +3171,32 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       }
     }
   },
+  "model-profile-store-state": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.ai-companion-nova.dev/model-profile-store-state/v2",
+    "title": "AI Companion Nova Model Profile Store State v2",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "apiVersion",
+      "schemaVersion",
+      "profiles"
+    ],
+    "properties": {
+      "apiVersion": {
+        "const": "1"
+      },
+      "schemaVersion": {
+        "const": "2"
+      },
+      "profiles": {
+        "type": "array",
+        "items": {
+          "$ref": "https://schemas.ai-companion-nova.dev/model-profile/v2"
+        }
+      }
+    }
+  },
   "model-profile": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://schemas.ai-companion-nova.dev/model-profile/v2",
@@ -3260,32 +3286,6 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       "providerPresetId": {
         "type": "string",
         "minLength": 1
-      }
-    }
-  },
-  "model-profile-store-state": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/model-profile-store-state/v2",
-    "title": "AI Companion Nova Model Profile Store State v2",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "apiVersion",
-      "schemaVersion",
-      "profiles"
-    ],
-    "properties": {
-      "apiVersion": {
-        "const": "1"
-      },
-      "schemaVersion": {
-        "const": "2"
-      },
-      "profiles": {
-        "type": "array",
-        "items": {
-          "$ref": "https://schemas.ai-companion-nova.dev/model-profile/v2"
-        }
       }
     }
   },
@@ -3611,6 +3611,155 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       "message": {
         "type": "string",
         "minLength": 1
+      }
+    }
+  },
+  "provider-preset-source": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.ai-companion-nova.dev/provider-preset-source/v2",
+    "title": "AI Companion Nova Provider Preset Source v2",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "id",
+      "name",
+      "providerId",
+      "baseUrl",
+      "model",
+      "credentialReference",
+      "enabled",
+      "health",
+      "failureCount",
+      "cooldownUntil",
+      "createdAt",
+      "updatedAt"
+    ],
+    "properties": {
+      "id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "providerId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 100
+      },
+      "baseUrl": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      },
+      "model": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "credentialReference": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "$ref": "https://schemas.ai-companion-nova.dev/credential-reference/v1"
+          }
+        ]
+      },
+      "enabled": {
+        "type": "boolean"
+      },
+      "health": {
+        "enum": [
+          "healthy",
+          "cooldown",
+          "unavailable"
+        ]
+      },
+      "failureCount": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "cooldownUntil": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "timeoutMs": {
+        "type": "number",
+        "minimum": 0.000001
+      },
+      "createdAt": {
+        "type": "string",
+        "minLength": 1
+      },
+      "updatedAt": {
+        "type": "string",
+        "minLength": 1
+      },
+      "numCtx": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "numPredict": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "keepAlive": {
+        "type": [
+          "string",
+          "number"
+        ],
+        "minLength": 1,
+        "minimum": -1
+      },
+      "temperature": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 2
+      },
+      "topP": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      }
+    }
+  },
+  "provider-preset-store-state": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.ai-companion-nova.dev/provider-preset-store-state/v3",
+    "title": "AI Companion Nova Provider Preset Store State v3",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "apiVersion",
+      "schemaVersion",
+      "presets",
+      "activePresetId"
+    ],
+    "properties": {
+      "apiVersion": {
+        "const": "1"
+      },
+      "schemaVersion": {
+        "const": "3"
+      },
+      "presets": {
+        "type": "array",
+        "items": {
+          "$ref": "https://schemas.ai-companion-nova.dev/provider-preset/v3"
+        }
+      },
+      "activePresetId": {
+        "type": [
+          "string",
+          "null"
+        ]
       }
     }
   },
@@ -4209,155 +4358,6 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         }
       }
     ]
-  },
-  "provider-preset-source": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/provider-preset-source/v2",
-    "title": "AI Companion Nova Provider Preset Source v2",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "id",
-      "name",
-      "providerId",
-      "baseUrl",
-      "model",
-      "credentialReference",
-      "enabled",
-      "health",
-      "failureCount",
-      "cooldownUntil",
-      "createdAt",
-      "updatedAt"
-    ],
-    "properties": {
-      "id": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200
-      },
-      "name": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200
-      },
-      "providerId": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 100
-      },
-      "baseUrl": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 2000
-      },
-      "model": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200
-      },
-      "credentialReference": {
-        "anyOf": [
-          {
-            "type": "null"
-          },
-          {
-            "$ref": "https://schemas.ai-companion-nova.dev/credential-reference/v1"
-          }
-        ]
-      },
-      "enabled": {
-        "type": "boolean"
-      },
-      "health": {
-        "enum": [
-          "healthy",
-          "cooldown",
-          "unavailable"
-        ]
-      },
-      "failureCount": {
-        "type": "integer",
-        "minimum": 0
-      },
-      "cooldownUntil": {
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "timeoutMs": {
-        "type": "number",
-        "minimum": 0.000001
-      },
-      "createdAt": {
-        "type": "string",
-        "minLength": 1
-      },
-      "updatedAt": {
-        "type": "string",
-        "minLength": 1
-      },
-      "numCtx": {
-        "type": "integer",
-        "minimum": 1
-      },
-      "numPredict": {
-        "type": "integer",
-        "minimum": 1
-      },
-      "keepAlive": {
-        "type": [
-          "string",
-          "number"
-        ],
-        "minLength": 1,
-        "minimum": -1
-      },
-      "temperature": {
-        "type": "number",
-        "minimum": 0,
-        "maximum": 2
-      },
-      "topP": {
-        "type": "number",
-        "minimum": 0,
-        "maximum": 1
-      }
-    }
-  },
-  "provider-preset-store-state": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/provider-preset-store-state/v3",
-    "title": "AI Companion Nova Provider Preset Store State v3",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "apiVersion",
-      "schemaVersion",
-      "presets",
-      "activePresetId"
-    ],
-    "properties": {
-      "apiVersion": {
-        "const": "1"
-      },
-      "schemaVersion": {
-        "const": "3"
-      },
-      "presets": {
-        "type": "array",
-        "items": {
-          "$ref": "https://schemas.ai-companion-nova.dev/provider-preset/v3"
-        }
-      },
-      "activePresetId": {
-        "type": [
-          "string",
-          "null"
-        ]
-      }
-    }
   },
   "retrieval-candidate": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
