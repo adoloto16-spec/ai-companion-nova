@@ -318,6 +318,25 @@ async function nativeToolCallResponseTest(){
   equal(response.finishReason,"stop","native tool_calls finish reason is normalized");
 }
 
+async function nativeStreamingToolCallTest(){
+  const http=new FakeHttpClient();
+  const first={choices:[{delta:{tool_calls:[{index:0,id:"call-stream-1",type:"function",function:{name:"memory.",arguments:"{\"query\":"}}]},finish_reason:null}]};
+  const second={choices:[{delta:{tool_calls:[{index:0,type:"function",function:{name:"search",arguments:"\"tea\"}"}}]},finish_reason:null}]};
+  const done={choices:[{delta:{},finish_reason:"tool_calls"}]};
+  http.streamNext={status:200,headers:{"content-type":"text/event-stream"},body:streamChunks([
+    "data: "+JSON.stringify(first)+"\n\n",
+    "data: "+JSON.stringify(second)+"\n\n",
+    "data: "+JSON.stringify(done)+"\n\n",
+    "data: [DONE]\n\n"
+  ])};
+  const tool={name:"memory.search",description:"Search character memories",parameters:{type:"object",properties:{query:{type:"string"}},required:["query"]}};
+  const response=await provider(http).stream({...request(),tools:[tool]},{onEvent(){}});
+  equal(response.message.toolCalls?.length,1,"fragmented native tool call is assembled once");
+  equal(response.message.toolCalls?.[0]?.name,"memory.search","fragmented function name is assembled");
+  equal(response.message.toolCalls?.[0]?.arguments.query,"tea","fragmented function arguments are parsed");
+  equal(response.message.content,"","tool-only stream does not fabricate user-facing text");
+}
+
 async function finishReasonTest(){
   const reasons:Array<[string, "stop"|"length"|"content_filter"|"error"|"unknown"]>=[
     ["stop","stop"],["length","length"],["content_filter","content_filter"],["error","error"],["unexpected","unknown"]
@@ -721,6 +740,7 @@ void (async()=>{
     ["Structured unsupported classification",structuredUnsupportedClassificationTest],
     ["Success response mapping",successResponseMappingTest],
     ["Native tool call response",nativeToolCallResponseTest],
+    ["Streaming native tool call fragments",nativeStreamingToolCallTest],
     ["Finish reasons",finishReasonTest],
     ["Malformed response",malformedResponseTest],
     ["HTTP status normalization",httpStatusTest],

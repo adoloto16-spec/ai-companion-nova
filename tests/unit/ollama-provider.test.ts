@@ -365,6 +365,41 @@ async function thinkingIsNotAssistantContentTest(): Promise<void> {
   equal(body.think, undefined, "streaming keeps the provider-default thinking mode");
 }
 
+async function nativeToolsUseModelCapabilitiesTest():Promise<void>{
+  const http=new FakeOllamaHttpClient();
+  http.requestHandler=async request=>{
+    if(request.url.endsWith("/api/show"))return {status:200,body:JSON.stringify({
+      capabilities:["tools","thinking"],thinking:{values:[true,false,"low","high"],default:"low"}
+    })};
+    return {status:200,body:JSON.stringify({
+      model:"qwen3.5:latest",
+      message:{role:"assistant",content:"",tool_calls:[{function:{name:"memory.search",arguments:{query:"tea"}}}]},
+      done:true,done_reason:"tool_calls"
+    })};
+  };
+  const tool={name:"memory.search",description:"Search active character memories",parameters:{type:"object",properties:{query:{type:"string"}},required:["query"]}};
+  const response=await provider(http).chat(chatRequest({
+    tools:[tool],reasoning:{mode:"enabled",effort:"high"},
+    context:{conversationId:"conversation-native-tools",messages:[
+      {role:"system",content:"Use tools when needed."},
+      {role:"assistant",content:"",toolCalls:[{id:"previous-call",name:"memory.search",arguments:{query:"coffee"}}]},
+      {role:"tool",content:"{\"matches\":[]}",toolCallId:"previous-call",toolName:"memory.search"},
+      {role:"user",content:"Remember my tea preference."}
+    ]}
+  }));
+  equal(response.message.toolCalls?.length,1,"native tool calls are returned without JSON parsing the answer");
+  equal(response.message.toolCalls?.[0]?.name,"memory.search","tool name is preserved");
+  equal((response.message.toolCalls?.[0]?.arguments as Record<string,unknown>).query,"tea","tool arguments are parsed");
+  const show=http.requests.find(request=>request.url.endsWith("/api/show"));
+  ok(show,"model capabilities are discovered before sending optional native features");
+  const request=http.requests.find(item=>item.url.endsWith("/api/chat"))!;
+  const body=JSON.parse(request.body!) as {think?:unknown;tools?:Array<{function:{name:string}}>;messages:Array<{role:string;tool_name?:string}>};
+  equal(body.think,"high","only a model-declared reasoning value is sent");
+  equal(body.tools?.[0]?.function.name,"memory.search","native tool definition is sent to Ollama");
+  equal(body.messages[2]?.role,"tool","tool result uses the provider-native role");
+  equal(body.messages[2]?.tool_name,"memory.search","tool result preserves the function name");
+}
+
 async function streamSchemaViolationTest(): Promise<void> {
   const http = new FakeOllamaHttpClient();
   http.streamHandler = async () => ({status: 200, body: chunks([
@@ -474,6 +509,7 @@ async function main(): Promise<void> {
     ["Invalid JSON and schema violations", invalidJsonAndSchemaViolationTest],
     ["Split NDJSON streaming", splitNdjsonStreamingTest],
     ["Thinking data is not assistant content", thinkingIsNotAssistantContentTest],
+    ["Native tools follow model capabilities",nativeToolsUseModelCapabilitiesTest],
     ["Streaming schema violation", streamSchemaViolationTest],
     ["Cancellation and timeouts", cancellationAndTimeoutTest],
     ["Stream timeout is an inactivity deadline", streamTimeoutIsInactivityDeadlineTest],
