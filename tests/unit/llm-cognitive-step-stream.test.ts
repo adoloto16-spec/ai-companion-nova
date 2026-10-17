@@ -153,7 +153,7 @@ async function ordinaryErrorsAndMalformedJsonNeverFallback():Promise<void>{
     };
     let rejected=false;
     const speechEvents:Array<{type:string;text?:string}> = [];
-    try{await createStep(runtime).run(context(event=>speechEvents.push({type:event.type,...(event.text===undefined?{}:{text:event.text})})));}catch{rejected=true;}
+    try{await createStep(runtime).run(context(event=>{speechEvents.push({type:event.type,...(event.text===undefined?{}:{text:event.text})});}));}catch{rejected=true;}
     ok(rejected,failure+" failure rejects the turn");
     if(failure==="invalid-json"){
       const publicSpeech=speechEvents.filter(event=>event.type==="delta").map(event=>event.text??"").join("");
