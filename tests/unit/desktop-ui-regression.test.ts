@@ -86,7 +86,7 @@ for(const label of ["General","Chat","Provider Presets"]){
 }
 assert.ok(settingsContainer.includes('tab==="general"'),"Settings must have a General tab");
 assert.ok(settingsContainer.includes('tab==="chat"')&&settingsContainer.includes("<ChatSettingsView "),"Settings must expose the Chat response-mode settings tab");
-assert.ok(appSettingsView.includes('settings.chat.responseMode')&&appSettingsView.includes('value="structured"')&&appSettingsView.includes('value="plain"'),"Chat settings bind both response modes");
+assert.ok(appSettingsView.includes('settings.chat.reasoningMode')&&appSettingsView.includes('value="provider-default"')&&appSettingsView.includes('value="enabled"')&&appSettingsView.includes('value="disabled"'),"Chat settings bind provider-native reasoning modes");
 assert.ok(settingsContainer.includes('tab==="provider-presets"'),"Settings must have a Provider Presets tab");
 assert.ok(settingsContainer.includes("<AppSettingsView "), "General tab must render AppSettingsView");
 assert.ok(diagnosticsView.includes("runtime.diagnostics(passiveDiagnosticsOptions(runtime.getProviderConfiguration()?.providerId))"),"DiagnosticsView diagnostics refresh must use cached Ollama health during periodic refresh");
