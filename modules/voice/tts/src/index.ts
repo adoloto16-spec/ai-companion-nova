@@ -7,6 +7,8 @@ export interface AudioOutputAdapter {
   unlock():Promise<void>;
   startSession(sessionId:string,metadata:TtsAudioMetadata):void;
   enqueue(sessionId:string,sequence:number,metadata:TtsAudioMetadata,data:Uint8Array,signal:AbortSignal):Promise<void>;
+  /** Resolves only after the session's final audio has physically finished playback. */
+  waitForPlayback?(sessionId:string,signal:AbortSignal):Promise<void>;
   stop(sessionId?:string):void;
 }
 export type SpeechOutputState="disabled"|"locked"|"ready"|"synthesizing"|"error";
@@ -38,6 +40,7 @@ interface Session {
   finishing:boolean;
   failed:boolean;
   outputSequence:number;
+  finishPromise?:Promise<void>;
 }
 const MAX_PENDING_SENTENCES=12;
 const MAX_PENDING_TEXT_CHARS=8_000;
@@ -149,6 +152,7 @@ export function normalizeVoiceExpression(text:string,emotion:string,capabilities
 export class SpeechOutputController {
   private readonly sessions=new Map<string,Session>();
   private active:Session|undefined;
+  private readonly pendingSessions:Session[]=[];
   private testAbort:AbortController|undefined;
   private sequence=0;
   private unlocked=false;
@@ -169,30 +173,30 @@ export class SpeechOutputController {
 
   /** Handles only public NovaTurn speech lifecycle events. It never receives thoughts or raw JSON. */
   async handleSpeechEvent(event:Pick<MindTurnSpeechEvent,"type"|"turnId"|"text"|"emotion">):Promise<void>{
+    let handlingSession:Session|undefined;
     try{
       if(event.type==="start"){
-        this.stop();
+        // Cognitive tool rounds may emit multiple starts for the same turn. Keep one TTS session per turn.
+        if(this.findSession(event.turnId))return;
         const settings=this.options.getSettings();
         if(!settings.enabled){
-          this.setStatus({state:"disabled",message:"Speech output is disabled."});
-          this.active=undefined;
+          if(!this.active)this.setStatus({state:"disabled",message:"Speech output is disabled."});
           return;
         }
         if(!this.unlocked){
-          this.setStatus({state:"locked",message:"Enable audio playback from TTS settings before speech can play."});
-          this.active=undefined;
+          if(!this.active)this.setStatus({state:"locked",message:"Enable audio playback from TTS settings before speech can play."});
           return;
         }
         const preset=settings.presets.find(item=>item.id===settings.activePresetId);
         if(!preset){
-          this.setStatus({state:"error",message:"The active TTS preset is missing."});
-          this.active=undefined;
+          this.reportDiagnostic("TTS_PRESET_MISSING","The active TTS preset is missing.");
+          if(!this.active)this.setStatus({state:"error",message:"The active TTS preset is missing."});
           return;
         }
         const provider=this.options.getProvider(preset.providerId);
         if(!provider){
-          this.setStatus({state:"error",message:"The selected TTS provider is not registered."});
-          this.active=undefined;
+          this.reportDiagnostic("TTS_PROVIDER_MISSING","The selected TTS provider is not registered.");
+          if(!this.active)this.setStatus({state:"error",message:"The selected TTS provider is not registered."});
           return;
         }
         const session:Session={
@@ -200,19 +204,25 @@ export class SpeechOutputController {
           preset:presetCopy(preset),provider,abort:new AbortController(),queue:[],waitingWriters:[],queueWaiters:[],queuedChars:0,
           segmenter:new SpeechSentenceSegmenter(),emotion:"",finishing:false,failed:false,outputSequence:0
         };
-        this.active=session;this.sessions.set(session.id,session);
-        this.setStatus({state:"ready",message:"TTS session started.",sessionId:session.id});
+        this.sessions.set(session.id,session);
+        if(this.active){
+          this.pendingSessions.push(session);
+          this.setStatus({state:"ready",message:"Assistant speech queued behind the active playback.",sessionId:session.id});
+        }else{
+          this.active=session;
+          this.setStatus({state:"ready",message:"TTS session started.",sessionId:session.id});
+        }
         return;
       }
-      const session=this.active;
-      if(!session||event.turnId!==session.turnId)return;
+      const session=this.findSession(event.turnId);
+      if(!session)return;
+      handlingSession=session;
       if(event.type==="emotion"){
         if(typeof event.emotion==="string")session.emotion=event.emotion.slice(0,500);
         return;
       }
       if(event.type==="reset"||event.type==="clear"){
-        // MindRuntime emits "clear" after successful commit to clear the chat stream view.
-        // Once synthesis has been explicitly finalized, that UI cleanup must not cancel queued audio.
+        // Successful commit emits clear after finalization; never truncate the queued audio in that case.
         if(event.type==="clear"&&session.finishing)return;
         this.cancelSession(session,"Speech output was reset.");
         return;
@@ -221,43 +231,53 @@ export class SpeechOutputController {
         if(typeof event.text==="string"&&event.text.length>0)await this.appendText(session,event.text);
       }
     }catch(error){
-      // TTS is isolated from Chat/Nova Life: report an output diagnostic, never propagate failure to the turn sink.
       this.reportDiagnostic("TTS_STREAM_FAILED",safeError(error));
       if(error&&typeof error==="object"&&(error as {name?:unknown}).name==="AbortError")return;
-      if(this.active)this.cancelSession(this.active,safeError(error),true);
+      const session=handlingSession??this.active;
+      if(session)this.cancelSession(session,safeError(error),true);
       this.setStatus({state:"error",message:safeError(error)});
     }
   }
 
-  /** Flushes the final unterminated public-speech segment without waiting for playback completion. */
+  /** Finalizes synthesis and then waits for the physical playback queue to drain. */
   finishTurn(turnId:string):Promise<void>{
-    const session=this.active;
-    if(!session||session.turnId!==turnId||session.failed)return Promise.resolve();
+    const session=this.findSession(turnId);
+    if(!session||session.failed)return Promise.resolve();
+    if(session.finishPromise)return session.finishPromise;
     session.finishing=true;
-    return (async()=>{
+    session.finishPromise=(async()=>{
       for(const text of session.segmenter.finish())await this.enqueueSentence(session,text,session.emotion);
       this.ensureWorker(session);
       await this.waitForSynthesis(session);
+      if(session.failed||aborted(session.abort.signal))return;
+      if(session.outputSequence>0&&this.options.output.waitForPlayback)
+        await this.options.output.waitForPlayback(session.id,session.abort.signal);
+      if(session.failed||aborted(session.abort.signal))return;
       this.sessions.delete(session.id);
-      if(this.active===session&&!session.failed){
+      const wasActive=this.active===session;
+      this.pendingSessions.splice(0,this.pendingSessions.length,...this.pendingSessions.filter(item=>item!==session));
+      if(wasActive){
         this.active=undefined;
-        this.setStatus({state:"ready",message:"Speech synthesis completed; audio may still be playing.",sessionId:session.id});
+        this.activateNextSession();
       }
+      if(!this.active)this.setStatus({state:"ready",message:"Assistant speech playback completed.",sessionId:session.id});
     })().catch(error=>{
       if(!aborted(session.abort.signal)){
         this.reportDiagnostic("TTS_FINISH_FAILED",safeError(error));
         this.cancelSession(session,safeError(error),true);
         this.setStatus({state:"error",message:safeError(error)});
       }
-    });
+    }).finally(()=>{session.finishPromise=undefined;});
+    return session.finishPromise;
   }
 
-  /** Stops synthesis and all scheduled/queued audio immediately. */
+  /** Explicit interruption cancels the active turn and every not-yet-played queued turn. */
   stop(message="Speech output stopped."):void{
-    const session=this.active;
-    if(session)this.cancelSession(session,message);
+    for(const session of [...this.sessions.values()])this.cancelSession(session,message,false,false);
+    this.active=undefined;
+    this.pendingSessions.length=0;
     if(this.testAbort){const preview=this.testAbort;this.testAbort=undefined;preview.abort();}
-    if(!session)this.options.output.stop();
+    this.options.output.stop();
     this.setStatus({state:this.unlocked?"ready":"locked",message});
   }
 
@@ -328,30 +348,27 @@ export class SpeechOutputController {
   }
 
   private async appendText(session:Session,text:string):Promise<void>{
-    if(this.active!==session||session.abort.signal.aborted||session.failed||session.finishing)return;
+    if(this.sessions.get(session.id)!==session||session.abort.signal.aborted||session.failed||session.finishing)return;
     for(const sentence of session.segmenter.push(text))await this.enqueueSentence(session,sentence,session.emotion);
   }
   private async enqueueSentence(session:Session,text:string,emotion:string):Promise<void>{
-    if(!text.trim()||this.active!==session||session.abort.signal.aborted||session.failed)return;
+    if(!text.trim()||this.sessions.get(session.id)!==session||session.abort.signal.aborted||session.failed)return;
     if(text.length>MAX_SENTENCE_CHARS*2)throw new Error("A TTS sentence exceeded the safe splitting limit.");
-    while(!session.abort.signal.aborted&&!session.failed&&
+    while(!session.abort.signal.aborted&&!session.failed&&this.sessions.get(session.id)===session&&
       (session.queue.length>=MAX_PENDING_SENTENCES||session.queuedChars+text.length>MAX_PENDING_TEXT_CHARS)){
       await new Promise<void>(resolve=>session.waitingWriters.push(resolve));
     }
-    if(session.abort.signal.aborted||session.failed||this.active!==session)return;
+    if(session.abort.signal.aborted||session.failed||this.sessions.get(session.id)!==session)return;
     session.queue.push({text,emotion});session.queuedChars+=text.length;
     this.ensureWorker(session);
   }
   private ensureWorker(session:Session):void{
-    if(session.worker||session.failed||session.abort.signal.aborted)return;
+    if(this.active!==session||session.worker||session.failed||session.abort.signal.aborted)return;
     session.worker=this.runWorker(session).finally(()=>{
       session.worker=undefined;
       if(session.queue.length>0&&!session.failed&&!session.abort.signal.aborted)this.ensureWorker(session);
       this.wakeQueueWaiters(session);
-      if(this.active===session&&session.finishing&&session.queue.length===0&&!session.failed&&!session.abort.signal.aborted){
-        this.active=undefined;
-        this.setStatus({state:"ready",message:"Speech synthesis completed; audio may still be playing.",sessionId:session.id});
-      }
+      // Do not release the active session here: synthesized audio may still be playing.
     });
   }
   private async runWorker(session:Session):Promise<void>{
@@ -396,29 +413,56 @@ export class SpeechOutputController {
       else if(event.type==="error")throw new Error(event.error.message);
     }
     if(!done)throw new Error("TTS provider ended synthesis without a completion event.");
-    // The next queued sentence is dispatched as soon as provider synthesis completes. Playback is independent.
+    // The next sentence may synthesize ahead, but the next turn waits for playback to finish.
   }
   private async waitForSynthesis(session:Session):Promise<void>{
-    while(!session.failed&&!session.abort.signal.aborted&&(session.queue.length>0||session.worker)){
-      if(session.worker)await session.worker;
-      else this.ensureWorker(session);
+    while(!session.failed&&!aborted(session.abort.signal)&&(session.queue.length>0||session.worker)){
+      if(this.active!==session){
+        await new Promise<void>(resolve=>session.queueWaiters.push(resolve));
+        continue;
+      }
+      if(session.worker){
+        await session.worker;
+      }else{
+        this.ensureWorker(session);
+        if(!session.worker&&session.queue.length>0)
+          await new Promise<void>(resolve=>session.queueWaiters.push(resolve));
+      }
     }
   }
   private wakeQueueWaiters(session:Session):void{
     for(const resolve of session.queueWaiters.splice(0))resolve();
   }
-  private cancelSession(session:Session,message:string,failed=false):void{
-    if(session.abort.signal.aborted)return;
+  private cancelSession(session:Session,message:string,failed=false,advanceQueue=true):void{
+    const wasActive=this.active===session;
     session.failed=failed;
-    session.abort.abort();
+    if(!session.abort.signal.aborted)session.abort.abort();
     session.segmenter.reset();
     session.queue.length=0;session.queuedChars=0;session.finishing=true;
     for(const resolve of session.waitingWriters.splice(0))resolve();
     this.wakeQueueWaiters(session);
     this.sessions.delete(session.id);
+    this.pendingSessions.splice(0,this.pendingSessions.length,...this.pendingSessions.filter(item=>item!==session));
     this.options.output.stop(session.id);
-    if(this.active===session)this.active=undefined;
+    if(wasActive)this.active=undefined;
+    if(advanceQueue&&wasActive)this.activateNextSession();
     if(!failed)this.setStatus({state:this.unlocked?"ready":"locked",message});
+  }
+  private findSession(turnId:string):Session|undefined{
+    for(const session of this.sessions.values())if(session.turnId===turnId)return session;
+    return undefined;
+  }
+  private activateNextSession():void{
+    if(this.active)return;
+    while(this.pendingSessions.length){
+      const next=this.pendingSessions.shift()!;
+      if(this.sessions.get(next.id)!==next||next.failed||next.abort.signal.aborted)continue;
+      this.active=next;
+      this.wakeQueueWaiters(next);
+      this.ensureWorker(next);
+      this.setStatus({state:"ready",message:"Next assistant speech session is active.",sessionId:next.id});
+      return;
+    }
   }
   private reportDiagnostic(code:string,message:string):void{try{this.options.onDiagnostic?.(code,message);}catch{}}
 
