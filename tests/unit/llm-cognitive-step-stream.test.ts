@@ -40,7 +40,7 @@ function event(request:ChatRequest,type:"delta"|"reasoning",text:string):ChatStr
   return {apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.stream",model:request.model,type,text} as ChatStreamEvent;
 }
 
-async function ordinaryTextStreamsSeparatelyFromReasoning():Promise<void>{async function profileGenerationOptionsReachNativeRequests():Promise<void>{
+async function profileGenerationOptionsReachNativeRequests():Promise<void>{
   const requests:ChatRequest[]=[];
   const runtime={async chat(request:ChatRequest):Promise<ChatResponse>{requests.push(request);return responseFor(request,"Completed answer.");}};
   const generation={temperature:0.45,topP:0.8,maxTokens:777,repeatPenalty:1.1,repeatLastN:48};
@@ -48,7 +48,7 @@ async function ordinaryTextStreamsSeparatelyFromReasoning():Promise<void>{async 
   equal(requests[0]?.generation,generation,"Model Profile generation settings reach actual native request bodies");
 }
 
-
+async function ordinaryTextStreamsSeparatelyFromReasoning():Promise<void>{
   const text="The answer is arriving while the model is still generating the rest.";
   const cut=23;
   let firstChunkSeen!:()=>void;

@@ -36,6 +36,7 @@ async function main(){
     ui:{...defaults.ui,showReasoningInDiagnostics:true},
     chat:{...defaults.chat,automaticLongTermMemory:false,responseMode:"plain" as const,reasoningMode:"enabled" as const},
     memoryAgent:{...defaults.memoryAgent,enabled:false},
+    memoryAgent:{...defaults.memoryAgent,enabled:false},
     cognitiveSchedule:{mode:"fixed" as const,defaultIntervalMs:60000,minIntervalMs:10000,maxIntervalMs:300000,maxRequestsPerHour:60},
     semanticDedup:{
       ...defaults.semanticDedup,
