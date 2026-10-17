@@ -424,6 +424,15 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     const pool=getPoolProvider(providerPresetId);
     return pool?.getModel()??resolveChatModelForPreset(providerPresetId);
   };
+  const automaticMemoryAgent=new AutomaticMemoryAgent({
+    settings:()=>settingsManager.get(),
+    broker:memoryBroker,
+    runtime:{
+      chat:(request,providerPresetId)=>extractionChatRuntime.chat(request,providerPresetId),
+      getChatModelForPreset
+    },
+    diagnostics:diagnosticsStore
+  });
 
   let activeModelProfile:import("../../../contracts/src/index").ModelProfile|undefined;
   const mindRuntime=new MindRuntime({
@@ -1101,8 +1110,10 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
           return [];
         }
       }
-      // No secondary LLM memory generation: only a validated NovaTurn.longMemory can create a candidate.
-      return [];
+      // Native NovaTurn responses do not carry the historical LONGMEMORY field. The dedicated
+      // agent evaluates the real user/assistant exchange and only persists a durable fact when useful.
+      const memory=await automaticMemoryAgent.process(request);
+      return memory?[memory]:[];
     },
     getMemory:(characterId,memoryOrConversationId,memoryId?)=>memoryId===undefined?memoryBroker.get(characterId,memoryOrConversationId):memoryBroker.get(characterId,memoryOrConversationId as MemoryItemId,memoryId as MemoryItemId),
     searchMemory:query=>memoryBroker.search(query),

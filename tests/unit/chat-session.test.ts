@@ -500,7 +500,7 @@ async function main(){
   let emptyCandidateWrites=0;
   const noCandidateController=new ChatSessionController(noCandidateSession,{async chat(request){return responseFor(request)}},{
     requestIdFactory:()=>"life-no-candidate-turn",
-    memoryExtractor:{extract:async()=>{emptyCandidateWrites++;return [];}}
+    memoryExtractor:{extract:async request=>{emptyCandidateWrites++;equal(request.assistantMessage.content,"A separate public reply","without LONGMEMORY, the memory agent receives only the committed public answer");return [];}}
   });
   await noCandidateController.submitToLife("Answer without a durable fact",async()=>{},()=>true);
   const noCandidateContext:import("../../contracts/src").MindTurnExecutionContext={
@@ -508,7 +508,7 @@ async function main(){
   };
   await noCandidateController.commitNovaTurn({...turn,longMemory:""},noCandidateContext,async()=>{});
   await new Promise(resolve=>setTimeout(resolve,0));
-  equal(emptyCandidateWrites,0,"empty LONGMEMORY does not invoke any memory persistence path");
+  equal(emptyCandidateWrites,1,"a completed native answer invokes agent evaluation even without a LONGMEMORY field");
 
   const cancelledCommitSession=new ConversationSession("life-cancelled-commit","character.life-cancelled-commit");
   let cancelledCandidateWrites=0;

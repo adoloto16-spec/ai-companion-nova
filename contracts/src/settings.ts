@@ -335,6 +335,10 @@ export function migrateAppSettings(value:unknown):AppSettings{
   if(!["off","errors","normal","verbose","debug"].includes(logLevelValue))throw new Error("Unsupported diagnostics log level.");
   const legacyEnabled=typeof chat.automaticLongTermMemory==="boolean"?chat.automaticLongTermMemory:defaults.chat.automaticLongTermMemory;
   const memoryAgentEnabled=typeof storedMemoryAgent.enabled==="boolean"?storedMemoryAgent.enabled:legacyEnabled;
+  // Schema v14 separates the legacy chat-wide save gate from the dedicated agent enable flag.
+  // Older schemas retain the historical mapping for a safe, backward-compatible migration.
+  const chatAutomaticMemoryEnabled=String(input.schemaVersion)==="14"&&typeof chat.automaticLongTermMemory==="boolean"
+    ?chat.automaticLongTermMemory:memoryAgentEnabled;
   const memoryAgentPreset=typeof storedMemoryAgent.providerPresetId==="string"&&storedMemoryAgent.providerPresetId.trim()?storedMemoryAgent.providerPresetId.trim():null;
   const memoryAgentModel=typeof storedMemoryAgent.model==="string"?storedMemoryAgent.model.trim():"";
   const memoryAgentOutputMode=["auto","structured","plain"].includes(storedMemoryAgent.outputMode)?storedMemoryAgent.outputMode:defaults.memoryAgent.outputMode;
@@ -381,7 +385,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
       maxIntervalMs:migratedMaximumInterval,
       maxRequestsPerHour:typeof cognitiveSchedule.maxRequestsPerHour==="number"?(String(input.schemaVersion)!=="10"&&String(input.schemaVersion)!=="11"&&String(input.schemaVersion)!=="12"&&cognitiveSchedule.maxRequestsPerHour===120?null:cognitiveSchedule.maxRequestsPerHour):null
     },
-    chat:{automaticLongTermMemory:memoryAgentEnabled,responseMode:chat.responseMode==="plain"?"plain":"structured",reasoningMode:["provider-default","enabled","disabled"].includes(chat.reasoningMode)?chat.reasoningMode:defaults.chat.reasoningMode,reasoningEffort:["provider-default","low","medium","high"].includes(chat.reasoningEffort)?chat.reasoningEffort:"provider-default"},
+    chat:{automaticLongTermMemory:chatAutomaticMemoryEnabled,responseMode:chat.responseMode==="plain"?"plain":"structured",reasoningMode:["provider-default","enabled","disabled"].includes(chat.reasoningMode)?chat.reasoningMode:defaults.chat.reasoningMode,reasoningEffort:["provider-default","low","medium","high"].includes(chat.reasoningEffort)?chat.reasoningEffort:"provider-default"},
     memoryAgent:{enabled:memoryAgentEnabled,providerPresetId:memoryAgentPreset,model:memoryAgentModel,outputMode:memoryAgentOutputMode,prompt:memoryAgentPrompt,promptBackup:memoryAgentBackup,defaultPromptVersion:memoryAgentPromptVersion},
     prompts:{overrides:promptOverrides},
     semanticDedup:{

@@ -374,7 +374,7 @@ export class ChatSessionController{
       this.notify();
       // Historical cognitive implementations may still supply LONGMEMORY; the native tool path does not.
       // Keep this guarded compatibility path for historical callers, but never send SPEECH to memory extraction.
-      if(reactive&&this.memoryExtractor&&(this.memoryExtractionEnabled?.()??true)&&turn.longMemory?.trim()&&!context.signal.aborted){
+      if(reactive&&this.memoryExtractor&&(this.memoryExtractionEnabled?.()??true)&&!context.signal.aborted){
         const messages=this.session.getMessages();
         const userIndex=messages.findIndex(item=>item.id===context.userMessageId&&item.role==="user");
         const userMessage=messages[userIndex];
@@ -384,10 +384,10 @@ export class ChatSessionController{
             .filter(item=>item.metadata?.contextSource===undefined||item.metadata?.contextSource==="conversation")
             .map(projectNovaTurnToSpeech).filter((item):item is ChatMessage=>Boolean(item))
             .slice(-(this.recentConversationMessagesProvider?.()??8));
-          const assistantProjection:ChatMessage={
+          const assistantProjection:ChatMessage=turn.longMemory?.trim()?{
             id:message.id,role:"assistant",content:turn.longMemory.trim(),
             metadata:{streamStatus:"complete",source:"nova-life-longmemory-candidate",novaTurnLongMemoryCandidate:true,longMemoryAbortSignal:context.signal}
-          };
+          }:cloneMessage(message);
           const extractionRequest:MemoryExtractionRequest={
             apiVersion:"1",schemaVersion:"1",characterId:this.session.characterId,conversationId:this.session.conversationId,turnId:context.turnId,
             model:context.model??this.modelProfile?.model??"",

@@ -69,6 +69,42 @@ async function main(){
     ok(diagnostic.some(entry=>entry.source==="nova-life-longmemory"&&entry.code==="SECRET_REJECTED"),"secret rejection is diagnosed");
   }finally{await freshRuntime.stop()}
 
+  const agentHttpClient={
+    async request(request:{method:string;url:string}){
+      if(request.method==="GET")return {status:200,body:JSON.stringify({data:[{id:"memory-model"}]})};
+      return {status:200,body:JSON.stringify({id:"memory-agent-response",model:"memory-model",choices:[{message:{role:"assistant",content:"The table is green."},finish_reason:"stop"}]})};
+    }
+  };
+  const agentStore=new InMemoryMemoryStore();
+  const agentRuntime=await createFoundationRuntime({
+    characterStore:new InMemoryCharacterStore(),memoryStore:agentStore,conversationStore:new InMemoryConversationStore(),httpClient:agentHttpClient
+  });
+  await agentRuntime.start();
+  try{
+    const character=await agentRuntime.getActiveCharacter();
+    const conversation=await agentRuntime.getActiveConversation(character.id);
+    agentRuntime.setProviderPresetConfigurations([{
+      presetId:"preset.memory-agent",
+      configuration:{providerId:"openai-compatible",baseUrl:"https://memory-agent.example/v1",model:"memory-model",credentialReference:null,enabled:true,timeoutMs:1000}
+    }],"preset.memory-agent");
+    await agentRuntime.updateSettings({
+      ...agentRuntime.getSettings(),
+      chat:{...agentRuntime.getSettings().chat,automaticLongTermMemory:true},
+      memoryAgent:{...agentRuntime.getSettings().memoryAgent,enabled:true,providerPresetId:"preset.memory-agent",model:"memory-model"}
+    });
+    const memory=await agentRuntime.extractMemory({
+      apiVersion:"1",schemaVersion:"1",characterId:character.id,conversationId:conversation.id,turnId:"native-agent-green-table",
+      model:"fake-cognitive-model",
+      userMessage:{id:"native-agent-green-table:user",role:"user",content:"Запомни: стол зелёный"},
+      assistantMessage:{id:"nova-turn:native-agent-green-table",role:"assistant",content:"Я запомню это."},
+      contextMessages:[{id:"native-agent-green-table:user",role:"user",content:"Запомни: стол зелёный"}]
+    });
+    equal(memory.length,1,"dedicated Memory Agent accepts a useful fact after a native answer");
+    equal(memory[0]?.content,"The table is green.","the agent's fact is returned after MemoryBroker persistence");
+    equal((await agentRuntime.listMemory(character.id)).filter(item=>item.content==="The table is green.").length,1,"the accepted fact is stored for the active character");
+    ok((await agentRuntime.listMemory("another-character")).length===0,"the agent does not write into another character's memory");
+  }finally{await agentRuntime.stop()}
+
   class FailingLongMemoryStore extends InMemoryMemoryStore{
     override async save(state:MemoryStoreState):Promise<void>{
       if(state.items.some(item=>item.metadata.origin==="nova-life-longmemory"))throw new Error("controlled memory storage failure");
