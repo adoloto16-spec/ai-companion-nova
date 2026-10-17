@@ -8,6 +8,8 @@ import type {
   ChatResponse,
   ChatStreamDone,
   ChatStreamHandlers,
+  ChatToolCall,
+  ChatReasoningOptions,
   ChatStreamOptions,
   ChatUsage,
   CredentialReference,
@@ -115,10 +117,11 @@ export class OllamaProviderError extends Error {
   }
 }
 
-interface OllamaMessage { role: "system" | "user" | "assistant"; content: string; }
+interface OllamaMessage { role:"system"|"user"|"assistant"|"tool"; content:string; tool_name?:string; tool_calls?:{type:"function";function:{index:number;name:string;arguments:Record<string,unknown>}}[]; }
+interface OllamaModelMetadata { capabilities:readonly string[]; thinking?:{values:readonly unknown[];default?:unknown}; }
 interface OllamaChunk {
   model?: unknown;
-  message?: { role?: unknown; content?: unknown; thinking?: unknown } | null;
+  message?: { role?: unknown; content?: unknown; thinking?: unknown; tool_calls?: unknown } | null;
   done?: unknown;
   done_reason?: unknown;
   error?: unknown;
@@ -203,6 +206,7 @@ export class OllamaChatProvider implements ChatProvider {
   private readonly config: OllamaProviderConfig;
   private readonly httpClient: OllamaHttpClient;
   private modelsCache?: { expiresAt: number; models: ModelInfo[] };
+  private readonly modelMetadataCache=new Map<string,{expiresAt:number;value:OllamaModelMetadata}>();
 
   constructor(config: OllamaProviderConfig, _credentialStore: CredentialStore, httpClient: OllamaHttpClient = new FetchOllamaHttpClient()) {
     this.config = { ...config, baseUrl: config.baseUrl ?? OLLAMA_DEFAULT_BASE_URL };
@@ -220,7 +224,7 @@ export class OllamaChatProvider implements ChatProvider {
   }
 
   capabilities(): ProviderCapabilities {
-    return { streaming: true, toolCalling: false, vision: false, structuredOutput: true, reasoning: false };
+    return { streaming: true, toolCalling: true, vision: false, structuredOutput: true, reasoning: true };
   }
 
   async listModels(): Promise<ModelInfo[]> {
@@ -260,6 +264,7 @@ export class OllamaChatProvider implements ChatProvider {
   async chat(request: ChatRequest, options: ChatRequestOptions = {}): Promise<ChatResponse> {
     this.ensureConfiguration(request);
     const messages = this.mapMessages(request.context.messages, request);
+    const modelMetadata=await this.modelMetadata(request,options.signal);
     const responseFormat = request.generation?.responseFormat;
     const schema = responseFormat?.type === "json-schema" || responseFormat?.type === "json" ? responseFormat.schema : undefined;
     if (schema) this.ensureSupportedSchema(schema as JsonSchema, request);
@@ -267,7 +272,7 @@ export class OllamaChatProvider implements ChatProvider {
       url: this.url("/api/chat"),
       method: "POST",
       headers: { Accept: "application/json", "Content-Type": "application/json" },
-      body: JSON.stringify(this.mapRequest(request, messages, false)),
+      body: JSON.stringify(this.mapRequest(request, messages, false,modelMetadata)),
       signal: options.signal
     }, this.timeoutMs(), request);
     if (response.status < 200 || response.status >= 300) throw this.httpFailure(response.status, response.body, request);
@@ -278,16 +283,21 @@ export class OllamaChatProvider implements ChatProvider {
     if (!record) throw this.failure(request, "INVALID_RESPONSE", "Ollama returned an invalid chat response.", "malformed_response");
     if (typeof record.error === "string") throw this.failure(request, "PROVIDER_ERROR", record.error, "api");
     const message = record.message && typeof record.message === "object" ? record.message as Record<string, unknown> : undefined;
-    if (!message || typeof message.content !== "string") throw this.failure(request, "INVALID_RESPONSE", "Ollama returned no assistant text.", "malformed_response");
-    this.validateOutput(message.content, request);
+    if (!message || (typeof message.content !== "string" && message.tool_calls===undefined)) throw this.failure(request, "INVALID_RESPONSE", "Ollama returned no assistant message.", "malformed_response");
+    const content=typeof message.content==="string"?message.content:"";
+    const toolCalls=this.mapToolCalls(message.tool_calls,request);
+    if(!toolCalls.length)this.validateOutput(content, request);
     const model = typeof record.model === "string" && record.model ? record.model : request.model;
     const usage = this.usage(record);
+    const reasoning=typeof message.thinking==="string"&&message.thinking.length>0?message.thinking:undefined;
     return {
       apiVersion: "1", schemaVersion: "1", requestId: request.requestId,
       conversationId: request.context.conversationId, providerId: this.id, model,
-      message: { role: "assistant", content: message.content },
+      message: { role: "assistant", content, ...(toolCalls.length?{toolCalls}:{}) },
       finishReason: this.finishReason(record.done_reason, record.done),
-      ...(usage ? { usage } : {})
+      ...(usage ? { usage } : {}),
+      ...(reasoning ? {reasoning}:{}),
+      ...(request.tools?.length&&!modelMetadata?.capabilities.includes("tools")?{metadata:{toolCallingUnavailableForModel:true}}:{})
     };
   }
 
@@ -295,6 +305,7 @@ export class OllamaChatProvider implements ChatProvider {
     this.ensureConfiguration(request);
     if (!this.httpClient.stream) throw this.failure(request, "UNSUPPORTED", "The configured HTTP transport does not support Ollama streaming.", "transport");
     const messages = this.mapMessages(request.context.messages, request);
+    const modelMetadata=await this.modelMetadata(request,options.signal);
     const responseFormat = request.generation?.responseFormat;
     const schema = responseFormat?.type === "json-schema" || responseFormat?.type === "json" ? responseFormat.schema : undefined;
     if (schema) this.ensureSupportedSchema(schema, request);
@@ -315,6 +326,8 @@ export class OllamaChatProvider implements ChatProvider {
     let status: number | undefined;
     let model = request.model;
     let content = "";
+    let reasoning = "";
+    let rawToolCalls:unknown;
     let usage: ChatUsage | undefined;
     let finishReason: ChatFinishReason = "unknown";
     let sawDone = false;
@@ -333,7 +346,7 @@ export class OllamaChatProvider implements ChatProvider {
       const response = await withAbortSignal(this.httpClient.stream({
         url: this.url("/api/chat"), method: "POST",
         headers: { Accept: "application/x-ndjson", "Content-Type": "application/json" },
-        body: JSON.stringify(this.mapRequest(request, messages, true)),
+        body: JSON.stringify(this.mapRequest(request, messages, true,modelMetadata)),
         signal: controller.signal
       }), controller.signal);
       status = response.status;
@@ -355,7 +368,15 @@ export class OllamaChatProvider implements ChatProvider {
         if (typeof event.error === "string" && event.error) throw this.failure(request, "PROVIDER_ERROR", event.error, "api");
         if (typeof event.model === "string" && event.model) model = event.model;
         const message = event.message;
-        // Ollama may send internal reasoning in `message.thinking`; only `content` is user-visible output.
+        if(message&&typeof message.thinking==="string"&&message.thinking.length>0){
+          reasoning+=message.thinking;
+          await handlers.onEvent({
+            apiVersion:"1",schemaVersion:"1",requestId:request.requestId,
+            conversationId:request.context.conversationId,providerId:this.id,
+            model,type:"reasoning",text:message.thinking
+          });
+        }
+        if(message&&Array.isArray(message.tool_calls)&&message.tool_calls.length>0)rawToolCalls=message.tool_calls;
         if (message && typeof message.content === "string" && message.content.length > 0) {
           content += message.content;
           await handlers.onEvent({
@@ -390,7 +411,8 @@ export class OllamaChatProvider implements ChatProvider {
       }
       if (buffer.trim()) await processLine(buffer);
       if (!sawDone) throw this.failure(request, "INVALID_RESPONSE", "Ollama stream ended before its final done event.", "incomplete_stream");
-      this.validateOutput(content, request);
+      const toolCalls=this.mapToolCalls(rawToolCalls,request);
+      if(!toolCalls.length)this.validateOutput(content, request);
       const done: ChatStreamDone = {
         apiVersion: "1", schemaVersion: "1", requestId: request.requestId,
         conversationId: request.context.conversationId, providerId: this.id,
@@ -400,7 +422,9 @@ export class OllamaChatProvider implements ChatProvider {
       return {
         apiVersion: "1", schemaVersion: "1", requestId: request.requestId,
         conversationId: request.context.conversationId, providerId: this.id, model,
-        message: { role: "assistant", content }, finishReason, ...(usage ? { usage } : {})
+        message: { role: "assistant", content, ...(toolCalls.length?{toolCalls}:{}) }, finishReason, ...(usage ? { usage } : {}),
+        ...(reasoning?{reasoning}:{}),
+        ...(request.tools?.length&&!modelMetadata?.capabilities.includes("tools")?{metadata:{toolCallingUnavailableForModel:true}}:{})
       };
     } catch (error) {
       if (callerSignal?.aborted) throw abortError();
@@ -414,10 +438,77 @@ export class OllamaChatProvider implements ChatProvider {
     }
   }
 
+  private async modelMetadata(request:ChatRequest,signal?:AbortSignal):Promise<OllamaModelMetadata|undefined>{
+    const needsMetadata=Boolean(request.tools?.length)||(request.reasoning!==undefined&&request.reasoning.mode!=="provider-default");
+    if(!needsMetadata)return undefined;
+    const cached=this.modelMetadataCache.get(request.model);
+    if(cached&&cached.expiresAt>Date.now())return cached.value;
+    try{
+      const response=await this.requestWithTimeout({
+        url:this.url("/api/show"),method:"POST",
+        headers:{Accept:"application/json","Content-Type":"application/json"},
+        body:JSON.stringify({model:request.model}),signal
+      },this.timeoutMs(),request);
+      if(response.status<200||response.status>=300)return undefined;
+      const parsed:unknown=JSON.parse(response.body);
+      if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))return undefined;
+      const raw=parsed as Record<string,unknown>;
+      const capabilities=Array.isArray(raw.capabilities)?raw.capabilities.filter((value):value is string=>typeof value==="string"):[];
+      const rawThinking=raw.thinking&&typeof raw.thinking==="object"&&!Array.isArray(raw.thinking)?raw.thinking as Record<string,unknown>:undefined;
+      const thinking=rawThinking&&Array.isArray(rawThinking.values)?{values:rawThinking.values,...("default" in rawThinking?{default:rawThinking.default}:{})}:undefined;
+      const metadata:OllamaModelMetadata={capabilities,...(thinking?{thinking}:{})};
+      this.modelMetadataCache.set(request.model,{expiresAt:Date.now()+30_000,value:metadata});
+      return metadata;
+    }catch(error){
+      if(signal?.aborted)throw abortError();
+      return undefined;
+    }
+  }
+
+  private resolveThink(options:ChatReasoningOptions|undefined,metadata:OllamaModelMetadata|undefined):boolean|string|undefined{
+    if(!options||options.mode==="provider-default")return undefined;
+    const values=metadata?.thinking?.values;
+    if(!values||values.length===0)return undefined;
+    if(options.effort&&values.includes(options.effort))return options.effort;
+    if(options.mode==="disabled")return values.includes(false)?false:undefined;
+    if(values.includes(true))return true;
+    const defaultValue=metadata?.thinking?.default;
+    if(typeof defaultValue==="string"&&values.includes(defaultValue))return defaultValue;
+    const named=values.find(value=>typeof value==="string");
+    return typeof named==="string"?named:undefined;
+  }
+
+  private mapToolCalls(raw:unknown,request:ChatRequest):ChatToolCall[]{
+    if(raw===undefined||raw===null)return [];
+    if(!Array.isArray(raw))throw this.failure(request,"INVALID_RESPONSE","Ollama returned malformed native tool calls.","malformed_tool_calls");
+    if(raw.length>32)throw this.failure(request,"INVALID_RESPONSE","Ollama returned too many native tool calls.","tool_call_limit");
+    return raw.map((entry,index)=>{
+      const item=entry&&typeof entry==="object"&&!Array.isArray(entry)?entry as Record<string,unknown>:undefined;
+      const fn=item?.function&&typeof item.function==="object"&&!Array.isArray(item.function)?item.function as Record<string,unknown>:undefined;
+      const name=typeof fn?.name==="string"?fn.name:"";
+      let args:unknown=fn?.arguments;
+      if(typeof args==="string"){
+        if(args.length>4000)throw this.failure(request,"INVALID_RESPONSE","Ollama tool arguments exceed the input limit.","tool_arguments_limit");
+        try{args=JSON.parse(args);}catch{throw this.failure(request,"INVALID_RESPONSE","Ollama returned invalid JSON in tool arguments.","invalid_tool_arguments");}
+      }
+      if(!name||!args||typeof args!=="object"||Array.isArray(args))throw this.failure(request,"INVALID_RESPONSE","Ollama returned an invalid native tool call.","malformed_tool_call");
+      if(JSON.stringify(args).length>4000)throw this.failure(request,"INVALID_RESPONSE","Ollama tool arguments exceed the input limit.","tool_arguments_limit");
+      const id=typeof item?.id==="string"&&item.id.trim()?item.id:request.requestId+":tool:"+index;
+      return {id,name,arguments:args as Record<string,unknown>};
+    });
+  }
+
   private mapMessages(messages: readonly ChatMessage[], request: ChatRequest): OllamaMessage[] {
     const mapped: OllamaMessage[] = messages.map(message => {
-      if (message.role === "tool") throw this.failure(request, "UNSUPPORTED", "Ollama provider does not support tool messages in this version.", "unsupported_message_role");
-      return { role: message.role, content: message.content };
+      if(message.role==="tool"){
+        if(!message.toolCallId||!message.toolName)throw this.failure(request,"INVALID_REQUEST","Ollama tool result is missing its call id or tool name.","invalid_tool_message");
+        return {role:"tool",tool_name:message.toolName,content:message.content};
+      }
+      return {
+        role:message.role,
+        content:message.content,
+        ...(message.toolCalls?.length?{tool_calls:message.toolCalls.map((call,index)=>({type:"function" as const,function:{index,name:call.name,arguments:call.arguments}}))}:{})
+      };
     });
     const systemMessages = mapped.filter(message => message.role === "system" && message.content.trim().length > 0);
     const conversationMessages = mapped.filter(message => message.role !== "system");
@@ -430,8 +521,10 @@ export class OllamaChatProvider implements ChatProvider {
     return [mergedSystemMessage, ...conversationMessages];
   }
 
-  private mapRequest(request: ChatRequest, messages: readonly OllamaMessage[], stream: boolean) {
+  private mapRequest(request: ChatRequest, messages: readonly OllamaMessage[], stream: boolean,modelMetadata?:OllamaModelMetadata) {
     const generation = request.generation;
+    const think=this.resolveThink(request.reasoning,modelMetadata);
+    const hasNativeTools=Boolean(modelMetadata?.capabilities.includes("tools")&&request.tools?.length);
     const options: Record<string, number> = {};
     const temperature = generation?.temperature ?? this.config.temperature;
     const topP = generation?.topP ?? this.config.topP;
@@ -446,7 +539,8 @@ export class OllamaChatProvider implements ChatProvider {
       model: request.model,
       messages,
       stream,
-      think: false,
+      ...(think===undefined?{}:{think}),
+      ...(hasNativeTools?{tools:request.tools!.map(tool=>({type:"function",function:{name:tool.name,description:tool.description,parameters:tool.parameters}}))}:{}),
       ...(format?.type === "json" ? { format: schema ?? "json" } : format?.type === "json-schema" ? { format: schema } : {}),
       ...(Object.keys(options).length ? { options } : {}),
       ...(this.config.keepAlive === undefined ? {} : { keep_alive: this.config.keepAlive })
@@ -489,7 +583,7 @@ export class OllamaChatProvider implements ChatProvider {
     return "unknown";
   }
 
-  private url(path: "/api/tags" | "/api/version" | "/api/chat"): string {
+  private url(path: "/api/tags" | "/api/version" | "/api/chat" | "/api/show"): string {
     return (this.config.baseUrl ?? OLLAMA_DEFAULT_BASE_URL).replace(/\/+$/, "") + path;
   }
 
