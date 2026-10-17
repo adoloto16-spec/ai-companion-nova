@@ -122,7 +122,7 @@ async function main(){
   equal(migratedV10.memoryAgent.enabled,true,"schema v10 preserves explicit Memory Agent configuration over the legacy chat gate");
   equal(migratedV10.memoryAgent.providerPresetId,"old-agent-preset","schema v10 preserves the Memory Agent provider preset");
   equal(migratedV10.memoryAgent.prompt,"old prompt","schema v10 preserves the Memory Agent prompt");
-  equal(migratedV10.chat.automaticLongTermMemory,true,"Memory Agent enabled state becomes the compatibility gate");
+  equal(migratedV10.chat.automaticLongTermMemory,false,"schema v10 preserves the explicit legacy memory-save gate");
   const v6=JSON.parse(JSON.stringify(defaultAppSettings())) as Record<string,unknown>;
   v6.schemaVersion="6";
   v6.memoryAgent={enabled:false,providerPresetId:"preset.legacy",model:"legacy-model",outputMode:"plain",prompt:"old prompt",promptBackup:"backup",defaultPromptVersion:"9"};

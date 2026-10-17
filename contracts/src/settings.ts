@@ -335,10 +335,9 @@ export function migrateAppSettings(value:unknown):AppSettings{
   if(!["off","errors","normal","verbose","debug"].includes(logLevelValue))throw new Error("Unsupported diagnostics log level.");
   const legacyEnabled=typeof chat.automaticLongTermMemory==="boolean"?chat.automaticLongTermMemory:defaults.chat.automaticLongTermMemory;
   const memoryAgentEnabled=typeof storedMemoryAgent.enabled==="boolean"?storedMemoryAgent.enabled:legacyEnabled;
-  // Schema v14 separates the legacy chat-wide save gate from the dedicated agent enable flag.
-  // Older schemas retain the historical mapping for a safe, backward-compatible migration.
-  const chatAutomaticMemoryEnabled=String(input.schemaVersion)==="14"&&typeof chat.automaticLongTermMemory==="boolean"
-    ?chat.automaticLongTermMemory:memoryAgentEnabled;
+  // Preserve the legacy global memory-save gate independently of the dedicated agent flag.
+  // This prevents migration from silently re-enabling memory saving when the user disabled it.
+  const chatAutomaticMemoryEnabled=legacyEnabled;
   const memoryAgentPreset=typeof storedMemoryAgent.providerPresetId==="string"&&storedMemoryAgent.providerPresetId.trim()?storedMemoryAgent.providerPresetId.trim():null;
   const memoryAgentModel=typeof storedMemoryAgent.model==="string"?storedMemoryAgent.model.trim():"";
   const memoryAgentOutputMode=["auto","structured","plain"].includes(storedMemoryAgent.outputMode)?storedMemoryAgent.outputMode:defaults.memoryAgent.outputMode;
