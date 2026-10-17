@@ -44,6 +44,8 @@ async function main(){
       temperature:0.65,
       topP:0.82,
       maxTokens:384,
+      repeatPenalty:1.15,
+      repeatLastN:0,
       responseFormat:{type:"json",schema:{kind:"example"}}
     },
     updatedAt:"2026-09-28T10:02:00.000Z"
@@ -60,6 +62,8 @@ async function main(){
   equal(loaded?.generation.temperature,0.65,"temperature survives IPC round-trip");
   equal(loaded?.generation.topP,0.82,"topP survives IPC round-trip");
   equal(loaded?.generation.maxTokens,384,"maxTokens survives IPC round-trip");
+  equal(loaded?.generation.repeatPenalty,1.15,"repeatPenalty survives IPC round-trip");
+  equal(loaded?.generation.repeatLastN,0,"repeatLastN survives IPC round-trip");
   equal(loaded?.generation.responseFormat,profile.generation.responseFormat,"responseFormat survives IPC round-trip");
   equal(loaded?.createdAt,profile.createdAt,"createdAt survives IPC round-trip");
   equal(loaded?.updatedAt,profile.updatedAt,"updatedAt survives IPC round-trip");

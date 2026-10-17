@@ -12,7 +12,10 @@ const validRequest={
 ok(validator.validateChatRequest(validRequest).valid,"valid ChatRequest");
 ok(!validator.validateChatRequest({...validRequest,model:""}).valid,"invalid ChatRequest model");
 ok(validator.validateChatMessage({role:"tool",content:"tool output",toolCallId:"call-1"}).valid,"tool message schema");
-ok(validator.validateChatGenerationOptions({temperature:0.5,maxTokens:64,topP:1}).valid,"generation options");
+ok(validator.validateChatGenerationOptions({temperature:0.5,maxTokens:64,topP:1,repeatPenalty:1.15,repeatLastN:-1}).valid,"generation options include Ollama repetition controls");
+ok(!validator.validateChatGenerationOptions({repeatPenalty:0}).valid,"repeatPenalty must be positive");
+ok(!validator.validateChatGenerationOptions({repeatLastN:-2}).valid,"repeatLastN allows only -1, 0, or positive integers");
+ok(validator.validateChatRequest({...validRequest,generation:{repeatPenalty:1.2,repeatLastN:0}}).valid,"chat request accepts repetition controls");
 ok(validator.validateChatResponse({
   apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION,requestId:"req-1",conversationId:"conv-1",
   providerId:"fake.chat",model:"fake-chat",message:{role:"assistant",content:"hello"},finishReason:"stop"

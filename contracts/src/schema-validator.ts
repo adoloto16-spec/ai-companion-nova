@@ -43,6 +43,7 @@ export class MinimalJsonSchemaValidator implements SchemaValidator {
     if(typeof value==="number"){
       if(schema.minimum!==undefined && value<schema.minimum)errors.push(path+" is below minimum");
       if(schema.maximum!==undefined && value>schema.maximum)errors.push(path+" is above maximum");
+      if(schema.exclusiveMinimum!==undefined && value<=schema.exclusiveMinimum)errors.push(path+" must be above exclusive minimum");
     }
     if(Array.isArray(value)){
       if(schema.minItems!==undefined && value.length<schema.minItems)errors.push(path+" has too few items");

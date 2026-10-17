@@ -35,7 +35,7 @@ async function main(){
       ...fresh,
       providerId:"fake.chat",
       model:"nova-profile-model",
-      generation:{temperature:0.4,topP:0.8,maxTokens:222},
+      generation:{temperature:0.4,topP:0.8,maxTokens:222,repeatPenalty:1.2,repeatLastN:-1},
       updatedAt:"2026-09-28T11:05:00.000Z"
     };
     await profileStore.save(novaProfile);
@@ -57,6 +57,8 @@ async function main(){
     equal(requests[0]?.generation?.temperature,0.4,"temperature reaches canonical generation");
     equal(requests[0]?.generation?.topP,0.8,"topP reaches canonical generation");
     equal(requests[0]?.generation?.maxTokens,222,"maxTokens reaches canonical generation");
+    equal(requests[0]?.generation?.repeatPenalty,1.2,"repeatPenalty reaches canonical generation");
+    equal(requests[0]?.generation?.repeatLastN,-1,"repeatLastN reaches canonical generation");
 
     const defaultProfile=defaultModelProfile(gm.id,"2026-09-28T11:00:00.000Z");
     const pinnedRequests:ChatRequest[]=[];

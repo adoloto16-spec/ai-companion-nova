@@ -204,7 +204,7 @@ export class GeminiChatProvider implements ChatProvider{
     const body=JSON.stringify({
       ...(mapped.systemInstruction?{systemInstruction:mapped.systemInstruction}:{}),
       contents:mapped.contents,
-      ...(request.generation&&Object.keys(request.generation).length>0?{generationConfig:this.mapGeneration(request)}:{})
+      ...(request.generation&&Object.keys(request.generation).some(key=>key!=="repeatPenalty"&&key!=="repeatLastN")?{generationConfig:this.mapGeneration(request)}:{})
     });
     this.recordDiagnostic(request,"GEMINI_REQUEST_STARTED",{});
     let response:HttpClientResponse;

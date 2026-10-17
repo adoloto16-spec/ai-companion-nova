@@ -166,7 +166,7 @@ async function modelDiscoveryAndNoKeyTest(): Promise<void> {
 async function ordinaryRequestMappingTest(): Promise<void> {
   const http = new FakeOllamaHttpClient();
   const response = await provider(http).chat(chatRequest({
-    generation: {temperature: 0.35, topP: 0.75, maxTokens: 120, responseFormat: {type: "text"}}
+    generation: {temperature: 0.35, topP: 0.75, maxTokens: 120, repeatPenalty: 1.15, repeatLastN: -1, responseFormat: {type: "text"}}
   }));
   equal(response.message.content, "hello from Ollama", "ordinary response content");
   equal(response.finishReason, "stop", "done maps to stop");
@@ -177,7 +177,7 @@ async function ordinaryRequestMappingTest(): Promise<void> {
   equal(body.stream, false, "ordinary request disables streaming");
   equal(body.think, false, "native /api/chat explicitly disables thinking");
   equal(body.format, undefined, "text generation omits JSON format");
-  deepEqual(body.options, {temperature: 0.35, top_p: 0.75, num_predict: 120}, "generation parameters map without invented context window");
+  deepEqual(body.options, {temperature: 0.35, top_p: 0.75, num_predict: 120, repeat_penalty: 1.15, repeat_last_n: -1}, "generation parameters map without invented context window");
   equal(body.model, "llama3.2:latest", "model tag preserved");
   const sentMessages = body.messages as Array<{role: string; content: string}>;
   deepEqual(sentMessages, [
@@ -252,6 +252,10 @@ async function configuredOptionsTest(): Promise<void> {
   await provider(noContext).chat(chatRequest());
   const noContextBody = JSON.parse(noContext.requests[0]!.body!) as {options?: Record<string, unknown>};
   ok(!("num_ctx" in (noContextBody.options ?? {})), "num_ctx is not forced to an arbitrary default");
+  const zeroRepeatWindow = new FakeOllamaHttpClient();
+  await provider(zeroRepeatWindow).chat(chatRequest({generation:{repeatPenalty:1.2,repeatLastN:0}}));
+  deepEqual((JSON.parse(zeroRepeatWindow.requests[0]!.body!) as {options?:Record<string,unknown>}).options,
+    {repeat_penalty:1.2,repeat_last_n:0},"zero repeat window is preserved rather than omitted");
 }
 
 async function jsonModeAndSchemaMappingTest(): Promise<void> {

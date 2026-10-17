@@ -138,7 +138,7 @@ async function requestMappingTest(){
   const p=provider(http);
   const result=await p.chat({
     ...request(),
-    generation:{temperature:0.4,maxTokens:128,topP:0.8,responseFormat:{type:"text"}}
+    generation:{temperature:0.4,maxTokens:128,topP:0.8,repeatPenalty:1.15,repeatLastN:-1,responseFormat:{type:"text"}}
   });
   equal(result.message.content,"hello from provider","mapped response text");
   equal(http.requests.length,1,"one HTTP request");
@@ -160,6 +160,8 @@ async function requestMappingTest(){
   equal(sent.temperature,0.4,"temperature mapping");
   equal(sent.max_tokens,128,"max token mapping");
   equal(sent.top_p,0.8,"top p mapping");
+  ok(!("repeat_penalty" in sent),"unsupported Ollama repeat_penalty is not sent to OpenAI-compatible APIs");
+  ok(!("repeat_last_n" in sent),"unsupported Ollama repeat_last_n is not sent to OpenAI-compatible APIs");
   ok(sent.response_format===undefined,"text response format is not expanded into unsupported fields");
   equal(sent.messages[0]!.role,"system","system message mapping");
   equal(sent.messages[1]!.role,"user","user message mapping");
