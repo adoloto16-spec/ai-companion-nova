@@ -437,10 +437,10 @@ export class OllamaChatProvider implements ChatProvider {
     const topP = generation?.topP ?? this.config.topP;
     if (temperature !== undefined) options.temperature = temperature;
     if (topP !== undefined) options.top_p = topP;
-    if (generation?.repeatPenalty !== undefined) options.repeat_penalty = generation.repeatPenalty;
-    if (generation?.repeatLastN !== undefined) options.repeat_last_n = generation.repeatLastN;
     const numPredict = generation?.maxTokens ?? this.config.numPredict;
     if (numPredict !== undefined) options.num_predict = numPredict;
+    if (generation?.repeatPenalty !== undefined) options.repeat_penalty = generation.repeatPenalty;
+    if (generation?.repeatLastN !== undefined) options.repeat_last_n = generation.repeatLastN;
     if (this.config.numCtx !== undefined) options.num_ctx = this.config.numCtx;
     const format = generation?.responseFormat;
     const schema = format?.type === "json-schema" || format?.type === "json" ? format.schema : undefined;
