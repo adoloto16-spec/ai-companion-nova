@@ -234,11 +234,14 @@ async function segmentSynthesisFailureDoesNotStopAlreadyQueuedSpeech():Promise<v
   await controller.unlockPlayback();
   await controller.handleSpeechEvent({type:"start",turnId:"turn-failed-segment"});
   await controller.handleSpeechEvent({type:"delta",turnId:"turn-failed-segment",text:"First sentence. Second sentence."});
-  const finished=controller.finishTurn("turn-failed-segment");
+  let cognitivelyReleased=false;
+  const finished=controller.finishTurn("turn-failed-segment").then(()=>{cognitivelyReleased=true;});
   await until(()=>provider.requests.length===2&&output.pendingPlayback.size===1,"first segment must stay queued while second segment fails");
+  await finished;
+  ok(cognitivelyReleased&&output.pendingPlayback.size===1,"synthesis failure releases the turn while successful earlier audio continues playing");
   ok(!output.stops.includes("nova-tts-1-turn-failed-segment"),"later synthesis failure does not stop the current playback session");
   output.finishPlayback(0);
-  await finished;
+  await until(()=>controller.getStatus().message.includes("Speech playback drained"),"the preserved audio drains after the early cognitive release");
   equal(output.queued.length,1,"only the successful segment reaches playback");
   ok(!output.stops.includes("nova-tts-1-turn-failed-segment"),"successful drain does not cancel preserved audio after a later segment error");
   controller.stop();
@@ -313,7 +316,7 @@ async function noFirstAudioTimesOutAndReleasesTurn():Promise<void>{
   await controller.finishTurn("turn-no-audio");
   ok(Date.now()-before>=900,"first-audio timeout respects the configured 1000 ms budget");
   equal(output.queued.length,0,"a provider that never starts audio is cancelled without late playback");
-  ok(controller.getStatus().message.includes("first audio"),"startup timeout is observable through the TTS status");
+  ok(controller.getStatus().message.includes("playback did not start"),"startup timeout is observable through the TTS status");
   gate.resolve();
   await Promise.resolve();await Promise.resolve();
   controller.stop();
