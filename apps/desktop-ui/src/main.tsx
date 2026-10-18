@@ -2541,7 +2541,9 @@ function App(){
             if(attached)setActiveConversation(updated);
           }
         });
-        void speechOutputController.finishTurn(context.turnId);
+        // Keep the cognitive turn open until queued audio has physically finished.
+        // User Stop still aborts the session immediately and releases this await.
+        await speechOutputController.finishTurn(context.turnId);
       },
       streamSpeech:async event=>{
         if(!attached||event.characterId!==activeCharacterId||event.conversationId!==activeConversationId){

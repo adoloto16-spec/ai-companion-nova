@@ -1,4 +1,5 @@
 import {SpeechOutputController,SpeechSentenceSegmenter,normalizeVoiceExpression} from "../../modules/voice/tts/src";
+import {MindRuntime} from "../../core/src/mind-runtime";
 import type {AudioOutputAdapter} from "../../modules/voice/tts/src";
 import type {TtsAudioMetadata,TtsPreset,TtsProvider,TtsProviderCapabilities,TtsProviderHealth,TtsSettings,TtsStreamEvent,TtsSynthesisRequest} from "../../contracts/src/tts";
 import {DEFAULT_TTS_SETTINGS} from "../../contracts/src/tts";
@@ -785,12 +786,46 @@ async function sileroProviderFailuresAndHealth():Promise<void>{
   equal(healthTimeout.message,"Silero connection check timed out.","connection timeout has a safe diagnostic");
 }
 
+async function lifeSpeechEventsReachAudioAndAwaitPhysicalPlayback():Promise<void>{
+  const output=new PlaybackControlledOutput(),provider=new RecordingProvider();
+  const settings:TtsSettings={...DEFAULT_TTS_SETTINGS,enabled:true,activePresetId:"test-preset",presets:[preset()]};
+  const controller=new SpeechOutputController({getSettings:()=>settings,getProvider:id=>id===provider.id?provider:undefined,output});
+  await controller.unlockPlayback();
+  const text="Nova Life public speech reaches PCM playback.";
+  const runtime=new MindRuntime({
+    cognitiveStep:{async run(context){
+      await context.onSpeechEvent?.({type:"start",conversationId:"conversation.life-tts"});
+      await context.onSpeechEvent?.({type:"delta",conversationId:"conversation.life-tts",text});
+      return {turn:{version:1,situation:"",thoughts:"",emotion:"",tools:[],toolResults:[],speech:text,nextWakeMs:30_000},conversationId:"conversation.life-tts"};
+    }},
+    schedule:{mode:"fixed",defaultIntervalMs:30_000,minIntervalMs:3_000,maxIntervalMs:300_000,maxRequestsPerHour:null},
+    turnSink:{
+      async commit(_turn,context){await controller.finishTurn(context.turnId);},
+      async streamSpeech(event){await controller.handleSpeechEvent(event);}
+    }
+  });
+  runtime.setActiveCharacter("character.life-tts");
+  try{
+    await runtime.start();
+    await until(()=>output.pendingPlayback.size===1,"Nova Life public speech reaches the playback queue");
+    equal(provider.requests[0],text,"only the public cognitive delta is synthesized");
+    equal(runtime.getState().lifecycleState,"thinking","the cognitive step waits while audio is playing");
+    output.finishPlayback(0);
+    await until(()=>runtime.getState().lifecycleState==="waiting","physical playback completion releases the next timer");
+    equal(controller.getStatus().message,"Assistant speech playback completed.","TTS session finalizes after playback");
+  }finally{
+    await runtime.stop();
+    controller.stop();
+  }
+}
+
 async function main():Promise<void>{
   sentenceBoundariesPreserveEveryCharacter();
   emotionMappingOnlyUsesSupportedActions();
   emotionDecodersDoNotGateSpeech();
   await synthesisRunsAheadOfPlaybackAndKeepsFifo();
   await assistantTurnsWaitForPlaybackAndInterruptionClearsQueue();
+  await lifeSpeechEventsReachAudioAndAwaitPhysicalPlayback();
   await boundedBackpressureAndCancellation();
   await cancelledProviderEventsCannotEnterANewSession();
   await voiceStudioWebSocketAndHttpFallback();
