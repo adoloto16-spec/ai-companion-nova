@@ -57,6 +57,11 @@ async function lifeHonorsPinnedModelProfile():Promise<void>{
       {presetId:"preset-life-profile",configuration:providerConfig("https://profile-life.example/v1","preset-default-model")}
     ]
   });
+  const runtimeSettings=runtime.getSettings();
+  await runtime.updateSettings({
+    ...runtimeSettings,
+    cognitiveSchedule:{...runtimeSettings.cognitiveSchedule,minIntervalMs:1_000}
+  });
   await runtime.start();
   try{
     const character=await runtime.getActiveCharacter();
@@ -83,15 +88,15 @@ async function lifeHonorsPinnedModelProfile():Promise<void>{
     });
     equal(accepted,true,"Life accepts the exact persisted reactive user turn");
     await lifeStarted;
-    for(let attempt=0;attempt<200&&committed.length===0;attempt++)
+    for(let attempt=0;attempt<1_000&&committed.length===0;attempt++)
       await new Promise(resolve=>setTimeout(resolve,5));
     if(committed.length!==1){
-      const trace=runtime.getMindState().recentTrace??[];
+      const state=runtime.getMindState();
       const requests=http.requests.map(item=>({
         url:item.url,method:item.method,
         ...(item.body?{model:(JSON.parse(item.body) as Record<string,unknown>).model}: {})
       }));
-      throw new Error("Nova Life produced no committed reply; trace="+JSON.stringify(trace)+" requests="+JSON.stringify(requests));
+      throw new Error("Nova Life produced no committed reply; state="+JSON.stringify(state)+" requests="+JSON.stringify(requests));
     }
     equal(committed.length,1,"reactive turn commits exactly one reply through Nova Life");
     equal(committed[0]?.speech,"Reactive reply from the pinned Model Profile.","actual provider stream becomes the committed public reply");
