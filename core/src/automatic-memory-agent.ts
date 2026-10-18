@@ -139,7 +139,7 @@ export class AutomaticMemoryAgent{
 
   async process(request:MemoryExtractionRequest):Promise<MemoryItem|undefined>{
     const settings=this.settings();
-    if(!settings.memoryAgent.enabled||!settings.chat.automaticLongTermMemory){
+    if(!settings.memoryAgent.enabled){
       
       return undefined;
     }

@@ -93,7 +93,7 @@ async function main(){
     }],"preset.memory-agent");
     await agentRuntime.updateSettings({
       ...agentRuntime.getSettings(),
-      chat:{...agentRuntime.getSettings().chat,automaticLongTermMemory:true},
+      chat:{...agentRuntime.getSettings().chat,automaticLongTermMemory:false},
       memoryAgent:{...agentRuntime.getSettings().memoryAgent,enabled:true,providerPresetId:"preset.memory-agent",model:"memory-model",outputMode:"auto"},
       prompts:{overrides:{"memory-agent.system":"Custom durable-memory instructions."}}
     });

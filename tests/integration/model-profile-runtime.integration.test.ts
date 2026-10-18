@@ -22,6 +22,11 @@ class LifeProfileHttpClient implements HttpClient{
   async request(request:HttpClientRequest):Promise<HttpClientResponse>{
     this.requests.push(request);
     if(request.method==="GET")return {status:200,body:JSON.stringify({data:[{id:"discovered-model"}]})};
+    if(request.url.includes("memory-agent.example")){
+      const payload=JSON.parse(request.body??"{}") as Record<string,unknown>;
+      const content=payload.response_format?JSON.stringify({memory:"Durable memory saved by Nova Life."}):"Durable memory saved by Nova Life.";
+      return {status:200,body:JSON.stringify({id:"memory-agent-response",model:"memory-model",choices:[{message:{role:"assistant",content},finish_reason:"stop"}]})};
+    }
     return {status:500,body:JSON.stringify({error:"Unexpected non-stream request in the Nova Life regression test."})};
   }
   async stream(request:HttpClientRequest):Promise<HttpClientStreamResponse>{
@@ -54,13 +59,16 @@ async function lifeHonorsPinnedModelProfile():Promise<void>{
     activeProviderPresetId:"preset-life-global",
     providerPresetConfigurations:[
       {presetId:"preset-life-global",configuration:providerConfig("https://global-life.example/v1","global-model")},
-      {presetId:"preset-life-profile",configuration:providerConfig("https://profile-life.example/v1","preset-default-model")}
+      {presetId:"preset-life-profile",configuration:providerConfig("https://profile-life.example/v1","preset-default-model")},
+      {presetId:"preset-life-memory",configuration:providerConfig("https://memory-agent.example/v1","memory-model")}
     ]
   });
   const runtimeSettings=runtime.getSettings();
   await runtime.updateSettings({
     ...runtimeSettings,
-    cognitiveSchedule:{...runtimeSettings.cognitiveSchedule,minIntervalMs:1_000}
+    cognitiveSchedule:{...runtimeSettings.cognitiveSchedule,minIntervalMs:1_000},
+    chat:{...runtimeSettings.chat,automaticLongTermMemory:false},
+    memoryAgent:{...runtimeSettings.memoryAgent,enabled:true,providerPresetId:"preset-life-memory",model:"memory-model",outputMode:"auto"}
   });
   await runtime.start();
   try{
@@ -109,6 +117,19 @@ async function lifeHonorsPinnedModelProfile():Promise<void>{
     equal(body.model,"life-profile-model","the actual provider request uses the pinned Model Profile model");
     equal(body.max_tokens,123,"Model Profile generation limit reaches the actual Nova Life provider request");
     equal(http.requests.some(item=>item.url==="https://global-life.example/v1/chat/completions"),false,"the incorrect global preset is not used for the reactive turn");
+    for(let attempt=0;attempt<400&&!http.requests.some(item=>item.url==="https://memory-agent.example/v1/chat/completions");attempt++)
+      await new Promise(resolve=>setTimeout(resolve,5));
+    const agentRequest=http.requests.find(item=>item.url==="https://memory-agent.example/v1/chat/completions");
+    ok(agentRequest?.body,"a committed Nova Life answer triggers the configured Automatic Memory Agent endpoint");
+    const agentPayload=JSON.parse(agentRequest!.body!) as Record<string,unknown>;
+    equal((agentPayload.response_format as Record<string,unknown>)?.type,"json_schema","automatic invocation uses the selected preset's structured-output capability");
+    let storedLifeMemory:readonly import("../../contracts/src").MemoryItem[]=[];
+    for(let attempt=0;attempt<400;attempt++){
+      storedLifeMemory=await runtime.listMemory(character.id);
+      if(storedLifeMemory.some(item=>item.content==="Durable memory saved by Nova Life."))break;
+      await new Promise(resolve=>setTimeout(resolve,5));
+    }
+    ok(storedLifeMemory.some(item=>item.content==="Durable memory saved by Nova Life."),"the automatically invoked agent persists its result through MemoryBroker");
   }finally{
     await runtime.stopLife();
     runtime.setNovaTurnSink(undefined);

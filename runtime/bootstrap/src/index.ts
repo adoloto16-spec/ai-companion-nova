@@ -1,6 +1,6 @@
-import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatRequestOptions,ChatResponse,ChatReasoningOptions,CredentialStore,ProviderConfiguration,ProviderPreset,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryArchiveReason,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,MemorySemanticIndexStore,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider,MindToolExecutor} from "../../../contracts/src/index";
+import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatRequestOptions,ChatResponse,ChatReasoningOptions,CredentialStore,ProviderConfiguration,ProviderPreset,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryArchiveReason,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,MemorySemanticIndexStore,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider,MindToolExecutor,MemoryExtractionRequest} from "../../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
-import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore,MindReactiveTurn,MindTurnSink,MindToolExecutionContext,NovaToolCall,NovaToolResult,PromptId} from "../../../contracts/src/index";
+import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore,MindReactiveTurn,MindTurnExecutionContext,MindTurnSink,MindToolExecutionContext,NovaToolCall,NovaToolResult,PromptId} from "../../../contracts/src/index";
 import type {Conversation,ConversationCreateInput,ConversationId,ConversationStore,ConversationUpdateInput} from "../../../contracts/src/index";
 import {
   AiRuntime,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,MemorySemanticDeduplicator,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,MindRuntime,LLMCognitiveStep,AutomaticMemoryAgent,
@@ -466,6 +466,44 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       clock:()=>new Date().toISOString()
     }),
     schedule:settingsManager.get().cognitiveSchedule,
+    onTurnCommitted:async(turn,context)=>{
+      if(!context.userMessageId||!settingsManager.get().memoryAgent.enabled)return;
+      try{
+        const conversation=await conversationManager.getConversation(context.characterId,context.conversationId);
+        if(!conversation){
+          diagnosticsStore.recordError("automatic-memory-agent","LIFE_CONVERSATION_MISSING","Completed Nova Life conversation was not available for memory extraction.",{
+            characterId:context.characterId,conversationId:context.conversationId,turnId:context.turnId
+          });
+          return;
+        }
+        const userIndex=conversation.messages.findIndex(message=>message.id===context.userMessageId&&message.role==="user");
+        if(userIndex<0){
+          diagnosticsStore.recordError("automatic-memory-agent","LIFE_USER_MESSAGE_MISSING","Completed Nova Life user message was not available for memory extraction.",{
+            characterId:context.characterId,conversationId:context.conversationId,turnId:context.turnId
+          });
+          return;
+        }
+        const userMessage=conversation.messages[userIndex]!;
+        const assistantMessage=conversation.messages.find(message=>message.id==="nova-turn:"+context.turnId&&message.role==="assistant")??{
+          id:"nova-turn:"+context.turnId,role:"assistant" as const,content:turn.speech,metadata:{novaTurnVersion:turn.version}
+        };
+        const request:MemoryExtractionRequest={
+          apiVersion:"1",schemaVersion:"1",
+          characterId:context.characterId,conversationId:context.conversationId,turnId:context.turnId,
+          model:context.model??"unknown",
+          ...(context.providerId?{providerId:context.providerId}:{}),
+          ...(context.providerPresetId?{providerPresetId:context.providerPresetId}:{}),
+          userMessage,assistantMessage,
+          contextMessages:conversation.messages.slice(Math.max(0,userIndex-12),userIndex).filter(message=>message.role==="user"||message.role==="assistant")
+        };
+        await automaticMemoryAgent.process(request);
+      }catch(error){
+        diagnosticsStore.recordError("automatic-memory-agent","LIFE_TURN_TRIGGER_FAILED","Automatic Memory Agent failed while evaluating a completed Nova Life turn.",{
+          characterId:context.characterId,conversationId:context.conversationId,turnId:context.turnId,
+          reason:error instanceof Error?error.message:"Unknown Automatic Memory Agent error"
+        });
+      }
+    },
     onError:error=>{
       const chatError=error&&typeof error==="object"&&"chatError" in error
         ?(error as {chatError?:{requestId?:unknown;code?:unknown;message?:unknown;providerId?:unknown;details?:Record<string,unknown>}}).chatError
@@ -1060,8 +1098,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     setCoreBookEntryEnabled:(characterId,entryId,enabled)=>coreBookManager.setCoreBookEntryEnabled(characterId,entryId,enabled),
     buildContext:request=>contextEngine.build(request),
     extractMemory:async request=>{
-      if(!settingsManager.get().chat.automaticLongTermMemory)return [];
       if(request.assistantMessage.metadata?.novaTurnLongMemoryCandidate===true){
+        if(!settingsManager.get().chat.automaticLongTermMemory)return [];
         const candidate=request.assistantMessage.content.normalize("NFKC").trim();
         const signal=request.assistantMessage.metadata?.longMemoryAbortSignal as AbortSignal|undefined;
         const source="nova-life-longmemory";
@@ -1116,6 +1154,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       }
       // Native NovaTurn responses do not carry the historical LONGMEMORY field. The dedicated
       // agent evaluates the real user/assistant exchange and only persists a durable fact when useful.
+      if(!settingsManager.get().memoryAgent.enabled)return [];
       const memory=await automaticMemoryAgent.process(request);
       return memory?[memory]:[];
     },
