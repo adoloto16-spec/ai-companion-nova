@@ -187,7 +187,9 @@ export class SpeechOutputController {
           return;
         }
         if(!this.unlocked){
-          if(!this.active)this.setStatus({state:"locked",message:"Enable audio playback from TTS settings before speech can play."});
+          const message="Speech output was skipped because browser audio is locked. Enable audio playback from TTS settings before Nova can speak.";
+          this.reportDiagnostic("TTS_AUDIO_LOCKED",message);
+          if(!this.active)this.setStatus({state:"locked",message});
           return;
         }
         const preset=settings.presets.find(item=>item.id===settings.activePresetId);
@@ -346,8 +348,17 @@ export class SpeechOutputController {
     const signal=new AbortController().signal;
     try{
       const result=await provider.testConnection(presetCopy(preset),signal);
-      this.setStatus({state:result.status==="healthy"?"ready":"error",message:result.message??result.status});
-      return {status:result.status,message:result.message??result.status};
+      const providerMessage=result.message??result.status;
+      if(result.status!=="healthy"){
+        this.setStatus({state:"error",message:providerMessage});
+      }else if(!settings.enabled){
+        this.setStatus({state:"disabled",message:"TTS provider connection succeeded, but speech output is disabled."});
+      }else if(!this.unlocked){
+        this.setStatus({state:"locked",message:"TTS provider is connected, but audio playback is locked. Enable audio playback from TTS settings before Nova can speak."});
+      }else{
+        this.setStatus({state:"ready",message:providerMessage});
+      }
+      return {status:result.status,message:providerMessage};
     }catch(error){
       const message=safeError(error);
       this.setStatus({state:"error",message});

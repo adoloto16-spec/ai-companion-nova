@@ -894,6 +894,36 @@ async function lifeSpeechEventsReachAudioAndAwaitPhysicalPlayback():Promise<void
   }
 }
 
+async function healthyConnectionDoesNotMaskLockedPlayback():Promise<void>{
+  const output=new PlaybackControlledOutput(),provider=new RecordingProvider(),diagnostics:string[]=[];
+  const settings:TtsSettings={...DEFAULT_TTS_SETTINGS,enabled:true,activePresetId:"test-preset",presets:[preset()]};
+  const controller=new SpeechOutputController({
+    getSettings:()=>settings,getProvider:id=>id===provider.id?provider:undefined,output,
+    onDiagnostic:code=>diagnostics.push(code)
+  });
+  try{
+    const health=await controller.testConnection();
+    equal(health.status,"healthy","TTS provider connection itself can succeed");
+    equal(controller.getStatus().state,"locked","successful provider health must not imply that browser playback is enabled");
+    ok(controller.getStatus().message.includes("audio playback is locked"),"status explains why connected TTS cannot yet play");
+    await controller.handleSpeechEvent({type:"start",turnId:"locked-turn"});
+    await controller.handleSpeechEvent({type:"delta",turnId:"locked-turn",text:"This message must not silently synthesize."});
+    await controller.finishTurn("locked-turn");
+    equal(provider.requests.length,0,"audio-locked turns do not call synthesize without a user gesture");
+    ok(diagnostics.includes("TTS_AUDIO_LOCKED"),"skipped locked audio is visible in diagnostics");
+
+    await controller.unlockPlayback();
+    await controller.handleSpeechEvent({type:"start",turnId:"unlocked-turn"});
+    await controller.handleSpeechEvent({type:"delta",turnId:"unlocked-turn",text:"Audio works after unlocking."});
+    const finished=controller.finishTurn("unlocked-turn");
+    await until(()=>output.pendingPlayback.size===1,"an unlocked fresh turn sends synthesized audio to playback");
+    equal(provider.requests[0],"Audio works after unlocking.","only the fresh unlocked public speech is synthesized");
+    output.finishPlayback(0);
+    await finished;
+    equal(controller.getStatus().message,"Assistant speech playback completed.","unlocked audio completes as usual");
+  }finally{controller.stop("Locked playback test cleanup.");}
+}
+
 async function lifeTurnFinalizesAfterPlaybackTimeoutWithoutLosingText():Promise<void>{
   const output=new PlaybackControlledOutput(),provider=new RecordingProvider(),diagnostics:string[]=[];
   const settings:TtsSettings={...DEFAULT_TTS_SETTINGS,enabled:true,activePresetId:"test-preset",presets:[preset()]};
@@ -944,6 +974,7 @@ async function main():Promise<void>{
   emotionDecodersDoNotGateSpeech();
   await synthesisRunsAheadOfPlaybackAndKeepsFifo();
   await assistantTurnsWaitForPlaybackAndInterruptionClearsQueue();
+  await healthyConnectionDoesNotMaskLockedPlayback();
   await lifeTurnFinalizesAfterPlaybackTimeoutWithoutLosingText();
   await lifeSpeechEventsReachAudioAndAwaitPhysicalPlayback();
   await boundedBackpressureAndCancellation();
