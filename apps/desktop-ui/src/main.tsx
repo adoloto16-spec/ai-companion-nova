@@ -1580,6 +1580,35 @@ function AppSettingsView({
           onChange={event=>onChange({...settings,chat:{...settings.chat,automaticLongTermMemory:event.target.checked}})} disabled={saving}/>
       </label>
       <p className="hint">Controls whether a non-empty LONGMEMORY candidate produced by Nova Life may enter the existing Memory Judge and character-memory save path. An empty or missing candidate causes no extra LLM call and no memory write. It does not make ordinary Chat generate memory candidates.</p>
+      <hr/>
+      <h4>Automatic Memory Agent</h4>
+      <label className="checkbox">Enabled
+        <input type="checkbox" checked={settings.memoryAgent.enabled}
+          onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,enabled:event.target.checked}})} disabled={saving}/>
+      </label>
+      <label>Provider Preset
+        <select value={settings.memoryAgent.providerPresetId??""}
+          onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,providerPresetId:event.target.value||null}})} disabled={saving}>
+          <option value="">Not configured</option>
+          {settings.memoryAgent.providerPresetId&&!providerPresets.some(p=>p.id===settings.memoryAgent.providerPresetId)&&
+            <option value={settings.memoryAgent.providerPresetId} disabled>Unavailable: {settings.memoryAgent.providerPresetId}</option>}
+          {providerPresets.map(preset=><option key={preset.id} value={preset.id}>{preset.name||preset.id}</option>)}
+        </select>
+      </label>
+      <label>Model
+        <input value={settings.memoryAgent.model}
+          onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,model:event.target.value}})}
+          placeholder="Use the selected preset model" disabled={saving}/>
+      </label>
+      <label>Response Mode
+        <select value={settings.memoryAgent.outputMode}
+          onChange={event=>onChange({...settings,memoryAgent:{...settings.memoryAgent,outputMode:event.target.value as AppSettings["memoryAgent"]["outputMode"]}})} disabled={saving}>
+          <option value="auto">Auto (provider capability)</option>
+          <option value="structured">Structured JSON</option>
+          <option value="plain">Plain text</option>
+        </select>
+      </label>
+      <p className="hint">This agent runs after a completed Nova Life reply and writes through MemoryBroker. It is separate from Memory Judge. Errors are recorded in Diagnostics and do not roll back the normal chat reply. Edit its separate system prompt in the Prompts tab.</p>
       <label>Memory items
         <input type="number" min={1} max={100} value={settings.memory.candidateLimit}
           onChange={event=>setNumber("memory","candidateLimit",Number(event.target.value))} disabled={saving}/>

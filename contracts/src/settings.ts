@@ -139,6 +139,7 @@ export function applyPromptOverride(settings:AppSettings,id:PromptId,text:string
   return {
     ...settings,
     prompts,
+    ...(id==="memory-agent.system"?{memoryAgent:{...settings.memoryAgent,prompt:resolvePromptText(prompts,"memory-agent.system")}}:{}),
     semanticDedup:{
       ...settings.semanticDedup,
       judge:{...settings.semanticDedup.judge,prompt:judgePrompt}
@@ -154,6 +155,7 @@ export function restoreAllPromptDefaults(settings:AppSettings):AppSettings{
   return {
     ...settings,
     prompts:{overrides:{}},
+    memoryAgent:{...settings.memoryAgent,prompt:DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS},
     semanticDedup:{
       ...settings.semanticDedup,
       judge:{...settings.semanticDedup.judge,prompt:DEFAULT_PROMPT_TEXTS["memory-judge.system"]}
@@ -375,6 +377,11 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const semanticJudgePrompt=resolvePromptText({overrides:promptOverrides},"memory-judge.system");
   const semanticJudgeBackup=typeof semanticJudge.promptBackup==="string"&&semanticJudge.promptBackup.length>0?semanticJudge.promptBackup:null;
   const semanticJudgeVersion=semanticJudgePromptIsLegacyDefault?DEFAULT_MEMORY_JUDGE_PROMPT_VERSION:(typeof semanticJudge.defaultPromptVersion==="string"&&semanticJudge.defaultPromptVersion.trim()?semanticJudge.defaultPromptVersion.trim():DEFAULT_MEMORY_JUDGE_PROMPT_VERSION);
+  const hasMemoryAgentPromptOverride=Object.prototype.hasOwnProperty.call(rawPromptOverrides,"memory-agent.system");
+  if(!hasMemoryAgentPromptOverride&&memoryAgentPrompt!==DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS){
+    promptOverrides["memory-agent.system"]=memoryAgentPrompt;
+  }
+  const effectiveMemoryAgentPrompt=resolvePromptText({overrides:promptOverrides},"memory-agent.system");
   const next:AppSettings={
     apiVersion:"1",schemaVersion:"14",
     cognitiveSchedule:{
@@ -385,7 +392,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
       maxRequestsPerHour:typeof cognitiveSchedule.maxRequestsPerHour==="number"?(String(input.schemaVersion)!=="10"&&String(input.schemaVersion)!=="11"&&String(input.schemaVersion)!=="12"&&cognitiveSchedule.maxRequestsPerHour===120?null:cognitiveSchedule.maxRequestsPerHour):null
     },
     chat:{automaticLongTermMemory:chatAutomaticMemoryEnabled,responseMode:chat.responseMode==="plain"?"plain":"structured",reasoningMode:["provider-default","enabled","disabled"].includes(chat.reasoningMode)?chat.reasoningMode:defaults.chat.reasoningMode,reasoningEffort:["provider-default","low","medium","high"].includes(chat.reasoningEffort)?chat.reasoningEffort:"provider-default"},
-    memoryAgent:{enabled:memoryAgentEnabled,providerPresetId:memoryAgentPreset,model:memoryAgentModel,outputMode:memoryAgentOutputMode,prompt:memoryAgentPrompt,promptBackup:memoryAgentBackup,defaultPromptVersion:memoryAgentPromptVersion},
+    memoryAgent:{enabled:memoryAgentEnabled,providerPresetId:memoryAgentPreset,model:memoryAgentModel,outputMode:memoryAgentOutputMode,prompt:effectiveMemoryAgentPrompt,promptBackup:memoryAgentBackup,defaultPromptVersion:memoryAgentPromptVersion},
     prompts:{overrides:promptOverrides},
     semanticDedup:{
       enabled:semanticDedupEnabled,

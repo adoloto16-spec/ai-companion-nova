@@ -429,7 +429,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     broker:memoryBroker,
     runtime:{
       chat:(request,providerPresetId)=>extractionChatRuntime.chat(request,providerPresetId),
-      getChatModelForPreset
+      getChatModelForPreset,
+      getChatProviderCapabilities:providerPresetId=>extractionChatRuntime.getChatProviderCapabilities(providerPresetId)
     },
     diagnostics:diagnosticsStore
   });
