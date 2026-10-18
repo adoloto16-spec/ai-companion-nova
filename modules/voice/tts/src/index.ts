@@ -275,8 +275,9 @@ export class SpeechOutputController {
     if(!session||session.failed)return Promise.resolve();
     if(session.finishPromise)return session.finishPromise;
     session.finishing=true;
-    const configuredTimeout=this.options.finishTimeoutMs??this.options.getSettings().finishTimeoutMs??DEFAULT_FINISH_TIMEOUT_MS;
-    const timeoutMs=Math.max(10_000,Math.min(600_000,Math.floor(configuredTimeout)));
+    const timeoutMs=this.options.finishTimeoutMs!==undefined
+      ?Math.max(1,Math.floor(this.options.finishTimeoutMs))
+      :Math.max(10_000,Math.min(600_000,Math.floor(this.options.getSettings().finishTimeoutMs??DEFAULT_FINISH_TIMEOUT_MS)));
     const completion=(async()=>{
       for(const text of session.segmenter.finish())await this.enqueueSentence(session,text,session.emotion);
       this.ensureWorker(session);
