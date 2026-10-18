@@ -109,7 +109,12 @@ assert.ok(diagnosticsView.includes('entry.source==="memory-semantic-deduplicatio
 assert.ok(diagnosticsView.includes("Memory Deduplication"),"DiagnosticsView must expose the Memory Deduplication section");
 assert.ok(diagnosticsView.includes("candidateDiagnostics")&&diagnosticsView.includes("archiveMapping")&&diagnosticsView.includes("mutationResult"),"DiagnosticsView must display dedup candidate/mutation diagnostics");
 assert.ok(diagnosticsView.includes("semanticDedupEnabled")&&diagnosticsView.includes("judgeProviderPresetId")&&diagnosticsView.includes("memoryCreatedSubscribers"),"DiagnosticsView must display effective runtime semantic settings");
-assert.equal(appSettingsView.includes("memoryAgent"),false,"Settings UI must not restore the retired Memory Agent configuration");
+assert.equal(appSettingsView.includes("memoryAgent"),true,"Settings UI exposes the dedicated Automatic Memory Agent configuration");
+assert.ok(appSettingsView.includes("settings.memoryAgent.enabled"),"Automatic Memory Agent enable state is editable");
+assert.ok(appSettingsView.includes("settings.memoryAgent.providerPresetId"),"Automatic Memory Agent Provider Preset is editable");
+assert.ok(appSettingsView.includes("settings.memoryAgent.model"),"Automatic Memory Agent model override is editable");
+assert.ok(appSettingsView.includes("settings.memoryAgent.outputMode"),"Automatic Memory Agent response mode is editable");
+assert.ok(appSettingsView.includes("memory-agent.system")||appSettingsView.includes("Prompts tab"),"Automatic Memory Agent exposes a separate editable prompt");
 assert.ok(appSettingsView.includes("settings.chat.automaticLongTermMemory"),"General settings retain the LONGMEMORY persistence gate");
 assert.ok(appSettingsView.includes("Save LONGMEMORY candidates automatically"),"Automatic memory setting describes candidate persistence, not a second generator");
 assert.ok(appSettingsView.includes("onClick={()=>void onSave()}"),"Settings UI exposes the existing Save Settings persistence path");
