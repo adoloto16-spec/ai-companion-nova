@@ -515,7 +515,8 @@ export class SpeechOutputController {
         continue;
       }
       if(session.worker){
-        await session.worker;
+        // Cancellation/first-audio timeout must release Life even if a provider ignores AbortSignal.
+        await Promise.race([session.worker,new Promise<void>(resolve=>session.queueWaiters.push(resolve))]);
       }else{
         this.ensureWorker(session);
         if(!session.worker&&session.queue.length>0)
