@@ -397,10 +397,7 @@
       "required": [
         "enabled",
         "activePresetId",
-        "presets",
-        "finishTimeoutMs",
-        "startTimeoutMs",
-        "segmentGapMs"
+        "presets"
       ],
       "properties": {
         "activePresetId": {
