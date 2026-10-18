@@ -236,7 +236,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       streaming:true,
       toolCalling:true,
       structuredOutput:true,
-      reasoning:false
+      reasoning:true
     };
   }
 
@@ -762,6 +762,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       max_tokens?:number;
       top_p?:number;
       response_format?:Record<string,unknown>;
+      reasoning_effort?:"none"|"low"|"medium"|"high";
       tools?:{type:"function";function:{name:string;description:string;parameters:unknown}}[];
     }={
       model:request.model,
@@ -772,6 +773,9 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     if(generation?.temperature!==undefined)payload.temperature=generation.temperature;
     if(generation?.maxTokens!==undefined)payload.max_tokens=generation.maxTokens;
     if(generation?.topP!==undefined)payload.top_p=generation.topP;
+    if(request.reasoning?.mode==="disabled")payload.reasoning_effort="none";
+    else if(request.reasoning?.effort)payload.reasoning_effort=request.reasoning.effort;
+    else if(request.reasoning?.mode==="enabled")payload.reasoning_effort="low";
     const responseFormat=generation?.responseFormat;
     if(responseFormat?.type==="json"){
       payload.response_format={type:"json_object"};

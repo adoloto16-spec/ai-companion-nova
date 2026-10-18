@@ -130,7 +130,20 @@ async function metadataAndCapabilitiesTest(){
   equal(capabilities.streaming,true,"streaming capability");
   equal(capabilities.toolCalling,true,"standard native tool calling capability");
   equal(capabilities.structuredOutput,true,"structured output adapter capability");
-  equal(capabilities.reasoning,false,"reasoning capability");
+  equal(capabilities.reasoning,true,"reasoning controls are mapped into the provider request");
+}
+
+async function reasoningModesMapToExplicitProviderPayloads(){
+  const disabledHttp=new FakeHttpClient();
+  await provider(disabledHttp).chat({...request(),reasoning:{mode:"disabled"},generation:{maxTokens:211}});
+  const disabledBody=JSON.parse(disabledHttp.requests[0]!.body!) as Record<string,unknown>;
+  equal(disabledBody.reasoning_effort,"none","disabled reasoning sends explicit reasoning_effort:none");
+  equal(disabledBody.max_tokens,211,"generation limit stays in the same provider request");
+
+  const enabledHttp=new FakeHttpClient();
+  await provider(enabledHttp).chat({...request(),reasoning:{mode:"enabled",effort:"high"}});
+  const enabledBody=JSON.parse(enabledHttp.requests[0]!.body!) as Record<string,unknown>;
+  equal(enabledBody.reasoning_effort,"high","enabled reasoning uses requested effort");
 }
 
 async function requestMappingTest(){
@@ -732,6 +745,7 @@ async function compositionRootTest(){
 void (async()=>{
   for(const [name,test] of [
     ["Metadata and capabilities",metadataAndCapabilitiesTest],
+    ["Reasoning mode payloads",reasoningModesMapToExplicitProviderPayloads],
     ["Request mapping",requestMappingTest],
     ["Cognition assistant role mapping",cognitionAssistantRoleRegressionTest],
     ["Structured request mapping",structuredRequestMappingTest],

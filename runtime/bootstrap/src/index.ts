@@ -445,9 +445,12 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
         const settings=settingsManager.get();
         return {availableContextTokens:settings.context.availableContextTokens,reservedOutputTokens:settings.context.reservedOutputTokens,systemOverheadTokens:0,safetyMarginTokens:settings.context.safetyMarginTokens};
       },
-      getActiveProviderPresetId:()=>activeProviderPresetId,
-      getChatModel:()=>activeProviderId(providerConfiguration)==="openai-compatible"&&providerConfiguration?providerConfiguration.model:"fake-chat",
-      getChatModelForPreset,
+      getActiveProviderPresetId:()=>activeModelProfile?.providerPresetId?.trim()||activeProviderPresetId,
+      getChatModel:()=>activeModelProfile?.model?.trim()||(providerConfiguration?.enabled?providerConfiguration.model:"fake-chat"),
+      getChatModelForPreset:async(providerPresetId)=>{
+        if(activeModelProfile?.model?.trim()&&(!activeModelProfile.providerPresetId||activeModelProfile.providerPresetId===providerPresetId))return activeModelProfile.model.trim();
+        return getChatModelForPreset(providerPresetId);
+      },
       getCognitiveSchedule:()=>settingsManager.get().cognitiveSchedule,
       getPrompt:(id:PromptId)=>resolvePromptText(settingsManager.get().prompts,id),
       getAvailableTools:()=>tools.list().map(tool=>({name:tool.name,description:tool.description,parameters:tool.parameters})),
