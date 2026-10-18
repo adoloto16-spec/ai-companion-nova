@@ -189,10 +189,15 @@ async function main(){
   let rejectedUnknownTts=false;
   try{migrateAppSettings({...defaultAppSettings(),tts:{...defaultAppSettings().tts,unknown:true} as any});}catch{rejectedUnknownTts=true;}
   ok(rejectedUnknownTts,"TTS settings reject unknown schema fields");
-  const alteredTts={...defaultAppSettings(),tts:{...defaultAppSettings().tts,enabled:true}};
+  const alteredTts={...defaultAppSettings(),tts:{...defaultAppSettings().tts,enabled:true,finishTimeoutMs:120000,startTimeoutMs:5000,segmentGapMs:250}};
   await manager.set(alteredTts);
   const ttsReload=await new SettingsManager(store,validator).initialize();
   equal(ttsReload.tts.enabled,true,"TTS enabled setting survives settings storage reload");
+  equal(ttsReload.tts.finishTimeoutMs,120000,"TTS maximum turn duration persists");
+  equal(ttsReload.tts.startTimeoutMs,5000,"TTS initial audio timeout persists");
+  equal(ttsReload.tts.segmentGapMs,250,"TTS sentence gap persists");
+  ok(validateAppSettings({...defaultAppSettings(),tts:{...defaultAppSettings().tts,segmentGapMs:5001}}).some(error=>error.includes("TTS segment gap")),"unsafe TTS sentence gap is rejected");
+  ok(validateAppSettings({...defaultAppSettings(),tts:{...defaultAppSettings().tts,finishTimeoutMs:9999}}).some(error=>error.includes("TTS maximum turn duration")),"unsafe TTS turn timeout is rejected");
   const ttsReset=await manager.reset();
   equal(ttsReset.tts.enabled,false,"settings reset turns TTS off");
   console.log("PASS Settings and diagnostics unit tests");
