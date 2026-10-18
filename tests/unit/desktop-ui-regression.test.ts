@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {chatDraftKey,readChatDraft,writeChatDraft,clearSubmittedChatDraft} from "../../apps/desktop-ui/src/chat-drafts";
 import {passiveDiagnosticsOptions} from "../../apps/desktop-ui/src/provider-health-polling";
-import {isAllowedOllamaRoute} from "../../apps/desktop-ui/src/ollama-http-client";
+import {isAllowedOllamaRoute} from "../../apps/desktop-ui/src/ollama-http-routes";
 
 const sourcePath=path.resolve(process.cwd(),"apps/desktop-ui/src/main.tsx");
 const source=fs.readFileSync(sourcePath,"utf8");

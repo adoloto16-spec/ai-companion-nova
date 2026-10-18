@@ -1,4 +1,5 @@
 import {Channel, invoke} from "@tauri-apps/api/core";
+import {isAllowedOllamaRoute} from "./ollama-http-routes";
 import {FetchHttpClient, type HttpClient as CompatibleHttpClient, type HttpClientRequest as CompatibleHttpClientRequest} from "../../../providers/chat/openai-compatible/src";
 import type {
   OllamaHttpClient,
@@ -24,12 +25,6 @@ function abortError(): Error {
 function requestId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
   return "ollama-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
-}
-
-export function isAllowedOllamaRoute(pathname: string, method: string): boolean {
-  if (pathname === "/api/tags" || pathname === "/api/version") return method === "GET";
-  if (pathname === "/api/chat" || pathname === "/api/show") return method === "POST";
-  return false;
 }
 
 function routeFor(request: OllamaHttpRequest): { baseUrl: string; route: string } {
