@@ -116,6 +116,13 @@ async function until(predicate:()=>boolean,message:string):Promise<void>{
   for(let i=0;i<100;i++){if(predicate())return;await Promise.resolve();}
   throw new Error(message);
 }
+async function untilWithTimeout(predicate:()=>boolean,message:string,timeoutMs=1500):Promise<void>{
+  const deadline=Date.now()+timeoutMs;
+  while(!predicate()){
+    if(Date.now()>=deadline)throw new Error(message);
+    await new Promise(resolve=>setTimeout(resolve,2));
+  }
+}
 
 function sentenceBoundariesPreserveEveryCharacter():void{
   const source="Привет, т.д. это 3.14. Он сказал: «Да!» А т.е. нет.\nНезавершённый остаток";
@@ -912,7 +919,7 @@ async function lifeTurnFinalizesAfterPlaybackTimeoutWithoutLosingText():Promise<
   runtime.setActiveCharacter("character.tts-timeout");
   try{
     await runtime.start();
-    await until(()=>runtime.getState().lifecycleState==="waiting"&&persistedText===text,"a stuck playback reaches its bounded timeout and releases the Life scheduler");
+    await untilWithTimeout(()=>runtime.getState().lifecycleState==="waiting"&&persistedText===text,"a stuck playback reaches its bounded timeout and releases the Life scheduler");
     equal(persistedText,text,"public reply is persisted independently of TTS playback completion");
     ok(diagnostics.includes("TTS_FINISH_FAILED"),"playback timeout is diagnosed rather than reported as completed audio");
     equal(controller.getStatus().state,"error","the controller does not report stuck playback as successful");
