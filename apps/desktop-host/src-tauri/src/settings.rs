@@ -190,11 +190,11 @@ pub struct TtsPreset {
     #[serde(rename="providerOptions",default)]
     pub provider_options:BTreeMap<String,Value>
 }
-#[derive(Debug,Deserialize,Serialize,Clone)]
-#[serde(deny_unknown_fields)]
 fn default_tts_finish_timeout_ms()->i64{60_000}
 fn default_tts_start_timeout_ms()->i64{10_000}
 fn default_tts_segment_gap_ms()->i64{500}
+#[derive(Debug,Deserialize,Serialize,Clone)]
+#[serde(deny_unknown_fields)]
 pub struct TtsSettings {
     pub enabled:bool,
     #[serde(rename="activePresetId")]
