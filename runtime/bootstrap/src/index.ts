@@ -462,10 +462,21 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       },
       getGenerationOptions:()=>activeModelProfile?.generation,
       getShowReasoningInDiagnostics:()=>settingsManager.get().ui.showReasoningInDiagnostics,
+      getProviderIdForPreset:providerPresetId=>{
+        if(!providerPresetId)return providerConfiguration?.enabled?providerConfiguration.providerId:undefined;
+        const configured=providerPresetConfigurations.get(providerPresetId);
+        if(configured)return configured.providerId;
+        const pool=getPoolProvider(providerPresetId);
+        if(pool)return pool.getDiagnostics().providerId??pool.id;
+        const preset=providerPresetPools.get(providerPresetId);
+        return preset?.sources.find(source=>source.id===preset.activeSourceId)?.providerId??preset?.sources[0]?.providerId;
+      },
+      onDiagnostic:(code,message,metadata)=>diagnosticsStore.recordError("mind-runtime",code,message,metadata),
       consumeRequestedWakeInterval:turnId=>{const interval=pendingWakeIntervalRequests.get(turnId);pendingWakeIntervalRequests.delete(turnId);return interval;},
       clock:()=>new Date().toISOString()
     }),
     schedule:settingsManager.get().cognitiveSchedule,
+    onDiagnostic:(code,detail,metadata)=>diagnosticsStore.recordError("mind-runtime",code,detail,metadata),
     onTurnCommitted:async(turn,context)=>{
       if(!context.userMessageId||!settingsManager.get().memoryAgent.enabled)return;
       try{

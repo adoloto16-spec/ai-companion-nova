@@ -154,6 +154,7 @@ export class AutomaticMemoryAgent{
     const configuredMode=settings.memoryAgent.outputMode;
     const structuredSupported=this.runtime.getChatProviderCapabilities?.(presetId).structuredOutput===true;
     const outputMode:MemoryAgentResponseMode=configuredMode==="structured"||(configuredMode==="auto"&&structuredSupported)?"structured":"plain";
+    this.recordOutcome("MEMORY_AGENT_STARTED","Automatic Memory Agent started.",request.turnId,presetId||undefined,modelOverride||undefined,{outputMode});
     
 
     try{
@@ -165,6 +166,7 @@ export class AutomaticMemoryAgent{
 
       const model=modelOverride||await this.runtime.getChatModelForPreset(presetId);
       if(!model.trim())throw new Error("Memory Agent model is not configured.");
+      this.recordOutcome("MEMORY_AGENT_PROVIDER_SELECTED","Automatic Memory Agent provider and model selected.",request.turnId,presetId,model,{outputMode});
       const payload=[
         "Relevant conversation context:",
         ...request.contextMessages.map(message=>message.role.toUpperCase()+": "+safeText(message.content)),
@@ -212,14 +214,18 @@ export class AutomaticMemoryAgent{
 
       
       const parsed=parseAgentText(response.message.content,outputMode);
-      if(parsed.kind==="empty"||parsed.kind==="no-memory")return undefined;
+      if(parsed.kind==="empty"||parsed.kind==="no-memory"){
+        this.recordOutcome("MEMORY_AGENT_EXTRACTION_COMPLETED","Automatic Memory Agent found no durable memory candidate.",request.turnId,presetId,model,{outputMode,candidateCount:0,result:parsed.kind});
+        return undefined;
+      }
       if(parsed.kind==="invalid"){
         this.recordFailure("INVALID_RESPONSE","Automatic Memory Agent response did not match its configured output mode.",request.turnId,presetId,model);
         return undefined;
       }
 
+      this.recordOutcome("MEMORY_AGENT_CANDIDATES_EXTRACTED","Automatic Memory Agent extracted a candidate.",request.turnId,presetId,model,{candidateCount:1,outputMode});
       if(containsSecret(parsed.content)){
-        
+        this.recordOutcome("MEMORY_AGENT_VALIDATION_REJECTED","Automatic Memory Agent candidate failed sensitive-content validation.",request.turnId,presetId,model,{candidateCount:1,reason:"secret-content"});
         this.recordFailure("SECRET_REJECTED","Automatic Memory Agent output was rejected because it contained sensitive material.",request.turnId,presetId,model);
         return undefined;
       }
@@ -228,6 +234,7 @@ export class AutomaticMemoryAgent{
       const existing=(await this.broker.list(request.characterId)).filter(item=>item.status==="active");
       const duplicate=existing.find(item=>normalizedContent(item.content)===normalizedContent(content));
       if(duplicate){
+        this.recordOutcome("MEMORY_AGENT_DUPLICATE_SKIPPED","Automatic Memory Agent candidate matches existing Character Memory.",request.turnId,presetId,model,{candidateCount:1,duplicateMemoryId:duplicate.id});
         
         return duplicate;
       }
@@ -261,6 +268,7 @@ export class AutomaticMemoryAgent{
       }
 
       
+      this.recordOutcome("MEMORY_AGENT_MEMORY_PERSISTED","Automatic Memory Agent memory was persisted through MemoryBroker.",request.turnId,presetId,model,{candidateCount:1,memoryId:created.id,status:"persisted"});
       return created;
     }catch(error){
       const message=error instanceof Error?error.message:"Automatic Memory Agent failed.";
@@ -270,6 +278,15 @@ export class AutomaticMemoryAgent{
     }finally{
       this.inFlight.delete(key);
     }
+  }
+
+  private recordOutcome(code:string,message:string,turnId:string,providerPresetId?:string,model?:string,metadata?:Record<string,unknown>):void{
+    this.diagnostics?.recordError(this.source,code,message,{
+      requestId:"memory-agent:"+turnId,turnId,
+      ...(providerPresetId?{providerPresetId}:{}),
+      ...(model?{model}:{}),
+      ...(metadata??{})
+    });
   }
 
   private recordFailure(code:string,message:string,turnId:string,providerPresetId?:string,model?:string,details?:string):void{

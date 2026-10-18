@@ -22,6 +22,8 @@ export interface SpeechOutputControllerOptions {
   getProvider:(id:string)=>TtsProvider|undefined;
   output:AudioOutputAdapter;
   onDiagnostic?:(code:string,message:string)=>void;
+  /** Bounds synthesis and physical playback finalization; timeout is diagnosed as a failure. */
+  finishTimeoutMs?:number;
 }
 interface SentenceTask {text:string;emotion:string;}
 interface Session {
@@ -46,6 +48,7 @@ const MAX_PENDING_SENTENCES=12;
 const MAX_PENDING_TEXT_CHARS=8_000;
 const MAX_SENTENCE_CHARS=1_200;
 const MAX_AUDIO_EVENT_BYTES=512*1024;
+const DEFAULT_FINISH_TIMEOUT_MS=60_000;
 
 function aborted(signal:AbortSignal):boolean{return signal.aborted;}
 function abortError():Error{const e=new Error("Speech session was cancelled.");e.name="AbortError";return e;}
@@ -245,7 +248,8 @@ export class SpeechOutputController {
     if(!session||session.failed)return Promise.resolve();
     if(session.finishPromise)return session.finishPromise;
     session.finishing=true;
-    session.finishPromise=(async()=>{
+    const timeoutMs=Math.max(1,Math.floor(this.options.finishTimeoutMs??DEFAULT_FINISH_TIMEOUT_MS));
+    const completion=(async()=>{
       for(const text of session.segmenter.finish())await this.enqueueSentence(session,text,session.emotion);
       this.ensureWorker(session);
       await this.waitForSynthesis(session);
@@ -261,13 +265,25 @@ export class SpeechOutputController {
         this.activateNextSession();
       }
       if(!this.active)this.setStatus({state:"ready",message:"Assistant speech playback completed.",sessionId:session.id});
-    })().catch(error=>{
+    })();
+    let timeout:ReturnType<typeof setTimeout>|undefined;
+    const deadline=new Promise<void>((_resolve,reject)=>{
+      timeout=setTimeout(()=>{
+        const error=new Error("Speech synthesis or playback exceeded its "+timeoutMs+" ms completion deadline.");
+        error.name="TimeoutError";
+        reject(error);
+      },timeoutMs);
+    });
+    session.finishPromise=Promise.race([completion,deadline]).catch(error=>{
       if(!aborted(session.abort.signal)){
         this.reportDiagnostic("TTS_FINISH_FAILED",safeError(error));
         this.cancelSession(session,safeError(error),true);
         this.setStatus({state:"error",message:safeError(error)});
       }
-    }).finally(()=>{session.finishPromise=undefined;});
+    }).finally(()=>{
+      if(timeout!==undefined)clearTimeout(timeout);
+      session.finishPromise=undefined;
+    });
     return session.finishPromise;
   }
 

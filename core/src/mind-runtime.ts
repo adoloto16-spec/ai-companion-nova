@@ -87,7 +87,7 @@ export interface MindRuntimeOptions {
   schedule?: CognitiveScheduleSettings;
   stepTimeoutMs?: number;
   onError?: (error: unknown) => void;
-  onDiagnostic?: (code: string, detail: string) => void;
+  onDiagnostic?: (code: string, detail: string, metadata?:Record<string,unknown>) => void;
   clock?: () => string;
   now?: () => number;
   turnSink?: MindTurnSink;
@@ -258,6 +258,8 @@ export class MindRuntime {
     let streamedPublicSpeech=false;
     let preserveFailedReactiveSpeech=false;
     const speechTurnId=reactiveTurn?.turnId??runId;
+    this.safeDiagnostic("nova_life.wake.started","Nova Life wake started.",{runId,wakeReason:reason,characterId,reactiveUserTurn:Boolean(reactiveTurn)});
+    this.safeDiagnostic("nova_life.cognition.started","Nova Life cognition started.",{runId,wakeReason:reason,characterId});
     const finishTrace = (result: MindTraceEntry["result"], extra: Partial<MindTraceEntry> = {}) => {
       const entry: MindTraceEntry = {
         runId, characterId, wakeReason: reason, startedAt, finishedAt: this.clock(), durationMs: Math.max(0, this.now() - startedMs), result,
@@ -366,10 +368,22 @@ export class MindRuntime {
         error.name = "REACTIVE_SPEECH_REQUIRED";
         throw error;
       }
+      this.safeDiagnostic("nova_life.turn.parsed","Nova Life turn passed protocol and public-speech validation.",{
+        runId,turnId:reactiveTurn?.turnId??runId,requestId:result.requestId??runId,
+        ...(result.providerId?{providerId:result.providerId}:{}),...(result.model?{model:result.model}:{}),
+        publicSpeechCharacters:turn.speech.length,toolCount:turn.tools.length
+      });
       const sink = this.turnSink;
       if (!sink) throw new Error("NovaTurn conversation sink is not attached.");
       const completedContext=turnContext(result);
       await sink.commit(turn, completedContext);
+      this.safeDiagnostic("nova_life.turn.persisted","Nova Life turn sink committed the public response.",{
+        runId,turnId:completedContext.turnId,conversationId:completedContext.conversationId,
+        ...(completedContext.requestId?{requestId:completedContext.requestId}:{}),
+        ...(completedContext.providerId?{providerId:completedContext.providerId}:{}),
+        ...(completedContext.model?{model:completedContext.model}:{}),
+        status:"persisted",durationMs:Math.max(0,this.now()-startedMs)
+      });
       if (life.signal.aborted || contextVersion !== this.contextVersion || (reactiveTurn && !this.isReactiveTurnCurrent(reactiveTurn))) {
         finishTrace("cancelled", {errorCode:"STALE_AFTER_COMMIT"}); return;
       }
@@ -408,6 +422,14 @@ export class MindRuntime {
       }
       applied = this.errorBackoffMs(); decision = "error-backoff"; nextDelay = applied; nextReason = "error-backoff";
       const errorCode = cancellation === "timeout" ? "STEP_TIMEOUT" : error instanceof Error ? error.name : "COGNITIVE_STEP_FAILED";
+      const safeReason=(error instanceof Error?error.message:"Cognitive step failed.")
+        .replace(/https?:\/\/\S+/gi,"[url]")
+        .replace(/(?:token|secret|password|api.?key)\s*[:=]\s*\S+/gi,"[redacted]")
+        .replace(/[\r\n\t]+/g," ").slice(0,240);
+      this.safeDiagnostic("nova_life.step.failed","Nova Life cognitive step failed.",{
+        runId,wakeReason:reason,errorCode,failureReason:safeReason,
+        durationMs:Math.max(0,this.now()-startedMs),...(requestId?{requestId}:{}),...(providerId?{providerId}:{})
+      });
       this.safeOnError(error);
       finishTrace("error", {errorCode});
     } finally {
@@ -457,7 +479,13 @@ export class MindRuntime {
     const wait = Math.max(1, Math.floor(delayMs));
     const deadline = this.scheduler.schedule(wait, reason);
     this.state.nextWakeAt = new Date(deadline).toISOString();
+    this.safeDiagnostic("nova_life.wait.scheduled","Nova Life scheduled its next wake.",{
+      wakeReason:reason,delayMs:wait,nextWakeAt:this.state.nextWakeAt
+    });
     this.setLifecycleState("waiting");
+  }
+  private safeDiagnostic(code:string,detail:string,metadata?:Record<string,unknown>):void{
+    try{this.onDiagnostic?.(code,detail,metadata);}catch{/* diagnostic observers must not disrupt Life */}
   }
   private safeOnError(error: unknown): void { try { this.onError?.(error); } catch { /* diagnostics must not stop Life */ } }
   private setLifecycleState(lifecycleState: MindRuntimeLifecycleState): void { this.state.lifecycleState = lifecycleState; this.notify(); }
