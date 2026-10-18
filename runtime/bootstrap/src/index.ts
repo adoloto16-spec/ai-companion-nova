@@ -10,7 +10,12 @@ import {
 } from "../../../core/src/index";
 import {StandardContractValidator,resolvePromptText} from "../../../contracts/src/index";
 import {FakeBrowserModule,FakeCharacterModule,FakeMemoryModule} from "../../../modules/mock/src/index";
-import {FakeChatProvider,FakeTTSProvider,FakeSTTProvider,FakeEmbeddingProvider,FakeVisionProvider} from "../../../providers/mock/src/index";
+import {FakeChatProvider,FakeSTTProvider,FakeEmbeddingProvider,FakeVisionProvider} from "../../../providers/mock/src/index";
+import {TtsProviderRegistry} from "../../../providers/tts/registry/src";
+import {VoiceStudioTtsProvider} from "../../../providers/tts/voice-studio/src";
+import {SileroTtsProvider} from "../../../providers/tts/silero/src";
+import type {SileroFetch} from "../../../providers/tts/silero/src";
+import type {TtsProvider,TtsProviderDescriptor} from "../../../contracts/src/tts";
 import {
   OpenAICompatibleChatProvider,
   type HttpClient,
@@ -44,6 +49,8 @@ export interface FoundationRuntimeOptions{
   memoryStore?:MemoryStore;
   conversationStore?:ConversationStore;
   httpClient?:HttpClient;
+  /** Optional native local transport; omitted by tests and non-desktop runtimes. */
+  sileroFetch?:SileroFetch;
   openAICompatible?:OpenAICompatibleRuntimeConfig;
   contextEngine?:ContextEngine;
   retriever?:Retriever;
@@ -78,6 +85,8 @@ export interface FoundationRuntime{
   wakeMind():void;
   wakeMindForUserMessage(turn:MindReactiveTurn):boolean;
   subscribeMindState(listener:(state:import("../../../contracts/src/index").MindState)=>void):import("../../../contracts/src/index").Unsubscribe;
+  getTtsProvider(providerId:string):TtsProvider|undefined;
+  listTtsProviders():TtsProviderDescriptor[];
   getChatProviderDiagnostics(providerPresetId?:string):{
     providerPresetId?:string;
     providerId:string;
@@ -195,6 +204,10 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const events=new InMemoryEventBus(diagnosticsStore,logger);
   const _state=new InMemoryStateStore(diagnosticsStore,logger);
   const providers=new ProviderRegistry();
+  const ttsProviders=new TtsProviderRegistry();
+  // Concrete TTS adapters are registered only at the composition root.
+  ttsProviders.register(()=>new VoiceStudioTtsProvider());
+  ttsProviders.register(()=>new SileroTtsProvider({fetch:options.sileroFetch}));
   const characterStore=options.characterStore??new InMemoryCharacterStore();
   const characterManager=new CharacterManager(characterStore,{events,clock:{now:()=>new Date().toISOString()}});
   const coreBookStore=options.coreBookStore??new InMemoryCoreBookStore();
@@ -297,7 +310,6 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   }else{
     await applyProvider(providerConfiguration);
   }
-  providers.register(new FakeTTSProvider(),["tts"]);
   providers.register(new FakeSTTProvider(),["stt"]);
   providers.register(new FakeEmbeddingProvider(),["embeddings"]);
   providers.register(new FakeVisionProvider(),["vision"]);
@@ -815,6 +827,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     getChatModelForPreset,
     applyProviderConfiguration:async(configuration)=>{await applyProvider(configuration);},
     getSettings:()=>settingsManager.get(),
+    getTtsProvider:providerId=>ttsProviders.get(providerId),
+    listTtsProviders:()=>ttsProviders.list(),
     getSemanticSearchStatus:()=>semanticSearch.getStatus(),
     rebuildSemanticSearchIndex:()=>semanticSearch.rebuildAll(),
     updateSettings:async(settings)=>{

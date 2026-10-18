@@ -7,6 +7,7 @@ export const FOUNDATION_SCHEMA_VERSION="1";
 export const CHAT_API_VERSION:ApiVersion="1";
 export const CHAT_SCHEMA_VERSION="1";
 export * from "./chat-stream";
+export * from "./tts";
 export * from "./settings";
 export * from "./prompts";
 

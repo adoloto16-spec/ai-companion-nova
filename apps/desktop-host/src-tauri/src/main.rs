@@ -20,6 +20,8 @@ mod credential_profiles;
 mod provider_presets;
 #[cfg(feature="tauri-app")]
 mod ollama_http;
+#[cfg(feature="tauri-app")]
+mod silero_http;
 mod windows_credentials;
 
 use serde::Serialize;
@@ -271,6 +273,7 @@ fn main(){
     tauri::Builder::default()
         .manage(RuntimeDiagnosticsState::default())
         .manage(ollama_http::OllamaHttpState::default())
+        .manage(silero_http::SileroHttpState::default())
         .manage(memory::MemoryWriteLock::default())
         .manage(retrieval::RetrievalIndexLock::default())
         .invoke_handler(tauri::generate_handler![
@@ -319,7 +322,9 @@ fn main(){
             delete_provider_preset,
             ollama_http::ollama_http_request,
             ollama_http::ollama_http_stream,
-            ollama_http::ollama_http_cancel
+            ollama_http::ollama_http_cancel,
+            silero_http::silero_http_request,
+            silero_http::silero_http_cancel
         ])
         .run(tauri::generate_context!())
         .expect("Tauri runtime failed");

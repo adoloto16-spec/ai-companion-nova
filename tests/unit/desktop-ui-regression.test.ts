@@ -45,6 +45,27 @@ assert.ok(diagnosticsView.includes("},[refresh]);"),"Diagnostics view creates on
 assert.ok(manualConnectionTest.includes("testProviderPresetConfiguration(config,credentialStore,ollamaHttpClient)"),"manual connection testing remains a real request");
 assert.ok(modelDiscovery.includes("listProviderModels("),"manual model discovery remains wired to the configured provider");
 assert.equal(providerPoolSource.includes("setInterval"),false,"provider pool recovery is request-driven; no periodic health timer is required");
+const chatStopAction=blockBetween("const stop=React.useCallback(async()=>{","const continueGeneration=React.useCallback");
+const chatRetryAction=blockBetween("const retry=React.useCallback(async()=>{","const clear=React.useCallback");
+const selectCharacterAction=blockBetween("const selectCharacter=React.useCallback(async(id:string)=>{","const selectConversation=React.useCallback(async(id:string)=>{");
+const selectConversationAction=blockBetween("const selectConversation=React.useCallback(async(id:string)=>{","const createConversation=React.useCallback(async()=>{");
+const createConversationAction=blockBetween("const createConversation=React.useCallback(async()=>{","const renameConversation=React.useCallback(async(conversation:Conversation)=>{");
+const deleteConversationAction=blockBetween("const deleteConversation=React.useCallback(async(conversation:Conversation)=>{","const createCharacter=React.useCallback(async(name:string)=>{");
+const deleteCharacterAction=blockBetween("const deleteCharacter=React.useCallback(async(id:string)=>{","const configurationForPreset=");
+const settingsResetStart=source.indexOf("const resetAppSettings=React.useCallback(async()=>{");
+const settingsResetEnd=source.indexOf("const savePromptOverride=React.useCallback",settingsResetStart);
+assert.ok(settingsResetStart>=0&&settingsResetEnd>settingsResetStart,"settings reset handler must be present");
+const settingsResetAction=source.slice(settingsResetStart,settingsResetEnd);
+assert.ok(chatStopAction.indexOf("onStopSpeech();")>=0&&chatStopAction.indexOf("onStopSpeech();")<chatStopAction.indexOf("await controller.stop();"),"Chat Stop cancels speech before stopping generation");
+assert.ok(chatRetryAction.indexOf("onStopSpeech();")>=0&&chatRetryAction.indexOf("onStopSpeech();")<chatRetryAction.indexOf("controller.retryLife("),"Nova Life retry cancels stale speech before restarting a turn");
+for(const [name,block] of [["character switch",selectCharacterAction],["conversation switch",selectConversationAction],["new conversation",createConversationAction]] as const){
+  assert.ok(block.includes("speechOutputController.stop("),"TTS is stopped immediately on "+name);
+  assert.ok(block.indexOf("speechOutputController.stop(")<block.indexOf("foundation.setNovaTurnSink(undefined)"),"TTS stops before the old "+name+" context is detached");
+}
+assert.ok(deleteConversationAction.includes("if(activeConversation?.id===conversation.id){\n      speechOutputController.stop("),"deleting active conversation cancels speech before replacement");
+assert.ok(deleteCharacterAction.includes("if(before?.id===id)speechOutputController.stop("),"deleting active character cancels speech");
+assert.ok(settingsResetAction.indexOf("speechOutputController.stop(")<settingsResetAction.indexOf("await foundation.resetSettings()"),"settings reset cancels audio before persistence");
+
 
 
 assert.equal(source.includes("function SettingsView("),false,"Legacy SettingsView component must be removed");
@@ -169,4 +190,20 @@ assert.equal(readChatDraft(unchangedOnFailure,draftA),"unsent A","failed or stal
 const afterSuccessfulSend=clearSubmittedChatDraft(drafts,draftA,"unsent A");
 assert.equal(readChatDraft(afterSuccessfulSend,draftA),"","successful send clears the matching submitted draft");
 assert.equal(readChatDraft(afterSuccessfulSend,draftB),"unsent B","successful send does not clear another conversation draft");
-console.log("desktop-ui-regression: ok");
+const ttsSettings=blockBetween("function TtsSettingsView(","function SettingsContainerView(");
+assert.match(ttsSettings,/Enable audio playback/,"TTS UI requires an explicit user gesture before playback");
+assert.match(settingsContainer,/ttsController:SpeechOutputController/,"settings container owns the dedicated speech controller prop");
+assert.match(settingsContainer,/ttsProviders:readonly TtsProviderDescriptor\[\]/,"settings container receives TTS providers from composition root");
+assert.doesNotMatch(providerPresets,/ttsController|ttsProviders/,"Chat Provider Presets remain independent of TTS settings");
+
+const tauriConfigPath=path.resolve(process.cwd(),"apps/desktop-host/src-tauri/tauri.conf.json");
+const tauriConfig=JSON.parse(fs.readFileSync(tauriConfigPath,"utf8")) as {app:{security:{csp:Record<string,string>}}};
+const connectPolicy=tauriConfig.app.security.csp["connect-src"];
+if(typeof connectPolicy!=="string")throw new Error("Tauri connect-src CSP policy must be present");
+const connectSources=connectPolicy.split(/\s+/);
+for(const origin of ["ws://127.0.0.1:3900","ws://localhost:3900","ws://[::1]:3900"]){
+  assert.ok(connectSources.includes(origin),"CSP allows only the configured loopback VoiceStudio WebSocket origin "+origin);
+}
+assert.ok(!connectSources.includes("ws:"),"CSP must not allow arbitrary WebSocket hosts");
+
+console.log("desktop-ui-regression: ok");console.log("desktop-ui-regression: ok");

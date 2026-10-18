@@ -15,7 +15,7 @@
       ],
       "csp": {
         "default-src": "'self' asset: customprotocol:",
-        "connect-src": "ipc: http://ipc.localhost http: https:",
+        "connect-src": "ipc: http://ipc.localhost http: https: ws://127.0.0.1:3900 ws://localhost:3900 ws://[::1]:3900",
         "img-src": "'self' asset: data: blob:",
         "style-src": "'self' 'unsafe-inline'",
         "script-src": "'self'"
@@ -40,7 +40,7 @@
     ],
     "windows": {
       "webviewInstallMode": {
-        "type": "skip"
+        "type": "downloadBootstrapper"
       },
       "nsis": {
         "startMenuFolder": "AI Companion Nova"
