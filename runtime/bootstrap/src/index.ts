@@ -881,7 +881,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       coreStatus:runtimeStatus==="running"&&degraded?"degraded":runtimeStatus,
       modules,
       providers:providerDiagnostics,
-      recentErrors:diagnosticsStore.recentErrors(),
+      recentErrors:diagnosticsStore.recentErrors(settingsManager.get().diagnostics.keepRecentEntries),
       capabilities:[...capabilities]
     };
   };
