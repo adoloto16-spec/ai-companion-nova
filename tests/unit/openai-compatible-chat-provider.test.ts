@@ -144,6 +144,11 @@ async function reasoningModesMapToExplicitProviderPayloads(){
   await provider(enabledHttp).chat({...request(),reasoning:{mode:"enabled",effort:"high"}});
   const enabledBody=JSON.parse(enabledHttp.requests[0]!.body!) as Record<string,unknown>;
   equal(enabledBody.reasoning_effort,"high","enabled reasoning uses requested effort");
+
+  const defaultHttp=new FakeHttpClient();
+  await provider(defaultHttp).chat({...request(),reasoning:{mode:"provider-default",effort:"high"}});
+  const defaultBody=JSON.parse(defaultHttp.requests[0]!.body!) as Record<string,unknown>;
+  equal(defaultBody.reasoning_effort,undefined,"provider-default does not become explicit low/high just because an effort preference is persisted");
 }
 
 async function requestMappingTest(){

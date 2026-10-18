@@ -774,8 +774,10 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     if(generation?.maxTokens!==undefined)payload.max_tokens=generation.maxTokens;
     if(generation?.topP!==undefined)payload.top_p=generation.topP;
     if(request.reasoning?.mode==="disabled")payload.reasoning_effort="none";
-    else if(request.reasoning?.effort==="low"||request.reasoning?.effort==="medium"||request.reasoning?.effort==="high")payload.reasoning_effort=request.reasoning.effort;
-    else if(request.reasoning?.mode==="enabled")payload.reasoning_effort="low";
+    else if(request.reasoning?.mode==="enabled"){
+      const effort=request.reasoning.effort;
+      payload.reasoning_effort=effort==="low"||effort==="medium"||effort==="high"?effort:"low";
+    }
     const responseFormat=generation?.responseFormat;
     if(responseFormat?.type==="json"){
       payload.response_format={type:"json_object"};

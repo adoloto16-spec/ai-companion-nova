@@ -2,7 +2,8 @@ import {ChatSessionController,ConversationSession} from "../../core/src";
 import {createFoundationRuntime} from "../../runtime/bootstrap/src";
 import {InMemoryCharacterStore} from "../../host/characters/src";
 import {InMemoryModelProfileStore} from "../../host/model-profiles/src";
-import {defaultModelProfile,type ChatRequest, type ChatResponse, type ModelProfile} from "../../contracts/src";
+import {defaultModelProfile,type ChatMessage,type ChatRequest,type ChatResponse,type ModelProfile,type ProviderConfiguration} from "../../contracts/src";
+import type {HttpClient,HttpClientRequest,HttpClientResponse,HttpClientStreamResponse} from "../../providers/chat/openai-compatible/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error(label+" expected "+String(expected)+" got "+String(actual))}
 function ok(value:unknown,label:string){if(!value)throw new Error(label)}
@@ -14,6 +15,92 @@ function responseFor(request:ChatRequest):ChatResponse{
     message:{id:request.requestId+":assistant",role:"assistant",content:"profile response"},
     finishReason:"stop"
   };
+}
+
+class LifeProfileHttpClient implements HttpClient{
+  readonly requests:HttpClientRequest[]=[];
+  async request(request:HttpClientRequest):Promise<HttpClientResponse>{
+    this.requests.push(request);
+    if(request.method==="GET")return {status:200,body:JSON.stringify({data:[{id:"discovered-model"}]})};
+    return {status:500,body:JSON.stringify({error:"Unexpected non-stream request in the Nova Life regression test."})};
+  }
+  async stream(request:HttpClientRequest):Promise<HttpClientStreamResponse>{
+    this.requests.push(request);
+    const content="Reactive reply from the pinned Model Profile.";
+    const event={
+      id:"life-profile-response",
+      model:"life-profile-model",
+      choices:[{index:0,delta:{role:"assistant",content},finish_reason:null}]
+    };
+    const body:AsyncIterable<string>={
+      async *[Symbol.asyncIterator](){
+        yield "data: "+JSON.stringify(event)+"\\n\\n";
+        yield "data: [DONE]\\n\\n";
+      }
+    };
+    return {status:200,body,headers:{"content-type":"text/event-stream"}};
+  }
+}
+
+async function lifeHonorsPinnedModelProfile():Promise<void>{
+  const http=new LifeProfileHttpClient();
+  const providerConfig=(baseUrl:string,model:string):ProviderConfiguration=>({
+    apiVersion:"1",schemaVersion:"1",providerId:"openai-compatible",enabled:true,
+    baseUrl,model,credentialReference:null,timeoutMs:1_000
+  });
+  const runtime=await createFoundationRuntime({
+    characterStore:new InMemoryCharacterStore(),
+    httpClient:http,
+    activeProviderPresetId:"preset-life-global",
+    providerPresetConfigurations:[
+      {presetId:"preset-life-global",configuration:providerConfig("https://global-life.example/v1","global-model")},
+      {presetId:"preset-life-profile",configuration:providerConfig("https://profile-life.example/v1","preset-default-model")}
+    ]
+  });
+  await runtime.start();
+  try{
+    const character=await runtime.getActiveCharacter();
+    const conversation=await runtime.getActiveConversation(character.id);
+    const userMessage:ChatMessage={id:"life-profile-user-message",role:"user",content:"Answer through the model configured for Nova Life."};
+    await runtime.updateConversation(character.id,conversation.id,{messages:[...conversation.messages,userMessage]});
+    runtime.setActiveModelProfile({
+      ...defaultModelProfile(character.id),
+      providerPresetId:"preset-life-profile",
+      model:"life-profile-model",
+      generation:{maxTokens:123}
+    });
+    const committed:Array<{speech:string;providerPresetId?:string;model?:string}>=[];
+    runtime.setNovaTurnSink({
+      async commit(turn,context){
+        committed.push({speech:turn.speech,providerPresetId:context.providerPresetId,model:context.model});
+      },
+      async streamSpeech(){}
+    });
+    const lifeStarted=runtime.startLife();
+    const accepted=runtime.wakeMindForUserMessage({
+      characterId:character.id,conversationId:conversation.id,
+      userMessageId:userMessage.id!,turnId:"life-profile-reactive-turn"
+    });
+    equal(accepted,true,"Life accepts the exact persisted reactive user turn");
+    await lifeStarted;
+    for(let attempt=0;attempt<200&&committed.length===0;attempt++)
+      await new Promise(resolve=>setTimeout(resolve,5));
+    equal(committed.length,1,"reactive turn commits exactly one reply through Nova Life");
+    equal(committed[0]?.speech,"Reactive reply from the pinned Model Profile.","actual provider stream becomes the committed public reply");
+    equal(committed[0]?.providerPresetId,"preset-life-profile","Life uses the profile's pinned provider preset rather than the global preset");
+    equal(committed[0]?.model,"life-profile-model","turn context records the profile's explicit model");
+
+    const request=http.requests.find(item=>item.url==="https://profile-life.example/v1/chat/completions");
+    ok(request?.body,"Nova Life sends a request to the actual selected profile endpoint");
+    const body=JSON.parse(request!.body!) as Record<string,unknown>;
+    equal(body.model,"life-profile-model","the actual provider request uses the pinned Model Profile model");
+    equal(body.max_tokens,123,"Model Profile generation limit reaches the actual Nova Life provider request");
+    equal(http.requests.some(item=>item.url==="https://global-life.example/v1/chat/completions"),false,"the incorrect global preset is not used for the reactive turn");
+  }finally{
+    await runtime.stopLife();
+    runtime.setNovaTurnSink(undefined);
+    await runtime.stop();
+  }
 }
 
 async function main(){
@@ -131,6 +218,7 @@ async function main(){
     equal(await profileStore.load(gm.id),undefined,"deleted Character profile no longer applies");
     ok(await profileStore.load(nova.id),"Nova profile remains after GM deletion");
   }finally{await runtime.stop()}
+  await lifeHonorsPinnedModelProfile();
   console.log("PASS model profile runtime integration tests");
 }
 void main().catch(error=>{console.error(error);process.exitCode=1});
