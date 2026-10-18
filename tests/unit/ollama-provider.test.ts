@@ -17,6 +17,7 @@ import {
   type OllamaHttpStreamResponse
 } from "../../providers/chat/ollama/src/index";
 import { testProviderPresetConfiguration } from "../../runtime/bootstrap/src/provider-configuration";
+import { AiRuntime, ProviderRegistry } from "../../core/src";
 
 function equal(actual: unknown, expected: unknown, label: string): void {
   if (actual !== expected) throw new Error(label + ": expected " + String(expected) + ", got " + String(actual));
@@ -480,6 +481,37 @@ async function apiErrorTest(): Promise<void> {
     "Ollama API error");
 }
 
+async function repeatSettingsPassCanonicalValidationAndReachNativeWireJson(): Promise<void> {
+  const http = new FakeOllamaHttpClient();
+  http.requestHandler = async request => {
+    if (request.url.endsWith("/api/show")) return {status: 503, body: "metadata unavailable"};
+    return {status: 200, body: JSON.stringify({
+      model: "llama3.2:latest",
+      message: {role: "assistant", content: "validated native request"},
+      done: true,
+      done_reason: "stop"
+    })};
+  };
+  const registry = new ProviderRegistry();
+  registry.register(provider(http), ["chat"]);
+  const runtime = new AiRuntime(registry);
+  const response = await runtime.generate(chatRequest({
+    providerId: "ollama",
+    generation: {temperature: 0.35, topP: 0.75, maxTokens: 120, repeatPenalty: 1.12, repeatLastN: 64}
+  }));
+  equal(response.message.content, "validated native request", "canonical validation permits all supported Ollama generation settings");
+  const chat = http.requests.find(request => request.url.endsWith("/api/chat"));
+  ok(chat, "validated request reaches POST /api/chat");
+  const body = JSON.parse(chat.body ?? "{}") as Record<string, unknown>;
+  deepEqual(body.options, {
+    temperature: 0.35,
+    top_p: 0.75,
+    num_predict: 120,
+    repeat_penalty: 1.12,
+    repeat_last_n: 64
+  }, "native Ollama JSON preserves canonical generation settings");
+}
+
 async function disabledReasoningIsExplicitWithoutModelMetadata(): Promise<void> {
   const http = new FakeOllamaHttpClient();
   http.requestHandler = async request => {
@@ -534,6 +566,7 @@ async function main(): Promise<void> {
     ["Cancellation and timeouts", cancellationAndTimeoutTest],
     ["Stream timeout is an inactivity deadline", streamTimeoutIsInactivityDeadlineTest],
     ["API and missing model errors", apiErrorTest],
+    ["Repeat settings pass canonical validation and serialize to native JSON", repeatSettingsPassCanonicalValidationAndReachNativeWireJson],
     ["Disabled reasoning survives missing /api/show metadata", disabledReasoningIsExplicitWithoutModelMetadata],
     ["Connection test runtime path", connectionTestUsesNativeTransport]
   ];

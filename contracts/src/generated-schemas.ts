@@ -1504,6 +1504,14 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             "minimum": 0,
             "maximum": 1
           },
+          "repeatPenalty": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "repeatLastN": {
+            "type": "integer",
+            "minimum": -1
+          },
           "responseFormat": {
             "type": "object",
             "additionalProperties": false,

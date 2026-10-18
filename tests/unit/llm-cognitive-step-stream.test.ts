@@ -50,6 +50,16 @@ async function disabledReasoningReachesProvidersWithoutReasoningCapability():Pro
   equal(requests[0]?.reasoning,{mode:"disabled"},"explicit reasoning opt-out reaches the provider even when its capability flag is false");
 }
 
+async function enabledReasoningReachesProvidersWithoutReasoningCapability():Promise<void>{
+  const requests:ChatRequest[]=[];
+  const runtime={
+    getChatProviderCapabilities:()=>({toolCalling:false,reasoning:false,streaming:true}),
+    async chat(request:ChatRequest):Promise<ChatResponse>{requests.push(request);return responseFor(request,"Ordinary answer.");}
+  };
+  await createStep(runtime,undefined,{getReasoningOptions:()=>({mode:"enabled",effort:"high"})}).run(context(()=>{}));
+  equal(requests[0]?.reasoning,{mode:"enabled",effort:"high"},"explicit reasoning opt-in reaches the provider even when its capability flag is false");
+}
+
 async function profileGenerationOptionsReachNativeRequests():Promise<void>{
   const requests:ChatRequest[]=[];
   const runtime={async chat(request:ChatRequest):Promise<ChatResponse>{requests.push(request);return responseFor(request,"Completed answer.");}};
@@ -203,6 +213,7 @@ async function backgroundStepMayReturnNoSpeech():Promise<void>{
 
 async function main():Promise<void>{
   await disabledReasoningReachesProvidersWithoutReasoningCapability();
+  await enabledReasoningReachesProvidersWithoutReasoningCapability();
   await profileGenerationOptionsReachNativeRequests();
   await ordinaryTextStreamsSeparatelyFromReasoning();
   await nativeToolRoundsReturnResultsBeforeFinalSpeech();
