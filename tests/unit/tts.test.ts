@@ -946,6 +946,42 @@ async function lifeSpeechEventsReachAudioAndAwaitPhysicalPlayback():Promise<void
   }
 }
 
+async function failedNovaLifeTurnWaitsForStreamedSpeech():Promise<void>{
+  const output=new PlaybackControlledOutput(),provider=new RecordingProvider();
+  const settings:TtsSettings={...DEFAULT_TTS_SETTINGS,enabled:true,activePresetId:"test-preset",presets:[preset()]};
+  const controller=new SpeechOutputController({getSettings:()=>settings,getProvider:id=>id===provider.id?provider:undefined,output});
+  await controller.unlockPlayback();
+  const runtime=new MindRuntime({
+    cognitiveStep:{async run(context){
+      await context.onSpeechEvent?.({type:"start",conversationId:"conversation.failed-speech"});
+      await context.onSpeechEvent?.({type:"delta",conversationId:"conversation.failed-speech",text:"This streamed speech must finish."});
+      // Mimic another native-tool round; it must not clear speech streamed by the prior round.
+      await context.onSpeechEvent?.({type:"start",conversationId:"conversation.failed-speech"});
+      throw new Error("fixture provider failure after public speech");
+    }},
+    schedule:{mode:"fixed",defaultIntervalMs:30_000,minIntervalMs:3_000,maxIntervalMs:300_000,maxRequestsPerHour:null},
+    turnSink:{
+      async commit(){throw new Error("failed cognitive turn must not commit");},
+      async streamSpeech(event){
+        if(event.type==="finish"){await controller.finishTurn(event.turnId);return;}
+        await controller.handleSpeechEvent(event);
+      }
+    }
+  });
+  runtime.setActiveCharacter("character.failed-speech");
+  try{
+    await runtime.start();
+    await until(()=>output.pendingPlayback.size===1,"public speech from a failed turn must reach playback");
+    equal(runtime.getState().lifecycleState,"thinking","Nova Life waits while streamed speech is still playing after a model error");
+    equal(provider.requests.length,1,"a repeated native-tool start does not erase streamed public speech");
+    output.finishPlayback(0);
+    await until(()=>runtime.getState().lifecycleState==="waiting","failed turn schedules its backoff only after started speech drains");
+    ok(runtime.getState().recentTrace?.some(entry=>entry.result==="error"),"failed model turn remains visible in the trace");
+  }finally{
+    controller.stop("Failure-drain test cleanup.");
+    await runtime.stop();
+  }
+}
 async function healthyConnectionDoesNotMaskLockedPlayback():Promise<void>{
   const output=new PlaybackControlledOutput(),provider=new RecordingProvider(),diagnostics:string[]=[];
   const settings:TtsSettings={...DEFAULT_TTS_SETTINGS,enabled:true,activePresetId:"test-preset",presets:[preset()]};
@@ -1027,6 +1063,7 @@ async function main():Promise<void>{
   await synthesisRunsAheadOfPlaybackAndKeepsFifo();
   await segmentSynthesisFailureDoesNotStopAlreadyQueuedSpeech();
   await assistantTurnsWaitForPlaybackAndInterruptionClearsQueue();
+  await failedNovaLifeTurnWaitsForStreamedSpeech();
   await noFirstAudioTimesOutAndReleasesTurn();
   await healthyConnectionDoesNotMaskLockedPlayback();
   await lifeTurnFinalizesAfterPlaybackTimeoutWithoutLosingText();
