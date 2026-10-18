@@ -184,6 +184,12 @@ async function main(){
   equal(migratedV12.prompts.overrides["nova-system-json"],"preserved v12 prompt override","v12 migration preserves prompt registry overrides");
   equal(migratedV12.tts.enabled,false,"v12 migration leaves TTS disabled");
   equal(migratedV12.tts.presets[0]?.baseUrl,"http://127.0.0.1:3900","v12 migration uses safe loopback TTS defaults");
+  const oldV14Tts=JSON.parse(JSON.stringify(defaultAppSettings())) as Record<string,any>;
+  delete oldV14Tts.tts.finishTimeoutMs;delete oldV14Tts.tts.startTimeoutMs;delete oldV14Tts.tts.segmentGapMs;
+  const migratedOldV14Tts=migrateAppSettings(oldV14Tts);
+  equal(migratedOldV14Tts.tts.finishTimeoutMs,60000,"existing v14 settings receive the TTS maximum duration default");
+  equal(migratedOldV14Tts.tts.startTimeoutMs,10000,"existing v14 settings receive the TTS start timeout default");
+  equal(migratedOldV14Tts.tts.segmentGapMs,500,"existing v14 settings receive the TTS sentence gap default");
   const invalidTtsSecret={...defaultAppSettings(),tts:{...defaultAppSettings().tts,presets:[{...defaultAppSettings().tts.presets[0]!,providerOptions:{apiKey:"should-not-be-persisted"}}]}};
   ok(validateAppSettings(invalidTtsSecret).some(error=>error.toLowerCase().includes("secret")),"TTS settings reject secret-bearing provider option keys");
   let rejectedUnknownTts=false;
