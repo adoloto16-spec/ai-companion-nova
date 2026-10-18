@@ -26,6 +26,12 @@ function requestId(): string {
   return "ollama-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
 }
 
+export function isAllowedOllamaRoute(pathname: string, method: string): boolean {
+  if (pathname === "/api/tags" || pathname === "/api/version") return method === "GET";
+  if (pathname === "/api/chat" || pathname === "/api/show") return method === "POST";
+  return false;
+}
+
 function routeFor(request: OllamaHttpRequest): { baseUrl: string; route: string } {
   let url: URL;
   try { url = new URL(request.url); }
@@ -35,8 +41,7 @@ function routeFor(request: OllamaHttpRequest): { baseUrl: string; route: string 
     throw new Error("Ollama HTTP transport is restricted to HTTP loopback URLs.");
   }
   if (url.username || url.password || url.search || url.hash) throw new Error("Ollama URL cannot contain credentials, query, or fragment components.");
-  if (!["/api/tags", "/api/version", "/api/chat"].includes(url.pathname)) throw new Error("Ollama HTTP route is not allowed.");
-  if ((url.pathname === "/api/chat") !== (request.method === "POST")) throw new Error("Ollama HTTP method is not allowed for this route.");
+  if (!isAllowedOllamaRoute(url.pathname, request.method)) throw new Error("Ollama HTTP route or method is not allowed.");
   return { baseUrl: url.origin, route: url.pathname };
 }
 
@@ -208,8 +213,7 @@ export class NovaHttpClient implements CompatibleHttpClient {
       const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
       if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "::1"].includes(hostname)) return false;
       if (url.username || url.password || url.search || url.hash) return false;
-      if (!["/api/tags", "/api/version", "/api/chat"].includes(url.pathname)) return false;
-      return url.pathname === "/api/chat" ? request.method === "POST" : request.method === "GET";
+      return isAllowedOllamaRoute(url.pathname, request.method);
     } catch {
       return false;
     }

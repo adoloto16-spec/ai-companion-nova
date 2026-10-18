@@ -467,15 +467,17 @@ export class OllamaChatProvider implements ChatProvider {
 
   private resolveThink(options:ChatReasoningOptions|undefined,metadata:OllamaModelMetadata|undefined):boolean|string|undefined{
     if(!options||options.mode==="provider-default")return undefined;
+    // Explicit opt-out is authoritative even when /api/show is unavailable or older Ollama
+    // builds omit thinking metadata. Never collapse "disabled" into provider-default.
+    if(options.mode==="disabled")return false;
     const values=metadata?.thinking?.values;
-    if(!values||values.length===0)return undefined;
-    if(options.mode==="disabled")return values.includes(false)?false:undefined;
+    if(!values||values.length===0)return true;
     if(options.effort&&values.includes(options.effort))return options.effort;
     if(values.includes(true))return true;
     const defaultValue=metadata?.thinking?.default;
     if(typeof defaultValue==="string"&&values.includes(defaultValue))return defaultValue;
     const named=values.find(value=>typeof value==="string");
-    return typeof named==="string"?named:undefined;
+    return typeof named==="string"?named:(values.includes(false)?false:true);
   }
 
   private mapToolCalls(raw:unknown,request:ChatRequest):ChatToolCall[]{
