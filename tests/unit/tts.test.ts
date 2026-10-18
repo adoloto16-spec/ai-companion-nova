@@ -676,13 +676,16 @@ async function webAudioSchedulesFifoWithoutOverlap():Promise<void>{
   };
   const output=new WebAudioOutputAdapter({createContext:()=>mockContext as unknown as AudioContext,maxScheduleAheadSeconds:10});
   await output.unlock();output.startSession("fifo",metadata);
-  await output.enqueue("fifo",20,metadata,new Uint8Array([0xe8,0x03,0x18,0xfc]),new AbortController().signal);
+  await output.enqueue("fifo",20,metadata,new Uint8Array([0xe8,0x03,0x18,0xfc]),new AbortController().signal,
+    {segmentSequence:0,gapBeforeMs:0});
   const other:TtsAudioMetadata={format:"pcm16le",sampleRate:44100,channels:1};
-  await output.enqueue("fifo",10,other,new Uint8Array([0xd0,0x07,0x30,0xf8]),new AbortController().signal);
+  await output.enqueue("fifo",10,other,new Uint8Array([0xd0,0x07,0x30,0xf8]),new AbortController().signal,
+    {segmentSequence:1,gapBeforeMs:500});
   await until(()=>scheduled.length===2,"two queued PCM chunks should be scheduled");
   equal(Math.round(scheduled[0]!.sample*1000),31,"PCM16 samples are converted to Float32 correctly");
   equal(Math.round(scheduled[1]!.sample*1000),61,"second chunk retains FIFO order regardless of transport sequence labels");
   ok(scheduled[1]!.when+1e-9>=scheduled[0]!.when+scheduled[0]!.duration,"consecutive chunks do not overlap");
+  ok(scheduled[1]!.when+1e-9>=scheduled[0]!.when+scheduled[0]!.duration+0.5,"configured 500 ms sentence pause is applied by the Web Audio scheduler");
   output.stop("fifo");
   await output.dispose();
 }
