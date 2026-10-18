@@ -78,7 +78,7 @@ async function lifeHonorsPinnedModelProfile():Promise<void>{
       ...defaultModelProfile(character.id),
       providerPresetId:"preset-life-profile",
       model:"life-profile-model",
-      generation:{maxTokens:123,repeatPenalty:1.12,repeatLastN:64,responseFormat:{type:"json"}}
+      generation:{maxTokens:123,repeatPenalty:1.12,repeatLastN:64,responseFormat:{type:"json" as const}}
     };
     runtime.setActiveModelProfile(profile);
     const conversationSession=new ConversationSession(conversation.id,character.id);

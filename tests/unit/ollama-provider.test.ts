@@ -502,7 +502,7 @@ async function repeatSettingsPassCanonicalValidationAndReachNativeWireJson(): Pr
   equal(response.message.content, "{\"ok\":true}", "canonical validation permits all supported Ollama generation settings and response format");
   const chat = http.requests.find(request => request.url.endsWith("/api/chat"));
   ok(chat, "validated request reaches POST /api/chat");
-  const body = JSON.parse(chat.body ?? "{}") as Record<string, unknown>;
+  const body = JSON.parse(chat!.body ?? "{}") as Record<string, unknown>;
   deepEqual(body.options, {
     temperature: 0.35,
     top_p: 0.75,
@@ -548,7 +548,7 @@ async function enabledReasoningSurvivesMissingModelMetadata(): Promise<void> {
   equal(response.message.content,"generation without metadata","missing /api/show metadata does not block explicit reasoning or public generation");
   const chat = http.requests.find(item=>item.url.endsWith("/api/chat"));
   ok(chat,"explicit reasoning still reaches POST /api/chat");
-  equal((JSON.parse(chat.body!) as Record<string,unknown>).think,true,"enabled reasoning maps to native think:true when model metadata is unavailable");
+  equal((JSON.parse(chat!.body!) as Record<string,unknown>).think,true,"enabled reasoning maps to native think:true when model metadata is unavailable");
 }
 
 async function connectionTestUsesNativeTransport(): Promise<void> {
