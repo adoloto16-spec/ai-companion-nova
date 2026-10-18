@@ -10,8 +10,6 @@ async function main():Promise<void>{
   if(rawMode!=="disabled"&&rawMode!=="enabled"&&rawMode!=="provider-default")
     throw new Error("OLLAMA_REASONING_MODE must be disabled, enabled, or provider-default.");
   const effort=process.env.OLLAMA_REASONING_EFFORT?.trim();
-  if(effort&&!["low","medium","high","minimal"].includes(effort))
-    throw new Error("OLLAMA_REASONING_EFFORT must be a model-supported reasoning level (for example low, medium, high).");
   if(effort&&rawMode!=="enabled")throw new Error("OLLAMA_REASONING_EFFORT requires OLLAMA_REASONING_MODE=enabled.");
   const reasoning:ChatReasoningOptions={mode:rawMode as ChatReasoningOptions["mode"],...(effort?{effort:effort as NonNullable<ChatReasoningOptions["effort"]>}:{})};
   const credentials:CredentialStore={

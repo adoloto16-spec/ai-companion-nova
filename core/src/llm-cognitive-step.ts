@@ -151,6 +151,7 @@ export class LLMCognitiveStep implements CognitiveStep {
       maxTokens:configuredGeneration?.maxTokens??1800,
       ...(configuredGeneration?.repeatPenalty!==undefined?{repeatPenalty:configuredGeneration.repeatPenalty}:{}),
       ...(configuredGeneration?.repeatLastN!==undefined?{repeatLastN:configuredGeneration.repeatLastN}:{}),
+      ...(configuredGeneration?.responseFormat!==undefined?{responseFormat:configuredGeneration.responseFormat}:{}),
     };
     const reqFor=(id:string):ChatRequest=>({
       apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION,requestId:id,model,

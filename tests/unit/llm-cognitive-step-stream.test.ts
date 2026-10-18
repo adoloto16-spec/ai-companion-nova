@@ -86,7 +86,7 @@ async function providerRequestLifecycleDiagnosticsAreStructured():Promise<void>{
 async function profileGenerationOptionsReachNativeRequests():Promise<void>{
   const requests:ChatRequest[]=[];
   const runtime={async chat(request:ChatRequest):Promise<ChatResponse>{requests.push(request);return responseFor(request,"Completed answer.");}};
-  const generation={temperature:0.45,topP:0.8,maxTokens:777,repeatPenalty:1.1,repeatLastN:48};
+  const generation={temperature:0.45,topP:0.8,maxTokens:777,repeatPenalty:1.1,repeatLastN:48,responseFormat:{type:"json" as const}};
   await createStep(runtime,undefined,{getGenerationOptions:()=>generation}).run(context(()=>{}));
   equal(requests[0]?.generation,generation,"Model Profile generation settings reach actual native request bodies");
 }

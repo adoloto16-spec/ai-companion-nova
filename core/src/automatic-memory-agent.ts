@@ -219,6 +219,7 @@ export class AutomaticMemoryAgent{
         return undefined;
       }
       if(parsed.kind==="invalid"){
+        this.recordOutcome("MEMORY_AGENT_VALIDATION_REJECTED","Automatic Memory Agent response failed output-mode validation.",request.turnId,presetId,model,{candidateCount:0,reason:"invalid-response",outputMode});
         this.recordFailure("INVALID_RESPONSE","Automatic Memory Agent response did not match its configured output mode.",request.turnId,presetId,model);
         return undefined;
       }
