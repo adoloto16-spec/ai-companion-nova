@@ -2225,6 +2225,21 @@ function TtsSettingsView({settings,onChange,onSave,saving,message,controller,pro
     </section>
     <section>
       <h3>Playback and diagnostics</h3>
+      <label>Maximum duration of an assistant speech turn (ms)
+        <input type="number" min={10000} max={600000} step={10000} value={settings.finishTimeoutMs}
+          onChange={event=>onChange({...settings,finishTimeoutMs:Number(event.target.value)})} disabled={saving}/>
+        <small>Default 60000 ms. Bounds both synthesis completion and physical playback.</small>
+      </label>
+      <label>Time to start first audio (ms)
+        <input type="number" min={1000} max={60000} step={1000} value={settings.startTimeoutMs}
+          onChange={event=>onChange({...settings,startTimeoutMs:Number(event.target.value)})} disabled={saving}/>
+        <small>Default 10000 ms. A stalled first segment is cancelled so Nova Life can continue.</small>
+      </label>
+      <label>Pause between sentences (ms)
+        <input type="number" min={0} max={5000} step={50} value={settings.segmentGapMs}
+          onChange={event=>onChange({...settings,segmentGapMs:Number(event.target.value)})} disabled={saving}/>
+        <small>Default 500 ms. Does not insert pauses inside one segment.</small>
+      </label>
       <div className="row">
         <button type="button" onClick={()=>void controller.unlockPlayback().catch(error=>setConnectionMessage(error instanceof Error?error.message:"Audio playback could not be enabled."))}>Enable audio playback</button>
         <button type="button" onClick={()=>void checkConnection()} disabled={!selected}>Check connection</button>
@@ -2461,6 +2476,10 @@ function App(){
       memoryExtractionEnabled:()=>{
         return foundationRef.current?.getSettings().chat.automaticLongTermMemory??true;
       },
+      reasoningOptionsProvider:()=>{
+        const settings=foundationRef.current?.getSettings()??defaultAppSettings();
+        return {mode:settings.chat.reasoningMode,effort:settings.chat.reasoningEffort};
+      },
       traceStore:foundationRef.current?.getChatTraceStore(),
       beforeUserMessage:async snapshot=>{
         const foundation=foundationRef.current;
@@ -2580,6 +2599,10 @@ function App(){
           speechOutputController.stop("Dialogue or character changed.");
           return;
         }
+        if(event.type==="finish"){
+          await speechOutputController.finishTurn(event.turnId);
+          return;
+        }
         if(event.type!=="emotion")chatController.updateNovaTurnStream(event);
         await speechOutputController.handleSpeechEvent(event);
       },
@@ -2588,8 +2611,6 @@ function App(){
         const current=chatController.getSnapshot();
         if(current.characterId===turn.characterId&&current.conversationId===turn.conversationId){
           chatController.failLifeTurn(turn.userMessageId,reason);
-          // Keep audio aligned with visible incomplete speech after a real failure; cancellations are cleared below.
-          if(!/cancel|superseded|stale-context|character-change|life-off/i.test(reason))void speechOutputController.finishTurn(turn.turnId);
         }
       }
     };
