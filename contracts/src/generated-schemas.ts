@@ -462,6 +462,10 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
               "memory-judge.system": {
                 "type": "string",
                 "maxLength": 12000
+              },
+              "memory-agent.system": {
+                "type": "string",
+                "maxLength": 12000
               }
             }
           }
