@@ -58,6 +58,7 @@ interface Session {
   segmentStates:Map<number,TtsSegmentStatus>;
   startTimeoutMs:number;
   segmentGapMs:number;
+  segmentError?:string;
   startTimer?:ReturnType<typeof setTimeout>;
   finishPromise?:Promise<void>;
 }
@@ -279,11 +280,17 @@ export class SpeechOutputController {
     const timeoutMs=this.options.finishTimeoutMs!==undefined
       ?Math.max(1,Math.floor(this.options.finishTimeoutMs))
       :Math.max(10_000,Math.min(600_000,Math.floor(this.options.getSettings().finishTimeoutMs??DEFAULT_FINISH_TIMEOUT_MS)));
+    const finishStartedAt=Date.now();
     const completion=(async()=>{
       for(const text of session.segmenter.finish())await this.enqueueSentence(session,text,session.emotion);
       this.ensureWorker(session);
       await this.waitForSynthesis(session);
       if(session.failed||aborted(session.abort.signal))return;
+      if(session.segmentError&&session.hasAudio){
+        // Release Nova Life immediately on a synthesis error, but keep already-queued audio active.
+        void this.drainFailedSessionAfterPlayback(session,Math.max(1,timeoutMs-(Date.now()-finishStartedAt)));
+        return;
+      }
       if(session.outputSequence>0&&this.options.output.waitForPlayback)
         await this.options.output.waitForPlayback(session.id,session.abort.signal);
       if(session.failed||aborted(session.abort.signal))return;
@@ -406,11 +413,11 @@ export class SpeechOutputController {
   }
 
   private async appendText(session:Session,text:string):Promise<void>{
-    if(this.sessions.get(session.id)!==session||session.abort.signal.aborted||session.failed||session.finishing)return;
+    if(this.sessions.get(session.id)!==session||session.abort.signal.aborted||session.failed||session.finishing||session.segmentError)return;
     for(const sentence of session.segmenter.push(text))await this.enqueueSentence(session,sentence,session.emotion);
   }
   private async enqueueSentence(session:Session,text:string,emotion:string):Promise<void>{
-    if(!text.trim()||this.sessions.get(session.id)!==session||session.abort.signal.aborted||session.failed)return;
+    if(!text.trim()||this.sessions.get(session.id)!==session||session.abort.signal.aborted||session.failed||session.segmentError)return;
     if(text.length>MAX_SENTENCE_CHARS*2)throw new Error("A TTS sentence exceeded the safe splitting limit.");
     while(!session.abort.signal.aborted&&!session.failed&&this.sessions.get(session.id)===session&&
       (session.queue.length>=MAX_PENDING_SENTENCES||session.queuedChars+text.length>MAX_PENDING_TEXT_CHARS)){
@@ -447,8 +454,13 @@ export class SpeechOutputController {
         this.options.output.markSegmentSynthesisComplete?.(session.id,task.sequence);
         // A failed later segment must not stop audio that has already entered playback.
         if(!(error instanceof TtsOutputError)&&session.hasAudio){
+          session.segmentError=message;
+          session.segmenter.reset();
+          for(const queued of session.queue)session.segmentStates.set(queued.sequence,"cancelled");
+          session.queue.length=0;session.queuedChars=0;
+          for(const resolve of session.waitingWriters.splice(0))resolve();
           this.setStatus({state:"error",message,sessionId:session.id});
-          continue;
+          return;
         }
         this.cancelSession(session,message,true);
         this.setStatus({state:"error",message,sessionId:session.id});
@@ -534,6 +546,48 @@ export class SpeechOutputController {
   }
   private wakeQueueWaiters(session:Session):void{
     for(const resolve of session.queueWaiters.splice(0))resolve();
+  }
+  private async drainFailedSessionAfterPlayback(session:Session,timeoutMs:number):Promise<void>{
+    let timeout:ReturnType<typeof setTimeout>|undefined;
+    try{
+      const playback=(async()=>{
+        if(session.outputSequence>0&&this.options.output.waitForPlayback)
+          await this.options.output.waitForPlayback(session.id,session.abort.signal);
+      })();
+      const deadline=new Promise<void>((_resolve,reject)=>{
+        timeout=setTimeout(()=>{
+          const error=new Error("Speech synthesis or playback exceeded its "+timeoutMs+" ms completion deadline.");
+          error.name="TimeoutError";reject(error);
+        },timeoutMs);
+      });
+      await Promise.race([playback,deadline]);
+      if(session.failed||aborted(session.abort.signal))return;
+      this.releaseSession(session);
+      // Do not overwrite status for a later session already using the output.
+      if(!this.active)this.setStatus({
+        state:"error",
+        message:"Speech playback drained, but a later segment failed: "+(session.segmentError??"TTS synthesis failed."),
+        sessionId:session.id
+      });
+    }catch(error){
+      if(aborted(session.abort.signal))return;
+      const message=safeError(error);
+      this.reportDiagnostic("TTS_FINISH_FAILED",message);
+      this.cancelSession(session,message,true);
+      this.setStatus({state:"error",message,sessionId:session.id});
+    }finally{
+      if(timeout!==undefined)clearTimeout(timeout);
+    }
+  }
+  private releaseSession(session:Session):void{
+    this.clearStartTimeout(session);
+    this.sessions.delete(session.id);
+    const wasActive=this.active===session;
+    this.pendingSessions.splice(0,this.pendingSessions.length,...this.pendingSessions.filter(item=>item!==session));
+    if(wasActive){
+      this.active=undefined;
+      this.activateNextSession();
+    }
   }
   private armStartTimeout(session:Session):void{
     if(session.playbackStarted||session.startTimer!==undefined||session.failed)return;
