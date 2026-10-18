@@ -17,6 +17,11 @@ export interface ChatStreamDelta extends ChatStreamEnvelope{
   text:string;
 }
 
+export interface ChatStreamReasoningDelta extends ChatStreamEnvelope{
+  type:"reasoning";
+  text:string;
+}
+
 export interface ChatStreamUsage extends ChatStreamEnvelope{
   type:"usage";
   usage:ChatUsage;
@@ -33,7 +38,7 @@ export interface ChatStreamError extends ChatStreamEnvelope{
   error:ChatError;
 }
 
-export type ChatStreamEvent=ChatStreamDelta|ChatStreamUsage|ChatStreamDone|ChatStreamError;
+export type ChatStreamEvent=ChatStreamDelta|ChatStreamReasoningDelta|ChatStreamUsage|ChatStreamDone|ChatStreamError;
 
 export interface ChatStreamHandlers{
   onEvent(event:ChatStreamEvent):void|Promise<void>;

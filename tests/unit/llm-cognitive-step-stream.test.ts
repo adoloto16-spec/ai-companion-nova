@@ -1,9 +1,6 @@
-import {LLMCognitiveStep} from "../../core/src/llm-cognitive-step";
+import {LLMCognitiveStep,type LLMCognitiveStepOptions} from "../../core/src/llm-cognitive-step";
 import type {CognitiveStepContext} from "../../core/src/mind-runtime";
-import type {AssembledContext,Character,ChatMessage,ChatRequest,ChatResponse,ChatStreamHandlers,ChatStreamOptions,Conversation} from "../../contracts/src";
-import {serializeNovaTurn} from "../../contracts/src";
-import type {PromptId} from "../../contracts/src";
-import type {NovaTurn} from "../../contracts/src/nova-turn";
+import type {AssembledContext,Character,ChatMessage,ChatRequest,ChatResponse,ChatStreamHandlers,ChatStreamOptions,Conversation,ChatStreamEvent} from "../../contracts/src";
 
 function equal(actual:unknown,expected:unknown,label:string):void{
   if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error(label+" expected "+JSON.stringify(expected)+" got "+JSON.stringify(actual));
@@ -21,7 +18,7 @@ function context(onSpeechEvent:CognitiveStepContext["onSpeechEvent"]):CognitiveS
   return {characterId:character.id,state:{lifecycleState:"thinking",nextWakeAt:null,recentTrace:[]},signal:new AbortController().signal,wakeReason:"user-message",
     userTurn:{characterId:character.id,conversationId:conversation.id,userMessageId:userMessage.id!,turnId:"turn.stream"},onSpeechEvent};
 }
-function createStep(runtime:unknown,mode:"structured"|"plain"="structured",getPrompt?:(id:PromptId)=>string):LLMCognitiveStep{
+function createStep(runtime:unknown,getPrompt?:(id:import("../../contracts/src").PromptId)=>string,overrides:Partial<Pick<LLMCognitiveStepOptions,"getAvailableTools"|"executeTool"|"getReasoningOptions"|"getShowReasoningInDiagnostics"|"getGenerationOptions">>={}):LLMCognitiveStep{
   return new LLMCognitiveStep({
     runtime:runtime as never,
     getCharacter:async()=>character,
@@ -32,25 +29,28 @@ function createStep(runtime:unknown,mode:"structured"|"plain"="structured",getPr
     getChatModel:()=>"fake-model",
     getChatModelForPreset:async()=>"unused",
     getCognitiveSchedule:()=>schedule,
-    getOutputMode:()=>mode,
+    getAvailableTools:()=>[{name:"read_memory",description:"Search saved character memory",parameters:{type:"object"}}],
+    getReasoningOptions:()=>({mode:"provider-default"}),
+    getShowReasoningInDiagnostics:()=>true,
+    ...overrides,
     ...(getPrompt?{getPrompt}:{}),
-    getAvailableTools:()=>[{name:"read_memory",description:"Search saved character memory",parameters:{type:"object"}}]
   });
 }
-function delta(request:ChatRequest,text:string){
-  return {apiVersion:"1" as const,schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.stream",model:request.model,type:"delta" as const,text};
-}
-function turnJson(speech:string):string{
-  return JSON.stringify({speech,version:1,situation:"situation-private",thoughts:"thoughts-private",emotion:"emotion-private",
-    tools:[{name:"read_memory",arguments:{query:"favorite color"}}],longMemory:"Prefers deep blue.",nextWakeMs:45000});
-}
-function taggedTurn(speech:string):string{
-  return serializeNovaTurn({version:1,situation:"private situation",thoughts:"private thoughts",emotion:"private emotion",tools:[],toolResults:[],speech,longMemory:"",nextWakeMs:45000} satisfies NovaTurn);
+function event(request:ChatRequest,type:"delta"|"reasoning",text:string):ChatStreamEvent{
+  return {apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.stream",model:request.model,type,text} as ChatStreamEvent;
 }
 
-async function nativeSchemaStreamsBeforeCompletion():Promise<void>{
-  const payload=turnJson("The answer is arriving while the model is still generating the rest.");
-  const cut=payload.indexOf("The answer is arriving")+12;
+async function profileGenerationOptionsReachNativeRequests():Promise<void>{
+  const requests:ChatRequest[]=[];
+  const runtime={async chat(request:ChatRequest):Promise<ChatResponse>{requests.push(request);return responseFor(request,"Completed answer.");}};
+  const generation={temperature:0.45,topP:0.8,maxTokens:777,repeatPenalty:1.1,repeatLastN:48};
+  await createStep(runtime,undefined,{getGenerationOptions:()=>generation}).run(context(()=>{}));
+  equal(requests[0]?.generation,generation,"Model Profile generation settings reach actual native request bodies");
+}
+
+async function ordinaryTextStreamsSeparatelyFromReasoning():Promise<void>{
+  const text="The answer is arriving while the model is still generating the rest.";
+  const cut=23;
   let firstChunkSeen!:()=>void;
   const firstChunk=new Promise<void>(resolve=>{firstChunkSeen=resolve;});
   let resume!:()=>void;
@@ -58,165 +58,146 @@ async function nativeSchemaStreamsBeforeCompletion():Promise<void>{
   const calls:ChatRequest[]=[];
   let returned=false;
   const runtime={
-    getChatProviderCapabilities:()=>({structuredOutput:true,streaming:true}),
-    getActiveProviderPresetId:()=>undefined,getChatModel:()=>"fake-model",
-    async getChatModelForPreset(){return "unused";},
-    async chat(request:ChatRequest){calls.push(request);return responseFor(request,payload);},
-    async stream(request:ChatRequest,handlers:ChatStreamHandlers,_options?:ChatStreamOptions){
-      calls.push(request);
-      await handlers.onEvent(delta(request,payload.slice(0,cut)));
-      firstChunkSeen();
-      await held;
-      await handlers.onEvent(delta(request,payload.slice(cut)));
-      returned=true;
-      return responseFor(request,payload);
-    }
-  };
-  let visible="";
-  const speechEvents:Array<{type:string;text?:string;emotion?:string}>=[];
-  const run=createStep(runtime,"structured",id=>"CUSTOM PROMPT: "+id).run(context(event=>{speechEvents.push({type:event.type,...(event.text===undefined?{}:{text:event.text}),...(event.emotion===undefined?{}:{emotion:event.emotion})});if(event.type==="delta")visible+=event.text??"";}));
-  await firstChunk;
-  ok(visible.length>0,"public speech is visible before stream completion");
-  ok(visible.length<payload.length,"raw JSON was not sent as visible text");
-  equal(returned,false,"provider stream has not returned when partial speech appears");
-  const format=calls[0]?.generation?.responseFormat;
-  if(!format||format.type!=="json-schema")throw new Error("structured mode must send native JSON Schema");
-  equal(format.name,"nova_turn_v1","native schema uses a stable name");
-  equal(calls[0]?.context.messages.find(message=>message.role==="system")?.content,"CUSTOM PROMPT: nova-system-json","native JSON request receives the edited JSON system prompt");
-  equal(calls[0]?.context.messages.find(message=>message.id?.endsWith(":user-cue"))?.content,"CUSTOM PROMPT: nova-cue-reactive-json","native JSON request receives the edited reactive JSON cue");
-  const structuredContext=calls[0]?.context.messages.find(message=>message.id?.endsWith(":schedule"))?.content??"";
-  ok(structuredContext.includes("CUSTOM PROMPT: nova-schedule-structured"),"native JSON request receives the edited schedule instruction");
-  ok(structuredContext.includes("CUSTOM PROMPT: nova-tools-allowlist"),"native JSON request receives the edited registered-tools instruction");
-  ok(Boolean(format.schema.properties?.speech),"schema defines the canonical speech field");
-  resume();
-  const result=await run;
-  equal(visible,"The answer is arriving while the model is still generating the rest.","streamed native output is only SPEECH and has no duplicated final text");
-  ok(speechEvents.findIndex(event=>event.type==="delta")<speechEvents.findIndex(event=>event.type==="emotion"),"native JSON emits public speech before an emotion field that appears later");
-  equal(result.turn.situation,"situation-private","native JSON preserves situation");
-  equal(result.turn.thoughts,"thoughts-private","native JSON preserves thoughts");
-  equal(result.turn.emotion,"emotion-private","native JSON preserves emotion");
-  equal(result.turn.longMemory,"Prefers deep blue.","native JSON preserves LONGMEMORY candidate");
-  equal(result.turn.tools,[{name:"read_memory",arguments:{query:"favorite color"}}],"native JSON preserves tool requests");
-  equal(result.turn.toolResults,[],"tool results are application-owned, never read from model JSON");
-}
-async function explicitUnsupportedUsesOnlyOneTaggedFallback():Promise<void>{
-  const calls:ChatRequest[]=[];
-  let count=0;
-  const response=taggedTurn("Fallback speech is streamed, not parsed as JSON.")
-    .replace(/<EMOTION>[\s\S]*?<\/EMOTION>\n?/,"")
-    .replace(/(<SPEECH>[\s\S]*?<\/SPEECH>)/,"$1\n<EMOTION>whisper</EMOTION>");
-  const runtime={
-    getChatProviderCapabilities:()=>({structuredOutput:true,streaming:true}),
-    getActiveProviderPresetId:()=>undefined,getChatModel:()=>"fake-model",
-    async getChatModelForPreset(){return "unused";},
-    async chat(request:ChatRequest){calls.push(request);return responseFor(request,response);},
-    async stream(request:ChatRequest,handlers:ChatStreamHandlers,_options?:ChatStreamOptions){
-      calls.push(request);count++;
-      if(count===1)throw new Error("JSON Schema response format is not supported");
-      for(let i=0;i<response.length;i+=13)await handlers.onEvent(delta(request,response.slice(i,i+13)));
-      return responseFor(request,response);
-    }
-  };
-  let visible="";
-  const speechEvents:Array<{type:string;text?:string;emotion?:string}>=[];
-  const result=await createStep(runtime,"structured",id=>"CUSTOM PROMPT: "+id).run(context(event=>{speechEvents.push({type:event.type,...(event.text===undefined?{}:{text:event.text}),...(event.emotion===undefined?{}:{emotion:event.emotion})});if(event.type==="delta")visible+=event.text??"";}));
-  equal(calls.length,2,"explicit unsupported schema causes one and only one tagged retry");
-  const resetIndex=speechEvents.findIndex(event=>event.type==="reset");
-  ok(resetIndex>=0&&speechEvents[resetIndex+1]?.type==="start","tagged fallback starts a new session immediately after resetting the JSON attempt");
-  ok(speechEvents.findIndex(event=>event.type==="delta")>resetIndex+1,"fallback speech is delivered only to the new session");
-  equal(calls[0]?.generation?.responseFormat?.type,"json-schema","first request uses native JSON Schema");
-  equal(calls[1]?.generation?.responseFormat?.type,"text","fallback request uses tagged text protocol");
-  equal(calls[1]?.context.messages.find(message=>message.role==="system")?.content,"CUSTOM PROMPT: nova-system-tagged","tagged fallback uses the edited tagged system prompt");
-  equal(calls[1]?.context.messages.find(message=>message.id?.endsWith(":user-cue"))?.content,"CUSTOM PROMPT: nova-cue-reactive-tagged","tagged fallback uses the edited reactive tagged cue");
-  equal(result.turn.speech,"Fallback speech is streamed, not parsed as JSON.","tag fallback validates final protocol");
-  equal(visible,result.turn.speech,"tag fallback streams only speech without final duplication");
-  equal(speechEvents.find(event=>event.type==="emotion")?.emotion,"whisper","tagged emotion metadata is delivered separately from displayed speech");
-  ok(speechEvents.findIndex(event=>event.type==="delta")<speechEvents.findIndex(event=>event.type==="emotion"),"tagged mode emits speech before a later emotion field");
-}
-async function ordinaryErrorsAndMalformedJsonNeverFallback():Promise<void>{
-  for(const failure of ["timeout","network","auth","invalid-json"] as const){
-    const calls:ChatRequest[]=[];
-    const runtime={
-      getChatProviderCapabilities:()=>({structuredOutput:true,streaming:true}),
-      getActiveProviderPresetId:()=>undefined,getChatModel:()=>"fake-model",
-      async getChatModelForPreset(){return "unused";},
-      async chat(request:ChatRequest){calls.push(request);return responseFor(request,"");},
-      async stream(request:ChatRequest,handlers:ChatStreamHandlers,_options?:ChatStreamOptions){
-        calls.push(request);
-        if(failure==="timeout")throw new Error("request timed out");
-        if(failure==="network")throw new Error("network connection refused");
-        if(failure==="auth")throw Object.assign(new Error("unauthorized"),{chatError:{message:"Unauthorized",details:{category:"authorization"}}});
-        const content='{"speech":"Привет, я Тоня.","thoughts":"private-thoughts"';
-        await handlers.onEvent(delta(request,content));
-        return responseFor(request,content);
-      }
-    };
-    let rejected=false;
-    const speechEvents:Array<{type:string;text?:string}> = [];
-    try{await createStep(runtime).run(context(event=>{speechEvents.push({type:event.type,...(event.text===undefined?{}:{text:event.text})});}));}catch{rejected=true;}
-    ok(rejected,failure+" failure rejects the turn");
-    if(failure==="invalid-json"){
-      const publicSpeech=speechEvents.filter(event=>event.type==="delta").map(event=>event.text??"").join("");
-      equal(publicSpeech,"Привет, я Тоня.","malformed final JSON leaves only already-streamed public speech visible");
-      ok(!publicSpeech.includes("private-thoughts")&&!publicSpeech.includes('{"speech"'),"malformed protocol never streams private fields or raw JSON into the public reply");
-    }
-    equal(calls.length,1,failure+" never triggers a format fallback");
-    equal(calls[0]?.generation?.responseFormat?.type,"json-schema",failure+" keeps the attempted format as native JSON Schema");
-  }
-}
-async function plainModeIsOrdinaryText():Promise<void>{
-  const calls:ChatRequest[]=[];
-  const text="This is plain text that includes <SPEECH> and \"quotes\" literally.";
-  const runtime={
-    getChatProviderCapabilities:()=>({structuredOutput:true,streaming:true}),
+    getChatProviderCapabilities:()=>({toolCalling:false,streaming:true}),
     getActiveProviderPresetId:()=>undefined,getChatModel:()=>"fake-model",
     async getChatModelForPreset(){return "unused";},
     async chat(request:ChatRequest){calls.push(request);return responseFor(request,text);},
     async stream(request:ChatRequest,handlers:ChatStreamHandlers,_options?:ChatStreamOptions){
-      calls.push(request);await handlers.onEvent(delta(request,text));return responseFor(request,text);
+      calls.push(request);
+      await handlers.onEvent(event(request,"reasoning","Provider-only reasoning"));
+      await handlers.onEvent(event(request,"delta",text.slice(0,cut)));
+      firstChunkSeen();
+      await held;
+      await handlers.onEvent(event(request,"delta",text.slice(cut)));
+      returned=true;
+      return responseFor(request,text);
     }
   };
-  const result=await createStep(runtime,"plain",id=>"CUSTOM PROMPT: "+id).run(context(()=>{}));
-  equal(calls.length,1,"plain mode uses one request");
-  equal(calls[0]?.generation?.responseFormat,undefined,"plain mode sends no JSON Schema or mandatory text format");
-  equal(calls[0]?.context.messages.find(message=>message.role==="system")?.content,"CUSTOM PROMPT: nova-system-plain","plain mode uses the edited plain system prompt");
-  equal(calls[0]?.context.messages.find(message=>message.id?.endsWith(":user-cue"))?.content,"CUSTOM PROMPT: nova-cue-reactive-plain","plain mode uses the edited reactive plain cue");
-  const plainContext=calls[0]?.context.messages.find(message=>message.id?.endsWith(":schedule"))?.content??"";
-  ok(plainContext.includes("CUSTOM PROMPT: nova-schedule-plain"),"plain mode receives its edited schedule instruction");
-  ok(!plainContext.includes("CUSTOM PROMPT: nova-tools-allowlist"),"plain mode keeps the tool instruction out of the no-tools context");
-  equal(result.turn.speech,text,"plain mode displays response as-is without protocol parsing");
+  let visible="";
+  const speechEvents:Array<{type:string;text?:string}>=[];
+  const run=createStep(runtime,id=>"CUSTOM PROMPT: "+id).run(context(item=>{
+    speechEvents.push({type:item.type,...(item.text===undefined?{}:{text:item.text})});
+    if(item.type==="delta")visible+=item.text??"";
+  }));
+  await firstChunk;
+  ok(visible.length>0,"ordinary provider text is visible before stream completion");
+  ok(visible.length<text.length,"text continues to stream incrementally");
+  equal(returned,false,"provider stream is still open when the first speech delta arrives");
+  equal(calls[0]?.generation?.responseFormat,undefined,"native cognition does not request mandatory JSON Schema");
+  equal(calls[0]?.context.messages.find(message=>message.role==="system")?.content,"CUSTOM PROMPT: nova-system-plain","native cognition uses the ordinary-text system prompt");
+  equal(calls[0]?.context.messages.find(message=>message.id?.endsWith(":user-cue"))?.content,"CUSTOM PROMPT: nova-cue-reactive-plain","native cognition uses the ordinary reactive cue");
+  ok(!speechEvents.some(item=>item.text?.includes("Provider-only reasoning")),"provider reasoning is never forwarded to speech or TTS events");
+  resume();
+  const result=await run;
+  equal(visible,text,"streamed assistant content has no duplicate final append");
+  equal(result.turn.speech,text,"ordinary provider content is the canonical user-facing reply");
+  equal(result.turn.situation,"","native reply does not require legacy situation");
+  equal(result.turn.thoughts,"","native reply does not fabricate private thoughts");
+  equal(result.turn.emotion,"","emotion remains optional and is not inferred from reasoning");
+  equal(result.turn.longMemory,undefined,"long-term memory is not extracted from the model's text");
+  equal(result.reasoning,"Provider-only reasoning","reasoning is returned separately for opt-in technical diagnostics");
 }
-async function backgroundTurnsUseBackgroundPromptIds():Promise<void>{
-  for(const variant of ["json","tagged","plain"] as const){
-    const calls:ChatRequest[]=[];
-    const content=variant==="json"?turnJson("Background response"):variant==="tagged"?taggedTurn("Background response"):"Background response";
-    const runtime={
-      getChatProviderCapabilities:()=>({structuredOutput:variant!=="tagged",streaming:true}),
-      getActiveProviderPresetId:()=>undefined,getChatModel:()=>"fake-model",
-      async getChatModelForPreset(){return "unused";},
-      async chat(request:ChatRequest){calls.push(request);return responseFor(request,content);},
-      async stream(request:ChatRequest,handlers:ChatStreamHandlers,_options?:ChatStreamOptions){
-        calls.push(request);await handlers.onEvent(delta(request,content));return responseFor(request,content);
+
+async function nativeToolRoundsReturnResultsBeforeFinalSpeech():Promise<void>{
+  const calls:ChatRequest[]=[];
+  const executed:string[]=[];
+  const runtime={
+    getChatProviderCapabilities:()=>({toolCalling:true,streaming:true}),
+    getActiveProviderPresetId:()=>undefined,getChatModel:()=>"fake-model",
+    async getChatModelForPreset(){return "unused";},
+    async chat(request:ChatRequest){calls.push(request);return responseFor(request,"unexpected non-stream response");},
+    async stream(request:ChatRequest,handlers:ChatStreamHandlers,_options?:ChatStreamOptions){
+      calls.push(request);
+      if(calls.length===1){
+        await handlers.onEvent(event(request,"reasoning","Selecting a memory lookup"));
+        return {...responseFor(request,""),message:{role:"assistant",content:"",toolCalls:[{id:"memory-call-1",name:"read_memory",arguments:{query:"favorite color"}}]}};
       }
-    };
-    const base=context(()=>{});
-    const background={characterId:base.characterId,state:base.state,signal:base.signal,wakeReason:"life-start" as const};
-    const mode=variant==="plain"?"plain":"structured";
-    await createStep(runtime,mode,id=>"CUSTOM PROMPT: "+id).run(background);
-    const format=variant==="plain"?"plain":variant==="tagged"?"tagged":"native-json";
-    const expectedSystem=variant==="plain"?"nova-system-plain":variant==="tagged"?"nova-system-tagged":"nova-system-json";
-    const expectedCue=variant==="plain"?"nova-cue-background-plain":variant==="tagged"?"nova-cue-background-tagged":"nova-cue-background-json";
-    equal(calls[0]?.context.messages.find(message=>message.role==="system")?.content,"CUSTOM PROMPT: "+expectedSystem,format+" background generation uses its editable system prompt");
-    equal(calls[0]?.context.messages.find(message=>message.id?.endsWith(":user-cue"))?.content,"CUSTOM PROMPT: "+expectedCue,format+" background generation uses its editable cue");
-  }
+      const text="I found the saved preference: deep blue.";
+      await handlers.onEvent(event(request,"reasoning","Summarizing the retrieved result"));
+      for(let i=0;i<text.length;i+=7)await handlers.onEvent(event(request,"delta",text.slice(i,i+7)));
+      return responseFor(request,text);
+    }
+  };
+  const step=createStep(runtime,undefined,{
+    getAvailableTools:()=>[{name:"read_memory",description:"Search saved character memory",parameters:{type:"object",properties:{query:{type:"string"}},required:["query"]}}],
+    executeTool:async(call,toolContext)=>{
+      executed.push(call.name);
+      return {callId:toolContext.callId,name:call.name,status:"success" as const,output:{matches:["Prefers deep blue."]}};
+    }
+  });
+  let visible="";
+  const result=await step.run(context(item=>{if(item.type==="delta")visible+=item.text??"";}));
+  equal(calls.length,2,"runtime requests a continuation after native tool execution");
+  equal(calls[0]?.tools?.map(tool=>tool.name),["read_memory"],"only registered tools are advertised to the model");
+  equal(calls[0]?.generation?.responseFormat,undefined,"tool-capable request still uses the native provider response format");
+  equal(executed,["read_memory"],"registered native function executes exactly once");
+  ok(calls[1]?.context.messages.some(message=>message.role==="assistant"&&message.toolCalls?.[0]?.id==="memory-call-1"),"assistant tool call is preserved in provider history");
+  ok(calls[1]?.context.messages.some(message=>message.role==="tool"&&message.toolCallId==="memory-call-1"&&message.toolName==="read_memory"&&message.content.includes("Prefers deep blue.")),"tool output returns to the model in a separate role=tool message");
+  equal(visible,"I found the saved preference: deep blue.","only final assistant text becomes user-facing speech");
+  equal(result.turn.speech,visible,"final speech exactly matches streamed output");
+  equal(result.reasoning,"Selecting a memory lookupSummarizing the retrieved result","provider reasoning from each round is kept separate");
+}
+
+async function plainContentIsNeverParsedAsCommands():Promise<void>{
+  const calls:ChatRequest[]=[];
+  const text='This is literal text containing <browser.navigate>{"url":"https://example.invalid"}</browser.navigate> and {"thoughts":"not a field"}.';
+  const runtime={
+    getChatProviderCapabilities:()=>({toolCalling:false,streaming:true}),
+    getActiveProviderPresetId:()=>undefined,getChatModel:()=>"fake-model",
+    async getChatModelForPreset(){return "unused";},
+    async chat(request:ChatRequest){calls.push(request);return responseFor(request,text);},
+    async stream(request:ChatRequest,handlers:ChatStreamHandlers,_options?:ChatStreamOptions){
+      calls.push(request);await handlers.onEvent(event(request,"delta",text));return responseFor(request,text);
+    }
+  };
+  const result=await createStep(runtime).run(context(()=>{}));
+  equal(calls.length,1,"ordinary reply requires one native request");
+  equal(result.turn.speech,text,"model content is shown verbatim without tagged-JSON parsing");
+  equal(result.turn.tools,[],"tool-like text is never executable");
+  equal(result.turn.thoughts,"","private thoughts are not extracted from user-visible text");
+  equal(calls[0]?.generation?.responseFormat,undefined,"no structured protocol is mandatory");
+}
+
+async function failuresDoNotTriggerFormatFallback():Promise<void>{
+  let calls=0;
+  const runtime={
+    getChatProviderCapabilities:()=>({toolCalling:false,streaming:true}),
+    getActiveProviderPresetId:()=>undefined,getChatModel:()=>"fake-model",
+    async getChatModelForPreset(){return "unused";},
+    async chat(request:ChatRequest){calls++;return responseFor(request,"");},
+    async stream(_request:ChatRequest,_handlers:ChatStreamHandlers,_options?:ChatStreamOptions){calls++;throw new Error("network connection refused");}
+  };
+  let rejected=false;
+  try{await createStep(runtime).run(context(()=>{}));}catch{rejected=true;}
+  equal(rejected,true,"provider network failure rejects the cognitive turn");
+  equal(calls,1,"failed native request is not retried with a different generated protocol");
+}
+
+async function backgroundStepMayReturnNoSpeech():Promise<void>{
+  const requestList:ChatRequest[]=[];
+  const runtime={
+    getChatProviderCapabilities:()=>({toolCalling:false,streaming:true}),
+    getActiveProviderPresetId:()=>undefined,getChatModel:()=>"fake-model",
+    async getChatModelForPreset(){return "unused";},
+    async chat(request:ChatRequest){requestList.push(request);return responseFor(request,"");},
+    async stream(request:ChatRequest,handlers:ChatStreamHandlers,_options?:ChatStreamOptions){requestList.push(request);return responseFor(request,"");}
+  };
+  const base=context(()=>{});
+  const background={characterId:base.characterId,state:base.state,signal:base.signal,wakeReason:"life-start" as const};
+  const result=await createStep(runtime).run(background);
+  equal(result.turn.speech,"","background step may complete without inventing a user-facing message");
+  equal(result.turn.nextWakeMs,30000,"background wake uses the configured bounded default interval");
+  equal(requestList[0]?.generation?.responseFormat,undefined,"background requests use the same native plain response contract");
+  equal(requestList[0]?.context.messages.find(message=>message.id?.endsWith(":user-cue"))?.content.includes("Do not invent a reason to speak"),true,"background prompt explicitly permits silence");
 }
 
 async function main():Promise<void>{
-  await nativeSchemaStreamsBeforeCompletion();
-  await explicitUnsupportedUsesOnlyOneTaggedFallback();
-  await ordinaryErrorsAndMalformedJsonNeverFallback();
-  await plainModeIsOrdinaryText();
-  await backgroundTurnsUseBackgroundPromptIds();
-  console.log("PASS native JSON Schema, fallback, and streaming cognitive-step tests");
+  await profileGenerationOptionsReachNativeRequests();
+  await ordinaryTextStreamsSeparatelyFromReasoning();
+  await nativeToolRoundsReturnResultsBeforeFinalSpeech();
+  await plainContentIsNeverParsedAsCommands();
+  await failuresDoNotTriggerFormatFallback();
+  await backgroundStepMayReturnNoSpeech();
+  console.log("PASS native cognitive text, tool-call, reasoning, and streaming tests");
 }
 void main().catch(error=>{console.error(error);process.exitCode=1;});

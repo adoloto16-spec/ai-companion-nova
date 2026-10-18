@@ -1,9 +1,9 @@
-import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatRequestOptions,ChatResponse,CredentialStore,ProviderConfiguration,ProviderPreset,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryArchiveReason,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,MemorySemanticIndexStore,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider} from "../../../contracts/src/index";
+import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatRequestOptions,ChatResponse,ChatReasoningOptions,CredentialStore,ProviderConfiguration,ProviderPreset,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryArchiveReason,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,MemorySemanticIndexStore,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider,MindToolExecutor} from "../../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
 import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore,MindReactiveTurn,MindTurnSink,MindToolExecutionContext,NovaToolCall,NovaToolResult,PromptId} from "../../../contracts/src/index";
 import type {Conversation,ConversationCreateInput,ConversationId,ConversationStore,ConversationUpdateInput} from "../../../contracts/src/index";
 import {
-  AiRuntime,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,MemorySemanticDeduplicator,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,MindRuntime,LLMCognitiveStep,
+  AiRuntime,CharacterManager,ConversationManager,CoreBookManager,InProcessMemoryRetriever,MemoryBrokerImpl,MemorySemanticDeduplicator,InMemoryCharacterStore,InMemoryDiagnosticsStore,InMemoryEventBus,InMemoryStateStore,ModuleManager,ProviderRegistry,createDeterministicContextEngine,MindRuntime,LLMCognitiveStep,AutomaticMemoryAgent,
   InMemoryPermissionService,InMemoryAuditService,InMemoryToolRegistry,DefaultActionBroker,
   DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
   InMemoryActorIdentityResolver,createMemoryConfig,SettingsManager,InMemoryChatTraceStore
@@ -66,6 +66,7 @@ export interface FoundationRuntimeOptions{
 
 export interface FoundationRuntime{
   start():Promise<void>;
+  setActiveModelProfile(profile:import("../../../contracts/src/index").ModelProfile|undefined):void;
   stop():Promise<void>;
   diagnostics(options?:{skipProviderHealthFor?:readonly string[]}):Promise<RuntimeDiagnostics>;
   recordDiagnosticError(source:string,code:string,message:string,metadata?:Record<string,unknown>):void;
@@ -285,6 +286,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const permissions=new InMemoryPermissionService();
   const actorResolver=new InMemoryActorIdentityResolver();
   const tools=new InMemoryToolRegistry();
+  const pendingWakeIntervalRequests=new Map<string,number>();
   const targetResolvers=new Map<string,ActionTargetResolver>();
   const browser=new FakeBrowserModule();
   const characterCredential={token:"foundation-character-opaque"};
@@ -293,7 +295,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     actorType:"module",
     moduleId:"character.fake",
     trusted:true,
-    capabilities:["browser.navigate","browser.control","character.expression","memory.search"]
+    capabilities:["browser.navigate","browser.control","character.expression","memory.search","memory.create","scheduler.wake"]
   });
 
   providers.register(new FakeChatProvider(),["chat"]);
@@ -422,7 +424,17 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     const pool=getPoolProvider(providerPresetId);
     return pool?.getModel()??resolveChatModelForPreset(providerPresetId);
   };
+  const automaticMemoryAgent=new AutomaticMemoryAgent({
+    settings:()=>settingsManager.get(),
+    broker:memoryBroker,
+    runtime:{
+      chat:(request,providerPresetId)=>extractionChatRuntime.chat(request,providerPresetId),
+      getChatModelForPreset
+    },
+    diagnostics:diagnosticsStore
+  });
 
+  let activeModelProfile:import("../../../contracts/src/index").ModelProfile|undefined;
   const mindRuntime=new MindRuntime({
     cognitiveStep:new LLMCognitiveStep({
       runtime:extractionChatRuntime,
@@ -437,9 +449,16 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
       getChatModel:()=>activeProviderId(providerConfiguration)==="openai-compatible"&&providerConfiguration?providerConfiguration.model:"fake-chat",
       getChatModelForPreset,
       getCognitiveSchedule:()=>settingsManager.get().cognitiveSchedule,
-      getOutputMode:()=>settingsManager.get().chat.responseMode,
       getPrompt:(id:PromptId)=>resolvePromptText(settingsManager.get().prompts,id),
       getAvailableTools:()=>tools.list().map(tool=>({name:tool.name,description:tool.description,parameters:tool.parameters})),
+      executeTool:executeRegisteredTool,
+      getReasoningOptions:()=>{
+        const chat=settingsManager.get().chat;
+        return {mode:chat.reasoningMode,...(chat.reasoningEffort!=="provider-default"?{effort:chat.reasoningEffort}:{})} as ChatReasoningOptions;
+      },
+      getGenerationOptions:()=>activeModelProfile?.generation,
+      getShowReasoningInDiagnostics:()=>settingsManager.get().ui.showReasoningInDiagnostics,
+      consumeRequestedWakeInterval:turnId=>{const interval=pendingWakeIntervalRequests.get(turnId);pendingWakeIntervalRequests.delete(turnId);return interval;},
       clock:()=>new Date().toISOString()
     }),
     schedule:settingsManager.get().cognitiveSchedule,
@@ -648,20 +667,126 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     action:"memory.search",
     effect:"allow"
   });
-  mindRuntime.setToolExecutor({
-    async execute(call:NovaToolCall,context:MindToolExecutionContext):Promise<NovaToolResult>{
-      if(!tools.get(call.name))return {callId:context.callId,name:call.name,status:"unknown-tool",error:"Tool is not registered: "+call.name};
-      const result=await broker.execute({
-        request:{
-          id:context.callId,schemaVersion:FOUNDATION_SCHEMA_VERSION,tool:call.name,arguments:call.arguments,
-          metadata:{characterId:context.characterId,conversationId:context.conversationId,turnId:context.turnId,callId:context.callId}
-        },
-        credential:characterCredential
-      });
-      if(result.status==="success")return {callId:context.callId,name:call.name,status:"success",output:result.output};
-      return {callId:context.callId,name:call.name,status:"error",error:result.error.message};
+  const memorySaveResolver:ActionTargetResolver={
+    id:"memory.save-candidate",
+    async resolve(request){
+      const content=request.arguments?.content;
+      if(typeof content!=="string"||!content.trim())throw new Error("memory.save requires non-empty content.");
+      const value={
+        content:content.trim(),
+        type:typeof request.arguments.type==="string"?request.arguments.type:"observation",
+        tags:Array.isArray(request.arguments.tags)?request.arguments.tags:[],
+        importance:typeof request.arguments.importance==="number"?request.arguments.importance:70,
+        confidence:typeof request.arguments.confidence==="number"?request.arguments.confidence:80,
+      };
+      return {kind:"resource",resource:JSON.stringify(value)};
     }
-  });
+  };
+  targetResolvers.set(memorySaveResolver.id,memorySaveResolver);
+  const memorySaveDefinition:ToolDefinition={
+    id:"memory.save",version:"1.0.0",schemaVersion:FOUNDATION_SCHEMA_VERSION,name:"memory.save",
+    description:"Save a concise, durable fact to the active character's existing long-term memory. Call only when the fact is likely to be useful later; do not save private reasoning or secrets.",
+    risk:"low",requiredCapabilities:["memory.create"],resourceType:"resource",action:"memory.create",
+    targetResolverId:memorySaveResolver.id,confirmation:"never",
+    parameters:objectSchema({
+      content:{type:"string",minLength:1,maxLength:2000},
+      type:{type:"string",enum:["fact","preference","relationship","event","experience","goal","instruction","observation"]},
+      tags:{type:"array",maxItems:12,items:{type:"string",minLength:1,maxLength:64}},
+      importance:{type:"integer",minimum:0,maximum:100},
+      confidence:{type:"integer",minimum:0,maximum:100}
+    },["content"])
+  };
+  const memorySaveDriver:ActionDriver={
+    id:"memory-save-driver",
+    async execute(request,target){
+      if(target.kind!=="resource")throw new Error("memory.save requires a resource target.");
+      if(!settingsManager.get().chat.automaticLongTermMemory)throw new Error("Long-term memory saving is disabled in Settings.");
+      const characterId=request.metadata?.characterId,conversationId=request.metadata?.conversationId,turnId=request.metadata?.turnId;
+      if(typeof characterId!=="string"||!characterId.trim()||typeof conversationId!=="string"||!conversationId.trim()||typeof turnId!=="string"||!turnId.trim())throw new Error("memory.save is missing character or conversation scope.");
+      let candidate:unknown;
+      try{candidate=JSON.parse(target.resource);}catch{throw new Error("memory.save received invalid arguments.");}
+      if(!candidate||typeof candidate!=="object"||Array.isArray(candidate))throw new Error("memory.save received invalid arguments.");
+      const value=candidate as Record<string,unknown>,content=typeof value.content==="string"?value.content.trim():"";
+      if(!content||content.length>2000)throw new Error("Memory content must contain 1 to 2000 characters.");
+      if(/authorization\s*:\s*bearer\s+\S+|\bbearer\s+[A-Za-z0-9._-]{16,}\b|\bsk-[A-Za-z0-9_-]{16,}\b|api[_ -]?key\s*[:=]\s*\S+|password\s*[:=]\s*\S+|secret\s*[:=]\s*\S+/i.test(content))throw new Error("Memory save rejected content that appears to contain a secret.");
+      const existing=await memoryBroker.list(characterId);
+      const normalize=(text:string)=>text.normalize("NFKC").toLocaleLowerCase().replace(/\s+/g," ").trim();
+      const duplicate=existing.find(item=>item.status==="active"&&normalize(item.content)===normalize(content));
+      if(duplicate){
+        diagnosticsStore.recordError("native-memory-save","DUPLICATE_SKIPPED","Native memory save matched an existing active character memory.",{characterId,conversationId,turnId,memoryId:duplicate.id});
+        return {saved:false,reason:"duplicate",memoryId:duplicate.id};
+      }
+      const types=["fact","preference","relationship","event","experience","goal","instruction","observation"];
+      const tags=Array.isArray(value.tags)?value.tags.filter((tag):tag is string=>typeof tag==="string"&&tag.trim().length>0&&tag.length<=64).slice(0,12):[];
+      const type=typeof value.type==="string"&&types.includes(value.type)?value.type as MemoryItem["type"]:"observation";
+      const importance=typeof value.importance==="number"&&Number.isInteger(value.importance)?Math.max(0,Math.min(100,value.importance)):70;
+      const confidence=typeof value.confidence==="number"&&Number.isInteger(value.confidence)?Math.max(0,Math.min(100,value.confidence)):80;
+      const authority:MemoryMutationAuthority={actorId:"nova-native-memory-save",actorType:"system",trusted:true,capabilities:["memory.create","memory.write.auto"],moduleId:"nova-life"};
+      const item=await memoryBroker.create(characterId,{
+        originConversationId:conversationId,type,content,tags,importance,confidence,source:"tool",sourceReference:turnId,
+        mutationPolicy:"auto",metadata:{origin:"native-tool-call",turnId}
+      },authority);
+      if(!settingsManager.get().semanticDedup.enabled){
+        const judged=await semanticMemoryDeduplicator.deduplicateMemory(item.id,characterId,{forceJudge:true});
+        if(judged.status==="failed"){
+          diagnosticsStore.recordError("native-memory-save","MEMORY_JUDGE_FAILED","Memory was stored, but the existing Memory Judge failed.",{characterId,conversationId,turnId,memoryId:item.id});
+          throw new Error("Memory was stored but deduplication review failed; do not assume the save completed cleanly.");
+        }
+      }
+      diagnosticsStore.recordError("native-memory-save","MEMORY_SAVED","Native memory tool saved a fact through MemoryBroker.",{characterId,conversationId,turnId,memoryId:item.id});
+      return {saved:true,memoryId:item.id,type:item.type};
+    }
+  };
+  tools.register(memorySaveDefinition,memorySaveDriver);
+  permissions.add({id:"character-memory-create",schemaVersion:FOUNDATION_SCHEMA_VERSION,subject:"character",resourceType:"resource",action:"memory.create",effect:"allow"});
+
+  const schedulerResolver:ActionTargetResolver={
+    id:"scheduler.next-wake-interval",
+    async resolve(request){
+      const interval=request.arguments?.intervalMs;
+      if(typeof interval!=="number"||!Number.isSafeInteger(interval))throw new Error("scheduler.set_next_wake requires an integer intervalMs.");
+      return {kind:"resource",resource:String(interval)};
+    }
+  };
+  targetResolvers.set(schedulerResolver.id,schedulerResolver);
+  const schedulerDefinition:ToolDefinition={
+    id:"scheduler.set-next-wake",version:"1.0.0",schemaVersion:FOUNDATION_SCHEMA_VERSION,name:"scheduler.set_next_wake",
+    description:"Request a different interval before the next autonomous wake. Optional; do not call on every turn. The runtime owns scheduling and enforces configured bounds.",
+    risk:"low",requiredCapabilities:["scheduler.wake"],resourceType:"resource",action:"scheduler.request",
+    targetResolverId:schedulerResolver.id,confirmation:"never",
+    parameters:objectSchema({intervalMs:{type:"integer",minimum:1000,maximum:3600000}},["intervalMs"])
+  };
+  const schedulerDriver:ActionDriver={
+    id:"scheduler-set-next-wake-driver",
+    async execute(request,target){
+      if(target.kind!=="resource")throw new Error("scheduler.set_next_wake requires a resource target.");
+      const turnId=request.metadata?.turnId;
+      if(typeof turnId!=="string"||!turnId.trim())throw new Error("Scheduler request is missing its turn scope.");
+      const current=settingsManager.get().cognitiveSchedule;
+      const intervalMs=Number(target.resource);
+      if(!Number.isSafeInteger(intervalMs)||intervalMs<1000||intervalMs>3600000)throw new Error("Requested wake interval must be between 1000 and 3600000 ms.");
+      if(current.mode==="fixed")return {accepted:false,reason:"The current schedule is fixed; the runtime will keep its configured default interval."};
+      pendingWakeIntervalRequests.set(turnId,intervalMs);
+      return {accepted:true,requestedIntervalMs:intervalMs,minIntervalMs:current.minIntervalMs,maxIntervalMs:current.maxIntervalMs,appliedBy:"MindRuntime"};
+    }
+  };
+  tools.register(schedulerDefinition,schedulerDriver);
+  permissions.add({id:"character-scheduler-wake",schemaVersion:FOUNDATION_SCHEMA_VERSION,subject:"character",resourceType:"resource",action:"scheduler.request",effect:"allow"});
+
+  async function executeRegisteredTool(call:NovaToolCall,context:MindToolExecutionContext):Promise<NovaToolResult>{
+    if(context.signal.aborted){const error=new Error("Tool execution was cancelled.");error.name="AbortError";throw error;}
+    if(!tools.get(call.name))return {callId:context.callId,name:call.name,status:"unknown-tool",error:"Tool is not registered: "+call.name};
+    const result=await broker.execute({
+      request:{
+        id:context.callId,schemaVersion:FOUNDATION_SCHEMA_VERSION,tool:call.name,arguments:call.arguments,
+        metadata:{characterId:context.characterId,conversationId:context.conversationId,turnId:context.turnId,callId:context.callId}
+      },
+      credential:characterCredential
+    });
+    if(result.status==="success")return {callId:context.callId,name:call.name,status:"success",output:result.output};
+    return {callId:context.callId,name:call.name,status:"error",error:result.error.message};
+  }
+  mindRuntime.setToolExecutor({execute:executeRegisteredTool});
 
   let runtimeStatus:RuntimeDiagnostics["runtimeStatus"]="starting";
   const snapshot=async(options:{skipProviderHealthFor?:readonly string[]}={}):Promise<RuntimeDiagnostics>=>{
@@ -827,6 +952,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     getChatModelForPreset,
     applyProviderConfiguration:async(configuration)=>{await applyProvider(configuration);},
     getSettings:()=>settingsManager.get(),
+    setActiveModelProfile:profile=>{activeModelProfile=profile?{...profile,generation:{...profile.generation}}:undefined;},
     getTtsProvider:providerId=>ttsProviders.get(providerId),
     listTtsProviders:()=>ttsProviders.list(),
     getSemanticSearchStatus:()=>semanticSearch.getStatus(),
@@ -984,8 +1110,10 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
           return [];
         }
       }
-      // No secondary LLM memory generation: only a validated NovaTurn.longMemory can create a candidate.
-      return [];
+      // Native NovaTurn responses do not carry the historical LONGMEMORY field. The dedicated
+      // agent evaluates the real user/assistant exchange and only persists a durable fact when useful.
+      const memory=await automaticMemoryAgent.process(request);
+      return memory?[memory]:[];
     },
     getMemory:(characterId,memoryOrConversationId,memoryId?)=>memoryId===undefined?memoryBroker.get(characterId,memoryOrConversationId):memoryBroker.get(characterId,memoryOrConversationId as MemoryItemId,memoryId as MemoryItemId),
     searchMemory:query=>memoryBroker.search(query),

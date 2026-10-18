@@ -78,6 +78,7 @@ export interface CognitiveStepResult {
   providerId?: string;
   model?: string;
   providerPresetId?: string;
+  reasoning?:string;
   protocolDiagnostics?: readonly string[];
 }
 export interface CognitiveStep { run(context: CognitiveStepContext): Promise<CognitiveStepResult>; }
@@ -246,6 +247,7 @@ export class MindRuntime {
     let nextReason: MindWakeReason = "scheduled";
     let requestId: string | undefined, providerId: string | undefined, requested: number | undefined, applied: number | undefined, decision: string | undefined;
     let protocolDiagnostics: readonly string[] = [];
+    let providerReasoning:string|undefined;
     let cancellation: CancellationKind | undefined;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let streamedConversationId:string|undefined;
@@ -316,7 +318,7 @@ export class MindRuntime {
       } finally {
         life.signal.removeEventListener("abort", onLifeAbort);
       }
-      requestId = result.requestId; providerId = result.providerId; protocolDiagnostics = result.protocolDiagnostics ?? [];
+      requestId = result.requestId; providerId = result.providerId; protocolDiagnostics = result.protocolDiagnostics ?? []; providerReasoning=result.reasoning;
       if (cancellation === "superseded" || life.signal.aborted || contextVersion !== this.contextVersion || characterId !== this.activeCharacterId || (reactiveTurn && !this.isReactiveTurnCurrent(reactiveTurn))) {
         finishTrace("cancelled", {errorCode:"STALE_COGNITIVE_RESULT"}); return;
       }
@@ -378,7 +380,7 @@ export class MindRuntime {
         this.pendingWakeReason = mergeWakeReason(this.pendingWakeReason, "tool-result");
         nextReason = "tool-result";
       }
-      finishTrace("success", {protocolDiagnostics});
+      finishTrace("success", {protocolDiagnostics,...(providerReasoning?{reasoning:providerReasoning.slice(0,8_000)}:{})});
     } catch (error) {
       const stale = cancellation === "cancelled" || cancellation === "superseded" || life.signal.aborted || contextVersion !== this.contextVersion || characterId !== this.activeCharacterId || (reactiveTurn && !this.isReactiveTurnCurrent(reactiveTurn));
       if (stale) {

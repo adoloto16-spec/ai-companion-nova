@@ -33,7 +33,9 @@ async function main(){
     memory:{...defaults.memory,candidateLimit:3},
     retrieval:{...defaults.retrieval,candidateLimit:7},
     diagnostics:{...defaults.diagnostics,logLevel:"verbose" as const,keepRecentEntries:25},
-    chat:{...defaults.chat,automaticLongTermMemory:false,responseMode:"plain" as const},
+    ui:{...defaults.ui,showReasoningInDiagnostics:true},
+    chat:{...defaults.chat,automaticLongTermMemory:false,responseMode:"plain" as const,reasoningMode:"enabled" as const},
+    memoryAgent:{...defaults.memoryAgent,enabled:false},
     cognitiveSchedule:{mode:"fixed" as const,defaultIntervalMs:60000,minIntervalMs:10000,maxIntervalMs:300000,maxRequestsPerHour:60},
     semanticDedup:{
       ...defaults.semanticDedup,
@@ -62,6 +64,10 @@ async function main(){
   equal((await manager.get()).memory.candidateLimit,3,"custom memory candidate limit persists");
   equal((await manager.get()).chat.automaticLongTermMemory,false,"custom extraction toggle persists");
   equal((await manager.get()).chat.responseMode,"plain","Chat response mode persists");
+  equal((await manager.get()).chat.reasoningMode,"enabled","provider reasoning setting persists");
+  equal((await manager.get()).chat.reasoningEffort,"low","low reasoning effort setting persists");
+  equal((await manager.get()).memoryAgent.prompt,DEFAULT_APP_SETTINGS.memoryAgent.prompt,"Memory Agent default prompt is stored in settings");
+  equal((await manager.get()).ui.showReasoningInDiagnostics,true,"reasoning diagnostics preference persists");
   equal(persistedIpcSettings?.chat.responseMode,"plain","IPC settings store persists Chat response mode");
   equal((await manager.get()).semanticDedup.candidateSimilarityThreshold,0.91,"semantic candidate threshold persists");
   equal((await manager.get()).semanticDedup.candidateLimit,7,"semantic candidate limit persists");
@@ -76,10 +82,15 @@ async function main(){
   v5.chat={automaticLongTermMemory:false,responseMode:"structured"};
   const migratedV5=migrateAppSettings(v5);
   equal(migratedV5.cognitiveSchedule,DEFAULT_APP_SETTINGS.cognitiveSchedule,"schema v5 migration inserts cognitive defaults");
-  equal(migratedV5.schemaVersion,"13","legacy AppSettings migrate to the current schema");
+  equal(migratedV5.schemaVersion,"14","legacy AppSettings migrate to the current schema");
   equal(migratedV5.chat.automaticLongTermMemory,false,"legacy automatic memory setting remains a save gate");
-  equal(Object.prototype.hasOwnProperty.call(migratedV5,"memoryAgent"),false,"legacy Memory Agent settings are dropped during migration");
+  equal(migratedV5.memoryAgent.enabled,false,"schema v5 preserves the Memory Agent enable flag");
+  equal(migratedV5.memoryAgent.providerPresetId,"preset.memory","schema v5 preserves the Memory Agent provider selection");
+  equal(migratedV5.memoryAgent.prompt,"custom prompt","schema v5 preserves custom Memory Agent prompt text");
+  equal(migratedV5.memoryAgent.promptBackup,"previous prompt","schema v5 preserves Memory Agent prompt backup");
+  equal(migratedV5.memoryAgent.defaultPromptVersion,"7","schema v5 preserves Memory Agent prompt version");
   const oldDefaultV8=JSON.parse(JSON.stringify(defaultAppSettings())) as Record<string,any>;
+  delete oldDefaultV8.memoryAgent;
   oldDefaultV8.schemaVersion="8";
   oldDefaultV8.cognitiveSchedule={...defaultAppSettings().cognitiveSchedule,minIntervalMs:10000,maxIntervalMs:900000,maxRequestsPerHour:120};
   const migratedOldDefaults=migrateAppSettings(oldDefaultV8);
@@ -88,6 +99,7 @@ async function main(){
   equal(migratedOldDefaults.cognitiveSchedule.maxRequestsPerHour,null,"legacy built-in hourly quota is disabled");
   // Pre-v9 default quota is migrated to an explicitly disabled quota; customized quotas survive.
   const v8=JSON.parse(JSON.stringify(defaultAppSettings())) as Record<string,any>;
+  delete v8.memoryAgent;
   v8.schemaVersion="8";
   v8.cognitiveSchedule={...defaultAppSettings().cognitiveSchedule,maxRequestsPerHour:120,minIntervalMs:12000,maxIntervalMs:500000};
   const migratedV8=migrateAppSettings(v8);
@@ -106,14 +118,18 @@ async function main(){
   const migratedV10=migrateAppSettings(v10);
   equal(migratedV10.chat.responseMode,"plain","schema v10 persists the selected Chat response mode");
   equal(migratedV10.cognitiveSchedule.maxRequestsPerHour,120,"explicit quota in the old schema is preserved");
-  equal(migratedV10.schemaVersion,"13","schema v10 upgrades to schema v13");
-  equal(Object.prototype.hasOwnProperty.call(migratedV10,"memoryAgent"),false,"schema v10 Memory Agent configuration is removed safely");
+  equal(migratedV10.schemaVersion,"14","schema v10 upgrades to schema v14");
+  equal(migratedV10.memoryAgent.enabled,true,"schema v10 preserves explicit Memory Agent configuration over the legacy chat gate");
+  equal(migratedV10.memoryAgent.providerPresetId,"old-agent-preset","schema v10 preserves the Memory Agent provider preset");
+  equal(migratedV10.memoryAgent.prompt,"old prompt","schema v10 preserves the Memory Agent prompt");
+  equal(migratedV10.chat.automaticLongTermMemory,false,"schema v10 preserves the explicit legacy memory-save gate");
   const v6=JSON.parse(JSON.stringify(defaultAppSettings())) as Record<string,unknown>;
   v6.schemaVersion="6";
   v6.memoryAgent={enabled:false,providerPresetId:"preset.legacy",model:"legacy-model",outputMode:"plain",prompt:"old prompt",promptBackup:"backup",defaultPromptVersion:"9"};
   const migratedV6=migrateAppSettings(v6);
-  equal(migratedV6.schemaVersion,"13","older settings schemas migrate to current AppSettings");
-  equal(Object.prototype.hasOwnProperty.call(migratedV6,"memoryAgent"),false,"legacy Memory Agent bindings do not return through migration");
+  equal(migratedV6.schemaVersion,"14","older settings schemas migrate to current AppSettings");
+  equal(migratedV6.memoryAgent.enabled,false,"schema v6 preserves the disabled Memory Agent setting");
+  equal(migratedV6.memoryAgent.providerPresetId,"preset.legacy","schema v6 preserves the configured Memory Agent preset");
   const currentSettings={...defaultAppSettings(),chat:{...defaultAppSettings().chat,automaticLongTermMemory:false,responseMode:"plain" as const}};
   await manager.set(currentSettings);
   const reloadedManager=new SettingsManager(store,validator);
@@ -152,15 +168,19 @@ async function main(){
   ok(!JSON.stringify(trace).includes("super-secret"),"trace redacts sensitive message strings");
 
   const v12=JSON.parse(JSON.stringify(defaultAppSettings())) as Record<string,any>;
+  delete v12.chat.reasoningEffort;
   v12.schemaVersion="12";
   delete v12.tts;
   v12.context.availableContextTokens=6144;
   v12.chat.responseMode="plain";
   v12.prompts.overrides={"nova-system-json":"preserved v12 prompt override"};
   const migratedV12=migrateAppSettings(v12);
-  equal(migratedV12.schemaVersion,"13","schema v12 migrates to v13");
+  equal(migratedV12.schemaVersion,"14","schema v12 migrates to v14");
   equal(migratedV12.context.availableContextTokens,6144,"v12 migration preserves the existing context settings");
   equal(migratedV12.chat.responseMode,"plain","v12 migration preserves the existing chat settings");
+  equal(migratedV12.chat.reasoningMode,"provider-default","v12 migration defaults unsupported reasoning settings safely");
+  equal(migratedV12.chat.reasoningEffort,"provider-default","existing profiles receive a non-invasive migrated reasoning default");
+  equal(migratedV12.ui.showReasoningInDiagnostics,false,"reasoning visibility defaults off");
   equal(migratedV12.prompts.overrides["nova-system-json"],"preserved v12 prompt override","v12 migration preserves prompt registry overrides");
   equal(migratedV12.tts.enabled,false,"v12 migration leaves TTS disabled");
   equal(migratedV12.tts.presets[0]?.baseUrl,"http://127.0.0.1:3900","v12 migration uses safe loopback TTS defaults");

@@ -456,20 +456,22 @@ async function main(){
   await lifeController.commitNovaTurn(turn,context,async snapshot=>{
     persistenceWrites++;persistedMessages=snapshot.messages.map(message=>({...message,...(message.metadata?{metadata:{...message.metadata}}:{})}));
     equal(lifeSession.getMessages().length,snapshot.messages.length-1,"the assistant record is not visible before persistence succeeds");
-    equal(snapshot.messages.at(-1)?.content?.includes("private thoughts live only"),true,"canonical persistence receives the full tagged NovaTurn");
+    equal(snapshot.messages.at(-1)?.content,"A separate public reply","persistence writes ordinary assistant speech instead of a tagged NovaTurn");
   });
   const record=lifeController.getSnapshot().messages.at(-1)!;
   equal(record.role,"assistant","NovaTurn is saved as one assistant Conversation message");
-  equal(record.metadata?.novaTurnVersion,1,"stored turn has an explicit protocol version marker");
+  equal(record.metadata?.novaTurnProtocolVersion,2,"stored turn has an explicit native-protocol version marker");
   equal(record.metadata?.novaTurnId,"life-request-1","stored record has a stable idempotency key");
-  equal(parseNovaTurn(record.content).turn?.speech,"A separate public reply","speech is parsed from the full persisted record");
+  equal(parseNovaTurn(record.content).turn,undefined,"new persisted speech does not require NovaTurn parsing");
+  equal(record.content,"A separate public reply","only user-facing speech is persisted");
+  ok(!record.content.includes("private thoughts live only"),"private technical fields are absent from the persisted assistant content");
   const renderedRecord=resolveNovaTurnMessagePresentation(record,false);
   equal(renderedRecord.render,true,"the exact ChatView presentation resolver keeps the canonical saved turn visible");
   equal(renderedRecord.text,"A separate public reply","the saved assistant bubble displays only SPEECH");
   equal(countVisibleSpeechMessages([record]),1,"the conversation counter counts the saved assistant reply once");
   const reloadedRecord=JSON.parse(JSON.stringify(record)) as typeof record;
   equal(resolveNovaTurnMessagePresentation(reloadedRecord,false).text,"A separate public reply","the canonical response remains visible after persistence reload");
-  equal(parseNovaTurn(record.content).turn?.thoughts,"private thoughts live only in the tagged record","private technical fields remain persisted");
+  equal(record.metadata?.novaTurnVersion,undefined,"new protocol does not masquerade as a legacy NovaTurn");
   equal(persistedMessages.length,lifeController.getSnapshot().messages.length,"canonical persistence and live UI share one Conversation record");
   equal(lifeController.getSnapshot().messages.filter(message=>message.metadata?.novaTurnId==="life-request-1").length,1,"reactive NovaTurn is shown exactly once");
   equal(lifeController.getSnapshot().lifeStreamingSpeech,undefined,"final persistence removes the provisional speech buffer instead of duplicating it");
@@ -498,7 +500,7 @@ async function main(){
   let emptyCandidateWrites=0;
   const noCandidateController=new ChatSessionController(noCandidateSession,{async chat(request){return responseFor(request)}},{
     requestIdFactory:()=>"life-no-candidate-turn",
-    memoryExtractor:{extract:async()=>{emptyCandidateWrites++;return [];}}
+    memoryExtractor:{extract:async request=>{emptyCandidateWrites++;equal(request.assistantMessage.content,"A separate public reply","without LONGMEMORY, the memory agent receives only the committed public answer");return [];}}
   });
   await noCandidateController.submitToLife("Answer without a durable fact",async()=>{},()=>true);
   const noCandidateContext:import("../../contracts/src").MindTurnExecutionContext={
@@ -506,7 +508,7 @@ async function main(){
   };
   await noCandidateController.commitNovaTurn({...turn,longMemory:""},noCandidateContext,async()=>{});
   await new Promise(resolve=>setTimeout(resolve,0));
-  equal(emptyCandidateWrites,0,"empty LONGMEMORY does not invoke any memory persistence path");
+  equal(emptyCandidateWrites,1,"a completed native answer invokes agent evaluation even without a LONGMEMORY field");
 
   const cancelledCommitSession=new ConversationSession("life-cancelled-commit","character.life-cancelled-commit");
   let cancelledCandidateWrites=0;

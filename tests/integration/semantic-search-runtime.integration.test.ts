@@ -1,6 +1,5 @@
 import type {AppSettings,ChatRequest,ChatResponse,EmbeddingProvider,HealthStatus,MindTurnExecutionContext,MindTurnSink,NovaTurn,ProviderCapabilities} from "../../contracts/src/index";
 import {defaultAppSettings,StandardContractValidator} from "../../contracts/src/index";
-import {serializeNovaTurn} from "../../contracts/src/nova-turn";
 import {ChatSessionController,ConversationSession,InMemoryCharacterStore,LLMCognitiveStep,MindRuntime} from "../../core/src/index";
 import {createFoundationRuntime} from "../../runtime/bootstrap/src/index";
 import {InMemoryCoreBookStore} from "../../host/core-book/src/index";
@@ -51,6 +50,27 @@ async function main(){
   const output=JSON.stringify(action.output);
   ok(output.includes("core_book")&&output.includes("memory")&&output.includes("conversation"),"MEMORY_SEARCH returns results across the three source families");
   ok(output.includes(modelSearch.id),"explicit MEMORY_SEARCH can find model_search Core Book entries");
+  const savedFact="For the native tool integration test, the user prefers mint tea over coffee.";
+  const saveAction=await runtime.invoke({id:"memory-save.integration",schemaVersion:"1",tool:"memory.save",
+    arguments:{content:savedFact,type:"preference",tags:["native-tool-test"],importance:70,confidence:95},
+    metadata:{characterId:character.id,conversationId:active.id,turnId:"memory-save-turn",callId:"memory-save-call"}});
+  eq(saveAction.status,"success","memory.save passes the existing Tool Registry and Action Broker");
+  if(saveAction.status!=="success")throw new Error("memory.save was rejected: "+saveAction.error.code);
+  const savedOutput=JSON.stringify(saveAction.output);
+  ok(savedOutput.includes('"saved":true')&&savedOutput.includes('"memoryId"'),"memory.save reports the created character memory ID");
+  const readBack=await runtime.invoke({id:"memory-save-readback.integration",schemaVersion:"1",tool:"read_memory",
+    arguments:{query:"native tool integration mint tea coffee"},
+    metadata:{characterId:character.id,conversationId:active.id,turnId:"memory-save-readback",callId:"memory-save-readback-call"}});
+  eq(readBack.status,"success","existing read_memory tool can read a native memory.save result");
+  if(readBack.status!=="success")throw new Error("read_memory readback failed: "+readBack.error.code);
+  ok(JSON.stringify(readBack.output).includes(savedFact),"saved fact is retrievable from the active character's existing MemoryBroker");
+  const duplicateSave=await runtime.invoke({id:"memory-save-duplicate.integration",schemaVersion:"1",tool:"memory.save",
+    arguments:{content:savedFact,type:"preference",tags:["native-tool-test"],importance:70,confidence:95},
+    metadata:{characterId:character.id,conversationId:active.id,turnId:"memory-save-duplicate",callId:"memory-save-duplicate-call"}});
+  eq(duplicateSave.status,"success","an exact duplicate memory request is handled as a successful tool result");
+  if(duplicateSave.status!=="success")throw new Error("Duplicate memory request failed: "+duplicateSave.error.code);
+  const duplicateOutput=JSON.stringify(duplicateSave.output);
+  ok(duplicateOutput.includes('"saved":false')&&duplicateOutput.includes('"reason":"duplicate"'),"repeated facts are deduplicated without creating unbounded memory entries");
   // A strict raw-cosine threshold isolates the exact historical vector for full-document assertions,
   // instead of making an assertion depend on the tool's bounded multi-result payload budget.
   const strictSearchSettings=runtime.getSettings();
@@ -63,35 +83,46 @@ async function main(){
   const historicalOutput=JSON.stringify(historicalAction.output);
   ok(historicalOutput.includes("old-turn.integration"),"MEMORY_SEARCH returns historical NOVA_TURN by source ID");
   ok(historicalOutput.includes(JSON.stringify(oldTurn.slice(0,60)).slice(1,-1)),"MEMORY_SEARCH returns intact historical NOVA_TURN content");
-  // Exercise the complete production cognitive loop around the real Action Broker:
-  // model emits MEMORY_SEARCH -> Tool Registry dispatches it -> result is persisted in NOVA_TURN
-  // -> the next model request receives the TOOL_RESULTS block.
+  // Exercise the complete production cognitive loop: the model emits a native MEMORY_SEARCH call,
+  // the existing Tool Registry and Action Broker execute it, and the provider receives a role=tool result.
   const loopConversation=await runtime.createConversation(character.id,{id:"semantic-tool-loop.integration",title:"Semantic tool loop"});
   const modelRequests:ChatRequest[]=[];
   const loopCommits:Array<{turn:NovaTurn;context:MindTurnExecutionContext}>=[];
-  let nextStepSawToolResult=false;
-  const toolRequest='<NOVA_TURN version="1"><SITUATION>Look up the saved lease detail.</SITUATION><THOUGHTS>Use the registered read-only search tool before answering.</THOUGHTS><EMOTION>Focused</EMOTION><TOOLS><MEMORY_SEARCH>{"query":"Which detail about the long-term lease in Riga was saved in my older conversation?"}</MEMORY_SEARCH></TOOLS><SPEECH>I will check the saved conversation.</SPEECH><LONGMEMORY></LONGMEMORY><NEXT_WAKE_MS>30000</NEXT_WAKE_MS></NOVA_TURN>';
-  const backgroundTurn='<NOVA_TURN version="1"><SITUATION>Begin cognitive loop.</SITUATION><THOUGHTS>There is no user turn yet.</THOUGHTS><EMOTION>Calm</EMOTION><TOOLS></TOOLS><SPEECH></SPEECH><LONGMEMORY></LONGMEMORY><NEXT_WAKE_MS>30000</NEXT_WAKE_MS></NOVA_TURN>';
-  const finalTurn='<NOVA_TURN version="1"><SITUATION>Use the saved detail to answer.</SITUATION><THOUGHTS>The tool result is now part of the canonical conversation.</THOUGHTS><EMOTION>Focused</EMOTION><TOOLS></TOOLS><SPEECH>The earlier conversation recorded a long-term lease and that you live in Riga.</SPEECH><LONGMEMORY></LONGMEMORY><NEXT_WAKE_MS>30000</NEXT_WAKE_MS></NOVA_TURN>';
-  const scriptedChat={getChatProviderCapabilities:()=>({structuredOutput:false}),async chat(request:ChatRequest):Promise<ChatResponse>{
-    modelRequests.push(request);
-    if(modelRequests.length===3){
-      nextStepSawToolResult=request.context.messages.some(message=>message.role==="assistant"&&message.content.includes("<TOOL_RESULTS>")
-        &&message.content.includes("old-turn.integration")&&message.content.includes("long-term lease"));
+  const nativeToolCalls:string[]=[];
+  let nextModelSawToolResult=false;
+  const finalSpeech="The earlier conversation recorded a long-term lease and that you live in Riga.";
+  const scriptedChat={
+    getChatProviderCapabilities:()=>({toolCalling:true}),
+    async chat(request:ChatRequest):Promise<ChatResponse>{
+      modelRequests.push(request);
+      if(modelRequests.length===1){
+        return {apiVersion:request.apiVersion,schemaVersion:request.schemaVersion,requestId:request.requestId,
+          conversationId:request.context.conversationId,providerId:"test.scripted-chat",model:request.model,
+          message:{role:"assistant",content:""},finishReason:"stop"};
+      }
+      if(modelRequests.length===2){
+        return {apiVersion:request.apiVersion,schemaVersion:request.schemaVersion,requestId:request.requestId,
+          conversationId:request.context.conversationId,providerId:"test.scripted-chat",model:request.model,
+          message:{role:"assistant",content:"",toolCalls:[{id:"semantic-search-call",name:"MEMORY_SEARCH",
+            arguments:{query:"Which detail about the long-term lease in Riga was saved in my older conversation?"}}]},
+          finishReason:"stop"};
+      }
+      nextModelSawToolResult=request.context.messages.some(message=>message.role==="tool"&&message.toolCallId==="semantic-search-call"
+        &&message.toolName==="MEMORY_SEARCH"&&message.content.includes("old-turn.integration")&&message.content.includes("long-term lease"));
+      return {apiVersion:request.apiVersion,schemaVersion:request.schemaVersion,requestId:request.requestId,
+        conversationId:request.context.conversationId,providerId:"test.scripted-chat",model:request.model,
+        message:{role:"assistant",content:finalSpeech},finishReason:"stop"};
     }
-    const content=modelRequests.length===1?backgroundTurn:modelRequests.length===2?toolRequest:finalTurn;
-    return {apiVersion:request.apiVersion,schemaVersion:request.schemaVersion,requestId:request.requestId,
-      conversationId:request.context.conversationId,providerId:"test.scripted-chat",model:request.model,
-      message:{role:"assistant",content},finishReason:"stop"};
-  }};
+  };
   const turnSink:MindTurnSink={async commit(turn,context){
     loopCommits.push({turn,context});
+    if(!turn.speech.trim())return;
     const current=await runtime.getConversation(context.characterId,context.conversationId);
-    if(!current)throw new Error("The canonical Conversation disappeared during tool-loop persistence.");
+    if(!current)throw new Error("The canonical Conversation disappeared during native tool-loop persistence.");
     await runtime.updateConversation(context.characterId,context.conversationId,{messages:[
       ...current.messages,
-      {id:"nova-turn:"+context.turnId+":"+current.messages.length,role:"assistant",content:serializeNovaTurn(turn),
-       metadata:{novaTurnVersion:1,novaTurnId:context.turnId}}
+      {id:"nova-turn:"+context.turnId+":"+current.messages.length,role:"assistant",content:turn.speech,
+       metadata:{novaTurnProtocolVersion:2,source:"nova-life",novaTurnId:context.turnId}}
     ]});
   }};
   const cognitiveStep=new LLMCognitiveStep({
@@ -101,16 +132,22 @@ async function main(){
     getContextBudget:()=>({availableContextTokens:4096,reservedOutputTokens:512,systemOverheadTokens:0,safetyMarginTokens:128}),
     getActiveProviderPresetId:()=>undefined,getChatModel:()=>"test-scripted-model",
     getChatModelForPreset:async()=>"test-scripted-model",getCognitiveSchedule:()=>runtime.getSettings().cognitiveSchedule,
-    getOutputMode:()=>"structured",
     getAvailableTools:()=>[{name:"MEMORY_SEARCH",description:"Read-only semantic search of saved memory and conversation history.",
-      parameters:{type:"object",properties:{query:{type:"string",minLength:1,maxLength:1000}},required:["query"]}}]
+      parameters:{type:"object",properties:{query:{type:"string",minLength:1,maxLength:1000}},required:["query"]}}],
+    executeTool:async(call,context)=>{
+      nativeToolCalls.push(call.name);
+      const result=await runtime.invoke({id:context.callId,schemaVersion:"1",tool:call.name,arguments:call.arguments,
+        metadata:{characterId:context.characterId,conversationId:context.conversationId,turnId:context.turnId,
+          callId:context.callId,requestId:context.requestId}});
+      if(result.status==="success")return {callId:context.callId,name:call.name,status:"success" as const,output:result.output};
+      return {callId:context.callId,name:call.name,status:"error" as const,error:"Action Broker rejected the native tool call: "+result.error.code};
+    }
   });
   const loopRuntime=new MindRuntime({cognitiveStep,schedule:{mode:"adaptive",defaultIntervalMs:30000,minIntervalMs:1,maxIntervalMs:60000,maxRequestsPerHour:null},
     turnSink,
     toolExecutor:{async execute(call,context){
       const result=await runtime.invoke({id:context.callId,schemaVersion:"1",tool:call.name,arguments:call.arguments,
-        metadata:{characterId:context.characterId,conversationId:context.conversationId,turnId:context.turnId,
-          callId:context.callId,requestId:context.requestId}});
+        metadata:{characterId:context.characterId,conversationId:context.conversationId,turnId:context.turnId,callId:context.callId,requestId:context.requestId}});
       if(result.status==="success")return {callId:context.callId,name:call.name,status:"success",output:result.output};
       return {callId:context.callId,name:call.name,status:"error",error:"Tool dispatch did not return success."};
     }}
@@ -123,20 +160,26 @@ async function main(){
   loopRuntime.setActiveCharacter(character.id);
   try{
     await loopRuntime.start();
-    await waitFor(()=>modelRequests.length>=1&&loopCommits.length>=1&&loopRuntime.getState().lifecycleState==="waiting","initial cognitive turn");
+    await waitFor(()=>modelRequests.length>=1&&loopCommits.length>=1&&loopRuntime.getState().lifecycleState==="waiting","initial background cognitive turn");
     const latest=await runtime.getConversation(character.id,loopConversation.id);
-    if(!latest)throw new Error("The tool-loop Conversation is unavailable.");
+    if(!latest)throw new Error("The native tool-loop Conversation is unavailable.");
     await runtime.updateConversation(character.id,loopConversation.id,{messages:[
       ...latest.messages,{id:"semantic-loop-user",role:"user",content:"Please find my saved lease details."}
     ]});
     ok(loopRuntime.wakeForUserMessage({characterId:character.id,conversationId:loopConversation.id,
       userMessageId:"semantic-loop-user",turnId:"semantic-loop-turn"}),"the persisted user turn schedules a real cognitive wake");
-    await waitFor(()=>modelRequests.length>=3&&loopCommits.length>=3&&loopRuntime.getState().lifecycleState==="waiting","tool result and next model response");
-    eq(loopCommits[1]?.turn.tools.map(tool=>tool.name),["MEMORY_SEARCH"],"the model-produced NOVA_TURN tool call was parsed and dispatched");
-    eq(loopCommits[1]?.turn.toolResults[0]?.status,"success","real MEMORY_SEARCH output was attached to the same NOVA_TURN");
-    ok(JSON.stringify(loopCommits[1]?.turn.toolResults[0]?.output).includes("old-turn.integration"),"tool result contains the historical source ID");
-    ok(nextStepSawToolResult,"the next actual cognitive ChatRequest includes persisted TOOL_RESULTS and historical content");
-    ok(modelRequests[2]?.context.messages.some(message=>message.content.includes("TOOL_RESULTS")),"the returned tool payload is passed to the next model step through Conversation context");
+    await waitFor(()=>modelRequests.length>=3&&loopCommits.length>=2&&loopRuntime.getState().lifecycleState==="waiting","native tool result and final provider response");
+    eq(modelRequests[1]?.tools?.map(tool=>tool.name),["MEMORY_SEARCH"],"only the existing registered search tool is advertised");
+    eq(nativeToolCalls,["MEMORY_SEARCH"],"the native tool call is executed exactly once");
+    ok(nextModelSawToolResult,"the provider receives the real Action Broker output in a separate role=tool message");
+    ok(modelRequests[2]?.context.messages.some(message=>message.role==="tool"&&message.content.includes("old-turn.integration")
+      &&message.content.includes("long-term lease")),"historical conversation retrieval reaches the next model request as native tool output");
+    eq(loopCommits[1]?.turn.speech,finalSpeech,"final cognitive turn contains ordinary provider speech");
+    eq(loopCommits[1]?.turn.tools,[],"native calls are not copied into the legacy turn tool list");
+    eq(loopCommits[1]?.turn.toolResults,[],"native tool result history is not re-serialized into legacy protocol fields");
+    const persisted=await runtime.getConversation(character.id,loopConversation.id);
+    ok(persisted?.messages.some(message=>message.role==="assistant"&&message.content===finalSpeech
+      &&message.metadata?.novaTurnProtocolVersion===2),"new cognitive speech is persisted as an ordinary assistant message");
   }finally{await loopRuntime.stop()}
  }finally{await runtime.stop()}
  console.log("semantic search runtime integration tests passed");

@@ -364,10 +364,11 @@ async function settingsV5PersistenceTest(){
     chat:{automaticLongTermMemory:false,responseMode:"plain"},
     memoryAgent:{enabled:true,providerPresetId:"legacy-agent",model:"legacy-model",outputMode:"plain",prompt:"legacy prompt",promptBackup:"backup",defaultPromptVersion:"9"}
   });
-  equal(migrated.schemaVersion,"13","legacy saved settings migrate to AppSettings v13");
+  equal(migrated.schemaVersion,"14","legacy saved settings migrate to AppSettings v14");
   equal(migrated.chat.automaticLongTermMemory,false,"LONGMEMORY persistence setting remains intentional and preserved");
   equal(migrated.chat.responseMode,"plain","response mode remains preserved during settings migration");
-  equal(Object.prototype.hasOwnProperty.call(migrated,"memoryAgent"),false,"legacy Automatic Memory Agent settings are ignored and not restored");
+  equal(migrated.memoryAgent.enabled,true,"legacy Memory Agent enable state is retained during migration");
+  equal(migrated.memoryAgent.providerPresetId,"legacy-agent","legacy Memory Agent provider selection is retained during migration");
 }
 
 async function legacySettingsMigrationTest(){

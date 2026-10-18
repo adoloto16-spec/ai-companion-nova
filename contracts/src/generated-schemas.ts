@@ -80,8 +80,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
   },
   "app-settings": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v13",
-    "title": "AI Companion Nova App Settings v13",
+    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v14",
+    "title": "AI Companion Nova App Settings v14",
     "type": "object",
     "additionalProperties": false,
     "required": [
@@ -96,21 +96,24 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       "ui",
       "semanticDedup",
       "prompts",
-      "tts"
+      "tts",
+      "memoryAgent"
     ],
     "properties": {
       "apiVersion": {
         "const": "1"
       },
       "schemaVersion": {
-        "const": "13"
+        "const": "14"
       },
       "chat": {
         "type": "object",
         "additionalProperties": false,
         "required": [
           "automaticLongTermMemory",
-          "responseMode"
+          "responseMode",
+          "reasoningMode",
+          "reasoningEffort"
         ],
         "properties": {
           "automaticLongTermMemory": {
@@ -121,6 +124,23 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             "enum": [
               "structured",
               "plain"
+            ]
+          },
+          "reasoningMode": {
+            "type": "string",
+            "enum": [
+              "provider-default",
+              "enabled",
+              "disabled"
+            ]
+          },
+          "reasoningEffort": {
+            "type": "string",
+            "enum": [
+              "provider-default",
+              "low",
+              "medium",
+              "high"
             ]
           }
         }
@@ -230,10 +250,14 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "showDiagnosticsInChat"
+          "showDiagnosticsInChat",
+          "showReasoningInDiagnostics"
         ],
         "properties": {
           "showDiagnosticsInChat": {
+            "type": "boolean"
+          },
+          "showReasoningInDiagnostics": {
             "type": "boolean"
           }
         }
@@ -573,6 +597,58 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           },
           "enabled": {
             "type": "boolean"
+          }
+        }
+      },
+      "memoryAgent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "enabled",
+          "providerPresetId",
+          "model",
+          "outputMode",
+          "prompt",
+          "promptBackup",
+          "defaultPromptVersion"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "providerPresetId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "outputMode": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "structured",
+              "plain"
+            ]
+          },
+          "prompt": {
+            "type": "string",
+            "maxLength": 12000
+          },
+          "promptBackup": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 12000
+          },
+          "defaultPromptVersion": {
+            "type": "string",
+            "minLength": 1
           }
         }
       }
@@ -1008,6 +1084,40 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             "metadata": {
               "type": "object",
               "additionalProperties": true
+            },
+            "toolName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "toolCalls": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "id",
+                  "name",
+                  "arguments"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "arguments": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
             }
           }
         }
@@ -1166,6 +1276,14 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             }
           }
         ]
+      },
+      "repeatPenalty": {
+        "type": "number",
+        "exclusiveMinimum": 0
+      },
+      "repeatLastN": {
+        "type": "integer",
+        "minimum": -1
       }
     }
   },
@@ -1202,6 +1320,40 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       "metadata": {
         "type": "object",
         "additionalProperties": true
+      },
+      "toolName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "toolCalls": {
+        "type": "array",
+        "maxItems": 32,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "name",
+            "arguments"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "arguments": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        }
       }
     }
   },
@@ -1286,6 +1438,40 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
                 "metadata": {
                   "type": "object",
                   "additionalProperties": true
+                },
+                "toolName": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "toolCalls": {
+                  "type": "array",
+                  "maxItems": 32,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "name",
+                      "arguments"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128
+                      },
+                      "arguments": {
+                        "type": "object",
+                        "additionalProperties": true
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -1347,6 +1533,56 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       "metadata": {
         "type": "object",
         "additionalProperties": true
+      },
+      "tools": {
+        "type": "array",
+        "maxItems": 64,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "description",
+            "parameters"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-zA-Z][a-zA-Z0-9_.-]*$"
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 4000
+            },
+            "parameters": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        }
+      },
+      "reasoning": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "enum": [
+              "provider-default",
+              "enabled",
+              "disabled"
+            ]
+          },
+          "effort": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32
+          }
+        }
       }
     }
   },
@@ -1423,6 +1659,40 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           "metadata": {
             "type": "object",
             "additionalProperties": true
+          },
+          "toolName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "toolCalls": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "name",
+                "arguments"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "arguments": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
           }
         }
       },
@@ -1456,6 +1726,10 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       "metadata": {
         "type": "object",
         "additionalProperties": true
+      },
+      "reasoning": {
+        "type": "string",
+        "maxLength": 32000
       }
     }
   },
@@ -3069,6 +3343,14 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
                 "additionalProperties": true
               }
             }
+          },
+          "repeatPenalty": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "repeatLastN": {
+            "type": "integer",
+            "minimum": -1
           }
         }
       },

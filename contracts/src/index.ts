@@ -569,19 +569,22 @@ export interface ProviderCapabilities{streaming?:boolean;vision?:boolean;toolCal
 export interface ModelInfo{id:string;displayName?:string;capabilities?:ProviderCapabilities}
 export interface JsonSchema{$schema?:string;$id?:string;title?:string;description?:string;default?:unknown;examples?:readonly unknown[];type?:string|string[];properties?:Record<string,JsonSchema>;required?:readonly string[];additionalProperties?:boolean|JsonSchema;items?:JsonSchema;enum?:readonly unknown[];oneOf?:readonly JsonSchema[];const?:unknown;minimum?:number;maximum?:number;minLength?:number;maxLength?:number;minItems?:number;maxItems?:number}
 export interface ToolDefinition{id:string;version:string;schemaVersion:string;name:string;description:string;risk:ActionRisk;requiredCapabilities:readonly string[];resourceType:"domain"|"filesystem"|"application"|"resource";action:string;targetResolverId:string;confirmation:"never"|"policy";parameters:JsonSchema}
-export interface ChatMessage{id?:string;role:"system"|"user"|"assistant"|"tool";content:string;toolCallId?:string;metadata?:Record<string,unknown>}
+export interface ChatToolDefinition{name:string;description:string;parameters:JsonSchema}
+export interface ChatToolCall{id:string;name:string;arguments:Record<string,unknown>}
+export interface ChatReasoningOptions{mode:"provider-default"|"enabled"|"disabled";effort?:string}
+export interface ChatMessage{id?:string;role:"system"|"user"|"assistant"|"tool";content:string;toolCallId?:string;toolName?:string;toolCalls?:readonly ChatToolCall[];metadata?:Record<string,unknown>}
 export interface ChatContext{conversationId:string;messages:readonly ChatMessage[];metadata?:Record<string,unknown>}
 export interface StructuredResponseFormat{type:"json-schema";schema:JsonSchema;name?:string;strict?:boolean}
 export type AgentOutputMode="auto"|"structured"|"plain";
 export type ResponseFormat={type:"text"}|{type:"json";schema?:Record<string,unknown>}|StructuredResponseFormat;
-export interface ChatGenerationOptions{temperature?:number;maxTokens?:number;topP?:number;responseFormat?:ResponseFormat}
+export interface ChatGenerationOptions{temperature?:number;maxTokens?:number;topP?:number;repeatPenalty?:number;repeatLastN?:number;responseFormat?:ResponseFormat}
 export interface ChatUsage{promptTokens?:number;completionTokens?:number;totalTokens?:number}
 export type ChatFinishReason="stop"|"length"|"content_filter"|"error"|"unknown"
 export type ChatErrorCode="INVALID_REQUEST"|"PROVIDER_NOT_FOUND"|"PROVIDER_UNAVAILABLE"|"PROVIDER_ERROR"|"INVALID_RESPONSE"|"UNSUPPORTED"
 export interface ChatError{apiVersion:ApiVersion;schemaVersion:string;code:ChatErrorCode;message:string;requestId?:string;providerId?:string;retryable?:boolean;details?:Record<string,unknown>}
 export interface ChatRequestOptions{signal?:AbortSignal}
-export interface ChatRequest{apiVersion:ApiVersion;schemaVersion:string;requestId:string;providerId?:string;model:string;context:ChatContext;generation?:ChatGenerationOptions;metadata?:Record<string,unknown>}
-export interface ChatResponse{apiVersion:ApiVersion;schemaVersion:string;requestId:string;conversationId:string;providerId:string;model:string;message:ChatMessage;finishReason:ChatFinishReason;usage?:ChatUsage;metadata?:Record<string,unknown>}
+export interface ChatRequest{apiVersion:ApiVersion;schemaVersion:string;requestId:string;providerId?:string;model:string;context:ChatContext;generation?:ChatGenerationOptions;tools?:readonly ChatToolDefinition[];reasoning?:ChatReasoningOptions;metadata?:Record<string,unknown>}
+export interface ChatResponse{apiVersion:ApiVersion;schemaVersion:string;requestId:string;conversationId:string;providerId:string;model:string;message:ChatMessage;finishReason:ChatFinishReason;usage?:ChatUsage;reasoning?:string;metadata?:Record<string,unknown>}
 export interface ChatProviderMetadata{id:string;kind:"chat";displayName:string;version:string;description?:string}
 export interface ChatProvider{id:string;metadata():ChatProviderMetadata;capabilities():ProviderCapabilities;listModels():Promise<ModelInfo[]>;chat(request:ChatRequest,options?:ChatRequestOptions):Promise<ChatResponse>;stream?(request:ChatRequest,handlers:ChatStreamHandlers,options?:ChatStreamOptions):Promise<ChatResponse>;health():Promise<HealthStatus>}
 export type Message=ChatMessage;

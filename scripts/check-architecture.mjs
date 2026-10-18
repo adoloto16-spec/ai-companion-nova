@@ -148,8 +148,8 @@ if(/providers\/tts\/registry\/src|providers\/tts\/voice-studio\/src/.test(source
 
 const appSettingsPath="contracts/src/settings.ts";
 const appSettingsSource=sourceFor(appSettingsPath);
-if(!/APP_SETTINGS_SCHEMA_VERSION:"13"/.test(appSettingsSource)||!/tts:cloneTtsSettings\(DEFAULT_APP_SETTINGS\.tts\)/.test(appSettingsSource))
-  violations.push(appSettingsPath+": AppSettings v13 must include copied TTS defaults.");
+if(!/APP_SETTINGS_SCHEMA_VERSION:"\d+"/.test(appSettingsSource)||!/tts:cloneTtsSettings\(DEFAULT_APP_SETTINGS\.tts\)/.test(appSettingsSource))
+  violations.push(appSettingsPath+": AppSettings must declare a schema version and include copied TTS defaults.");
 const ttsDefaults=sourceFor("contracts/src/tts.ts");
 if(!/enabled:\s*false/.test(ttsDefaults))violations.push("contracts/src/tts.ts: TTS must be disabled by default.");
 

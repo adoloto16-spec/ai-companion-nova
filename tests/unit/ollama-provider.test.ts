@@ -159,14 +159,14 @@ async function modelDiscoveryAndNoKeyTest(): Promise<void> {
   ok(http.requests.every(item => !("Authorization" in item.headers) && !("authorization" in item.headers)), "no API key is sent");
   equal(provider(http).capabilities().structuredOutput, true, "structured output capability is explicit");
   equal(provider(http).capabilities().vision, false, "vision capability remains disabled");
-  equal(provider(http).capabilities().toolCalling, false, "tool calling capability remains disabled");
-  equal(provider(http).capabilities().reasoning, false, "reasoning capability remains disabled");
+  equal(provider(http).capabilities().toolCalling, true, "native tool calling is supported by this adapter");
+  equal(provider(http).capabilities().reasoning, true, "native reasoning is supported by this adapter");
 }
 
 async function ordinaryRequestMappingTest(): Promise<void> {
   const http = new FakeOllamaHttpClient();
   const response = await provider(http).chat(chatRequest({
-    generation: {temperature: 0.35, topP: 0.75, maxTokens: 120, responseFormat: {type: "text"}}
+    generation: {temperature: 0.35, topP: 0.75, maxTokens: 120, repeatPenalty: 1.12, repeatLastN: 64, responseFormat: {type: "text"}}
   }));
   equal(response.message.content, "hello from Ollama", "ordinary response content");
   equal(response.finishReason, "stop", "done maps to stop");
@@ -175,9 +175,9 @@ async function ordinaryRequestMappingTest(): Promise<void> {
   equal(req.url, "http://127.0.0.1:11434/api/chat", "native chat endpoint");
   const body = JSON.parse(req.body!) as Record<string, unknown>;
   equal(body.stream, false, "ordinary request disables streaming");
-  equal(body.think, false, "native /api/chat explicitly disables thinking");
+  equal(body.think, undefined, "provider-default reasoning is left to Ollama");
   equal(body.format, undefined, "text generation omits JSON format");
-  deepEqual(body.options, {temperature: 0.35, top_p: 0.75, num_predict: 120}, "generation parameters map without invented context window");
+  deepEqual(body.options, {temperature: 0.35, top_p: 0.75, num_predict: 120, repeat_penalty: 1.12, repeat_last_n: 64}, "generation params map to supported Ollama fields without an invented context window");
   equal(body.model, "llama3.2:latest", "model tag preserved");
   const sentMessages = body.messages as Array<{role: string; content: string}>;
   deepEqual(sentMessages, [
@@ -354,13 +354,50 @@ async function thinkingIsNotAssistantContentTest(): Promise<void> {
   });
 
   equal(response.message.content, "Here is the answer.", "only message.content is returned as the assistant answer");
+  equal(response.reasoning, "internal reasoning that must not be shown", "native reasoning is returned in a separate field");
   deepEqual(
     events.filter(event => event.type === "delta").map(event => event.text),
     ["Here is the answer."],
-    "message.thinking is neither accumulated nor emitted as a user-facing delta"
+    "message.thinking is never emitted as a user-facing delta"
   );
+  deepEqual(events.filter(event=>event.type==="reasoning").map(event=>event.text),["internal reasoning that must not be shown"],"reasoning has its own stream event");
   const body = JSON.parse(http.streamRequests[0]!.body!) as Record<string, unknown>;
-  equal(body.think, false, "streaming /api/chat also disables thinking");
+  equal(body.think, undefined, "streaming keeps the provider-default thinking mode");
+}
+
+async function nativeToolsUseModelCapabilitiesTest():Promise<void>{
+  const http=new FakeOllamaHttpClient();
+  http.requestHandler=async request=>{
+    if(request.url.endsWith("/api/show"))return {status:200,body:JSON.stringify({
+      capabilities:["tools","thinking"],thinking:{values:[true,false,"low","high"],default:"low"}
+    })};
+    return {status:200,body:JSON.stringify({
+      model:"qwen3.5:latest",
+      message:{role:"assistant",content:"",tool_calls:[{function:{name:"memory.search",arguments:{query:"tea"}}}]},
+      done:true,done_reason:"tool_calls"
+    })};
+  };
+  const tool={name:"memory.search",description:"Search active character memories",parameters:{type:"object",properties:{query:{type:"string"}},required:["query"]}};
+  const response=await provider(http).chat(chatRequest({
+    tools:[tool],reasoning:{mode:"enabled",effort:"high"},
+    context:{conversationId:"conversation-native-tools",messages:[
+      {role:"system",content:"Use tools when needed."},
+      {role:"assistant",content:"",toolCalls:[{id:"previous-call",name:"memory.search",arguments:{query:"coffee"}}]},
+      {role:"tool",content:"{\"matches\":[]}",toolCallId:"previous-call",toolName:"memory.search"},
+      {role:"user",content:"Remember my tea preference."}
+    ]}
+  }));
+  equal(response.message.toolCalls?.length,1,"native tool calls are returned without JSON parsing the answer");
+  equal(response.message.toolCalls?.[0]?.name,"memory.search","tool name is preserved");
+  equal((response.message.toolCalls?.[0]?.arguments as Record<string,unknown>).query,"tea","tool arguments are parsed");
+  const show=http.requests.find(request=>request.url.endsWith("/api/show"));
+  ok(show,"model capabilities are discovered before sending optional native features");
+  const request=http.requests.find(item=>item.url.endsWith("/api/chat"))!;
+  const body=JSON.parse(request.body!) as {think?:unknown;tools?:Array<{function:{name:string}}>;messages:Array<{role:string;tool_name?:string}>};
+  equal(body.think,"high","only a model-declared reasoning value is sent");
+  equal(body.tools?.[0]?.function.name,"memory.search","native tool definition is sent to Ollama");
+  equal(body.messages[2]?.role,"tool","tool result uses the provider-native role");
+  equal(body.messages[2]?.tool_name,"memory.search","tool result preserves the function name");
 }
 
 async function streamSchemaViolationTest(): Promise<void> {
@@ -472,6 +509,7 @@ async function main(): Promise<void> {
     ["Invalid JSON and schema violations", invalidJsonAndSchemaViolationTest],
     ["Split NDJSON streaming", splitNdjsonStreamingTest],
     ["Thinking data is not assistant content", thinkingIsNotAssistantContentTest],
+    ["Native tools follow model capabilities",nativeToolsUseModelCapabilitiesTest],
     ["Streaming schema violation", streamSchemaViolationTest],
     ["Cancellation and timeouts", cancellationAndTimeoutTest],
     ["Stream timeout is an inactivity deadline", streamTimeoutIsInactivityDeadlineTest],

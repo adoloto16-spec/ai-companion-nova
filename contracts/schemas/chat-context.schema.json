@@ -46,6 +46,40 @@
           "metadata": {
             "type": "object",
             "additionalProperties": true
+          },
+          "toolName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "toolCalls": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "name",
+                "arguments"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "arguments": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
           }
         }
       }

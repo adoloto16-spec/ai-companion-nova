@@ -31,7 +31,7 @@ import {
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
   type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem, type ErrorDiagnostic,
   defaultAppSettings, validateAppSettings, StandardContractValidator, applyPromptOverride, restorePromptDefault, restoreAllPromptDefaults, type PromptId,
-  type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo, type MindState, type MindTurnSink, type MindReactiveTurn
+  type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo, type MindState, type MindTraceEntry, type MindTurnSink, type MindReactiveTurn
 } from "../../../contracts/src/index";
 import {countVisibleSpeechMessages,resolveNovaTurnMessagePresentation} from "./nova-turn-visibility";
 import {chatDraftKey,readChatDraft,writeChatDraft,clearSubmittedChatDraft} from "./chat-drafts";
@@ -202,6 +202,8 @@ function ChatView({controller,runtime,character,conversations,activeConversation
 
   const send=React.useCallback(async()=>{
     const submittedDraft=input;
+    // Sending a user message is an explicit interruption of ongoing and queued speech.
+    onStopSpeech();
     setPersistenceError("");
     if(runtime.getMindState().lifecycleState!=="off"){
       try{
@@ -217,7 +219,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     const result=await controller.submit(submittedDraft,runtime.getActiveChatModel());
     if(result.status==="sent")onClearSubmittedDraft(submittedDraft);
     await persistAfterAction(result);
-  },[controller,input,runtime,onPersist,onClearSubmittedDraft,persistAfterAction]);
+  },[controller,input,runtime,onPersist,onClearSubmittedDraft,persistAfterAction,onStopSpeech]);
 
   const stop=React.useCallback(async()=>{
     onStopSpeech();
@@ -1394,9 +1396,9 @@ function ModelProfileView({
 
   const selectedPresetAvailable=!draft.providerPresetId||presets.some(preset=>preset.id===draft.providerPresetId);
 
-  const updateGeneration=(key:"temperature"|"topP"|"maxTokens",value:string)=>{
+  const updateGeneration=(key:"temperature"|"topP"|"maxTokens"|"repeatPenalty"|"repeatLastN",value:string)=>{
     const numeric=value.trim()===""?undefined:Number(value);
-    setDraft(current=>({...current,generation:{...current.generation,...(numeric===undefined?{}:{[key]:numeric})}}));
+    setDraft(current=>({...current,generation:{...current.generation,[key]:numeric}}));
   };
 
   const save=async()=>{
@@ -1406,6 +1408,8 @@ function ModelProfileView({
         ...(draft.generation.temperature!==undefined?{temperature:draft.generation.temperature}:{}),
         ...(draft.generation.topP!==undefined?{topP:draft.generation.topP}:{}),
         ...(draft.generation.maxTokens!==undefined?{maxTokens:draft.generation.maxTokens}:{}),
+        ...(draft.generation.repeatPenalty!==undefined?{repeatPenalty:draft.generation.repeatPenalty}:{}),
+        ...(draft.generation.repeatLastN!==undefined?{repeatLastN:draft.generation.repeatLastN}:{}),
         ...(draft.generation.responseFormat!==undefined?{responseFormat:draft.generation.responseFormat}:{}),
       };
       const next:ModelProfile={
@@ -1452,6 +1456,14 @@ function ModelProfileView({
         <label>Top P
           <input type="number" min="0" max="1" step="0.01" value={draft.generation.topP??""}
             onChange={event=>updateGeneration("topP",event.target.value)} placeholder="Runtime default" disabled={busy}/>
+        </label>
+        <label>Repeat penalty (Ollama only)
+          <input type="number" min="0.01" step="0.05" value={draft.generation.repeatPenalty??""}
+            onChange={event=>updateGeneration("repeatPenalty",event.target.value)} placeholder="Provider default" disabled={busy}/>
+        </label>
+        <label>Repeat last N (Ollama only; -1 = all)
+          <input type="number" min="-1" step="1" value={draft.generation.repeatLastN??""}
+            onChange={event=>updateGeneration("repeatLastN",event.target.value)} placeholder="Provider default" disabled={busy}/>
         </label>
       </div>
       <label>Max Tokens
@@ -1722,6 +1734,11 @@ function AppSettingsView({
         <input type="checkbox" checked={settings.ui.showDiagnosticsInChat}
           onChange={event=>onChange({...settings,ui:{...settings.ui,showDiagnosticsInChat:event.target.checked}})} disabled={saving}/>
       </label>
+      <label className="checkbox">Show provider reasoning in Diagnostics
+        <input type="checkbox" checked={settings.ui.showReasoningInDiagnostics}
+          onChange={event=>onChange({...settings,ui:{...settings.ui,showReasoningInDiagnostics:event.target.checked}})} disabled={saving}/>
+      </label>
+      <p className="hint">Provider reasoning, when returned, is kept in a bounded technical trace and never added to normal chat text or TTS.</p>
       <p className="hint">Model, temperature, topP, and maxTokens remain in Model Profile and are intentionally not duplicated here.</p>
       <div className="actions">
         <button type="button" onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save Settings"}</button>
@@ -1743,21 +1760,29 @@ function ChatSettingsView({settings,onChange,onSave,onReset,saving,message}:{
   return <div className="settings-grid">
     <section>
       <div className="section-header">
-        <div><h2>Chat</h2><p className="chat-subtitle">Choose the output format used for the next Nova Life cognitive request.</p></div>
+        <div><h2>Chat</h2><p className="chat-subtitle">Nova Life uses native provider text and tool calls; legacy response mode remains for compatibility.</p></div>
         <button type="button" onClick={()=>void onReset()} disabled={saving}>Reset to Defaults</button>
       </div>
-      <label>Chat response mode
-        <select value={settings.chat.responseMode}
-          onChange={event=>onChange({...settings,chat:{...settings.chat,responseMode:event.target.value as AppSettings["chat"]["responseMode"]}})} disabled={saving}>
-          <option value="structured">Structured JSON Schema (tagged fallback if unsupported)</option>
-          <option value="plain">Plain text</option>
+      <p className="hint">The legacy response-mode preference is preserved when settings are migrated. New cognitive turns use ordinary text content, provider-native tool calls, and separate optional reasoning; NovaTurn JSON is no longer required.</p>
+      <label>Provider reasoning
+        <select value={settings.chat.reasoningMode}
+          onChange={event=>onChange({...settings,chat:{...settings.chat,reasoningMode:event.target.value as AppSettings["chat"]["reasoningMode"]}})} disabled={saving}>
+          <option value="provider-default">Provider default</option>
+          <option value="enabled">Enabled (when supported by the selected model)</option>
+          <option value="disabled">Disabled (when supported by the selected model)</option>
         </select>
       </label>
-      {settings.chat.responseMode==="structured"
-        ?<p className="hint">Requests native NovaTurn v1 JSON Schema output. The tagged NOVA_TURN protocol is used only if the chosen provider explicitly declares structured output unsupported or explicitly rejects the schema format.</p>
-        :<p className="hint">Sends ordinary plain text without JSON Schema or mandatory NOVA_TURN parsing. Tool requests and structured scheduling metadata are disabled.</p>}
-      <p className="hint">This setting is saved independently of technical-data visibility. It applies on the next cognitive request and does not change previously saved Conversation messages.</p>
-      <p className="hint">Default: {defaults.chat.responseMode==="structured"?"Structured protocol (recommended)":"Plain text (fallback)"}.</p>
+      <p className="hint">Only provider- and model-supported settings are sent. Provider-default is recommended when a model does not expose reasoning controls; effort levels remain model-specific.</p>
+      <label>Reasoning effort
+        <select value={settings.chat.reasoningEffort}
+          onChange={event=>onChange({...settings,chat:{...settings.chat,reasoningEffort:event.target.value as AppSettings["chat"]["reasoningEffort"]}})} disabled={saving}>
+          <option value="provider-default">Provider default</option>
+          <option value="low">Low (recommended)</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+        </select>
+      </label>
+      <p className="hint">Effort is applied only where the provider/model supports it. Current APIs do not guarantee a separate hard 120-token reasoning cap; low effort is best-effort and model-dependent.</p>
       <div className="actions">
         <button type="button" onClick={()=>void onSave()} disabled={saving}>{saving?"Saving…":"Save Settings"}</button>
       </div>
@@ -1781,7 +1806,7 @@ function TraceCandidate({candidate}:{candidate:any}){
   </div>;
 }
 
-function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:AppSettings}){
+function DiagnosticsView({runtime,settings,mindTrace}:{runtime:FoundationRuntime;settings:AppSettings;mindTrace:readonly MindTraceEntry[]}){
   const [traces,setTraces]=React.useState<readonly ChatTurnTrace[]>([]);
   const [semanticDiagnostics,setSemanticDiagnostics]=React.useState<readonly ErrorDiagnostic[]>([]);
   const [runtimeDiagnostics,setRuntimeDiagnostics]=React.useState<readonly ErrorDiagnostic[]>([]);
@@ -1816,9 +1841,13 @@ function DiagnosticsView({runtime,settings}:{runtime:FoundationRuntime;settings:
   return <div className="settings-grid">
     <section>
       <div className="section-header">
-        <div><h2>Diagnostics</h2><p className="chat-subtitle">Technical turn traces and semantic-memory diagnostics; no model chain-of-thought is recorded.</p></div>
+        <div><h2>Diagnostics</h2><p className="chat-subtitle">Technical turn traces and semantic-memory diagnostics. Provider reasoning stays out of user messages and is shown only when explicitly enabled.</p></div>
         <button type="button" onClick={()=>{runtime.clearChatTraces();refresh()}}>Clear Logs</button>
       </div>
+      {settings.ui.showReasoningInDiagnostics&&mindTrace.filter(entry=>typeof entry.reasoning==="string"&&entry.reasoning.length>0).map(entry=><article className="diagnostic-json" key={entry.runId+":reasoning"}>
+        <div><strong>Provider reasoning</strong> · {entry.wakeReason} · {entry.result}</div>
+        <pre>{entry.reasoning}</pre>
+      </article>)}
       <div className="status-grid">
         <span>Log level</span><strong>{settings.diagnostics.logLevel}</strong>
         <span>Retained turn traces</span><strong>{traces.length}</strong>
@@ -2952,6 +2981,7 @@ function App(){
       return current;
     });
   },[modelProfileStore]);
+  React.useEffect(()=>{foundationRef.current?.setActiveModelProfile(activeModelProfile);},[activeModelProfile]);
 
   const saveAppSettings=React.useCallback(async()=>{
     const errors=validateAppSettings(appSettings);
@@ -3067,7 +3097,7 @@ function App(){
           onTestPreset={testPreset}
           onError={reportViewError}/>
       :view==="diagnostics"&&foundationRef.current
-      ?<DiagnosticsView runtime={foundationRef.current} settings={appSettings}/>
+      ?<DiagnosticsView runtime={foundationRef.current} settings={appSettings} mindTrace={mindState.recentTrace??[]}/>
       :startupStatus==="error"
         ?<section className="loading-panel" role="alert">
           <strong>Character runtime initialization failed.</strong>

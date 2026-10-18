@@ -1,8 +1,13 @@
 import {resolvePromptText} from "../../contracts/src";
 import type {PromptId} from "../../contracts/src";
-import type {AssembledContext,Character,ChatMessage,ChatRequest,ChatRequestOptions,ChatResponse,ChatStreamHandlers,ContextBuildRequest,ContextBudget,Conversation,CognitiveScheduleSettings,MindReactiveTurn,ProviderCapabilities} from "../../contracts/src";
-import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,CONTEXT_API_VERSION,CONTEXT_SCHEMA_VERSION,MinimalJsonSchemaValidator,parseNovaTurn,STANDARD_SCHEMAS} from "../../contracts/src";
-import {NovaTurnJsonEmotionStreamDecoder,NovaTurnJsonSpeechStreamDecoder,NovaTurnTaggedEmotionStreamDecoder,NovaTurnTaggedSpeechStreamDecoder} from "./nova-turn-stream-decoders";
+import type {
+  AssembledContext,Character,ChatMessage,ChatRequest,ChatRequestOptions,ChatResponse,
+  ChatStreamHandlers,ChatToolDefinition,ChatReasoningOptions,ContextBuildRequest,ContextBudget,
+  Conversation,CognitiveScheduleSettings,MindReactiveTurn,ProviderCapabilities,JsonSchema,
+  MindToolExecutor,NovaToolCall,NovaToolResult
+} from "../../contracts/src";
+import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,CONTEXT_API_VERSION,CONTEXT_SCHEMA_VERSION,parseNovaTurn} from "../../contracts/src";
+import {NOVA_TURN_MAX_SERIALIZED_CHARS} from "../../contracts/src/nova-turn";
 import type {NovaTurn} from "../../contracts/src/nova-turn";
 import type {CognitiveStep,CognitiveStepContext,CognitiveStepResult} from "./mind-runtime";
 
@@ -24,25 +29,48 @@ export interface LLMCognitiveStepOptions {
   getChatModel:()=>string;
   getChatModelForPreset:(providerPresetId:string)=>Promise<string>;
   getCognitiveSchedule?:()=>CognitiveScheduleSettings;
-  getOutputMode?:()=> "structured"|"plain";
   getPrompt?:(id:PromptId)=>string;
   getAvailableTools?:()=>readonly {name:string;description:string;parameters:unknown}[];
+  executeTool?:MindToolExecutor["execute"];
+  getReasoningOptions?:()=>ChatReasoningOptions;
+  getShowReasoningInDiagnostics?:()=>boolean;
+  getGenerationOptions?:()=>import("../../contracts/src/index").ChatGenerationOptions|undefined;
+  consumeRequestedWakeInterval?:(turnId:string)=>number|undefined;
   clock?:()=>string;
 }
+
+const MAX_NATIVE_TOOL_ROUNDS=12;
+const MAX_NATIVE_TOOL_CALLS=64;
+const MAX_TOOL_ARGUMENT_CHARS=4_000;
+const MAX_TOOL_RESULT_CHARS=4_000;
+
 function defaultCognitiveInterval(schedule:CognitiveScheduleSettings|undefined):number{
   if(!schedule)return 30_000;
   return Math.min(schedule.maxIntervalMs,Math.max(schedule.minIntervalMs,schedule.defaultIntervalMs));
 }
-function throwIfAborted(signal:AbortSignal):void { if(signal.aborted){const error=new Error("Mind Runtime cognitive step aborted.");error.name="AbortError";throw error;} }
-function cloneMessage(message:ChatMessage):ChatMessage { return {...message,...(message.metadata?{metadata:{...message.metadata}}:{})}; }
-function escapeUntrustedUserText(value:string):string {
-  return value.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function throwIfAborted(signal:AbortSignal):void {
+  if(signal.aborted){const error=new Error("Mind Runtime cognitive step aborted.");error.name="AbortError";throw error;}
 }
-function requestId():string { return "nova-turn-"+Date.now()+"-"+Math.random().toString(36).slice(2,10); }
+function cloneMessage(message:ChatMessage):ChatMessage{return {...message,...(message.metadata?{metadata:{...message.metadata}}:{})};}
+function normalizeHistoricalMessage(message:ChatMessage):ChatMessage{
+  if(message.role!=="assistant")return cloneMessage(message);
+  const parsed=parseNovaTurn(message.content);
+  if(!parsed.turn)return cloneMessage(message);
+  return {...cloneMessage(message),content:parsed.turn.speech};
+}
+function safeToolResultText(value:unknown):string{
+  let serialized:string;
+  try{serialized=JSON.stringify(value)??"null";}catch{serialized=JSON.stringify({error:"Tool result was not serializable."})!;}
+  if(serialized.length<=MAX_TOOL_RESULT_CHARS)return serialized;
+  return JSON.stringify({truncated:true,preview:serialized.slice(0,MAX_TOOL_RESULT_CHARS-100)});
+}
+function requestId():string{return "nova-turn-"+Date.now()+"-"+Math.random().toString(36).slice(2,10);}
 
 export class LLMCognitiveStep implements CognitiveStep {
   private readonly clock:()=>string;
+  private readonly nativeToolResultCache=new Map<string,NovaToolResult>();
   constructor(private readonly options:LLMCognitiveStepOptions){this.clock=options.clock??(()=>new Date().toISOString());}
+
   async run(context:CognitiveStepContext):Promise<CognitiveStepResult>{
     throwIfAborted(context.signal);
     const character=await this.options.getCharacter(context.characterId);
@@ -51,6 +79,7 @@ export class LLMCognitiveStep implements CognitiveStep {
     const conversation=await this.options.getActiveConversation(context.characterId);
     if(!conversation)throw new Error("No active conversation is available for cognitive step.");
     if(conversation.characterId!==character.id)throw new Error("Cognitive conversation character scope mismatch.");
+
     let reactiveUserMessage:ChatMessage|undefined;
     if(context.userTurn){
       const turn:MindReactiveTurn=context.userTurn;
@@ -64,11 +93,10 @@ export class LLMCognitiveStep implements CognitiveStep {
     }
     throwIfAborted(context.signal);
     const assembled=await this.options.buildContext({
-      apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION,characterId:character.id,conversationId:conversation.id,
-      messages:conversation.messages,budget:this.options.getContextBudget(),
+      apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION,characterId:character.id,
+      conversationId:conversation.id,messages:conversation.messages,budget:this.options.getContextBudget(),
     });
     throwIfAborted(context.signal);
-    const outputMode=this.options.getOutputMode?.()??"structured";
     const promptText=(id:PromptId)=>{
       const configured=this.options.getPrompt?.(id);
       return typeof configured==="string"&&configured.trim().length>0?configured:resolvePromptText(undefined,id);
@@ -76,166 +104,145 @@ export class LLMCognitiveStep implements CognitiveStep {
     const schedule=this.options.getCognitiveSchedule?.();
     const scheduleContext=schedule?[
       "[COGNITIVE SCHEDULE]",
-      "Default next wake interval: "+schedule.defaultIntervalMs+" ms",
-      "Allowed next wake interval: "+schedule.minIntervalMs+" to "+schedule.maxIntervalMs+" ms",
-      outputMode==="structured"
-        ?promptText("nova-schedule-structured")
-        :promptText("nova-schedule-plain"),
+      "Default next wake interval: "+schedule.defaultIntervalMs+" ms.",
+      "Permitted next wake interval: "+schedule.minIntervalMs+" to "+schedule.maxIntervalMs+" ms.",
+      "Use the scheduler tool only when changing the next interval is useful; the runtime enforces these bounds.",
       "[/COGNITIVE SCHEDULE]",
     ].join("\n"):"";
-    const toolDefinitions=outputMode==="structured"?(this.options.getAvailableTools?.()??[]):[];
-    const toolContext=outputMode==="structured"
-      ?["[REGISTERED TOOLS]",JSON.stringify(toolDefinitions),promptText("nova-tools-allowlist"),"[/REGISTERED TOOLS]"].join("\n")
-      :"";
     const identity=["[IDENTITY / CHARACTER]","Name: "+character.name,"Description: "+character.description,"[/IDENTITY / CHARACTER]"].join("\n");
-    const messages=assembled.messages.map(message=>cloneMessage(message));
+    const messages=assembled.messages.map(message=>normalizeHistoricalMessage(message));
     if(reactiveUserMessage&&!messages.some(message=>message.id===reactiveUserMessage!.id))messages.push(cloneMessage(reactiveUserMessage));
-    const cue=outputMode==="structured"
-      ?promptText(context.userTurn?"nova-cue-reactive-tagged":"nova-cue-background-tagged")
-      :promptText(context.userTurn?"nova-cue-reactive-plain":"nova-cue-background-plain");
-    const contextMessages:ChatMessage[]=[
-      {id:conversation.id+":nova-turn:system",role:"system",content:promptText(outputMode==="structured"?"nova-system-tagged":"nova-system-plain")},
+    const baseMessages:ChatMessage[]=[
+      {id:conversation.id+":nova-turn:system",role:"system",content:promptText("nova-system-plain")},
       {id:conversation.id+":nova-turn:identity",role:"system",content:identity},
-      {id:conversation.id+":nova-turn:schedule",role:"system",content:[scheduleContext,toolContext].filter(Boolean).join("\n")},
+      {id:conversation.id+":nova-turn:schedule",role:"system",content:scheduleContext},
       ...messages,
-      // Keep the synthetic user cue last; Mistral-compatible providers depend on valid final role ordering.
-      {id:conversation.id+":nova-turn:user-cue",role:"user",content:cue},
+      {id:conversation.id+":nova-turn:user-cue",role:"user",content:promptText(context.userTurn?"nova-cue-reactive-plain":"nova-cue-background-plain")+
+        (context.userTurn?"":"\nThis is a background step. Do not invent a reason to speak. If no useful user-facing reply or action is needed, return an empty answer.")},
     ];
     const providerPresetId=this.options.getActiveProviderPresetId()??this.options.runtime.getActiveProviderPresetId?.();
     const model=providerPresetId?await this.options.getChatModelForPreset(providerPresetId):this.options.getChatModel();
     throwIfAborted(context.signal);
     const request=requestId();
-    const cueFor=(format:"native-json"|"tagged"|"plain"):string=>format==="plain"
-      ?promptText(context.userTurn?"nova-cue-reactive-plain":"nova-cue-background-plain")
-      :format==="tagged"
-        ?promptText(context.userTurn?"nova-cue-reactive-tagged":"nova-cue-background-tagged")
-        :promptText(context.userTurn?"nova-cue-reactive-json":"nova-cue-background-json");
-    const requestFor=(id:string,format:"native-json"|"tagged"|"plain"):ChatRequest=>{
-      const system=promptText(format==="plain"?"nova-system-plain":format==="tagged"?"nova-system-tagged":"nova-system-json");
-      const finalMessages=contextMessages.map((message,index)=>{
-        if(index===0)return {...message,content:system};
-        if(index===contextMessages.length-1&&message.id===conversation.id+":nova-turn:user-cue")return {...message,content:cueFor(format)};
-        if(format==="tagged"&&index<contextMessages.length-1&&message.role==="user")return {...message,content:escapeUntrustedUserText(message.content)};
-        return message;
-      });
-      const responseFormat=format==="native-json"
-        ?{type:"json-schema" as const,name:"nova_turn_v1",strict:false,schema:STANDARD_SCHEMAS["nova-turn"]!}
-        :format==="tagged"?{type:"text" as const}:undefined;
-      return {
-        apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION,requestId:id,model,
-        context:{conversationId:conversation.id,messages:finalMessages},
-        generation:{maxTokens:1800,...(responseFormat?{responseFormat}:{})},
-        metadata:{cognition:true,protocol:format==="native-json"?"NOVA_TURN_JSON":format==="tagged"?"NOVA_TURN":"PLAIN_TEXT",protocolVersion:1,outputMode},
-      };
+    const turnId=context.userTurn?.turnId??request;
+    const capabilities=this.options.runtime.getChatProviderCapabilities?.(providerPresetId);
+    const advertised=this.options.getAvailableTools?.()??[];
+    const toolDefinitions:ChatToolDefinition[]=capabilities?.toolCalling
+      ?advertised.map(tool=>({name:tool.name,description:tool.description,parameters:tool.parameters as JsonSchema}))
+      :[];
+    const allowedToolNames=new Set(toolDefinitions.map(tool=>tool.name));
+    const reasoningOptions=capabilities?.reasoning?this.options.getReasoningOptions?.():undefined;
+    const history:ChatMessage[]=[];
+    let output:{response:ChatResponse;content:string}={response:undefined as unknown as ChatResponse,content:""};
+    let combinedReasoning="";
+    let executedCallCount=0;
+    let roundsWithToolCalls=0;
+    const configuredGeneration=this.options.getGenerationOptions?.();
+    const requestGeneration:import("../../contracts/src/index").ChatGenerationOptions={
+      ...(configuredGeneration?.temperature!==undefined?{temperature:configuredGeneration.temperature}:{}),
+      ...(configuredGeneration?.topP!==undefined?{topP:configuredGeneration.topP}:{}),
+      maxTokens:configuredGeneration?.maxTokens??1800,
+      ...(configuredGeneration?.repeatPenalty!==undefined?{repeatPenalty:configuredGeneration.repeatPenalty}:{}),
+      ...(configuredGeneration?.repeatLastN!==undefined?{repeatLastN:configuredGeneration.repeatLastN}:{}),
     };
-    const parseNative=(content:string):NovaTurn=>{
-      if(content.length>32_000)throw new Error("Native NovaTurn JSON exceeds the 32000-character contract limit.");
-      let raw:unknown;
-      try{raw=JSON.parse(content);}catch{throw new Error("Provider returned invalid NovaTurn JSON.");}
-      const valid=new MinimalJsonSchemaValidator().validate(raw,STANDARD_SCHEMAS["nova-turn"]!);
-      if(!valid.valid)throw new Error("Provider JSON did not match NovaTurn v1: "+valid.errors.slice(0,8).join("; "));
-      const value=raw as Record<string,unknown>;
-      const tools=value.tools as {name:string;arguments:Record<string,unknown>}[];
-      for(const tool of tools){
-        if(!/^[a-z][a-z0-9_-]*(?:\.[a-z0-9_-]+)*$/i.test(tool.name)||JSON.stringify(tool.arguments).length>4_000)
-          throw new Error("Provider JSON contains an invalid NovaTurn tool call.");
-      }
-      return {version:1,situation:value.situation as string,thoughts:value.thoughts as string,emotion:value.emotion as string,
-        tools,toolResults:[],speech:value.speech as string,longMemory:typeof value.longMemory==="string"?value.longMemory:"",nextWakeMs:value.nextWakeMs as number};
-    };
-    const explicitlyUnsupported=(error:unknown):boolean=>{
-      const root=error&&typeof error==="object"?error as Record<string,unknown>:{};
-      const chat=root.chatError&&typeof root.chatError==="object"?root.chatError as Record<string,unknown>:{};
-      const details=chat.details&&typeof chat.details==="object"?chat.details as Record<string,unknown>:{};
-      const response=typeof details.providerResponse==="string"?details.providerResponse:"";
-      const message=[root.message,chat.message,details.category,response].filter(item=>typeof item==="string").join(" ");
-      return /(json[\s_-]*schema|response[\s_-]*format|structured[\s_-]*output)/i.test(message)&&
-        /(unsupported|not supported|does not support|unknown parameter|unrecognized parameter|not implemented)/i.test(message);
-    };
-    const doRequest=async(format:"native-json"|"tagged"|"plain",id:string)=>{
+    const reqFor=(id:string):ChatRequest=>({
+      apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION,requestId:id,model,
+      context:{conversationId:conversation.id,messages:[...baseMessages.map(cloneMessage),...history.map(cloneMessage)]},
+      generation:requestGeneration,
+      ...(toolDefinitions.length?{tools:toolDefinitions}:{}),
+      ...(reasoningOptions?{reasoning:reasoningOptions}:{}),
+      metadata:{cognition:true,protocol:"NATIVE_TOOL_CALLS",protocolVersion:2,outputMode:"plain"},
+    });
+    while(true){
       throwIfAborted(context.signal);
-      const decoder=format==="native-json"?new NovaTurnJsonSpeechStreamDecoder():format==="tagged"?new NovaTurnTaggedSpeechStreamDecoder():undefined;
-      const emotionDecoder=format==="native-json"?new NovaTurnJsonEmotionStreamDecoder():format==="tagged"?new NovaTurnTaggedEmotionStreamDecoder():undefined;
-      let rawContent="",deltaCount=0,accumulatedEmotion="";
+      const currentRequestId=roundsWithToolCalls===0?request:request+"-tool-"+roundsWithToolCalls;
+      const req=reqFor(currentRequestId);
+      let rawContent="";
+      let deltaCount=0;
+      let streamedReasoning="";
       await context.onSpeechEvent?.({type:"start",conversationId:conversation.id});
       const consume=async(text:string)=>{
         if(!text)return;
-        rawContent+=text;deltaCount++;
-        const speech=format==="plain"?text:decoder instanceof NovaTurnJsonSpeechStreamDecoder?decoder.push(text):decoder instanceof NovaTurnTaggedSpeechStreamDecoder?decoder.push(text):"";
-        const emotionDelta=emotionDecoder instanceof NovaTurnJsonEmotionStreamDecoder?emotionDecoder.push(text):emotionDecoder instanceof NovaTurnTaggedEmotionStreamDecoder?emotionDecoder.push(text):"";
-        const emotionOffset=emotionDecoder instanceof NovaTurnJsonEmotionStreamDecoder||emotionDecoder instanceof NovaTurnTaggedEmotionStreamDecoder?emotionDecoder.fieldOffset():undefined;
-        const speechOffset=decoder instanceof NovaTurnJsonSpeechStreamDecoder||decoder instanceof NovaTurnTaggedSpeechStreamDecoder?decoder.fieldOffset():undefined;
-        const emitEmotion=async()=>{
-          if(!emotionDelta)return;
-          accumulatedEmotion+=emotionDelta;
-          await context.onSpeechEvent?.({type:"emotion",conversationId:conversation.id,emotion:accumulatedEmotion});
-        };
-        const emitSpeech=async()=>{
-          if(speech)await context.onSpeechEvent?.({type:"delta",conversationId:conversation.id,text:speech});
-        };
-        // Field order matters when both fields arrive in one transport delta:
-        // a later emotion must not retroactively change already-emitted speech.
-        if(speech&&emotionDelta&&emotionOffset!==undefined&&speechOffset!==undefined&&emotionOffset<speechOffset){
-          await emitEmotion();await emitSpeech();
-        }else{
-          await emitSpeech();await emitEmotion();
-        }
+        rawContent+=text;
+        deltaCount++;
+        if(rawContent.length>NOVA_TURN_MAX_SERIALIZED_CHARS)throw new Error("Nova's plain-text response exceeds the existing 32000-character cognitive reply safety limit.");
+        await context.onSpeechEvent?.({type:"delta",conversationId:conversation.id,text});
       };
-      const req=requestFor(id,format);
       let response:ChatResponse;
       if(this.options.runtime.stream){
-        response=await this.options.runtime.stream(req,{onEvent:async event=>{if(event.type==="delta")await consume(event.text);}}, {signal:context.signal},providerPresetId);
+        const handlers:ChatStreamHandlers={onEvent:async event=>{
+          if(event.type==="delta")await consume(event.text);
+          else if(event.type==="reasoning")streamedReasoning+=event.text;
+        }};
+        response=await this.options.runtime.stream(req,handlers,{signal:context.signal},providerPresetId);
         if(deltaCount===0&&response.message.content)await consume(response.message.content);
       }else{
         response=await this.options.runtime.chat(req,providerPresetId,{signal:context.signal});
         await consume(response.message.content);
       }
       throwIfAborted(context.signal);
-      return {response,content:rawContent};
-    };
-    let effectiveFormat:"native-json"|"tagged"|"plain"=outputMode==="plain"?"plain":"native-json";
-    let output:{response:ChatResponse;content:string};
-    let protocolDiagnostics:readonly string[]=[];
-    if(outputMode==="plain"){
-      output=await doRequest("plain",request);
-    }else{
-      const capabilities=this.options.runtime.getChatProviderCapabilities?.(providerPresetId);
-      if(capabilities?.structuredOutput===false){
-        effectiveFormat="tagged";
-        output=await doRequest("tagged",request);
-        protocolDiagnostics=["structured-output-fallback:provider-capability"];
-      }else{
-        try{
-          output=await doRequest("native-json",request);
-        }catch(error){
-          if(!explicitlyUnsupported(error))throw error;
-          throwIfAborted(context.signal);
-          await context.onSpeechEvent?.({type:"reset",conversationId:conversation.id});
-          effectiveFormat="tagged";
-          // Reset cancels the failed native-JSON attempt. Start a fresh speech/TTS session before fallback deltas.
-          await context.onSpeechEvent?.({type:"start",conversationId:conversation.id});
-          output=await doRequest("tagged",request+"-tag-fallback");
-          protocolDiagnostics=["structured-output-fallback:explicit-unsupported"];
+      if(streamedReasoning)combinedReasoning+=streamedReasoning;
+      else if(response.reasoning)combinedReasoning+=response.reasoning;
+      output={response,content:rawContent};
+      const calls=response.message.toolCalls??[];
+      if(calls.length===0)break;
+      roundsWithToolCalls++;
+      if(roundsWithToolCalls>MAX_NATIVE_TOOL_ROUNDS||executedCallCount+calls.length>MAX_NATIVE_TOOL_CALLS){
+        throw new Error("Native tool-call loop exceeded its safety limit.");
+      }
+      history.push({
+        id:response.message.id,role:"assistant",content:response.message.content,
+        toolCalls:calls.map(call=>({id:call.id,name:call.name,arguments:{...call.arguments}})),
+      });
+      for(const [index,call] of calls.entries()){
+        throwIfAborted(context.signal);
+        if(!call.name||JSON.stringify(call.arguments).length>MAX_TOOL_ARGUMENT_CHARS||!call.arguments||typeof call.arguments!=="object"||Array.isArray(call.arguments)){
+          throw new Error("Provider returned an invalid native tool call.");
         }
+        const callId=turnId+":native-tool:"+call.id;
+        let result=this.nativeToolResultCache.get(callId);
+        if(!result){
+          const nativeCall:NovaToolCall={name:call.name,arguments:call.arguments};
+          if(!allowedToolNames.has(call.name)){
+            result={callId,name:call.name,status:"unknown-tool",error:"Tool is not registered or was not advertised to this provider."};
+          }else if(!this.options.executeTool){
+            result={callId,name:call.name,status:"unknown-tool",error:"Secure tool execution is not configured."};
+          }else{
+            const toolContext={
+              characterId:context.characterId,conversationId:conversation.id,turnId,
+              ...(context.userTurn?{userMessageId:context.userTurn.userMessageId}:{}),
+              requestId:response.requestId,providerId:response.providerId,model:response.model,
+              ...(providerPresetId?{providerPresetId}:{}),signal:context.signal,callId,index:executedCallCount,
+            };
+            try{result=await this.options.executeTool(nativeCall,toolContext);}
+            catch(error){result={callId,name:call.name,status:"error",error:error instanceof Error?error.message.slice(0,MAX_TOOL_RESULT_CHARS):"Tool execution failed."};}
+          }
+          this.nativeToolResultCache.set(callId,result);
+          if(this.nativeToolResultCache.size>500)this.nativeToolResultCache.delete(this.nativeToolResultCache.keys().next().value!);
+        }
+        executedCallCount++;
+        history.push({
+          id:callId,role:"tool",toolCallId:call.id,toolName:call.name,
+          content:safeToolResultText({
+            status:result.status,
+            ...(result.output===undefined?{}:{output:result.output}),
+            ...(result.error?{error:result.error}:{}),
+          }),
+        });
       }
     }
     throwIfAborted(context.signal);
-    let turn:NovaTurn;
-    if(effectiveFormat==="native-json")turn=parseNative(output.content);
-    else if(effectiveFormat==="tagged"){
-      const parsed=parseNovaTurn(output.content);
-      if(!parsed.turn)throw new Error("Provider response did not contain one unambiguous, valid SPEECH block in NOVA_TURN v1. Diagnostics: "+parsed.diagnostics.join(", "));
-      turn={...parsed.turn,toolResults:[],longMemory:parsed.turn.longMemory??""};
-      protocolDiagnostics=[...protocolDiagnostics,...parsed.diagnostics];
-    }else{
-      const raw=output.content;
-      if(context.userTurn&&!raw.trim())throw new Error("Nova returned no speech for this user message. Retry the Nova Life turn.");
-      if(raw.length>4_000)throw new Error("Nova's plain-text response exceeds the 4000-character speech limit. Retry the Nova Life turn.");
-      turn={version:1,situation:"",thoughts:"",emotion:"",tools:[],toolResults:[],speech:raw,nextWakeMs:defaultCognitiveInterval(schedule)};
-    }
-    if(context.userTurn&&!turn.speech.trim())throw new Error("Nova returned no speech for this user message. Retry the Nova Life turn.");
-    return {turn,conversationId:conversation.id,requestId:output.response.requestId||request,providerId:output.response.providerId,model:output.response.model,
-      ...(providerPresetId?{providerPresetId}:{}),protocolDiagnostics};
-
+    if(context.userTurn&&!output.content.trim())throw new Error("Nova returned no speech for this user message. Retry the Nova Life turn.");
+    const scheduledInterval=this.options.consumeRequestedWakeInterval?.(turnId);
+    const turn:NovaTurn={
+      version:1,situation:"",thoughts:"",emotion:"",tools:[],toolResults:[],
+      speech:output.content,nextWakeMs:typeof scheduledInterval==="number"?scheduledInterval:defaultCognitiveInterval(schedule),
+    };
+    return {
+      turn,conversationId:conversation.id,requestId:output.response.requestId||request,providerId:output.response.providerId,model:output.response.model,
+      ...(providerPresetId?{providerPresetId}:{}),
+      ...(this.options.getShowReasoningInDiagnostics?.()&&combinedReasoning?{reasoning:combinedReasoning.slice(0,8_000)}:{}),
+      protocolDiagnostics:["native-tool-protocol"],
+    };
   }
 }
