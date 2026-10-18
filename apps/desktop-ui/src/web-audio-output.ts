@@ -55,6 +55,7 @@ export class WebAudioOutputAdapter implements AudioOutputAdapter {
     if(!this.unlocked)throw new Error("Enable audio playback explicitly from TTS settings first.");
     if(this.sessionId===sessionId)return;
     this.stop();
+    this.outputFailure=undefined;
     this.sessionId=sessionId;
     this.sequence=0;
     this.nextStartTime=0;

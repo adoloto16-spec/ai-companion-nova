@@ -559,6 +559,43 @@ async function websocketRequestLockReleasedBeforeCancelledIteratorSettles():Prom
   equal(freshEvents.map(event=>event.type).join(","),"start,audio,done","a fresh request can start immediately after cancellation");
   ok(secondSocket.sent.length===1,"the fresh request owns a new websocket");
 }
+async function webAudioRecoversAfterTransientOutputFailure():Promise<void>{
+  const scheduled:MockSource[]=[],sources:MockSource[]=[],failures:Error[]=[];
+  let failFirstBuffer=true;
+  const mockContext={
+    currentTime:0,state:"running",destination:{},
+    async resume(){this.state="running";},async close(){this.state="closed";},
+    createBuffer(channels:number,length:number,sampleRate:number):MockBuffer{
+      if(failFirstBuffer){failFirstBuffer=false;throw new Error("simulated transient AudioBuffer failure");}
+      const data=Array.from({length:channels},()=>new Float32Array(length));
+      return {duration:length/sampleRate,numberOfChannels:channels,length,sampleRate,data,getChannelData:(index:number)=>data[index]!};
+    },
+    createBufferSource():MockSource{
+      const source:MockSource={
+        buffer:null,onended:null,connect(){},disconnect(){},
+        start(){scheduled.push(source);},
+        stop(){source.onended?.();}
+      };
+      sources.push(source);return source;
+    }
+  };
+  const output=new WebAudioOutputAdapter({
+    createContext:()=>mockContext as unknown as AudioContext,
+    onError:error=>failures.push(error)
+  });
+  await output.unlock();
+  output.startSession("failed-audio-session",metadata);
+  await output.enqueue("failed-audio-session",0,metadata,new Uint8Array([0xe8,0x03,0x18,0xfc]),new AbortController().signal);
+  await until(()=>failures.length===1,"the first physical audio session records its injected output failure");
+  output.startSession("recovered-audio-session",metadata);
+  await output.enqueue("recovered-audio-session",0,metadata,new Uint8Array([0xd0,0x07,0x30,0xf8]),new AbortController().signal);
+  await until(()=>scheduled.length===1,"a fresh TTS session schedules PCM after the previous output error");
+  scheduled[0]!.onended?.();
+  await output.waitForPlayback("recovered-audio-session",new AbortController().signal);
+  equal(failures[0]?.message,"simulated transient AudioBuffer failure","the initial failure was real and observed");
+  await output.dispose();
+}
+
 async function webAudioSchedulesFifoWithoutOverlap():Promise<void>{
   const scheduled:Array<{when:number;duration:number;sample:number}>=[],sources:MockSource[]=[];
   const mockContext={
@@ -832,6 +869,7 @@ async function main():Promise<void>{
   await sileroProviderProtocolAndWav();
   await sileroProviderFailuresAndHealth();
   await websocketRequestLockReleasedBeforeCancelledIteratorSettles();
+  await webAudioRecoversAfterTransientOutputFailure();
   await webAudioSchedulesFifoWithoutOverlap();
   console.log("PASS TTS sentence, emotion, controller, provider and Web Audio tests");
 }

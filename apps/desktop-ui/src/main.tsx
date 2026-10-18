@@ -2505,6 +2505,7 @@ function App(){
       foundation.getActiveConversation(characterId),
       loadModelProfile(characterId)
     ]);
+    foundation.setActiveModelProfile(profile);
     return {conversation,controller:controllerForConversation(conversation,profile)};
   },[controllerForConversation,loadModelProfile]);
 
@@ -3006,6 +3007,7 @@ function App(){
   const saveModelProfile=React.useCallback(async(profile:ModelProfile)=>{
     await modelProfileStore.save(profile);
     modelProfileLoadErrorRef.current=undefined;
+    foundationRef.current?.setActiveModelProfile(profile);
     setActiveModelProfile(profile);
     setChatController(current=>{
       current?.setModelProfile(profile);

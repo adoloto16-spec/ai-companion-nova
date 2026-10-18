@@ -74,28 +74,39 @@ async function lifeHonorsPinnedModelProfile():Promise<void>{
   try{
     const character=await runtime.getActiveCharacter();
     const conversation=await runtime.getActiveConversation(character.id);
-    const userMessage:ChatMessage={id:"life-profile-user-message",role:"user",content:"Answer through the model configured for Nova Life."};
-    await runtime.updateConversation(character.id,conversation.id,{messages:[...conversation.messages,userMessage]});
-    runtime.setActiveModelProfile({
+    const profile={
       ...defaultModelProfile(character.id),
       providerPresetId:"preset-life-profile",
       model:"life-profile-model",
       generation:{maxTokens:123}
-    });
-    const committed:Array<{speech:string;providerPresetId?:string;model?:string}>=[];
+    };
+    runtime.setActiveModelProfile(profile);
+    const conversationSession=new ConversationSession(conversation.id,character.id);
+    for(const message of conversation.messages)conversationSession.addMessage(message);
+    const chatController=new ChatSessionController(conversationSession,runtime);
+    chatController.setModelProfile(profile);
+    const committed:Array<{speech:string;providerPresetId?:string;model?:string;turnId:string;userMessageId:string}>=[];
     runtime.setNovaTurnSink({
       async commit(turn,context){
-        committed.push({speech:turn.speech,providerPresetId:context.providerPresetId,model:context.model});
+        await chatController.commitNovaTurn(turn,context,async snapshot=>{
+          await runtime.updateConversation(snapshot.characterId,snapshot.conversationId,{messages:snapshot.messages});
+        });
+        if(context.userMessageId)committed.push({
+          speech:turn.speech,providerPresetId:context.providerPresetId,model:context.model,
+          turnId:context.turnId,userMessageId:context.userMessageId
+        });
       },
-      async streamSpeech(){}
+      async streamSpeech(event){
+        if(event.type!=="emotion")chatController.updateNovaTurnStream(event);
+      },
+      fail(turn,reason){chatController.failLifeTurn(turn.userMessageId,reason);}
     });
     const lifeStarted=runtime.startLife();
-    const accepted=runtime.wakeMindForUserMessage({
-      characterId:character.id,conversationId:conversation.id,
-      userMessageId:userMessage.id!,turnId:"life-profile-reactive-turn"
-    });
-    equal(accepted,true,"Life accepts the exact persisted reactive user turn");
     await lifeStarted;
+    const submitted=await chatController.submitToLife("Answer through the model configured for Nova Life.",async snapshot=>{
+      await runtime.updateConversation(snapshot.characterId,snapshot.conversationId,{messages:snapshot.messages});
+    },turn=>runtime.wakeMindForUserMessage(turn));
+    equal(submitted.status,"awaiting-life","the actual Chat submit-to-Life user path accepts the persisted request");
     for(let attempt=0;attempt<1_000&&committed.length===0;attempt++)
       await new Promise(resolve=>setTimeout(resolve,5));
     if(committed.length!==1){
@@ -104,12 +115,15 @@ async function lifeHonorsPinnedModelProfile():Promise<void>{
         url:item.url,method:item.method,
         ...(item.body?{model:(JSON.parse(item.body) as Record<string,unknown>).model}: {})
       }));
-      throw new Error("Nova Life produced no committed reply; state="+JSON.stringify(state)+" requests="+JSON.stringify(requests));
+      throw new Error("Nova Life produced no committed UI-path reply; state="+JSON.stringify(state)+" chat="+JSON.stringify(chatController.getSnapshot())+" requests="+JSON.stringify(requests));
     }
     equal(committed.length,1,"reactive turn commits exactly one reply through Nova Life");
     equal(committed[0]?.speech,"Reactive reply from the pinned Model Profile.","actual provider stream becomes the committed public reply");
     equal(committed[0]?.providerPresetId,"preset-life-profile","Life uses the profile's pinned provider preset rather than the global preset");
     equal(committed[0]?.model,"life-profile-model","turn context records the profile's explicit model");
+    const persistedConversation=await runtime.getConversation(character.id,conversation.id);
+    ok(persistedConversation?.messages.some(message=>message.id==="nova-turn:"+committed[0]!.turnId&&message.role==="assistant"&&message.content===committed[0]!.speech),"the actual Nova Life response is saved into the active conversation by ChatSessionController");
+    equal(chatController.getSnapshot().lifeTurn?.status,"completed","the real UI lifecycle transitions the reactive turn to completed");
 
     const request=http.requests.find(item=>item.url==="https://profile-life.example/v1/chat/completions");
     ok(request?.body,"Nova Life sends a request to the actual selected profile endpoint");

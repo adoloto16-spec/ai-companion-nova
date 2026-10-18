@@ -370,6 +370,9 @@ export class MindRuntime {
       if (!sink) throw new Error("NovaTurn conversation sink is not attached.");
       const completedContext=turnContext(result);
       await sink.commit(turn, completedContext);
+      if (life.signal.aborted || contextVersion !== this.contextVersion || (reactiveTurn && !this.isReactiveTurnCurrent(reactiveTurn))) {
+        finishTrace("cancelled", {errorCode:"STALE_AFTER_COMMIT"}); return;
+      }
       if(this.onTurnCommitted){
         try{
           void Promise.resolve(this.onTurnCommitted(turn,completedContext)).catch(error=>this.safeOnError(error));
