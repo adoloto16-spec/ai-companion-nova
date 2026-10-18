@@ -85,6 +85,14 @@ async function lifeHonorsPinnedModelProfile():Promise<void>{
     await lifeStarted;
     for(let attempt=0;attempt<200&&committed.length===0;attempt++)
       await new Promise(resolve=>setTimeout(resolve,5));
+    if(committed.length!==1){
+      const trace=runtime.getMindState().recentTrace??[];
+      const requests=http.requests.map(item=>({
+        url:item.url,method:item.method,
+        ...(item.body?{model:(JSON.parse(item.body) as Record<string,unknown>).model}: {})
+      }));
+      throw new Error("Nova Life produced no committed reply; trace="+JSON.stringify(trace)+" requests="+JSON.stringify(requests));
+    }
     equal(committed.length,1,"reactive turn commits exactly one reply through Nova Life");
     equal(committed[0]?.speech,"Reactive reply from the pinned Model Profile.","actual provider stream becomes the committed public reply");
     equal(committed[0]?.providerPresetId,"preset-life-profile","Life uses the profile's pinned provider preset rather than the global preset");
