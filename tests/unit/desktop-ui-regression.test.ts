@@ -3,11 +3,21 @@ import fs from "node:fs";
 import path from "node:path";
 import {chatDraftKey,readChatDraft,writeChatDraft,clearSubmittedChatDraft} from "../../apps/desktop-ui/src/chat-drafts";
 import {passiveDiagnosticsOptions} from "../../apps/desktop-ui/src/provider-health-polling";
+import {isAllowedOllamaRoute} from "../../apps/desktop-ui/src/ollama-http-client";
 
 const sourcePath=path.resolve(process.cwd(),"apps/desktop-ui/src/main.tsx");
 const source=fs.readFileSync(sourcePath,"utf8");
 const foundationPath=path.resolve(process.cwd(),"runtime/bootstrap/src/index.ts");
 const foundationSource=fs.readFileSync(foundationPath,"utf8");
+assert.equal(isAllowedOllamaRoute("/api/tags","GET"),true,"Ollama model discovery keeps GET /api/tags");
+assert.equal(isAllowedOllamaRoute("/api/show","POST"),true,"capability discovery permits POST /api/show through desktop IPC");
+assert.equal(isAllowedOllamaRoute("/api/show","GET"),false,"capability discovery rejects the wrong HTTP method");
+assert.equal(isAllowedOllamaRoute("/api/chat","POST"),true,"native chat remains allowed");
+assert.equal(isAllowedOllamaRoute("/api/show","DELETE"),false,"undocumented Ollama methods remain blocked");
+assert.ok(foundationSource.includes("activeModelProfile?.providerPresetId?.trim()||activeProviderPresetId"),"Nova Life follows Model Profile's pinned provider preset");
+assert.ok(foundationSource.includes("activeModelProfile?.model?.trim()"),"Nova Life follows Model Profile's model override");
+assert.ok(source.includes("Automatic Memory Agent"),"Memory settings expose separate agent configuration controls");
+assert.ok(source.includes("await speechOutputController.finishTurn(context.turnId);"),"cognitive turn completion awaits real speech playback");
 
 function blockBetween(startMarker:string,endMarker:string):string{
   const start=source.indexOf(startMarker);
