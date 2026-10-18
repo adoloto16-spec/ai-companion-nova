@@ -34,8 +34,8 @@ class LifeProfileHttpClient implements HttpClient{
     };
     const body:AsyncIterable<string>={
       async *[Symbol.asyncIterator](){
-        yield "data: "+JSON.stringify(event)+"\\n\\n";
-        yield "data: [DONE]\\n\\n";
+        yield "data: "+JSON.stringify(event)+"\n\n";
+        yield "data: [DONE]\n\n";
       }
     };
     return {status:200,body,headers:{"content-type":"text/event-stream"}};
