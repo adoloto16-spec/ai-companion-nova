@@ -441,7 +441,8 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
               details:{category:"malformed_stream_delta",durationMs:Date.now()-started}
             });
           }
-          const reasoning=typeof deltaRecord.reasoning_content==="string"?deltaRecord.reasoning_content:
+          const reasoning=request.reasoning?.mode==="disabled"?"":
+            typeof deltaRecord.reasoning_content==="string"?deltaRecord.reasoning_content:
             typeof deltaRecord.reasoning==="string"?deltaRecord.reasoning:"";
           if(reasoning){
             streamedReasoning+=reasoning;

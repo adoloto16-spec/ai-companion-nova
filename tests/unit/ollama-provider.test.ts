@@ -486,12 +486,13 @@ async function disabledReasoningIsExplicitWithoutModelMetadata(): Promise<void> 
     if (request.url.endsWith("/api/show")) return {status: 503, body: "metadata unavailable"};
     if (request.url.endsWith("/api/tags")) return {status: 200, body: JSON.stringify({models: [{name: "llama3.2:latest"}]})};
     return {status: 200, body: JSON.stringify({
-      model: "llama3.2:latest", message: {role: "assistant", content: "public answer"},
+      model: "llama3.2:latest", message: {role: "assistant", content: "public answer",thinking:"provider ignored think:false"},
       done: true, done_reason: "stop"
     })};
   };
   const response = await provider(http).chat(chatRequest({reasoning:{mode:"disabled"}}));
   equal(response.message.content, "public answer", "optional metadata failure does not break ordinary generation");
+  equal(response.reasoning,undefined,"a provider that ignores think:false cannot surface reasoning when disabled");
   const show = http.requests.find(item=>item.url.endsWith("/api/show"));
   const chat = http.requests.find(item=>item.url.endsWith("/api/chat"));
   ok(show && show.method==="POST", "capability discovery uses POST /api/show");

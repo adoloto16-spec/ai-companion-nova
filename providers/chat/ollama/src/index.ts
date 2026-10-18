@@ -289,7 +289,8 @@ export class OllamaChatProvider implements ChatProvider {
     if(!toolCalls.length)this.validateOutput(content, request);
     const model = typeof record.model === "string" && record.model ? record.model : request.model;
     const usage = this.usage(record);
-    const reasoning=typeof message.thinking==="string"&&message.thinking.length>0?message.thinking:undefined;
+    const reasoning=request.reasoning?.mode==="disabled"?undefined:
+      typeof message.thinking==="string"&&message.thinking.length>0?message.thinking:undefined;
     return {
       apiVersion: "1", schemaVersion: "1", requestId: request.requestId,
       conversationId: request.context.conversationId, providerId: this.id, model,
@@ -368,7 +369,7 @@ export class OllamaChatProvider implements ChatProvider {
         if (typeof event.error === "string" && event.error) throw this.failure(request, "PROVIDER_ERROR", event.error, "api");
         if (typeof event.model === "string" && event.model) model = event.model;
         const message = event.message;
-        if(message&&typeof message.thinking==="string"&&message.thinking.length>0){
+        if(request.reasoning?.mode!=="disabled"&&message&&typeof message.thinking==="string"&&message.thinking.length>0){
           reasoning+=message.thinking;
           await handlers.onEvent({
             apiVersion:"1",schemaVersion:"1",requestId:request.requestId,
