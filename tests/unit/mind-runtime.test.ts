@@ -224,8 +224,33 @@ async function llmUsesNativeProtocolAndPreservesContextTest(){
  equal(result.reasoning,"Provider supplied reasoning for tool selectionProvider supplied final reasoning","provider reasoning is kept separate from the user-facing answer");
 }
 
+async function lifecycleDiagnosticsCaptureWakeParsePersistAndWait(){
+ const entries:Array<{code:string;metadata?:Record<string,unknown>}>=[],fixture=sinkFixture();
+ const step:CognitiveStep={async run(){return {turn:makeTurn("diagnostic lifecycle reply",1000),conversationId:"conversation.runtime",requestId:"diagnostic-request",providerId:"ollama",model:"qwen3:latest",providerPresetId:"local-ollama"};}};
+ const runtime=new MindRuntime({
+  cognitiveStep:step,
+  schedule:{mode:"fixed",defaultIntervalMs:1000,minIntervalMs:1000,maxIntervalMs:2000,maxRequestsPerHour:null},
+  turnSink:fixture.sink,
+  onDiagnostic:(code,_detail,metadata)=>entries.push({code,metadata})
+ });
+ runtime.setActiveCharacter("character.runtime");
+ try{
+  await runtime.start();
+  await waitFor(()=>fixture.committed.length===1&&runtime.getState().lifecycleState==="waiting");
+  const codes=entries.map(entry=>entry.code);
+  for(const required of ["nova_life.wake.started","nova_life.cognition.started","nova_life.turn.parsed","nova_life.turn.persisted","nova_life.wait.scheduled"])
+   ok(codes.includes(required),"lifecycle diagnostics include "+required);
+  const parsed=entries.find(entry=>entry.code==="nova_life.turn.parsed");
+  equal(parsed?.metadata?.model,"qwen3:latest","parsed-turn diagnostic preserves the selected model");
+  const persisted=entries.find(entry=>entry.code==="nova_life.turn.persisted");
+  equal(persisted?.metadata?.status,"persisted","turn sink completion is recorded as persisted");
+  ok(typeof persisted?.metadata?.durationMs==="number","turn-persisted diagnostic includes duration");
+ }finally{await runtime.stop();}
+}
+
 async function main(){
  await backgroundSchedulingAndSerializationTest();
+  await lifecycleDiagnosticsCaptureWakeParsePersistAndWait();
  await userPriorityAndStaleCancellationTest();
  await reactiveSpeechFailureAndRetryTest();
  await failedReactiveFinalizationPreservesSpeechForRetryTest();

@@ -22,6 +22,8 @@ export interface SpeechOutputControllerOptions {
   getProvider:(id:string)=>TtsProvider|undefined;
   output:AudioOutputAdapter;
   onDiagnostic?:(code:string,message:string)=>void;
+  /** Bounds synthesis and physical playback finalization; timeout is diagnosed as a failure. */
+  finishTimeoutMs?:number;
 }
 interface SentenceTask {text:string;emotion:string;}
 interface Session {
@@ -46,6 +48,7 @@ const MAX_PENDING_SENTENCES=12;
 const MAX_PENDING_TEXT_CHARS=8_000;
 const MAX_SENTENCE_CHARS=1_200;
 const MAX_AUDIO_EVENT_BYTES=512*1024;
+const DEFAULT_FINISH_TIMEOUT_MS=60_000;
 
 function aborted(signal:AbortSignal):boolean{return signal.aborted;}
 function abortError():Error{const e=new Error("Speech session was cancelled.");e.name="AbortError";return e;}
@@ -184,7 +187,9 @@ export class SpeechOutputController {
           return;
         }
         if(!this.unlocked){
-          if(!this.active)this.setStatus({state:"locked",message:"Enable audio playback from TTS settings before speech can play."});
+          const message="Speech output was skipped because browser audio is locked. Enable audio playback from TTS settings before Nova can speak.";
+          this.reportDiagnostic("TTS_AUDIO_LOCKED",message);
+          if(!this.active)this.setStatus({state:"locked",message});
           return;
         }
         const preset=settings.presets.find(item=>item.id===settings.activePresetId);
@@ -245,7 +250,8 @@ export class SpeechOutputController {
     if(!session||session.failed)return Promise.resolve();
     if(session.finishPromise)return session.finishPromise;
     session.finishing=true;
-    session.finishPromise=(async()=>{
+    const timeoutMs=Math.max(1,Math.floor(this.options.finishTimeoutMs??DEFAULT_FINISH_TIMEOUT_MS));
+    const completion=(async()=>{
       for(const text of session.segmenter.finish())await this.enqueueSentence(session,text,session.emotion);
       this.ensureWorker(session);
       await this.waitForSynthesis(session);
@@ -261,13 +267,25 @@ export class SpeechOutputController {
         this.activateNextSession();
       }
       if(!this.active)this.setStatus({state:"ready",message:"Assistant speech playback completed.",sessionId:session.id});
-    })().catch(error=>{
+    })();
+    let timeout:ReturnType<typeof setTimeout>|undefined;
+    const deadline=new Promise<void>((_resolve,reject)=>{
+      timeout=setTimeout(()=>{
+        const error=new Error("Speech synthesis or playback exceeded its "+timeoutMs+" ms completion deadline.");
+        error.name="TimeoutError";
+        reject(error);
+      },timeoutMs);
+    });
+    session.finishPromise=Promise.race([completion,deadline]).catch(error=>{
       if(!aborted(session.abort.signal)){
         this.reportDiagnostic("TTS_FINISH_FAILED",safeError(error));
         this.cancelSession(session,safeError(error),true);
         this.setStatus({state:"error",message:safeError(error)});
       }
-    }).finally(()=>{session.finishPromise=undefined;});
+    }).finally(()=>{
+      if(timeout!==undefined)clearTimeout(timeout);
+      session.finishPromise=undefined;
+    });
     return session.finishPromise;
   }
 
@@ -330,8 +348,17 @@ export class SpeechOutputController {
     const signal=new AbortController().signal;
     try{
       const result=await provider.testConnection(presetCopy(preset),signal);
-      this.setStatus({state:result.status==="healthy"?"ready":"error",message:result.message??result.status});
-      return {status:result.status,message:result.message??result.status};
+      const providerMessage=result.message??result.status;
+      if(result.status!=="healthy"){
+        this.setStatus({state:"error",message:providerMessage});
+      }else if(!settings.enabled){
+        this.setStatus({state:"disabled",message:"TTS provider connection succeeded, but speech output is disabled."});
+      }else if(!this.unlocked){
+        this.setStatus({state:"locked",message:"TTS provider is connected, but audio playback is locked. Enable audio playback from TTS settings before Nova can speak."});
+      }else{
+        this.setStatus({state:"ready",message:providerMessage});
+      }
+      return {status:result.status,message:providerMessage};
     }catch(error){
       const message=safeError(error);
       this.setStatus({state:"error",message});

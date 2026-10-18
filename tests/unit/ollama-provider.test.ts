@@ -17,6 +17,7 @@ import {
   type OllamaHttpStreamResponse
 } from "../../providers/chat/ollama/src/index";
 import { testProviderPresetConfiguration } from "../../runtime/bootstrap/src/provider-configuration";
+import { AiRuntime, ProviderRegistry } from "../../core/src";
 
 function equal(actual: unknown, expected: unknown, label: string): void {
   if (actual !== expected) throw new Error(label + ": expected " + String(expected) + ", got " + String(actual));
@@ -480,6 +481,38 @@ async function apiErrorTest(): Promise<void> {
     "Ollama API error");
 }
 
+async function repeatSettingsPassCanonicalValidationAndReachNativeWireJson(): Promise<void> {
+  const http = new FakeOllamaHttpClient();
+  http.requestHandler = async request => {
+    if (request.url.endsWith("/api/show")) return {status: 503, body: "metadata unavailable"};
+    return {status: 200, body: JSON.stringify({
+      model: "llama3.2:latest",
+      message: {role: "assistant", content: "{\"ok\":true}"},
+      done: true,
+      done_reason: "stop"
+    })};
+  };
+  const registry = new ProviderRegistry();
+  registry.register(provider(http), ["chat"]);
+  const runtime = new AiRuntime(registry);
+  const response = await runtime.generate(chatRequest({
+    providerId: "ollama",
+    generation: {temperature: 0.35, topP: 0.75, maxTokens: 120, repeatPenalty: 1.12, repeatLastN: 64, responseFormat:{type:"json"}}
+  }));
+  equal(response.message.content, "{\"ok\":true}", "canonical validation permits all supported Ollama generation settings and response format");
+  const chat = http.requests.find(request => request.url.endsWith("/api/chat"));
+  ok(chat, "validated request reaches POST /api/chat");
+  const body = JSON.parse(chat!.body ?? "{}") as Record<string, unknown>;
+  deepEqual(body.options, {
+    temperature: 0.35,
+    top_p: 0.75,
+    num_predict: 120,
+    repeat_penalty: 1.12,
+    repeat_last_n: 64
+  }, "native Ollama JSON preserves canonical generation settings");
+  equal(body.format,"json","Model Profile response format is sent using Ollama's native format field");
+}
+
 async function disabledReasoningIsExplicitWithoutModelMetadata(): Promise<void> {
   const http = new FakeOllamaHttpClient();
   http.requestHandler = async request => {
@@ -498,6 +531,24 @@ async function disabledReasoningIsExplicitWithoutModelMetadata(): Promise<void> 
   ok(show && show.method==="POST", "capability discovery uses POST /api/show");
   ok(chat, "chat still executes with the same provider config after metadata discovery fails");
   equal((JSON.parse(chat!.body!) as Record<string,unknown>).think, false, "disabled maps to think:false, not an omitted provider default");
+}
+
+async function enabledReasoningSurvivesMissingModelMetadata(): Promise<void> {
+  const http = new FakeOllamaHttpClient();
+  http.requestHandler = async request => {
+    if (request.url.endsWith("/api/show")) return {status: 503, body: "metadata unavailable"};
+    return {status: 200, body: JSON.stringify({
+      model: "llama3.2:latest",
+      message: {role: "assistant", content: "generation without metadata"},
+      done: true,
+      done_reason: "stop"
+    })};
+  };
+  const response = await provider(http).chat(chatRequest({reasoning:{mode:"enabled"}}));
+  equal(response.message.content,"generation without metadata","missing /api/show metadata does not block explicit reasoning or public generation");
+  const chat = http.requests.find(item=>item.url.endsWith("/api/chat"));
+  ok(chat,"explicit reasoning still reaches POST /api/chat");
+  equal((JSON.parse(chat!.body!) as Record<string,unknown>).think,true,"enabled reasoning maps to native think:true when model metadata is unavailable");
 }
 
 async function connectionTestUsesNativeTransport(): Promise<void> {
@@ -534,7 +585,9 @@ async function main(): Promise<void> {
     ["Cancellation and timeouts", cancellationAndTimeoutTest],
     ["Stream timeout is an inactivity deadline", streamTimeoutIsInactivityDeadlineTest],
     ["API and missing model errors", apiErrorTest],
+    ["Repeat settings pass canonical validation and serialize to native JSON", repeatSettingsPassCanonicalValidationAndReachNativeWireJson],
     ["Disabled reasoning survives missing /api/show metadata", disabledReasoningIsExplicitWithoutModelMetadata],
+    ["Enabled reasoning survives missing /api/show metadata", enabledReasoningSurvivesMissingModelMetadata],
     ["Connection test runtime path", connectionTestUsesNativeTransport]
   ];
   for (const [name, test] of tests) {

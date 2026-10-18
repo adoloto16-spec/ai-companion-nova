@@ -116,6 +116,13 @@ async function until(predicate:()=>boolean,message:string):Promise<void>{
   for(let i=0;i<100;i++){if(predicate())return;await Promise.resolve();}
   throw new Error(message);
 }
+async function untilWithTimeout(predicate:()=>boolean,message:string,timeoutMs=1500):Promise<void>{
+  const deadline=Date.now()+timeoutMs;
+  while(!predicate()){
+    if(Date.now()>=deadline)throw new Error(message);
+    await new Promise(resolve=>setTimeout(resolve,2));
+  }
+}
 
 function sentenceBoundariesPreserveEveryCharacter():void{
   const source="Привет, т.д. это 3.14. Он сказал: «Да!» А т.е. нет.\nНезавершённый остаток";
@@ -887,12 +894,88 @@ async function lifeSpeechEventsReachAudioAndAwaitPhysicalPlayback():Promise<void
   }
 }
 
+async function healthyConnectionDoesNotMaskLockedPlayback():Promise<void>{
+  const output=new PlaybackControlledOutput(),provider=new RecordingProvider(),diagnostics:string[]=[];
+  const settings:TtsSettings={...DEFAULT_TTS_SETTINGS,enabled:true,activePresetId:"test-preset",presets:[preset()]};
+  const controller=new SpeechOutputController({
+    getSettings:()=>settings,getProvider:id=>id===provider.id?provider:undefined,output,
+    onDiagnostic:code=>diagnostics.push(code)
+  });
+  try{
+    const health=await controller.testConnection();
+    equal(health.status,"healthy","TTS provider connection itself can succeed");
+    equal(controller.getStatus().state,"locked","successful provider health must not imply that browser playback is enabled");
+    ok(controller.getStatus().message.includes("audio playback is locked"),"status explains why connected TTS cannot yet play");
+    await controller.handleSpeechEvent({type:"start",turnId:"locked-turn"});
+    await controller.handleSpeechEvent({type:"delta",turnId:"locked-turn",text:"This message must not silently synthesize."});
+    await controller.finishTurn("locked-turn");
+    equal(provider.requests.length,0,"audio-locked turns do not call synthesize without a user gesture");
+    ok(diagnostics.includes("TTS_AUDIO_LOCKED"),"skipped locked audio is visible in diagnostics");
+
+    await controller.unlockPlayback();
+    await controller.handleSpeechEvent({type:"start",turnId:"unlocked-turn"});
+    await controller.handleSpeechEvent({type:"delta",turnId:"unlocked-turn",text:"Audio works after unlocking."});
+    const finished=controller.finishTurn("unlocked-turn");
+    await until(()=>output.pendingPlayback.size===1,"an unlocked fresh turn sends synthesized audio to playback");
+    equal(provider.requests[0],"Audio works after unlocking.","only the fresh unlocked public speech is synthesized");
+    output.finishPlayback(0);
+    await finished;
+    equal(controller.getStatus().message,"Assistant speech playback completed.","unlocked audio completes as usual");
+  }finally{controller.stop("Locked playback test cleanup.");}
+}
+
+async function lifeTurnFinalizesAfterPlaybackTimeoutWithoutLosingText():Promise<void>{
+  const output=new PlaybackControlledOutput(),provider=new RecordingProvider(),diagnostics:string[]=[];
+  const settings:TtsSettings={...DEFAULT_TTS_SETTINGS,enabled:true,activePresetId:"test-preset",presets:[preset()]};
+  const controller=new SpeechOutputController({
+    getSettings:()=>settings,getProvider:id=>id===provider.id?provider:undefined,output,finishTimeoutMs:30,
+    onDiagnostic:code=>diagnostics.push(code)
+  });
+  await controller.unlockPlayback();
+  const text="The saved answer survives a stuck audio device.";
+  let persistedText="";
+  const runtime=new MindRuntime({
+    cognitiveStep:{async run(context){
+      await context.onSpeechEvent?.({type:"start",conversationId:"conversation.tts-timeout"});
+      await context.onSpeechEvent?.({type:"delta",conversationId:"conversation.tts-timeout",text});
+      return {turn:{version:1,situation:"",thoughts:"",emotion:"",tools:[],toolResults:[],speech:text,nextWakeMs:30_000},conversationId:"conversation.tts-timeout"};
+    }},
+    schedule:{mode:"fixed",defaultIntervalMs:30_000,minIntervalMs:3_000,maxIntervalMs:300_000,maxRequestsPerHour:null},
+    turnSink:{
+      async commit(turn,context){persistedText=turn.speech;await controller.finishTurn(context.turnId);},
+      async streamSpeech(event){await controller.handleSpeechEvent(event);}
+    }
+  });
+  runtime.setActiveCharacter("character.tts-timeout");
+  try{
+    await runtime.start();
+    await untilWithTimeout(()=>runtime.getState().lifecycleState==="waiting"&&persistedText===text,"a stuck playback reaches its bounded timeout and releases the Life scheduler");
+    equal(persistedText,text,"public reply is persisted independently of TTS playback completion");
+    ok(diagnostics.includes("TTS_FINISH_FAILED"),"playback timeout is diagnosed rather than reported as completed audio");
+    equal(controller.getStatus().state,"error","the controller does not report stuck playback as successful");
+    ok(runtime.getState().recentTrace?.some(entry=>entry.result==="success"),"a successfully committed cognitive reply is not erased by the separate audio failure");
+    equal(output.pendingPlayback.size,0,"timed-out playback session is cancelled from the FIFO output");
+    await controller.handleSpeechEvent({type:"start",turnId:"fresh-after-timeout"});
+    await controller.handleSpeechEvent({type:"delta",turnId:"fresh-after-timeout",text:"Fresh audio."});
+    const fresh=controller.finishTurn("fresh-after-timeout");
+    await until(()=>output.pendingPlayback.size===1,"a new session starts after the timed-out audio session");
+    output.finishPlayback(0);
+    await fresh;
+    equal(controller.getStatus().message,"Assistant speech playback completed.","a subsequent healthy audio session finalizes normally");
+  }finally{
+    controller.stop("TTS timeout test cleanup.");
+    await runtime.stop();
+  }
+}
+
 async function main():Promise<void>{
   sentenceBoundariesPreserveEveryCharacter();
   emotionMappingOnlyUsesSupportedActions();
   emotionDecodersDoNotGateSpeech();
   await synthesisRunsAheadOfPlaybackAndKeepsFifo();
   await assistantTurnsWaitForPlaybackAndInterruptionClearsQueue();
+  await healthyConnectionDoesNotMaskLockedPlayback();
+  await lifeTurnFinalizesAfterPlaybackTimeoutWithoutLosingText();
   await lifeSpeechEventsReachAudioAndAwaitPhysicalPlayback();
   await boundedBackpressureAndCancellation();
   await cancelledProviderEventsCannotEnterANewSession();

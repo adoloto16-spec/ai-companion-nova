@@ -34,6 +34,8 @@ export interface LLMCognitiveStepOptions {
   executeTool?:MindToolExecutor["execute"];
   getReasoningOptions?:()=>ChatReasoningOptions;
   getShowReasoningInDiagnostics?:()=>boolean;
+  getProviderIdForPreset?:(providerPresetId:string|undefined)=>string|undefined;
+  onDiagnostic?:(code:string,message:string,metadata?:Record<string,unknown>)=>void;
   getGenerationOptions?:()=>import("../../contracts/src/index").ChatGenerationOptions|undefined;
   consumeRequestedWakeInterval?:(turnId:string)=>number|undefined;
   clock?:()=>string;
@@ -70,6 +72,10 @@ export class LLMCognitiveStep implements CognitiveStep {
   private readonly clock:()=>string;
   private readonly nativeToolResultCache=new Map<string,NovaToolResult>();
   constructor(private readonly options:LLMCognitiveStepOptions){this.clock=options.clock??(()=>new Date().toISOString());}
+
+  private diagnostic(code:string,message:string,metadata?:Record<string,unknown>):void{
+    try{this.options.onDiagnostic?.(code,message,metadata);}catch{/* diagnostics must not interrupt cognition */}
+  }
 
   async run(context:CognitiveStepContext):Promise<CognitiveStepResult>{
     throwIfAborted(context.signal);
@@ -132,7 +138,7 @@ export class LLMCognitiveStep implements CognitiveStep {
       :[];
     const allowedToolNames=new Set(toolDefinitions.map(tool=>tool.name));
     const configuredReasoning=this.options.getReasoningOptions?.();
-    const reasoningOptions=configuredReasoning?.mode==="disabled"||capabilities?.reasoning?configuredReasoning:undefined;
+    const reasoningOptions=configuredReasoning&&(configuredReasoning.mode!=="provider-default"||capabilities?.reasoning)?configuredReasoning:undefined;
     const history:ChatMessage[]=[];
     let output:{response:ChatResponse;content:string}={response:undefined as unknown as ChatResponse,content:""};
     let combinedReasoning="";
@@ -145,6 +151,7 @@ export class LLMCognitiveStep implements CognitiveStep {
       maxTokens:configuredGeneration?.maxTokens??1800,
       ...(configuredGeneration?.repeatPenalty!==undefined?{repeatPenalty:configuredGeneration.repeatPenalty}:{}),
       ...(configuredGeneration?.repeatLastN!==undefined?{repeatLastN:configuredGeneration.repeatLastN}:{}),
+      ...(configuredGeneration?.responseFormat!==undefined?{responseFormat:configuredGeneration.responseFormat}:{}),
     };
     const reqFor=(id:string):ChatRequest=>({
       apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION,requestId:id,model,
@@ -170,15 +177,39 @@ export class LLMCognitiveStep implements CognitiveStep {
         await context.onSpeechEvent?.({type:"delta",conversationId:conversation.id,text});
       };
       let response:ChatResponse;
+      const providerStartedAt=Date.now();
+      const providerContext={
+        requestId:currentRequestId,turnId,model,toolRound:roundsWithToolCalls,
+        ...(providerPresetId?{providerPresetId}:{}),
+        ...(this.options.getProviderIdForPreset?.(providerPresetId)?{providerId:this.options.getProviderIdForPreset(providerPresetId)}:{})
+      };
+      this.diagnostic("nova_life.provider_request.started","Nova Life provider request started.",providerContext);
+      try{
+        if(this.options.runtime.stream){
+          const handlers:ChatStreamHandlers={onEvent:async event=>{
+            if(event.type==="delta")await consume(event.text);
+            else if(event.type==="reasoning")streamedReasoning+=event.text;
+          }};
+          response=await this.options.runtime.stream(req,handlers,{signal:context.signal},providerPresetId);
+        }else{
+          response=await this.options.runtime.chat(req,providerPresetId,{signal:context.signal});
+        }
+        this.diagnostic("nova_life.provider_request.completed","Nova Life provider request completed.",{
+          ...providerContext,durationMs:Math.max(0,Date.now()-providerStartedAt),status:"completed",
+          finishReason:response.finishReason,responseCharacters:response.message.content.length,
+          toolCallCount:response.message.toolCalls?.length??0
+        });
+      }catch(error){
+        this.diagnostic("nova_life.provider_request.failed","Nova Life provider request failed.",{
+          ...providerContext,durationMs:Math.max(0,Date.now()-providerStartedAt),
+          status:"failed",errorType:error instanceof Error?error.name:"UnknownError",
+          ...(error&&typeof error==="object"&&"code" in error&&typeof (error as {code?:unknown}).code==="string"?{errorCode:(error as {code:string}).code}:{})
+        });
+        throw error;
+      }
       if(this.options.runtime.stream){
-        const handlers:ChatStreamHandlers={onEvent:async event=>{
-          if(event.type==="delta")await consume(event.text);
-          else if(event.type==="reasoning")streamedReasoning+=event.text;
-        }};
-        response=await this.options.runtime.stream(req,handlers,{signal:context.signal},providerPresetId);
         if(deltaCount===0&&response.message.content)await consume(response.message.content);
       }else{
-        response=await this.options.runtime.chat(req,providerPresetId,{signal:context.signal});
         await consume(response.message.content);
       }
       throwIfAborted(context.signal);

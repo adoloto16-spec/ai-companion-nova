@@ -78,7 +78,7 @@ async function lifeHonorsPinnedModelProfile():Promise<void>{
       ...defaultModelProfile(character.id),
       providerPresetId:"preset-life-profile",
       model:"life-profile-model",
-      generation:{maxTokens:123}
+      generation:{maxTokens:123,repeatPenalty:1.12,repeatLastN:64,responseFormat:{type:"json" as const}}
     };
     runtime.setActiveModelProfile(profile);
     const conversationSession=new ConversationSession(conversation.id,character.id);
@@ -130,6 +130,7 @@ async function lifeHonorsPinnedModelProfile():Promise<void>{
     const body=JSON.parse(request!.body!) as Record<string,unknown>;
     equal(body.model,"life-profile-model","the actual provider request uses the pinned Model Profile model");
     equal(body.max_tokens,123,"Model Profile generation limit reaches the actual Nova Life provider request");
+    equal((body.response_format as Record<string,unknown>)?.type,"json_object","Model Profile response format reaches the actual selected provider request");
     equal(http.requests.some(item=>item.url==="https://global-life.example/v1/chat/completions"),false,"the incorrect global preset is not used for the reactive turn");
     for(let attempt=0;attempt<400&&!http.requests.some(item=>item.url==="https://memory-agent.example/v1/chat/completions");attempt++)
       await new Promise(resolve=>setTimeout(resolve,5));
@@ -144,6 +145,19 @@ async function lifeHonorsPinnedModelProfile():Promise<void>{
       await new Promise(resolve=>setTimeout(resolve,5));
     }
     ok(storedLifeMemory.some(item=>item.content==="Durable memory saved by Nova Life."),"the automatically invoked agent persists its result through MemoryBroker");
+    const diagnostics=(await runtime.diagnostics()).recentErrors;
+    const codes=new Set(diagnostics.map(entry=>entry.code));
+    for(const required of ["nova_life.wake.started","nova_life.cognition.started","nova_life.provider_request.started","nova_life.provider_request.completed","nova_life.turn.parsed","nova_life.turn.persisted","nova_life.wait.scheduled"])
+      ok(codes.has(required),"runtime diagnostics expose "+required);
+    for(const required of ["MEMORY_AGENT_TRIGGERED","MEMORY_AGENT_STARTED","MEMORY_AGENT_PROVIDER_SELECTED","MEMORY_AGENT_CANDIDATES_EXTRACTED","MEMORY_AGENT_MEMORY_PERSISTED"])
+      ok(codes.has(required),"Automatic Memory Agent diagnostics expose "+required);
+    const previousAgentCalls=http.requests.filter(item=>item.url==="https://memory-agent.example/v1/chat/completions").length;
+    runtime.wakeMind();
+    for(let attempt=0;attempt<1_000&&http.requests.filter(item=>item.url==="https://memory-agent.example/v1/chat/completions").length<=previousAgentCalls;attempt++)
+      await new Promise(resolve=>setTimeout(resolve,5));
+    ok(http.requests.filter(item=>item.url==="https://memory-agent.example/v1/chat/completions").length>previousAgentCalls,"a completed background Nova Life turn also triggers Automatic Memory Agent using the latest preceding user message");
+    const afterBackground=(await runtime.diagnostics()).recentErrors;
+    ok(afterBackground.some(entry=>entry.code==="MEMORY_AGENT_TRIGGERED"&&entry.metadata?.triggerSource==="background-turn"),"background Automatic Memory Agent execution is visible in diagnostics");
   }finally{
     await runtime.stopLife();
     runtime.setNovaTurnSink(undefined);

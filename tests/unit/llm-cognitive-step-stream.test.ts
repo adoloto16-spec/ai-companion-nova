@@ -18,7 +18,7 @@ function context(onSpeechEvent:CognitiveStepContext["onSpeechEvent"]):CognitiveS
   return {characterId:character.id,state:{lifecycleState:"thinking",nextWakeAt:null,recentTrace:[]},signal:new AbortController().signal,wakeReason:"user-message",
     userTurn:{characterId:character.id,conversationId:conversation.id,userMessageId:userMessage.id!,turnId:"turn.stream"},onSpeechEvent};
 }
-function createStep(runtime:unknown,getPrompt?:(id:import("../../contracts/src").PromptId)=>string,overrides:Partial<Pick<LLMCognitiveStepOptions,"getAvailableTools"|"executeTool"|"getReasoningOptions"|"getShowReasoningInDiagnostics"|"getGenerationOptions">>={}):LLMCognitiveStep{
+function createStep(runtime:unknown,getPrompt?:(id:import("../../contracts/src").PromptId)=>string,overrides:Partial<Pick<LLMCognitiveStepOptions,"getAvailableTools"|"executeTool"|"getReasoningOptions"|"getShowReasoningInDiagnostics"|"getGenerationOptions"|"getProviderIdForPreset"|"onDiagnostic">>={}):LLMCognitiveStep{
   return new LLMCognitiveStep({
     runtime:runtime as never,
     getCharacter:async()=>character,
@@ -50,10 +50,43 @@ async function disabledReasoningReachesProvidersWithoutReasoningCapability():Pro
   equal(requests[0]?.reasoning,{mode:"disabled"},"explicit reasoning opt-out reaches the provider even when its capability flag is false");
 }
 
+async function enabledReasoningReachesProvidersWithoutReasoningCapability():Promise<void>{
+  const requests:ChatRequest[]=[];
+  const runtime={
+    getChatProviderCapabilities:()=>({toolCalling:false,reasoning:false,streaming:true}),
+    async chat(request:ChatRequest):Promise<ChatResponse>{requests.push(request);return responseFor(request,"Ordinary answer.");}
+  };
+  await createStep(runtime,undefined,{getReasoningOptions:()=>({mode:"enabled",effort:"high"})}).run(context(()=>{}));
+  equal(requests[0]?.reasoning,{mode:"enabled",effort:"high"},"explicit reasoning opt-in reaches the provider even when its capability flag is false");
+}
+
+async function providerRequestLifecycleDiagnosticsAreStructured():Promise<void>{
+  const entries:Array<{code:string;metadata?:Record<string,unknown>}>= [];
+  const runtime={async chat(request:ChatRequest):Promise<ChatResponse>{return responseFor(request,"Diagnostic answer.");}};
+  await createStep(runtime,undefined,{
+    getProviderIdForPreset:()=> "ollama",
+    onDiagnostic:(code,_message,metadata)=>entries.push({code,metadata})
+  }).run(context(()=>{}));
+  equal(entries.map(entry=>entry.code),["nova_life.provider_request.started","nova_life.provider_request.completed"],"successful provider attempts emit start and completion diagnostics");
+  equal(entries[0]?.metadata?.providerId,"ollama","provider diagnostic identifies the resolved provider");
+  equal(entries[0]?.metadata?.model,"fake-model","provider diagnostic identifies the selected model");
+  ok(typeof entries[1]?.metadata?.durationMs==="number","provider completion diagnostic includes elapsed time");
+
+  const failures:Array<{code:string;metadata?:Record<string,unknown>}>= [];
+  const failingRuntime={async chat(_request:ChatRequest):Promise<ChatResponse>{throw Object.assign(new Error("controlled provider error"),{code:"PROVIDER_ERROR"});}};
+  let rejected=false;
+  try{
+    await createStep(failingRuntime,undefined,{onDiagnostic:(code,_message,metadata)=>failures.push({code,metadata})}).run(context(()=>{}));
+  }catch{rejected=true;}
+  ok(rejected,"a failed provider request is propagated to cognitive-step error handling");
+  equal(failures.map(entry=>entry.code),["nova_life.provider_request.started","nova_life.provider_request.failed"],"failed provider attempts are not logged as successful completions");
+  equal(failures[1]?.metadata?.errorCode,"PROVIDER_ERROR","provider failure carries a stable safe error code");
+}
+
 async function profileGenerationOptionsReachNativeRequests():Promise<void>{
   const requests:ChatRequest[]=[];
   const runtime={async chat(request:ChatRequest):Promise<ChatResponse>{requests.push(request);return responseFor(request,"Completed answer.");}};
-  const generation={temperature:0.45,topP:0.8,maxTokens:777,repeatPenalty:1.1,repeatLastN:48};
+  const generation={temperature:0.45,topP:0.8,maxTokens:777,repeatPenalty:1.1,repeatLastN:48,responseFormat:{type:"json" as const}};
   await createStep(runtime,undefined,{getGenerationOptions:()=>generation}).run(context(()=>{}));
   equal(requests[0]?.generation,generation,"Model Profile generation settings reach actual native request bodies");
 }
@@ -203,6 +236,8 @@ async function backgroundStepMayReturnNoSpeech():Promise<void>{
 
 async function main():Promise<void>{
   await disabledReasoningReachesProvidersWithoutReasoningCapability();
+  await enabledReasoningReachesProvidersWithoutReasoningCapability();
+  await providerRequestLifecycleDiagnosticsAreStructured();
   await profileGenerationOptionsReachNativeRequests();
   await ordinaryTextStreamsSeparatelyFromReasoning();
   await nativeToolRoundsReturnResultsBeforeFinalSpeech();
