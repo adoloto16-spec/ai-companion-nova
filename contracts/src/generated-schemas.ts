@@ -477,10 +477,7 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         "required": [
           "enabled",
           "activePresetId",
-          "presets",
-          "finishTimeoutMs",
-          "startTimeoutMs",
-          "segmentGapMs"
+          "presets"
         ],
         "properties": {
           "activePresetId": {
