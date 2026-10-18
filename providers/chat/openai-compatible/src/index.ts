@@ -934,7 +934,8 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       throw this.failure({code:"INVALID_RESPONSE",message:"OpenAI-compatible provider response is missing assistant text and tool calls.",request,retryable:false,details:{category:"missing_assistant_content",durationMs}});
     }
     const content=typeof message.content==="string"?message.content:"";
-    const reasoning=typeof message.reasoning_content==="string"?message.reasoning_content:
+    const reasoning=request.reasoning?.mode==="disabled"?undefined:
+      typeof message.reasoning_content==="string"?message.reasoning_content:
       typeof message.reasoning==="string"?message.reasoning:undefined;
 
     const usage=this.mapUsage(object.usage,request,durationMs);

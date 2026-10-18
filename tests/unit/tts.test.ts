@@ -593,6 +593,8 @@ async function webAudioRecoversAfterTransientOutputFailure():Promise<void>{
   scheduled[0]!.onended?.();
   await output.waitForPlayback("recovered-audio-session",new AbortController().signal);
   equal(failures[0]?.message,"simulated transient AudioBuffer failure","the initial failure was real and observed");
+  const failedWait=await output.waitForPlayback("failed-audio-session",new AbortController().signal).then(()=>undefined,error=>error as Error);
+  equal(failedWait?.message,"simulated transient AudioBuffer failure","a failure is propagated even when the playback waiter registers after the pump has already failed");
   await output.dispose();
 }
 
@@ -824,7 +826,34 @@ async function sileroProviderFailuresAndHealth():Promise<void>{
 }
 
 async function lifeSpeechEventsReachAudioAndAwaitPhysicalPlayback():Promise<void>{
-  const output=new PlaybackControlledOutput(),provider=new RecordingProvider();
+  class PcmRecordingProvider extends RecordingProvider{
+    override async *synthesize(request:TtsSynthesisRequest,options:{signal:AbortSignal}):AsyncIterable<TtsStreamEvent>{
+      this.requests.push(request.text);this.emotions.push(request.emotion);
+      if(options.signal.aborted){const error=new Error("cancelled");error.name="AbortError";throw error;}
+      yield {type:"start",sessionId:request.sessionId,audio:metadata};
+      yield {type:"audio",sessionId:request.sessionId,sequence:0,data:new Uint8Array([0xe8,0x03,0x18,0xfc,0xd0,0x07,0x30,0xf8])};
+      yield {type:"done",sessionId:request.sessionId};
+    }
+  }
+  const played:MockSource[]=[],sources:MockSource[]=[],audioErrors:Error[]=[];
+  const mockContext={
+    currentTime:0,state:"running",destination:{},
+    async resume(){this.state="running";},async close(){this.state="closed";},
+    createBuffer(channels:number,length:number,sampleRate:number):MockBuffer{
+      const data=Array.from({length:channels},()=>new Float32Array(length));
+      return {duration:length/sampleRate,numberOfChannels:channels,length,sampleRate,data,getChannelData:(index:number)=>data[index]!};
+    },
+    createBufferSource():MockSource{
+      const source:MockSource={
+        buffer:null,onended:null,connect(){},disconnect(){},
+        start(){played.push(source);},
+        stop(){source.onended?.();}
+      };
+      sources.push(source);return source;
+    }
+  };
+  const output=new WebAudioOutputAdapter({createContext:()=>mockContext as unknown as AudioContext,onError:error=>audioErrors.push(error)});
+  const provider=new PcmRecordingProvider();
   const settings:TtsSettings={...DEFAULT_TTS_SETTINGS,enabled:true,activePresetId:"test-preset",presets:[preset()]};
   const controller=new SpeechOutputController({getSettings:()=>settings,getProvider:id=>id===provider.id?provider:undefined,output});
   await controller.unlockPlayback();
@@ -844,15 +873,17 @@ async function lifeSpeechEventsReachAudioAndAwaitPhysicalPlayback():Promise<void
   runtime.setActiveCharacter("character.life-tts");
   try{
     await runtime.start();
-    await until(()=>output.pendingPlayback.size===1,"Nova Life public speech reaches the playback queue");
+    await until(()=>played.length===1,"Nova Life PCM reaches an AudioBufferSource and starts physical playback");
     equal(provider.requests[0],text,"only the public cognitive delta is synthesized");
-    equal(runtime.getState().lifecycleState,"thinking","the cognitive step waits while audio is playing");
-    output.finishPlayback(0);
-    await until(()=>runtime.getState().lifecycleState==="waiting","physical playback completion releases the next timer");
-    equal(controller.getStatus().message,"Assistant speech playback completed.","TTS session finalizes after playback");
+    equal(runtime.getState().lifecycleState,"thinking","the cognitive step waits while Web Audio is playing");
+    equal(audioErrors.length,0,"the Web Audio adapter plays the generated PCM without output errors");
+    played[0]!.onended?.();
+    await until(()=>runtime.getState().lifecycleState==="waiting","physical Web Audio completion releases the next timer");
+    equal(controller.getStatus().message,"Assistant speech playback completed.","TTS session finalizes only after physical playback");
   }finally{
+    controller.stop("Life TTS integration cleanup.");
     await runtime.stop();
-    controller.stop();
+    await output.dispose();
   }
 }
 

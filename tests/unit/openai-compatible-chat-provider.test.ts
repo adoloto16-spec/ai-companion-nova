@@ -140,6 +140,19 @@ async function reasoningModesMapToExplicitProviderPayloads(){
   equal(disabledBody.reasoning_effort,"none","disabled reasoning sends explicit reasoning_effort:none");
   equal(disabledBody.max_tokens,211,"generation limit stays in the same provider request");
 
+  const disabledResponseHttp=new FakeHttpClient();
+  disabledResponseHttp.next={
+    status:200,
+    body:JSON.stringify({
+      id:"disabled-reasoning-response",
+      model:"openai-compatible-test-model",
+      choices:[{message:{role:"assistant",content:"Public answer",reasoning_content:"this must stay hidden"},finish_reason:"stop"}]
+    })
+  };
+  const disabledResponse=await provider(disabledResponseHttp).chat({...request(),reasoning:{mode:"disabled"}});
+  equal(disabledResponse.message.content,"Public answer","disabled mode still returns public assistant content");
+  equal(disabledResponse.reasoning,undefined,"non-stream provider reasoning is never surfaced when disabled");
+
   const enabledHttp=new FakeHttpClient();
   await provider(enabledHttp).chat({...request(),reasoning:{mode:"enabled",effort:"high"}});
   const enabledBody=JSON.parse(enabledHttp.requests[0]!.body!) as Record<string,unknown>;

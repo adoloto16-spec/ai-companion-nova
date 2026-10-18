@@ -92,6 +92,7 @@ export class WebAudioOutputAdapter implements AudioOutputAdapter {
   async waitForPlayback(sessionId:string,signal:AbortSignal):Promise<void>{
     while(true){
       if(signal.aborted||this.sessionId!==sessionId)throw makeAbortError();
+      if(this.outputFailure)throw this.outputFailure;
       if(this.queue.length===0&&this.sources.size===0&&!this.pumping)return;
       await new Promise<void>((resolve,reject)=>{
         const onAbort=()=>{signal.removeEventListener("abort",onAbort);reject(makeAbortError());};
