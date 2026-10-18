@@ -144,6 +144,12 @@ async function lifeHonorsPinnedModelProfile():Promise<void>{
       await new Promise(resolve=>setTimeout(resolve,5));
     }
     ok(storedLifeMemory.some(item=>item.content==="Durable memory saved by Nova Life."),"the automatically invoked agent persists its result through MemoryBroker");
+    const diagnostics=(await runtime.diagnostics()).recentErrors;
+    const codes=new Set(diagnostics.map(entry=>entry.code));
+    for(const required of ["nova_life.wake.started","nova_life.cognition.started","nova_life.provider_request.started","nova_life.provider_request.completed","nova_life.turn.parsed","nova_life.turn.persisted","nova_life.wait.scheduled"])
+      ok(codes.has(required),"runtime diagnostics expose "+required);
+    for(const required of ["MEMORY_AGENT_STARTED","MEMORY_AGENT_PROVIDER_SELECTED","MEMORY_AGENT_CANDIDATES_EXTRACTED","MEMORY_AGENT_MEMORY_PERSISTED"])
+      ok(codes.has(required),"Automatic Memory Agent diagnostics expose "+required);
   }finally{
     await runtime.stopLife();
     runtime.setNovaTurnSink(undefined);

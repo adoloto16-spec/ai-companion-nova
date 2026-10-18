@@ -532,6 +532,24 @@ async function disabledReasoningIsExplicitWithoutModelMetadata(): Promise<void> 
   equal((JSON.parse(chat!.body!) as Record<string,unknown>).think, false, "disabled maps to think:false, not an omitted provider default");
 }
 
+async function enabledReasoningSurvivesMissingModelMetadata(): Promise<void> {
+  const http = new FakeOllamaHttpClient();
+  http.requestHandler = async request => {
+    if (request.url.endsWith("/api/show")) return {status: 503, body: "metadata unavailable"};
+    return {status: 200, body: JSON.stringify({
+      model: "llama3.2:latest",
+      message: {role: "assistant", content: "generation without metadata"},
+      done: true,
+      done_reason: "stop"
+    })};
+  };
+  const response = await provider(http).chat(chatRequest({reasoning:{mode:"enabled"}}));
+  equal(response.message.content,"generation without metadata","missing /api/show metadata does not block explicit reasoning or public generation");
+  const chat = http.requests.find(item=>item.url.endsWith("/api/chat"));
+  ok(chat,"explicit reasoning still reaches POST /api/chat");
+  equal((JSON.parse(chat.body!) as Record<string,unknown>).think,true,"enabled reasoning maps to native think:true when model metadata is unavailable");
+}
+
 async function connectionTestUsesNativeTransport(): Promise<void> {
   const http = new FakeOllamaHttpClient();
   const result = await testProviderPresetConfiguration({
@@ -568,6 +586,7 @@ async function main(): Promise<void> {
     ["API and missing model errors", apiErrorTest],
     ["Repeat settings pass canonical validation and serialize to native JSON", repeatSettingsPassCanonicalValidationAndReachNativeWireJson],
     ["Disabled reasoning survives missing /api/show metadata", disabledReasoningIsExplicitWithoutModelMetadata],
+    ["Enabled reasoning survives missing /api/show metadata", enabledReasoningSurvivesMissingModelMetadata],
     ["Connection test runtime path", connectionTestUsesNativeTransport]
   ];
   for (const [name, test] of tests) {
