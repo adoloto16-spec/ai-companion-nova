@@ -26,7 +26,7 @@ export interface TtsSettings {
   presets: TtsPreset[];
   /** Upper bound for synthesis plus physical playback of one assistant turn. */
   finishTimeoutMs: number;
-  /** Maximum wait from starting the first segment synthesis to enqueuing its first audio. */
+  /** Maximum wait from first-segment synthesis start until playback of its first audio begins. */
   startTimeoutMs: number;
   /** Silence inserted between consecutive sentence segments. */
   segmentGapMs: number;
