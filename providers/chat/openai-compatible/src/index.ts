@@ -236,7 +236,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       streaming:true,
       toolCalling:true,
       structuredOutput:true,
-      reasoning:false
+      reasoning:true
     };
   }
 
@@ -441,7 +441,8 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
               details:{category:"malformed_stream_delta",durationMs:Date.now()-started}
             });
           }
-          const reasoning=typeof deltaRecord.reasoning_content==="string"?deltaRecord.reasoning_content:
+          const reasoning=request.reasoning?.mode==="disabled"?"":
+            typeof deltaRecord.reasoning_content==="string"?deltaRecord.reasoning_content:
             typeof deltaRecord.reasoning==="string"?deltaRecord.reasoning:"";
           if(reasoning){
             streamedReasoning+=reasoning;
@@ -762,6 +763,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       max_tokens?:number;
       top_p?:number;
       response_format?:Record<string,unknown>;
+      reasoning_effort?:"none"|"low"|"medium"|"high";
       tools?:{type:"function";function:{name:string;description:string;parameters:unknown}}[];
     }={
       model:request.model,
@@ -772,6 +774,11 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
     if(generation?.temperature!==undefined)payload.temperature=generation.temperature;
     if(generation?.maxTokens!==undefined)payload.max_tokens=generation.maxTokens;
     if(generation?.topP!==undefined)payload.top_p=generation.topP;
+    if(request.reasoning?.mode==="disabled")payload.reasoning_effort="none";
+    else if(request.reasoning?.mode==="enabled"){
+      const effort=request.reasoning.effort;
+      payload.reasoning_effort=effort==="low"||effort==="medium"||effort==="high"?effort:"low";
+    }
     const responseFormat=generation?.responseFormat;
     if(responseFormat?.type==="json"){
       payload.response_format={type:"json_object"};
@@ -927,7 +934,8 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
       throw this.failure({code:"INVALID_RESPONSE",message:"OpenAI-compatible provider response is missing assistant text and tool calls.",request,retryable:false,details:{category:"missing_assistant_content",durationMs}});
     }
     const content=typeof message.content==="string"?message.content:"";
-    const reasoning=typeof message.reasoning_content==="string"?message.reasoning_content:
+    const reasoning=request.reasoning?.mode==="disabled"?undefined:
+      typeof message.reasoning_content==="string"?message.reasoning_content:
       typeof message.reasoning==="string"?message.reasoning:undefined;
 
     const usage=this.mapUsage(object.usage,request,durationMs);

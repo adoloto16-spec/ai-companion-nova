@@ -1,4 +1,5 @@
 import {SpeechOutputController,SpeechSentenceSegmenter,normalizeVoiceExpression} from "../../modules/voice/tts/src";
+import {MindRuntime} from "../../core/src/mind-runtime";
 import type {AudioOutputAdapter} from "../../modules/voice/tts/src";
 import type {TtsAudioMetadata,TtsPreset,TtsProvider,TtsProviderCapabilities,TtsProviderHealth,TtsSettings,TtsStreamEvent,TtsSynthesisRequest} from "../../contracts/src/tts";
 import {DEFAULT_TTS_SETTINGS} from "../../contracts/src/tts";
@@ -558,6 +559,45 @@ async function websocketRequestLockReleasedBeforeCancelledIteratorSettles():Prom
   equal(freshEvents.map(event=>event.type).join(","),"start,audio,done","a fresh request can start immediately after cancellation");
   ok(secondSocket.sent.length===1,"the fresh request owns a new websocket");
 }
+async function webAudioRecoversAfterTransientOutputFailure():Promise<void>{
+  const scheduled:MockSource[]=[],sources:MockSource[]=[],failures:Error[]=[];
+  let failFirstBuffer=true;
+  const mockContext={
+    currentTime:0,state:"running",destination:{},
+    async resume(){this.state="running";},async close(){this.state="closed";},
+    createBuffer(channels:number,length:number,sampleRate:number):MockBuffer{
+      if(failFirstBuffer){failFirstBuffer=false;throw new Error("simulated transient AudioBuffer failure");}
+      const data=Array.from({length:channels},()=>new Float32Array(length));
+      return {duration:length/sampleRate,numberOfChannels:channels,length,sampleRate,data,getChannelData:(index:number)=>data[index]!};
+    },
+    createBufferSource():MockSource{
+      const source:MockSource={
+        buffer:null,onended:null,connect(){},disconnect(){},
+        start(){scheduled.push(source);},
+        stop(){source.onended?.();}
+      };
+      sources.push(source);return source;
+    }
+  };
+  const output=new WebAudioOutputAdapter({
+    createContext:()=>mockContext as unknown as AudioContext,
+    onError:error=>failures.push(error)
+  });
+  await output.unlock();
+  output.startSession("failed-audio-session",metadata);
+  await output.enqueue("failed-audio-session",0,metadata,new Uint8Array([0xe8,0x03,0x18,0xfc]),new AbortController().signal);
+  await until(()=>failures.length===1,"the first physical audio session records its injected output failure");
+  const failedWait=await output.waitForPlayback("failed-audio-session",new AbortController().signal).then(()=>undefined,error=>error as Error);
+  equal(failedWait?.message,"simulated transient AudioBuffer failure","a failure is propagated even when the playback waiter registers after the pump has already failed");
+  output.startSession("recovered-audio-session",metadata);
+  await output.enqueue("recovered-audio-session",0,metadata,new Uint8Array([0xd0,0x07,0x30,0xf8]),new AbortController().signal);
+  await until(()=>scheduled.length===1,"a fresh TTS session schedules PCM after the previous output error");
+  scheduled[0]!.onended?.();
+  await output.waitForPlayback("recovered-audio-session",new AbortController().signal);
+  equal(failures[0]?.message,"simulated transient AudioBuffer failure","the initial failure was real and observed");
+  await output.dispose();
+}
+
 async function webAudioSchedulesFifoWithoutOverlap():Promise<void>{
   const scheduled:Array<{when:number;duration:number;sample:number}>=[],sources:MockSource[]=[];
   const mockContext={
@@ -785,18 +825,82 @@ async function sileroProviderFailuresAndHealth():Promise<void>{
   equal(healthTimeout.message,"Silero connection check timed out.","connection timeout has a safe diagnostic");
 }
 
+async function lifeSpeechEventsReachAudioAndAwaitPhysicalPlayback():Promise<void>{
+  class PcmRecordingProvider extends RecordingProvider{
+    override async *synthesize(request:TtsSynthesisRequest,options:{signal:AbortSignal}):AsyncIterable<TtsStreamEvent>{
+      this.requests.push(request.text);this.emotions.push(request.emotion);
+      if(options.signal.aborted){const error=new Error("cancelled");error.name="AbortError";throw error;}
+      yield {type:"start",sessionId:request.sessionId,audio:metadata};
+      yield {type:"audio",sessionId:request.sessionId,sequence:0,data:new Uint8Array([0xe8,0x03,0x18,0xfc,0xd0,0x07,0x30,0xf8])};
+      yield {type:"done",sessionId:request.sessionId};
+    }
+  }
+  const played:MockSource[]=[],sources:MockSource[]=[],audioErrors:Error[]=[];
+  const mockContext={
+    currentTime:0,state:"running",destination:{},
+    async resume(){this.state="running";},async close(){this.state="closed";},
+    createBuffer(channels:number,length:number,sampleRate:number):MockBuffer{
+      const data=Array.from({length:channels},()=>new Float32Array(length));
+      return {duration:length/sampleRate,numberOfChannels:channels,length,sampleRate,data,getChannelData:(index:number)=>data[index]!};
+    },
+    createBufferSource():MockSource{
+      const source:MockSource={
+        buffer:null,onended:null,connect(){},disconnect(){},
+        start(){played.push(source);},
+        stop(){source.onended?.();}
+      };
+      sources.push(source);return source;
+    }
+  };
+  const output=new WebAudioOutputAdapter({createContext:()=>mockContext as unknown as AudioContext,onError:error=>audioErrors.push(error)});
+  const provider=new PcmRecordingProvider();
+  const settings:TtsSettings={...DEFAULT_TTS_SETTINGS,enabled:true,activePresetId:"test-preset",presets:[preset()]};
+  const controller=new SpeechOutputController({getSettings:()=>settings,getProvider:id=>id===provider.id?provider:undefined,output});
+  await controller.unlockPlayback();
+  const text="Nova Life public speech reaches PCM playback.";
+  const runtime=new MindRuntime({
+    cognitiveStep:{async run(context){
+      await context.onSpeechEvent?.({type:"start",conversationId:"conversation.life-tts"});
+      await context.onSpeechEvent?.({type:"delta",conversationId:"conversation.life-tts",text});
+      return {turn:{version:1,situation:"",thoughts:"",emotion:"",tools:[],toolResults:[],speech:text,nextWakeMs:30_000},conversationId:"conversation.life-tts"};
+    }},
+    schedule:{mode:"fixed",defaultIntervalMs:30_000,minIntervalMs:3_000,maxIntervalMs:300_000,maxRequestsPerHour:null},
+    turnSink:{
+      async commit(_turn,context){await controller.finishTurn(context.turnId);},
+      async streamSpeech(event){await controller.handleSpeechEvent(event);}
+    }
+  });
+  runtime.setActiveCharacter("character.life-tts");
+  try{
+    await runtime.start();
+    await until(()=>played.length===1,"Nova Life PCM reaches an AudioBufferSource and starts physical playback");
+    equal(provider.requests[0],text,"only the public cognitive delta is synthesized");
+    equal(runtime.getState().lifecycleState,"thinking","the cognitive step waits while Web Audio is playing");
+    equal(audioErrors.length,0,"the Web Audio adapter plays the generated PCM without output errors");
+    played[0]!.onended?.();
+    await until(()=>runtime.getState().lifecycleState==="waiting","physical Web Audio completion releases the next timer");
+    equal(controller.getStatus().message,"Assistant speech playback completed.","TTS session finalizes only after physical playback");
+  }finally{
+    controller.stop("Life TTS integration cleanup.");
+    await runtime.stop();
+    await output.dispose();
+  }
+}
+
 async function main():Promise<void>{
   sentenceBoundariesPreserveEveryCharacter();
   emotionMappingOnlyUsesSupportedActions();
   emotionDecodersDoNotGateSpeech();
   await synthesisRunsAheadOfPlaybackAndKeepsFifo();
   await assistantTurnsWaitForPlaybackAndInterruptionClearsQueue();
+  await lifeSpeechEventsReachAudioAndAwaitPhysicalPlayback();
   await boundedBackpressureAndCancellation();
   await cancelledProviderEventsCannotEnterANewSession();
   await voiceStudioWebSocketAndHttpFallback();
   await sileroProviderProtocolAndWav();
   await sileroProviderFailuresAndHealth();
   await websocketRequestLockReleasedBeforeCancelledIteratorSettles();
+  await webAudioRecoversAfterTransientOutputFailure();
   await webAudioSchedulesFifoWithoutOverlap();
   console.log("PASS TTS sentence, emotion, controller, provider and Web Audio tests");
 }

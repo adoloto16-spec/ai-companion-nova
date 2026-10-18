@@ -480,6 +480,26 @@ async function apiErrorTest(): Promise<void> {
     "Ollama API error");
 }
 
+async function disabledReasoningIsExplicitWithoutModelMetadata(): Promise<void> {
+  const http = new FakeOllamaHttpClient();
+  http.requestHandler = async request => {
+    if (request.url.endsWith("/api/show")) return {status: 503, body: "metadata unavailable"};
+    if (request.url.endsWith("/api/tags")) return {status: 200, body: JSON.stringify({models: [{name: "llama3.2:latest"}]})};
+    return {status: 200, body: JSON.stringify({
+      model: "llama3.2:latest", message: {role: "assistant", content: "public answer",thinking:"provider ignored think:false"},
+      done: true, done_reason: "stop"
+    })};
+  };
+  const response = await provider(http).chat(chatRequest({reasoning:{mode:"disabled"}}));
+  equal(response.message.content, "public answer", "optional metadata failure does not break ordinary generation");
+  equal(response.reasoning,undefined,"a provider that ignores think:false cannot surface reasoning when disabled");
+  const show = http.requests.find(item=>item.url.endsWith("/api/show"));
+  const chat = http.requests.find(item=>item.url.endsWith("/api/chat"));
+  ok(show && show.method==="POST", "capability discovery uses POST /api/show");
+  ok(chat, "chat still executes with the same provider config after metadata discovery fails");
+  equal((JSON.parse(chat!.body!) as Record<string,unknown>).think, false, "disabled maps to think:false, not an omitted provider default");
+}
+
 async function connectionTestUsesNativeTransport(): Promise<void> {
   const http = new FakeOllamaHttpClient();
   const result = await testProviderPresetConfiguration({
@@ -514,6 +534,7 @@ async function main(): Promise<void> {
     ["Cancellation and timeouts", cancellationAndTimeoutTest],
     ["Stream timeout is an inactivity deadline", streamTimeoutIsInactivityDeadlineTest],
     ["API and missing model errors", apiErrorTest],
+    ["Disabled reasoning survives missing /api/show metadata", disabledReasoningIsExplicitWithoutModelMetadata],
     ["Connection test runtime path", connectionTestUsesNativeTransport]
   ];
   for (const [name, test] of tests) {

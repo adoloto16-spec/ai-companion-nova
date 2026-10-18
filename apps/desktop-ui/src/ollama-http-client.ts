@@ -1,4 +1,5 @@
 import {Channel, invoke} from "@tauri-apps/api/core";
+import {isAllowedOllamaRoute} from "./ollama-http-routes";
 import {FetchHttpClient, type HttpClient as CompatibleHttpClient, type HttpClientRequest as CompatibleHttpClientRequest} from "../../../providers/chat/openai-compatible/src";
 import type {
   OllamaHttpClient,
@@ -35,8 +36,7 @@ function routeFor(request: OllamaHttpRequest): { baseUrl: string; route: string 
     throw new Error("Ollama HTTP transport is restricted to HTTP loopback URLs.");
   }
   if (url.username || url.password || url.search || url.hash) throw new Error("Ollama URL cannot contain credentials, query, or fragment components.");
-  if (!["/api/tags", "/api/version", "/api/chat"].includes(url.pathname)) throw new Error("Ollama HTTP route is not allowed.");
-  if ((url.pathname === "/api/chat") !== (request.method === "POST")) throw new Error("Ollama HTTP method is not allowed for this route.");
+  if (!isAllowedOllamaRoute(url.pathname, request.method)) throw new Error("Ollama HTTP route or method is not allowed.");
   return { baseUrl: url.origin, route: url.pathname };
 }
 
@@ -208,8 +208,7 @@ export class NovaHttpClient implements CompatibleHttpClient {
       const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
       if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "::1"].includes(hostname)) return false;
       if (url.username || url.password || url.search || url.hash) return false;
-      if (!["/api/tags", "/api/version", "/api/chat"].includes(url.pathname)) return false;
-      return url.pathname === "/api/chat" ? request.method === "POST" : request.method === "GET";
+      return isAllowedOllamaRoute(url.pathname, request.method);
     } catch {
       return false;
     }

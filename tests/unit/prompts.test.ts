@@ -13,7 +13,7 @@ function equal(actual:unknown,expected:unknown,label:string):void{
 function ok(value:unknown,label:string):void{if(!value)throw new Error(label);}
 async function main():Promise<void>{
   const ids=PROMPT_REGISTRY.map(prompt=>prompt.id);
-  equal(ids.length,13,"complete registry contains all discovered editable prompt templates");
+  equal(ids.length,14,"complete registry contains all discovered editable prompt templates");
   equal([...ids].sort(),Object.keys(DEFAULT_PROMPT_TEXTS).sort(),"each registry item has one immutable factory default");
   ok(Object.isFrozen(DEFAULT_PROMPT_TEXTS),"factory prompt definitions are runtime-frozen");
   for(const prompt of PROMPT_REGISTRY){
@@ -32,6 +32,7 @@ async function main():Promise<void>{
   let custom=applyPromptOverride(initial,"nova-system-json","CUSTOM JSON SYSTEM");
   custom=applyPromptOverride(custom,"nova-cue-reactive-tagged","CUSTOM REACTIVE TAG CUE");
   custom=applyPromptOverride(custom,"memory-judge.system","CUSTOM JUDGE SYSTEM");
+  custom=applyPromptOverride(custom,"memory-agent.system","CUSTOM MEMORY AGENT SYSTEM");
   custom={
     ...custom,
     context:{...custom.context,availableContextTokens:8192},
@@ -47,6 +48,8 @@ async function main():Promise<void>{
   equal(resolvePromptText(restarted.prompts,"nova-system-json"),"CUSTOM JSON SYSTEM","override survives settings-store restart");
   equal(resolvePromptText(restarted.prompts,"nova-cue-reactive-tagged"),"CUSTOM REACTIVE TAG CUE","each prompt override persists independently");
   equal(resolvePromptText(restarted.prompts,"memory-judge.system"),"CUSTOM JUDGE SYSTEM","Memory Judge override survives restart");
+  equal(resolvePromptText(restarted.prompts,"memory-agent.system"),"CUSTOM MEMORY AGENT SYSTEM","Automatic Memory Agent prompt survives restart");
+  equal(restarted.memoryAgent.prompt,"CUSTOM MEMORY AGENT SYSTEM","legacy agent prompt stays synchronized with the registry");
   equal(restarted.semanticDedup.judge.prompt,"CUSTOM JUDGE SYSTEM","legacy Memory Judge prompt field stays synchronized");
   equal(restarted.context.availableContextTokens,8192,"unrelated context settings survive prompt edits");
   equal(restarted.semanticDedup.embeddingProviderPresetId,"preset.embedding","embedding preset survives prompt edits");
@@ -68,6 +71,7 @@ async function main():Promise<void>{
   const resetAll=restoreAllPromptDefaults(afterSingleRestore.get());
   equal(Object.keys(resetAll.prompts.overrides),[],"restore-all clears all prompt overrides");
   equal(resetAll.semanticDedup.judge.prompt,DEFAULT_PROMPT_TEXTS["memory-judge.system"],"restore-all resets compatibility Judge prompt field");
+  equal(resetAll.memoryAgent.prompt,DEFAULT_PROMPT_TEXTS["memory-agent.system"],"restore-all resets compatibility Memory Agent prompt field");
   await afterSingleRestore.set(resetAll);
   const finalReload=new SettingsManager(store,validator);
   const finalSettings=await finalReload.initialize();
@@ -85,6 +89,7 @@ async function main():Promise<void>{
   legacy.schemaVersion="11";
   delete legacy.prompts;
   legacy.semanticDedup.judge.prompt="Legacy user-authored Judge prompt";
+  legacy.memoryAgent.prompt="Legacy custom Automatic Memory Agent prompt";
   legacy.semanticDedup.judge.providerPresetId="legacy-judge-preset";
   legacy.semanticDedup.judge.model="legacy-judge-model";
   legacy.semanticDedup.embeddingProviderPresetId="legacy-embedding-preset";
@@ -93,6 +98,8 @@ async function main():Promise<void>{
   const migrated=migrateAppSettings(legacy);
   equal(migrated.schemaVersion,"14","previous AppSettings version migrates to the current v14 schema");
   equal(migrated.prompts.overrides["memory-judge.system"],"Legacy user-authored Judge prompt","migration promotes custom Judge text into the central registry");
+  equal(migrated.prompts.overrides["memory-agent.system"],"Legacy custom Automatic Memory Agent prompt","migration preserves old agent prompt in the editable registry");
+  equal(migrated.memoryAgent.prompt,"Legacy custom Automatic Memory Agent prompt","migration keeps legacy agent prompt setting compatible");
   equal(migrated.semanticDedup.judge.prompt,"Legacy user-authored Judge prompt","migration preserves prior custom Judge prompt");
   equal(migrated.semanticDedup.judge.providerPresetId,"legacy-judge-preset","migration preserves Judge provider selection");
   equal(migrated.semanticDedup.judge.model,"legacy-judge-model","migration preserves Judge model selection");

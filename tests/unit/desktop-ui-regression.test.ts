@@ -3,11 +3,21 @@ import fs from "node:fs";
 import path from "node:path";
 import {chatDraftKey,readChatDraft,writeChatDraft,clearSubmittedChatDraft} from "../../apps/desktop-ui/src/chat-drafts";
 import {passiveDiagnosticsOptions} from "../../apps/desktop-ui/src/provider-health-polling";
+import {isAllowedOllamaRoute} from "../../apps/desktop-ui/src/ollama-http-routes";
 
 const sourcePath=path.resolve(process.cwd(),"apps/desktop-ui/src/main.tsx");
 const source=fs.readFileSync(sourcePath,"utf8");
 const foundationPath=path.resolve(process.cwd(),"runtime/bootstrap/src/index.ts");
 const foundationSource=fs.readFileSync(foundationPath,"utf8");
+assert.equal(isAllowedOllamaRoute("/api/tags","GET"),true,"Ollama model discovery keeps GET /api/tags");
+assert.equal(isAllowedOllamaRoute("/api/show","POST"),true,"capability discovery permits POST /api/show through desktop IPC");
+assert.equal(isAllowedOllamaRoute("/api/show","GET"),false,"capability discovery rejects the wrong HTTP method");
+assert.equal(isAllowedOllamaRoute("/api/chat","POST"),true,"native chat remains allowed");
+assert.equal(isAllowedOllamaRoute("/api/show","DELETE"),false,"undocumented Ollama methods remain blocked");
+assert.ok(foundationSource.includes("activeModelProfile?.providerPresetId?.trim()||activeProviderPresetId"),"Nova Life follows Model Profile's pinned provider preset");
+assert.ok(foundationSource.includes("activeModelProfile?.model?.trim()"),"Nova Life follows Model Profile's model override");
+assert.ok(source.includes("Automatic Memory Agent"),"Memory settings expose separate agent configuration controls");
+assert.ok(source.includes("await speechOutputController.finishTurn(context.turnId);"),"cognitive turn completion awaits real speech playback");
 
 function blockBetween(startMarker:string,endMarker:string):string{
   const start=source.indexOf(startMarker);
@@ -99,7 +109,12 @@ assert.ok(diagnosticsView.includes('entry.source==="memory-semantic-deduplicatio
 assert.ok(diagnosticsView.includes("Memory Deduplication"),"DiagnosticsView must expose the Memory Deduplication section");
 assert.ok(diagnosticsView.includes("candidateDiagnostics")&&diagnosticsView.includes("archiveMapping")&&diagnosticsView.includes("mutationResult"),"DiagnosticsView must display dedup candidate/mutation diagnostics");
 assert.ok(diagnosticsView.includes("semanticDedupEnabled")&&diagnosticsView.includes("judgeProviderPresetId")&&diagnosticsView.includes("memoryCreatedSubscribers"),"DiagnosticsView must display effective runtime semantic settings");
-assert.equal(appSettingsView.includes("memoryAgent"),false,"Settings UI must not restore the retired Memory Agent configuration");
+assert.equal(appSettingsView.includes("memoryAgent"),true,"Settings UI exposes the dedicated Automatic Memory Agent configuration");
+assert.ok(appSettingsView.includes("settings.memoryAgent.enabled"),"Automatic Memory Agent enable state is editable");
+assert.ok(appSettingsView.includes("settings.memoryAgent.providerPresetId"),"Automatic Memory Agent Provider Preset is editable");
+assert.ok(appSettingsView.includes("settings.memoryAgent.model"),"Automatic Memory Agent model override is editable");
+assert.ok(appSettingsView.includes("settings.memoryAgent.outputMode"),"Automatic Memory Agent response mode is editable");
+assert.ok(appSettingsView.includes("memory-agent.system")||appSettingsView.includes("Prompts tab"),"Automatic Memory Agent exposes a separate editable prompt");
 assert.ok(appSettingsView.includes("settings.chat.automaticLongTermMemory"),"General settings retain the LONGMEMORY persistence gate");
 assert.ok(appSettingsView.includes("Save LONGMEMORY candidates automatically"),"Automatic memory setting describes candidate persistence, not a second generator");
 assert.ok(appSettingsView.includes("onClick={()=>void onSave()}"),"Settings UI exposes the existing Save Settings persistence path");

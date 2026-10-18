@@ -1,6 +1,6 @@
 import type {CognitiveScheduleSettings} from "../../contracts/src";
 import {DEFAULT_COGNITIVE_SCHEDULE} from "../../contracts/src";
-import type {MindReactiveTurn, MindState, MindTraceEntry, MindWakeReason, MindRuntimeLifecycleState, MindTurnSink, MindToolExecutor} from "../../contracts/src";
+import type {MindReactiveTurn, MindState, MindTraceEntry, MindWakeReason, MindRuntimeLifecycleState, MindTurnExecutionContext, MindTurnSink, MindToolExecutor} from "../../contracts/src";
 import type {NovaToolResult, NovaTurn} from "../../contracts/src/nova-turn";
 import {MindScheduler} from "./mind-scheduler";
 
@@ -92,6 +92,8 @@ export interface MindRuntimeOptions {
   now?: () => number;
   turnSink?: MindTurnSink;
   toolExecutor?: MindToolExecutor;
+  /** Runs after a successful sink commit; failures must not roll back the user-visible reply. */
+  onTurnCommitted?: (turn:NovaTurn,context:MindTurnExecutionContext)=>void|Promise<void>;
 }
 export class MindRuntime {
   private readonly cognitiveStep: CognitiveStep;
@@ -103,6 +105,7 @@ export class MindRuntime {
   private scheduleSettings: CognitiveScheduleSettings;
   private turnSink: MindTurnSink | undefined;
   private toolExecutor: MindToolExecutor | undefined;
+  private readonly onTurnCommitted:MindRuntimeOptions["onTurnCommitted"];
   private readonly state: MindState = { lifecycleState: "off", nextWakeAt: null, recentTrace: [] };
   private readonly listeners = new Set<(state: MindState) => void>();
   private readonly trace: MindTraceEntry[] = [];
@@ -134,6 +137,7 @@ export class MindRuntime {
     this.now = options.now ?? Date.now;
     this.turnSink = options.turnSink;
     this.toolExecutor = options.toolExecutor;
+    this.onTurnCommitted = options.onTurnCommitted;
     this.scheduler = new MindScheduler(reason => this.handleWake(reason), this.now);
   }
   getState(): MindState { return cloneState(this.state); }
@@ -364,7 +368,16 @@ export class MindRuntime {
       }
       const sink = this.turnSink;
       if (!sink) throw new Error("NovaTurn conversation sink is not attached.");
-      await sink.commit(turn, turnContext(result));
+      const completedContext=turnContext(result);
+      await sink.commit(turn, completedContext);
+      if (life.signal.aborted || contextVersion !== this.contextVersion || (reactiveTurn && !this.isReactiveTurnCurrent(reactiveTurn))) {
+        finishTrace("cancelled", {errorCode:"STALE_AFTER_COMMIT"}); return;
+      }
+      if(this.onTurnCommitted){
+        try{
+          void Promise.resolve(this.onTurnCommitted(turn,completedContext)).catch(error=>this.safeOnError(error));
+        }catch(error){this.safeOnError(error);}
+      }
       if (life.signal.aborted || contextVersion !== this.contextVersion || (reactiveTurn && !this.isReactiveTurnCurrent(reactiveTurn))) {
         finishTrace("cancelled", {errorCode:"STALE_AFTER_COMMIT"}); return;
       }

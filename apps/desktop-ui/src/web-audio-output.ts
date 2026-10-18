@@ -55,6 +55,7 @@ export class WebAudioOutputAdapter implements AudioOutputAdapter {
     if(!this.unlocked)throw new Error("Enable audio playback explicitly from TTS settings first.");
     if(this.sessionId===sessionId)return;
     this.stop();
+    this.outputFailure=undefined;
     this.sessionId=sessionId;
     this.sequence=0;
     this.nextStartTime=0;
@@ -91,6 +92,7 @@ export class WebAudioOutputAdapter implements AudioOutputAdapter {
   async waitForPlayback(sessionId:string,signal:AbortSignal):Promise<void>{
     while(true){
       if(signal.aborted||this.sessionId!==sessionId)throw makeAbortError();
+      if(this.outputFailure)throw this.outputFailure;
       if(this.queue.length===0&&this.sources.size===0&&!this.pumping)return;
       await new Promise<void>((resolve,reject)=>{
         const onAbort=()=>{signal.removeEventListener("abort",onAbort);reject(makeAbortError());};

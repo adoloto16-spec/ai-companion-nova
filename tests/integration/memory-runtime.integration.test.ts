@@ -69,10 +69,14 @@ async function main(){
     ok(diagnostic.some(entry=>entry.source==="nova-life-longmemory"&&entry.code==="SECRET_REJECTED"),"secret rejection is diagnosed");
   }finally{await freshRuntime.stop()}
 
+  const agentRequests:Array<Record<string,unknown>>=[];
   const agentHttpClient={
-    async request(request:{method:string;url:string}){
+    async request(request:{method:string;url:string;body?:string}){
       if(request.method==="GET")return {status:200,body:JSON.stringify({data:[{id:"memory-model"}]})};
-      return {status:200,body:JSON.stringify({id:"memory-agent-response",model:"memory-model",choices:[{message:{role:"assistant",content:"The table is green."},finish_reason:"stop"}]})};
+      const body=JSON.parse(request.body??"{}") as Record<string,unknown>;
+      agentRequests.push(body);
+      const content=body.response_format?JSON.stringify({memory:"The table is green."}):"The table is green.";
+      return {status:200,body:JSON.stringify({id:"memory-agent-response",model:"memory-model",choices:[{message:{role:"assistant",content},finish_reason:"stop"}]})};
     }
   };
   const agentStore=new InMemoryMemoryStore();
@@ -89,8 +93,9 @@ async function main(){
     }],"preset.memory-agent");
     await agentRuntime.updateSettings({
       ...agentRuntime.getSettings(),
-      chat:{...agentRuntime.getSettings().chat,automaticLongTermMemory:true},
-      memoryAgent:{...agentRuntime.getSettings().memoryAgent,enabled:true,providerPresetId:"preset.memory-agent",model:"memory-model"}
+      chat:{...agentRuntime.getSettings().chat,automaticLongTermMemory:false},
+      memoryAgent:{...agentRuntime.getSettings().memoryAgent,enabled:true,providerPresetId:"preset.memory-agent",model:"memory-model",outputMode:"auto"},
+      prompts:{overrides:{"memory-agent.system":"Custom durable-memory instructions."}}
     });
     const memory=await agentRuntime.extractMemory({
       apiVersion:"1",schemaVersion:"1",characterId:character.id,conversationId:conversation.id,turnId:"native-agent-green-table",
@@ -100,6 +105,9 @@ async function main(){
       contextMessages:[{id:"native-agent-green-table:user",role:"user",content:"Запомни: стол зелёный"}]
     });
     equal(memory.length,1,"dedicated Memory Agent accepts a useful fact after a native answer");
+    const agentRequest=agentRequests[0]!;
+    equal((agentRequest.response_format as Record<string,unknown>)?.type,"json_schema","auto mode uses the selected provider's real structured-output capability");
+    ok(String((agentRequest.messages as Array<{content:string}>)[0]?.content).includes("Custom durable-memory instructions."),"editable prompt override reaches the actual Memory Agent request");
     equal(memory[0]?.content,"The table is green.","the agent's fact is returned after MemoryBroker persistence");
     equal((await agentRuntime.listMemory(character.id)).filter(item=>item.content==="The table is green.").length,1,"the accepted fact is stored for the active character");
     const otherCharacter=await agentRuntime.createCharacter({name:"Other memory scope"});

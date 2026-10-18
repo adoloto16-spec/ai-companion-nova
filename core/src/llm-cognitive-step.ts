@@ -131,7 +131,8 @@ export class LLMCognitiveStep implements CognitiveStep {
       ?advertised.map(tool=>({name:tool.name,description:tool.description,parameters:tool.parameters as JsonSchema}))
       :[];
     const allowedToolNames=new Set(toolDefinitions.map(tool=>tool.name));
-    const reasoningOptions=capabilities?.reasoning?this.options.getReasoningOptions?.():undefined;
+    const configuredReasoning=this.options.getReasoningOptions?.();
+    const reasoningOptions=configuredReasoning?.mode==="disabled"||capabilities?.reasoning?configuredReasoning:undefined;
     const history:ChatMessage[]=[];
     let output:{response:ChatResponse;content:string}={response:undefined as unknown as ChatResponse,content:""};
     let combinedReasoning="";

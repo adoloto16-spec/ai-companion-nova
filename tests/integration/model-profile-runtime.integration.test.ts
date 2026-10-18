@@ -2,7 +2,8 @@ import {ChatSessionController,ConversationSession} from "../../core/src";
 import {createFoundationRuntime} from "../../runtime/bootstrap/src";
 import {InMemoryCharacterStore} from "../../host/characters/src";
 import {InMemoryModelProfileStore} from "../../host/model-profiles/src";
-import {defaultModelProfile,type ChatRequest, type ChatResponse, type ModelProfile} from "../../contracts/src";
+import {defaultModelProfile,type ChatMessage,type ChatRequest,type ChatResponse,type ModelProfile,type ProviderConfiguration} from "../../contracts/src";
+import type {HttpClient,HttpClientRequest,HttpClientResponse,HttpClientStreamResponse} from "../../providers/chat/openai-compatible/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error(label+" expected "+String(expected)+" got "+String(actual))}
 function ok(value:unknown,label:string){if(!value)throw new Error(label)}
@@ -14,6 +15,140 @@ function responseFor(request:ChatRequest):ChatResponse{
     message:{id:request.requestId+":assistant",role:"assistant",content:"profile response"},
     finishReason:"stop"
   };
+}
+
+class LifeProfileHttpClient implements HttpClient{
+  readonly requests:HttpClientRequest[]=[];
+  async request(request:HttpClientRequest):Promise<HttpClientResponse>{
+    this.requests.push(request);
+    if(request.method==="GET")return {status:200,body:JSON.stringify({data:[{id:"discovered-model"}]})};
+    if(request.url.includes("memory-agent.example")){
+      const payload=JSON.parse(request.body??"{}") as Record<string,unknown>;
+      const content=payload.response_format?JSON.stringify({memory:"Durable memory saved by Nova Life."}):"Durable memory saved by Nova Life.";
+      return {status:200,body:JSON.stringify({id:"memory-agent-response",model:"memory-model",choices:[{message:{role:"assistant",content},finish_reason:"stop"}]})};
+    }
+    return {status:500,body:JSON.stringify({error:"Unexpected non-stream request in the Nova Life regression test."})};
+  }
+  async stream(request:HttpClientRequest):Promise<HttpClientStreamResponse>{
+    this.requests.push(request);
+    const content="Reactive reply from the pinned Model Profile.";
+    const event={
+      id:"life-profile-response",
+      model:"life-profile-model",
+      choices:[{index:0,delta:{role:"assistant",content},finish_reason:null}]
+    };
+    const body:AsyncIterable<string>={
+      async *[Symbol.asyncIterator](){
+        yield "data: "+JSON.stringify(event)+"\n\n";
+        yield "data: [DONE]\n\n";
+      }
+    };
+    return {status:200,body,headers:{"content-type":"text/event-stream"}};
+  }
+}
+
+async function lifeHonorsPinnedModelProfile():Promise<void>{
+  const http=new LifeProfileHttpClient();
+  const providerConfig=(baseUrl:string,model:string):ProviderConfiguration=>({
+    apiVersion:"1",schemaVersion:"1",providerId:"openai-compatible",enabled:true,
+    baseUrl,model,credentialReference:null,timeoutMs:1_000
+  });
+  const runtime=await createFoundationRuntime({
+    characterStore:new InMemoryCharacterStore(),
+    httpClient:http,
+    activeProviderPresetId:"preset-life-global",
+    providerPresetConfigurations:[
+      {presetId:"preset-life-global",configuration:providerConfig("https://global-life.example/v1","global-model")},
+      {presetId:"preset-life-profile",configuration:providerConfig("https://profile-life.example/v1","preset-default-model")},
+      {presetId:"preset-life-memory",configuration:providerConfig("https://memory-agent.example/v1","memory-model")}
+    ]
+  });
+  const runtimeSettings=runtime.getSettings();
+  await runtime.updateSettings({
+    ...runtimeSettings,
+    cognitiveSchedule:{...runtimeSettings.cognitiveSchedule,minIntervalMs:1_000},
+    chat:{...runtimeSettings.chat,automaticLongTermMemory:false},
+    memoryAgent:{...runtimeSettings.memoryAgent,enabled:true,providerPresetId:"preset-life-memory",model:"memory-model",outputMode:"auto"}
+  });
+  await runtime.start();
+  try{
+    const character=await runtime.getActiveCharacter();
+    const conversation=await runtime.getActiveConversation(character.id);
+    const profile={
+      ...defaultModelProfile(character.id),
+      providerPresetId:"preset-life-profile",
+      model:"life-profile-model",
+      generation:{maxTokens:123}
+    };
+    runtime.setActiveModelProfile(profile);
+    const conversationSession=new ConversationSession(conversation.id,character.id);
+    for(const message of conversation.messages)conversationSession.addMessage(message);
+    const chatController=new ChatSessionController(conversationSession,runtime);
+    chatController.setModelProfile(profile);
+    const committed:Array<{speech:string;providerPresetId?:string;model?:string;turnId:string;userMessageId:string}>=[];
+    runtime.setNovaTurnSink({
+      async commit(turn,context){
+        await chatController.commitNovaTurn(turn,context,async snapshot=>{
+          await runtime.updateConversation(snapshot.characterId,snapshot.conversationId,{messages:snapshot.messages});
+        });
+        if(context.userMessageId)committed.push({
+          speech:turn.speech,providerPresetId:context.providerPresetId,model:context.model,
+          turnId:context.turnId,userMessageId:context.userMessageId
+        });
+      },
+      async streamSpeech(event){
+        if(event.type!=="emotion")chatController.updateNovaTurnStream(event);
+      },
+      fail(turn,reason){chatController.failLifeTurn(turn.userMessageId,reason);}
+    });
+    const lifeStarted=runtime.startLife();
+    await lifeStarted;
+    const submitted=await chatController.submitToLife("Answer through the model configured for Nova Life.",async snapshot=>{
+      await runtime.updateConversation(snapshot.characterId,snapshot.conversationId,{messages:snapshot.messages});
+    },turn=>runtime.wakeMindForUserMessage(turn));
+    equal(submitted.status,"awaiting-life","the actual Chat submit-to-Life user path accepts the persisted request");
+    for(let attempt=0;attempt<1_000&&committed.length===0;attempt++)
+      await new Promise(resolve=>setTimeout(resolve,5));
+    if(committed.length!==1){
+      const state=runtime.getMindState();
+      const requests=http.requests.map(item=>({
+        url:item.url,method:item.method,
+        ...(item.body?{model:(JSON.parse(item.body) as Record<string,unknown>).model}: {})
+      }));
+      throw new Error("Nova Life produced no committed UI-path reply; state="+JSON.stringify(state)+" chat="+JSON.stringify(chatController.getSnapshot())+" requests="+JSON.stringify(requests));
+    }
+    equal(committed.length,1,"reactive turn commits exactly one reply through Nova Life");
+    equal(committed[0]?.speech,"Reactive reply from the pinned Model Profile.","actual provider stream becomes the committed public reply");
+    equal(committed[0]?.providerPresetId,"preset-life-profile","Life uses the profile's pinned provider preset rather than the global preset");
+    equal(committed[0]?.model,"life-profile-model","turn context records the profile's explicit model");
+    const persistedConversation=await runtime.getConversation(character.id,conversation.id);
+    ok(persistedConversation?.messages.some(message=>message.id==="nova-turn:"+committed[0]!.turnId&&message.role==="assistant"&&message.content===committed[0]!.speech),"the actual Nova Life response is saved into the active conversation by ChatSessionController");
+    equal(chatController.getSnapshot().lifeTurn?.status,"completed","the real UI lifecycle transitions the reactive turn to completed");
+
+    const request=http.requests.find(item=>item.url==="https://profile-life.example/v1/chat/completions");
+    ok(request?.body,"Nova Life sends a request to the actual selected profile endpoint");
+    const body=JSON.parse(request!.body!) as Record<string,unknown>;
+    equal(body.model,"life-profile-model","the actual provider request uses the pinned Model Profile model");
+    equal(body.max_tokens,123,"Model Profile generation limit reaches the actual Nova Life provider request");
+    equal(http.requests.some(item=>item.url==="https://global-life.example/v1/chat/completions"),false,"the incorrect global preset is not used for the reactive turn");
+    for(let attempt=0;attempt<400&&!http.requests.some(item=>item.url==="https://memory-agent.example/v1/chat/completions");attempt++)
+      await new Promise(resolve=>setTimeout(resolve,5));
+    const agentRequest=http.requests.find(item=>item.url==="https://memory-agent.example/v1/chat/completions");
+    ok(agentRequest?.body,"a committed Nova Life answer triggers the configured Automatic Memory Agent endpoint");
+    const agentPayload=JSON.parse(agentRequest!.body!) as Record<string,unknown>;
+    equal((agentPayload.response_format as Record<string,unknown>)?.type,"json_schema","automatic invocation uses the selected preset's structured-output capability");
+    let storedLifeMemory:readonly import("../../contracts/src").MemoryItem[]=[];
+    for(let attempt=0;attempt<400;attempt++){
+      storedLifeMemory=await runtime.listMemory(character.id);
+      if(storedLifeMemory.some(item=>item.content==="Durable memory saved by Nova Life."))break;
+      await new Promise(resolve=>setTimeout(resolve,5));
+    }
+    ok(storedLifeMemory.some(item=>item.content==="Durable memory saved by Nova Life."),"the automatically invoked agent persists its result through MemoryBroker");
+  }finally{
+    await runtime.stopLife();
+    runtime.setNovaTurnSink(undefined);
+    await runtime.stop();
+  }
 }
 
 async function main(){
@@ -131,6 +266,7 @@ async function main(){
     equal(await profileStore.load(gm.id),undefined,"deleted Character profile no longer applies");
     ok(await profileStore.load(nova.id),"Nova profile remains after GM deletion");
   }finally{await runtime.stop()}
+  await lifeHonorsPinnedModelProfile();
   console.log("PASS model profile runtime integration tests");
 }
 void main().catch(error=>{console.error(error);process.exitCode=1});

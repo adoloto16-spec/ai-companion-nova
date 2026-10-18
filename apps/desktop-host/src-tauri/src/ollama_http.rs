@@ -132,7 +132,7 @@ fn validated_url(base_url: &str, route: &str, method: &str) -> Result<Url, Strin
         url.set_port(Some(11434)).map_err(|_| "Ollama port is invalid.".to_string())?;
     }
     match (method, route) {
-        ("GET", "/api/tags" | "/api/version") | ("POST", "/api/chat") => {}
+        ("GET", "/api/tags" | "/api/version") | ("POST", "/api/chat" | "/api/show") => {}
         _ => return Err("Ollama HTTP route is not allowed.".to_string()),
     }
     url.set_path(route);
@@ -308,6 +308,8 @@ mod tests {
         assert!(validated_url("http://127.0.0.1:11434", "/api/tags", "GET").is_ok());
         assert!(validated_url("http://localhost:11434", "/api/version", "GET").is_ok());
         assert!(validated_url("http://[::1]:11434", "/api/chat", "POST").is_ok());
+        assert!(validated_url("http://127.0.0.1:11434", "/api/show", "POST").is_ok());
+        assert!(validated_url("http://127.0.0.1:11434", "/api/show", "GET").is_err());
         assert!(validated_url("https://127.0.0.1:11434", "/api/tags", "GET").is_err());
         assert!(validated_url("http://192.168.1.5:11434", "/api/tags", "GET").is_err());
         assert!(validated_url("http://127.0.0.2:11434", "/api/tags", "GET").is_err());
