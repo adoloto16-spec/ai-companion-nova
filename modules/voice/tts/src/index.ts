@@ -54,6 +54,7 @@ interface Session {
   outputSequence:number;
   nextSegmentSequence:number;
   hasAudio:boolean;
+  playbackStarted:boolean;
   segmentStates:Map<number,TtsSegmentStatus>;
   startTimeoutMs:number;
   segmentGapMs:number;
@@ -230,7 +231,7 @@ export class SpeechOutputController {
           turnId:event.turnId,id:"nova-tts-"+(++this.sequence)+"-"+event.turnId.slice(0,80),
           preset:presetCopy(preset),provider,abort:new AbortController(),queue:[],waitingWriters:[],queueWaiters:[],queuedChars:0,
           segmenter:new SpeechSentenceSegmenter(),emotion:"",finishing:false,failed:false,outputSequence:0,
-          nextSegmentSequence:0,hasAudio:false,segmentStates:new Map<number,TtsSegmentStatus>(),
+          nextSegmentSequence:0,hasAudio:false,playbackStarted:false,segmentStates:new Map<number,TtsSegmentStatus>(),
           startTimeoutMs:Math.max(1_000,Math.min(60_000,Math.floor(settings.startTimeoutMs??DEFAULT_START_TIMEOUT_MS))),
           segmentGapMs:Math.max(0,Math.min(5_000,Math.floor(settings.segmentGapMs??DEFAULT_SEGMENT_GAP_MS)))
         };
@@ -480,6 +481,8 @@ export class SpeechOutputController {
           segmentSequence:task.sequence,
           gapBeforeMs:segmentAudioChunks===0&&session.hasAudio?session.segmentGapMs:0,
           onPlaybackStarted:()=>{
+            session.playbackStarted=true;
+            this.clearStartTimeout(session);
             if(session.segmentStates.get(task.sequence)!=="failed"&&!session.failed)
               session.segmentStates.set(task.sequence,"playing");
           }
@@ -490,7 +493,12 @@ export class SpeechOutputController {
         session.outputSequence++;
         segmentAudioChunks++;
         session.hasAudio=true;
-        this.clearStartTimeout(session);
+        // Older adapters without segment-playback notifications treat accepted audio as started;
+        // the production Web Audio adapter keeps the real start deadline armed until scheduling begins.
+        if(!this.options.output.waitForSegmentPlayback){
+          session.playbackStarted=true;
+          this.clearStartTimeout(session);
+        }
         if(session.segmentStates.get(task.sequence)==="synthesizing")session.segmentStates.set(task.sequence,"buffered");
       }else if(event.type==="done")done=true;
       else if(event.type==="error")throw new Error(event.error.message);
@@ -528,11 +536,11 @@ export class SpeechOutputController {
     for(const resolve of session.queueWaiters.splice(0))resolve();
   }
   private armStartTimeout(session:Session):void{
-    if(session.hasAudio||session.startTimer!==undefined||session.failed)return;
+    if(session.playbackStarted||session.startTimer!==undefined||session.failed)return;
     session.startTimer=setTimeout(()=>{
       session.startTimer=undefined;
-      if(this.sessions.get(session.id)!==session||session.failed||session.abort.signal.aborted||session.hasAudio)return;
-      const message="TTS did not enqueue the first audio within "+session.startTimeoutMs+" ms.";
+      if(this.sessions.get(session.id)!==session||session.failed||session.abort.signal.aborted||session.playbackStarted)return;
+      const message="TTS playback did not start within "+session.startTimeoutMs+" ms.";
       this.reportDiagnostic("TTS_START_TIMEOUT",message);
       this.cancelSession(session,message,true);
       this.setStatus({state:"error",message,sessionId:session.id});
