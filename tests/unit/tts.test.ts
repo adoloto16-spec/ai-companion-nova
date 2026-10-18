@@ -587,14 +587,14 @@ async function webAudioRecoversAfterTransientOutputFailure():Promise<void>{
   output.startSession("failed-audio-session",metadata);
   await output.enqueue("failed-audio-session",0,metadata,new Uint8Array([0xe8,0x03,0x18,0xfc]),new AbortController().signal);
   await until(()=>failures.length===1,"the first physical audio session records its injected output failure");
+  const failedWait=await output.waitForPlayback("failed-audio-session",new AbortController().signal).then(()=>undefined,error=>error as Error);
+  equal(failedWait?.message,"simulated transient AudioBuffer failure","a failure is propagated even when the playback waiter registers after the pump has already failed");
   output.startSession("recovered-audio-session",metadata);
   await output.enqueue("recovered-audio-session",0,metadata,new Uint8Array([0xd0,0x07,0x30,0xf8]),new AbortController().signal);
   await until(()=>scheduled.length===1,"a fresh TTS session schedules PCM after the previous output error");
   scheduled[0]!.onended?.();
   await output.waitForPlayback("recovered-audio-session",new AbortController().signal);
   equal(failures[0]?.message,"simulated transient AudioBuffer failure","the initial failure was real and observed");
-  const failedWait=await output.waitForPlayback("failed-audio-session",new AbortController().signal).then(()=>undefined,error=>error as Error);
-  equal(failedWait?.message,"simulated transient AudioBuffer failure","a failure is propagated even when the playback waiter registers after the pump has already failed");
   await output.dispose();
 }
 
