@@ -256,7 +256,7 @@ export class MindRuntime {
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let streamedConversationId:string|undefined;
     let streamedPublicSpeech=false;
-    let preserveFailedReactiveSpeech=false;
+    let finishFailedSpeech=false;
     const speechTurnId=reactiveTurn?.turnId??runId;
     this.safeDiagnostic("nova_life.wake.started","Nova Life wake started.",{runId,wakeReason:reason,characterId,reactiveUserTurn:Boolean(reactiveTurn)});
     this.safeDiagnostic("nova_life.cognition.started","Nova Life cognition started.",{runId,wakeReason:reason,characterId});
@@ -308,10 +308,12 @@ export class MindRuntime {
           characterId,state:this.getState(),signal:stepController.signal,wakeReason:reason,
           ...(reactiveTurn ? {userTurn:reactiveTurn} : {}),
           onSpeechEvent:async event=>{
+            const previousConversationId=streamedConversationId;
             streamedConversationId=event.conversationId;
             if(stepController.signal.aborted||life.signal.aborted||contextVersion!==this.contextVersion||
               characterId!==this.activeCharacterId||(reactiveTurn&&!this.isReactiveTurnCurrent(reactiveTurn)))return;
-            if(event.type==="start"||event.type==="reset")streamedPublicSpeech=false;
+            // A start event can occur for each native-tool round; it must not erase speech already streamed in this turn.
+            if((event.type==="start"&&previousConversationId!==event.conversationId)||event.type==="reset")streamedPublicSpeech=false;
             else if(event.type==="delta"&&event.text?.trim())streamedPublicSpeech=true;
             await this.turnSink?.streamSpeech?.({
               type:event.type,characterId,conversationId:event.conversationId,turnId:speechTurnId,
@@ -416,10 +418,8 @@ export class MindRuntime {
         return;
       }
       this.consecutiveErrors += 1;
-      if (reactiveTurn) {
-        this.failReactiveTurn(reactiveTurn, error instanceof Error ? error.name : "COGNITIVE_STEP_FAILED");
-        preserveFailedReactiveSpeech=streamedPublicSpeech;
-      }
+      finishFailedSpeech=streamedPublicSpeech;
+      if (reactiveTurn) this.failReactiveTurn(reactiveTurn, error instanceof Error ? error.name : "COGNITIVE_STEP_FAILED");
       applied = this.errorBackoffMs(); decision = "error-backoff"; nextDelay = applied; nextReason = "error-backoff";
       const errorCode = cancellation === "timeout" ? "STEP_TIMEOUT" : error instanceof Error ? error.name : "COGNITIVE_STEP_FAILED";
       const safeReason=(error instanceof Error?error.message:"Cognitive step failed.")
@@ -434,9 +434,10 @@ export class MindRuntime {
       finishTrace("error", {errorCode});
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
-      if(streamedConversationId&&!preserveFailedReactiveSpeech){
+      if(streamedConversationId){
         await this.turnSink?.streamSpeech?.({
-          type:"clear",characterId,conversationId:streamedConversationId,turnId:speechTurnId,
+          type:finishFailedSpeech&&streamedPublicSpeech?"finish":"clear",
+          characterId,conversationId:streamedConversationId,turnId:speechTurnId,
           ...(reactiveTurn?{userMessageId:reactiveTurn.userMessageId}:{})
         });
       }
