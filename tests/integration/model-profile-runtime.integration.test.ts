@@ -149,8 +149,15 @@ async function lifeHonorsPinnedModelProfile():Promise<void>{
     const codes=new Set(diagnostics.map(entry=>entry.code));
     for(const required of ["nova_life.wake.started","nova_life.cognition.started","nova_life.provider_request.started","nova_life.provider_request.completed","nova_life.turn.parsed","nova_life.turn.persisted","nova_life.wait.scheduled"])
       ok(codes.has(required),"runtime diagnostics expose "+required);
-    for(const required of ["MEMORY_AGENT_STARTED","MEMORY_AGENT_PROVIDER_SELECTED","MEMORY_AGENT_CANDIDATES_EXTRACTED","MEMORY_AGENT_MEMORY_PERSISTED"])
+    for(const required of ["MEMORY_AGENT_TRIGGERED","MEMORY_AGENT_STARTED","MEMORY_AGENT_PROVIDER_SELECTED","MEMORY_AGENT_CANDIDATES_EXTRACTED","MEMORY_AGENT_MEMORY_PERSISTED"])
       ok(codes.has(required),"Automatic Memory Agent diagnostics expose "+required);
+    const previousAgentCalls=http.requests.filter(item=>item.url==="https://memory-agent.example/v1/chat/completions").length;
+    runtime.wakeMind();
+    for(let attempt=0;attempt<1_000&&http.requests.filter(item=>item.url==="https://memory-agent.example/v1/chat/completions").length<=previousAgentCalls;attempt++)
+      await new Promise(resolve=>setTimeout(resolve,5));
+    ok(http.requests.filter(item=>item.url==="https://memory-agent.example/v1/chat/completions").length>previousAgentCalls,"a completed background Nova Life turn also triggers Automatic Memory Agent using the latest preceding user message");
+    const afterBackground=(await runtime.diagnostics()).recentErrors;
+    ok(afterBackground.some(entry=>entry.code==="MEMORY_AGENT_TRIGGERED"&&entry.metadata?.triggerSource==="background-turn"),"background Automatic Memory Agent execution is visible in diagnostics");
   }finally{
     await runtime.stopLife();
     runtime.setNovaTurnSink(undefined);

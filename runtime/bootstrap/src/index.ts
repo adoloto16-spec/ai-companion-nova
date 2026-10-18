@@ -478,7 +478,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     schedule:settingsManager.get().cognitiveSchedule,
     onDiagnostic:(code,detail,metadata)=>diagnosticsStore.recordError("mind-runtime",code,detail,metadata),
     onTurnCommitted:async(turn,context)=>{
-      if(!context.userMessageId||!settingsManager.get().memoryAgent.enabled)return;
+      if(!settingsManager.get().memoryAgent.enabled)return;
       try{
         const conversation=await conversationManager.getConversation(context.characterId,context.conversationId);
         if(!conversation){
@@ -487,17 +487,33 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
           });
           return;
         }
-        const userIndex=conversation.messages.findIndex(message=>message.id===context.userMessageId&&message.role==="user");
-        if(userIndex<0){
-          diagnosticsStore.recordError("automatic-memory-agent","LIFE_USER_MESSAGE_MISSING","Completed Nova Life user message was not available for memory extraction.",{
-            characterId:context.characterId,conversationId:context.conversationId,turnId:context.turnId
+        const assistantIndex=conversation.messages.findIndex(message=>message.id==="nova-turn:"+context.turnId&&message.role==="assistant");
+        let userIndex=-1;
+        if(context.userMessageId){
+          userIndex=conversation.messages.findIndex(message=>message.id===context.userMessageId&&message.role==="user");
+        }else{
+          // A completed background Life turn has no reactive userMessageId; bind it to the latest user exchange preceding this assistant turn.
+          const searchEnd=assistantIndex>=0?assistantIndex:conversation.messages.length;
+          for(let index=searchEnd-1;index>=0;index--){
+            if(conversation.messages[index]?.role==="user"){userIndex=index;break;}
+          }
+        }
+        if(userIndex<0||(assistantIndex>=0&&userIndex>=assistantIndex)){
+          diagnosticsStore.recordError("automatic-memory-agent","LIFE_USER_MESSAGE_MISSING","Completed Nova Life turn had no earlier user message available for memory extraction.",{
+            characterId:context.characterId,conversationId:context.conversationId,turnId:context.turnId,
+            triggerSource:context.userMessageId?"reactive-user-turn":"background-turn"
           });
           return;
         }
         const userMessage=conversation.messages[userIndex]!;
-        const assistantMessage=conversation.messages.find(message=>message.id==="nova-turn:"+context.turnId&&message.role==="assistant")??{
+        const assistantMessage=assistantIndex>=0?conversation.messages[assistantIndex]!:{
           id:"nova-turn:"+context.turnId,role:"assistant" as const,content:turn.speech,metadata:{novaTurnVersion:turn.version}
         };
+        diagnosticsStore.recordError("automatic-memory-agent","MEMORY_AGENT_TRIGGERED","Completed Nova Life turn triggered Automatic Memory Agent evaluation.",{
+          characterId:context.characterId,conversationId:context.conversationId,turnId:context.turnId,
+          triggerSource:context.userMessageId?"reactive-user-turn":"background-turn",
+          providerPresetId:settingsManager.get().memoryAgent.providerPresetId??""
+        });
         const request:MemoryExtractionRequest={
           apiVersion:"1",schemaVersion:"1",
           characterId:context.characterId,conversationId:context.conversationId,turnId:context.turnId,
