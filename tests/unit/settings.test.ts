@@ -1,7 +1,8 @@
 import {
   SettingsManager,InMemoryDiagnosticsStore,InMemoryChatTraceStore
 } from "../../core/src";
-import {StandardContractValidator,DEFAULT_APP_SETTINGS,defaultAppSettings,migrateAppSettings,validateAppSettings} from "../../contracts/src";
+import {StandardContractValidator,DEFAULT_APP_SETTINGS,defaultAppSettings,migrateAppSettings,applyPromptOverride,validateAppSettings} from "../../contracts/src";
+import type {AppSettings} from "../../contracts/src";
 import {IpcSettingsStore,InMemorySettingsStore} from "../../host/settings/src";
 
 function equal(actual:unknown,expected:unknown,label:string){if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error(label+" expected "+String(expected)+" got "+String(actual))}
@@ -27,7 +28,7 @@ async function main(){
   ok(defaults.prompts.presets[0]?.prompts.some(prompt=>prompt.id==="memory-judge-output-structured"&&prompt.enabled&&prompt.text.includes("JSON object")),"Default preset exposes a structured Memory Judge protocol as an editable prompt");
   ok(defaults.prompts.presets[0]?.prompts.some(prompt=>prompt.id==="memory-judge-output-plain"&&prompt.enabled&&prompt.text.includes("NO_ARCHIVE")),"Default preset exposes a plain Memory Judge protocol as an editable prompt");
   equal(defaults.semanticDedup.judge.defaultPromptVersion,"2","default Judge prompt version");
-  const custom={
+  const customBase={
     ...defaults,
     context:{...defaults.context,availableContextTokens:8192,reservedOutputTokens:2048,safetyMarginTokens:256,recentConversationMessages:4},
     memory:{...defaults.memory,candidateLimit:3},
@@ -47,6 +48,7 @@ async function main(){
       judge:{...defaults.semanticDedup.judge,enabled:true,providerPresetId:"preset.judge",model:"judge-model",outputMode:"plain" as const,prompt:"Judge custom",promptBackup:"Judge previous",defaultPromptVersion:"2"}
     }
   };
+  const custom=applyPromptOverride(customBase as AppSettings,"memory-judge.system","Judge custom");
   const errors=validateAppSettings(custom);
   equal(errors,[],"valid custom settings pass semantic validation");
   await manager.set(custom);
