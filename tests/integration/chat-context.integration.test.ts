@@ -117,10 +117,10 @@ async function main(){
   }
 
   const expectedConversationRoles=[
-    ["system","system","system","user","user"],
+    ["system","system","system","user"],
+    ["system","system","system","user","assistant"],
     ["system","system","system","user","assistant","user"],
-    ["system","system","system","user","assistant","user","user"],
-    ["system","system","system","user","assistant","user","assistant","user"]
+    ["system","system","system","user","assistant","user","assistant"]
   ];
   equal(cognitiveCalls.length,4,"cognition request executes for all four role sequences");
   equal(cognitiveCalls.map(call=>call.request.model),["cognition-test-model","cognition-test-model","cognition-test-model","cognition-test-model"],"cognition model remains stable across assistant message");
@@ -128,15 +128,16 @@ async function main(){
   equal(cognitiveCalls.map(call=>call.request.generation?.responseFormat?.type===undefined),[true,true,true,true],"native cognition does not require a structured response format");
   for(let index=0;index<expectedConversationRoles.length;index+=1){
     const request=cognitiveCalls[index]!.request;
-    equal(request.context.messages.map(message=>message.role),expectedConversationRoles[index],`Case ${index+1} preserves conversation roles and appends a user cognition cue`);
-    ok(request.context.messages[request.context.messages.length-1]?.content.includes("return only user-facing plain text"),"scheduled cognition uses the native plain-text cue");
-    ok(request.context.messages[request.context.messages.length-1]?.content.includes("This is a background step. Do not invent a reason to speak."),"background prompt allows silence without a legacy response object");
-    ok(!request.context.messages[request.context.messages.length-1]?.content.includes("NovaTurn"),"new cognition does not prompt for the legacy NovaTurn fields");
-    equal(request.context.messages[request.context.messages.length-1]?.id,request.context.conversationId+":nova-turn:user-cue","synthetic cognition cue has a request-local id");
+    equal(request.context.messages.map(message=>message.role),expectedConversationRoles[index],`Case ${index+1} preserves persisted conversation roles without appending a synthetic cue`);
+    const systemPrompt=request.context.messages.find(message=>message.id===request.context.conversationId+":nova-turn:system");
+    ok(systemPrompt?.content.includes("return only user-facing plain text"),"scheduled cognition uses the active preset's native plain-text instructions");
+    ok(systemPrompt?.content.includes("Do not invent a reason to speak"),"background silence guidance is part of the assembled system prompt");
+    ok(!systemPrompt?.content.includes("NovaTurn"),"new cognition does not prompt for the legacy NovaTurn fields");
+    equal(request.context.messages.some(message=>message.id===request.context.conversationId+":nova-turn:user-cue"),false,"no synthetic cognition cue is added as a user message");
   }
   equal(cognitiveCalls[1]?.request.context.messages.find(message=>message.id==="cognition-assistant-2")?.metadata?.safeMarker,"assistant-metadata","assistant metadata survives ContextEngine into canonical request");
-  equal(cognitiveCalls[1]?.request.context.messages.slice(3,-1).map(message=>message.content),["Hello","Hi there"],"Case B preserves user and assistant content before the cue");
-  equal(cognitiveCalls[3]?.request.context.messages.slice(3,-1).map(message=>message.content),["First","Reply","Second","Second reply"],"Case D preserves the full conversation before the cue");
+  equal(cognitiveCalls[1]?.request.context.messages.slice(3).map(message=>message.content),["Hello","Hi there"],"Case B preserves user and assistant content without a synthetic cue");
+  equal(cognitiveCalls[3]?.request.context.messages.slice(3).map(message=>message.content),["First","Reply","Second","Second reply"],"Case D preserves the full conversation without a synthetic cue");
   equal((await runtime.getActiveConversation(character.id))?.messages.map(message=>message.content),["First","Reply","Second","Second reply"],"synthetic cue is not written to Conversation");
   equal((await runtime.getActiveConversation(character.id))?.messages.some(message=>message.id?.endsWith(":nova-turn:user-cue")),false,"synthetic cue does not enter stored Conversation");
   const roleSystem=await runtime.createCoreBookEntry(character.id,{title:"System role",content:"Core Book system-role payload",source:"user",role:"system"});
