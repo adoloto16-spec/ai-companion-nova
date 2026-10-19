@@ -134,8 +134,22 @@ export function applyPromptOverride(settings:AppSettings,id:PromptId,text:string
   const overrides:PromptOverrides={...settings.prompts.overrides};
   if(typeof text==="string"&&text.trim().length>0)overrides[id]=text;else delete overrides[id];
   const replacement=typeof text==="string"&&text.trim().length>0?text:DEFAULT_PROMPT_TEXTS[id];
-  const presets=settings.prompts.presets.map(preset=>preset.id!==settings.prompts.activePresetId?preset:{
-    ...preset,version:preset.version+1,prompts:preset.prompts.map(prompt=>prompt.legacyId===id?{...prompt,text:replacement}:prompt)
+  const defaultRecord=createDefaultPromptPreset().prompts.find(prompt=>prompt.legacyId===id);
+  const presets=settings.prompts.presets.map(preset=>{
+    if(preset.id!==settings.prompts.activePresetId)return preset;
+    let found=false;
+    const updated=preset.prompts.map(prompt=>{
+      if(prompt.legacyId!==id)return prompt;
+      found=true;
+      return {...prompt,text:replacement,enabled:true};
+    });
+    if(!found&&defaultRecord){
+      const ids=new Set(updated.map(prompt=>prompt.id));
+      let recordId=defaultRecord.id;
+      while(ids.has(recordId))recordId=recordId+"-compat";
+      updated.push({...defaultRecord,id:recordId,text:replacement,enabled:true,order:defaultRecord.order});
+    }
+    return {...preset,version:preset.version+1,prompts:updated};
   });
   const prompts={...settings.prompts,overrides,presets};
   const active=presets.find(preset=>preset.id===settings.prompts.activePresetId);

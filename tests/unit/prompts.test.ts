@@ -133,6 +133,9 @@ async function main():Promise<void>{
   const emptyAssembly=assemblePromptInstructions(emptyConfiguration,"nova","reactive");
   equal(emptyAssembly.text,"","an intentionally empty preset does not restore factory instructions");
   ok(!emptyAssembly.error,"an empty but valid preset is not a configuration error");
+  const editedEmpty=applyPromptOverride({...initial,prompts:emptyConfiguration},"memory-judge.system","Editable Judge system prompt");
+  const editedEmptyAssembly=assemblePromptInstructions(editedEmpty.prompts,"memory-judge","plain");
+  ok(editedEmptyAssembly.text.includes("Editable Judge system prompt"),"legacy Settings editor creates an active editable record when a custom preset does not contain that prompt");
   const missingAssembly=assemblePromptInstructions({...initial.prompts,activePresetId:"missing"},"nova","reactive");
   ok(!!missingAssembly.error&&missingAssembly.text==="","a missing active preset reports an error without fallback text");
 
