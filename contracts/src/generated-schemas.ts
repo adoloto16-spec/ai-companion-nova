@@ -601,6 +601,24 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
           },
           "enabled": {
             "type": "boolean"
+          },
+          "finishTimeoutMs": {
+            "type": "integer",
+            "minimum": 10000,
+            "maximum": 600000,
+            "default": 60000
+          },
+          "startTimeoutMs": {
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 60000,
+            "default": 10000
+          },
+          "segmentGapMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5000,
+            "default": 500
           }
         }
       },

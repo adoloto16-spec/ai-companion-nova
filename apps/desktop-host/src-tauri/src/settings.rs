@@ -190,13 +190,22 @@ pub struct TtsPreset {
     #[serde(rename="providerOptions",default)]
     pub provider_options:BTreeMap<String,Value>
 }
+fn default_tts_finish_timeout_ms()->i64{60_000}
+fn default_tts_start_timeout_ms()->i64{10_000}
+fn default_tts_segment_gap_ms()->i64{500}
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TtsSettings {
     pub enabled:bool,
     #[serde(rename="activePresetId")]
     pub active_preset_id:Option<String>,
-    pub presets:Vec<TtsPreset>
+    pub presets:Vec<TtsPreset>,
+    #[serde(rename="finishTimeoutMs",default="default_tts_finish_timeout_ms")]
+    pub finish_timeout_ms:i64,
+    #[serde(rename="startTimeoutMs",default="default_tts_start_timeout_ms")]
+    pub start_timeout_ms:i64,
+    #[serde(rename="segmentGapMs",default="default_tts_segment_gap_ms")]
+    pub segment_gap_ms:i64
 }
 fn default_tts_settings()->TtsSettings {
     TtsSettings {
@@ -212,7 +221,10 @@ fn default_tts_settings()->TtsSettings {
             speed:1.0,
             credential_reference:None,
             provider_options:BTreeMap::new()
-        }]
+        }],
+        finish_timeout_ms:default_tts_finish_timeout_ms(),
+        start_timeout_ms:default_tts_start_timeout_ms(),
+        segment_gap_ms:default_tts_segment_gap_ms()
     }
 }
 
@@ -284,6 +296,9 @@ fn validate(settings:&AppSettings)->Result<(),String>{
     if settings.cognitive_schedule.min_interval_ms>settings.cognitive_schedule.default_interval_ms||settings.cognitive_schedule.default_interval_ms>settings.cognitive_schedule.max_interval_ms{return Err("Cognitive schedule interval bounds are inconsistent.".into());}
     if let Some(limit)=settings.cognitive_schedule.max_requests_per_hour{valid_integer(limit,1,3_600,"Cognitive requests per hour")?;}
 
+    valid_integer(settings.tts.finish_timeout_ms,10_000,600_000,"TTS maximum turn duration")?;
+    valid_integer(settings.tts.start_timeout_ms,1_000,60_000,"TTS initial audio timeout")?;
+    valid_integer(settings.tts.segment_gap_ms,0,5_000,"TTS segment gap")?;
     if settings.tts.presets.len()>32{return Err("At most 32 TTS presets are allowed.".into());}
     let mut tts_ids=std::collections::BTreeSet::new();
     for preset in &settings.tts.presets {
@@ -711,6 +726,27 @@ mod tests{
         settings=default_settings();
         settings.tts.presets[0].provider_options.insert("api-key".into(),Value::String("secret".into()));
         assert!(validate(&settings).is_err());
+    }
+    #[test]fn validates_tts_timing_bounds(){
+        let mut settings=default_settings();
+        settings.tts.finish_timeout_ms=9_999;
+        assert!(validate(&settings).is_err());
+        settings=default_settings();
+        settings.tts.start_timeout_ms=60_001;
+        assert!(validate(&settings).is_err());
+        settings=default_settings();
+        settings.tts.segment_gap_ms=-1;
+        assert!(validate(&settings).is_err());
+    }
+    #[test]fn defaults_tts_timing_for_existing_v14_settings(){
+        let mut value=serde_json::to_value(default_settings()).expect("encode defaults");
+        let root=value.as_object_mut().expect("settings object");
+        let tts=root.get_mut("tts").and_then(Value::as_object_mut).expect("tts settings");
+        tts.remove("finishTimeoutMs");tts.remove("startTimeoutMs");tts.remove("segmentGapMs");
+        let (restored,_)=migrate(value).expect("legacy v14 TTS settings should deserialize with defaults");
+        assert_eq!(restored.tts.finish_timeout_ms,60_000);
+        assert_eq!(restored.tts.start_timeout_ms,10_000);
+        assert_eq!(restored.tts.segment_gap_ms,500);
     }
 
     #[test]fn validates_prompt_override_ids_and_lengths(){

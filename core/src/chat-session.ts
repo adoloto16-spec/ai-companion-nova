@@ -1,5 +1,5 @@
 import type {
-  AssembledContext,ChatErrorCode,ChatGenerationOptions,ChatMessage,ChatRequest,ChatResponse,ChatStreamEvent,
+  AssembledContext,ChatErrorCode,ChatGenerationOptions,ChatMessage,ChatReasoningOptions,ChatRequest,ChatResponse,ChatStreamEvent,
   ChatStreamHandlers,ChatStreamOptions,ChatUsage,CharacterId,ChatTraceStore,ContextBuildRequest,ContextBudget,MemoryExtractionRequest,MindReactiveTurn,MindTurnExecutionContext,ModelProfile,Unsubscribe
 } from "../../contracts/src/index";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,DEFAULT_APP_SETTINGS,parseNovaTurn} from "../../contracts/src/index";
@@ -149,6 +149,7 @@ export interface ChatSessionControllerOptions{
   recentConversationMessagesProvider?:()=>number;
   memoryExtractor?:ChatCompletedTurnMemoryBoundary;
   memoryExtractionEnabled?:()=>boolean;
+  reasoningOptionsProvider?:()=>ChatReasoningOptions|undefined;
   traceStore?:ChatTraceStore;
   beforeUserMessage?:(snapshot:ConversationSnapshot)=>Promise<void>;
 }
@@ -192,6 +193,7 @@ export class ChatSessionController{
   private readonly recentConversationMessagesProvider?:()=>number;
   private readonly memoryExtractor?:ChatCompletedTurnMemoryBoundary;
   private readonly memoryExtractionEnabled?:()=>boolean;
+  private readonly reasoningOptionsProvider?:()=>ChatReasoningOptions|undefined;
   private readonly traceStore?:ChatTraceStore;
   private readonly beforeUserMessage?:ChatSessionControllerOptions["beforeUserMessage"];
   private modelProfile?:ModelProfile;
@@ -217,6 +219,7 @@ export class ChatSessionController{
     this.recentConversationMessagesProvider=options.recentConversationMessagesProvider;
     this.memoryExtractor=options.memoryExtractor;
     this.memoryExtractionEnabled=options.memoryExtractionEnabled;
+    this.reasoningOptionsProvider=options.reasoningOptionsProvider;
     this.traceStore=options.traceStore;
     this.beforeUserMessage=options.beforeUserMessage;
     const messages=session.getMessages();
@@ -810,6 +813,11 @@ export class ChatSessionController{
     }
     const generation=profile?.generation;
     const hasGeneration=Boolean(generation&&Object.keys(generation).length>0);
+    const configuredReasoning=this.reasoningOptionsProvider?.();
+    const includeReasoning=Boolean(configuredReasoning&&(
+      configuredReasoning.mode!=="provider-default"||
+      (configuredReasoning.effort!==undefined&&configuredReasoning.effort!=="provider-default")
+    ));
     return {
       apiVersion:CHAT_API_VERSION,
       schemaVersion:CHAT_SCHEMA_VERSION,
@@ -817,7 +825,8 @@ export class ChatSessionController{
       ...(profileProviderId!==undefined?{providerId:profileProviderId}: {}),
       model:profile?.model??resolvedModel,
       context:{conversationId:this.session.conversationId,messages},
-      ...(hasGeneration&&generation?{generation:cloneGeneration(generation)}:{})
+      ...(hasGeneration&&generation?{generation:cloneGeneration(generation)}:{}),
+      ...(includeReasoning&&configuredReasoning?{reasoning:{...configuredReasoning}}:{})
     };
   }
 

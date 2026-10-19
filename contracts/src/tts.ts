@@ -24,6 +24,12 @@ export interface TtsSettings {
   enabled: boolean;
   activePresetId: string | null;
   presets: TtsPreset[];
+  /** Upper bound for synthesis plus physical playback of one assistant turn. */
+  finishTimeoutMs: number;
+  /** Maximum wait from first-segment synthesis start until playback of its first audio begins. */
+  startTimeoutMs: number;
+  /** Silence inserted between consecutive sentence segments. */
+  segmentGapMs: number;
 }
 
 export const DEFAULT_TTS_PRESET_ID = "tts-preset-default";
@@ -40,7 +46,10 @@ export const DEFAULT_TTS_SETTINGS: TtsSettings = {
     speed: 1,
     credentialReference: null,
     providerOptions: {}
-  }]
+  }],
+  finishTimeoutMs: 60_000,
+  startTimeoutMs: 10_000,
+  segmentGapMs: 500
 };
 
 export interface TtsAudioMetadata {

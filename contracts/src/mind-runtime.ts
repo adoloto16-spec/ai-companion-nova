@@ -49,7 +49,7 @@ export interface MindTurnExecutionContext {
 }
 
 export interface MindTurnSpeechEvent {
-  type:"start"|"delta"|"reset"|"clear"|"emotion";
+  type:"start"|"delta"|"reset"|"clear"|"emotion"|"finish";
   characterId:string;
   conversationId:string;
   turnId:string;

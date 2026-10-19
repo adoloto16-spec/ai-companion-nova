@@ -3,10 +3,20 @@ import type {
   TtsAudioMetadata,TtsPreset,TtsProvider,TtsProviderCapabilities,TtsSettings,TtsStreamEvent,TtsSynthesisRequest
 } from "../../../../contracts/src/tts";
 
+export interface AudioSegmentPlaybackOptions {
+  /** Stable sequence for one logical sentence/segment, distinct from its PCM chunk sequence. */
+  segmentSequence:number;
+  /** Inserted before the first PCM chunk for this segment, never between chunks of the same segment. */
+  gapBeforeMs:number;
+  onPlaybackStarted?:()=>void;
+}
+export type TtsSegmentStatus="queued"|"synthesizing"|"buffered"|"playing"|"completed"|"failed"|"cancelled";
 export interface AudioOutputAdapter {
   unlock():Promise<void>;
   startSession(sessionId:string,metadata:TtsAudioMetadata):void;
-  enqueue(sessionId:string,sequence:number,metadata:TtsAudioMetadata,data:Uint8Array,signal:AbortSignal):Promise<void>;
+  enqueue(sessionId:string,sequence:number,metadata:TtsAudioMetadata,data:Uint8Array,signal:AbortSignal,segment?:AudioSegmentPlaybackOptions):Promise<void>;
+  markSegmentSynthesisComplete?(sessionId:string,segmentSequence:number):void;
+  waitForSegmentPlayback?(sessionId:string,segmentSequence:number,signal:AbortSignal):Promise<void>;
   /** Resolves only after the session's final audio has physically finished playback. */
   waitForPlayback?(sessionId:string,signal:AbortSignal):Promise<void>;
   stop(sessionId?:string):void;
@@ -25,7 +35,7 @@ export interface SpeechOutputControllerOptions {
   /** Bounds synthesis and physical playback finalization; timeout is diagnosed as a failure. */
   finishTimeoutMs?:number;
 }
-interface SentenceTask {text:string;emotion:string;}
+interface SentenceTask {text:string;emotion:string;sequence:number;}
 interface Session {
   turnId:string;
   id:string;
@@ -42,6 +52,13 @@ interface Session {
   finishing:boolean;
   failed:boolean;
   outputSequence:number;
+  nextSegmentSequence:number;
+  hasAudio:boolean;
+  playbackStarted:boolean;
+  segmentStates:Map<number,TtsSegmentStatus>;
+  startTimeoutMs:number;
+  segmentGapMs:number;
+  startTimer?:ReturnType<typeof setTimeout>;
   finishPromise?:Promise<void>;
 }
 const MAX_PENDING_SENTENCES=12;
@@ -49,6 +66,13 @@ const MAX_PENDING_TEXT_CHARS=8_000;
 const MAX_SENTENCE_CHARS=1_200;
 const MAX_AUDIO_EVENT_BYTES=512*1024;
 const DEFAULT_FINISH_TIMEOUT_MS=60_000;
+const DEFAULT_START_TIMEOUT_MS=10_000;
+const DEFAULT_SEGMENT_GAP_MS=500;
+const MAX_SYNTHESIS_ATTEMPTS=3;
+
+class TtsOutputError extends Error {
+  constructor(error:unknown){super(safeError(error));this.name="TtsOutputError";}
+}
 
 function aborted(signal:AbortSignal):boolean{return signal.aborted;}
 function abortError():Error{const e=new Error("Speech session was cancelled.");e.name="AbortError";return e;}
@@ -207,7 +231,10 @@ export class SpeechOutputController {
         const session:Session={
           turnId:event.turnId,id:"nova-tts-"+(++this.sequence)+"-"+event.turnId.slice(0,80),
           preset:presetCopy(preset),provider,abort:new AbortController(),queue:[],waitingWriters:[],queueWaiters:[],queuedChars:0,
-          segmenter:new SpeechSentenceSegmenter(),emotion:"",finishing:false,failed:false,outputSequence:0
+          segmenter:new SpeechSentenceSegmenter(),emotion:"",finishing:false,failed:false,outputSequence:0,
+          nextSegmentSequence:0,hasAudio:false,playbackStarted:false,segmentStates:new Map<number,TtsSegmentStatus>(),
+          startTimeoutMs:Math.max(1_000,Math.min(60_000,Math.floor(settings.startTimeoutMs??DEFAULT_START_TIMEOUT_MS))),
+          segmentGapMs:Math.max(0,Math.min(5_000,Math.floor(settings.segmentGapMs??DEFAULT_SEGMENT_GAP_MS)))
         };
         this.sessions.set(session.id,session);
         if(this.active){
@@ -250,7 +277,9 @@ export class SpeechOutputController {
     if(!session||session.failed)return Promise.resolve();
     if(session.finishPromise)return session.finishPromise;
     session.finishing=true;
-    const timeoutMs=Math.max(1,Math.floor(this.options.finishTimeoutMs??DEFAULT_FINISH_TIMEOUT_MS));
+    const timeoutMs=this.options.finishTimeoutMs!==undefined
+      ?Math.max(1,Math.floor(this.options.finishTimeoutMs))
+      :Math.max(10_000,Math.min(600_000,Math.floor(this.options.getSettings().finishTimeoutMs??DEFAULT_FINISH_TIMEOUT_MS)));
     const completion=(async()=>{
       for(const text of session.segmenter.finish())await this.enqueueSentence(session,text,session.emotion);
       this.ensureWorker(session);
@@ -259,6 +288,9 @@ export class SpeechOutputController {
       if(session.outputSequence>0&&this.options.output.waitForPlayback)
         await this.options.output.waitForPlayback(session.id,session.abort.signal);
       if(session.failed||aborted(session.abort.signal))return;
+      this.clearStartTimeout(session);
+      for(const [sequence,state] of session.segmentStates)
+        if(state!=="failed"&&state!=="cancelled")session.segmentStates.set(sequence,"completed");
       this.sessions.delete(session.id);
       const wasActive=this.active===session;
       this.pendingSessions.splice(0,this.pendingSessions.length,...this.pendingSessions.filter(item=>item!==session));
@@ -386,7 +418,9 @@ export class SpeechOutputController {
       await new Promise<void>(resolve=>session.waitingWriters.push(resolve));
     }
     if(session.abort.signal.aborted||session.failed||this.sessions.get(session.id)!==session)return;
-    session.queue.push({text,emotion});session.queuedChars+=text.length;
+    const sequence=session.nextSegmentSequence++;
+    session.queue.push({text,emotion,sequence});session.queuedChars+=text.length;
+    session.segmentStates.set(sequence,"queued");
     this.ensureWorker(session);
   }
   private ensureWorker(session:Session):void{
@@ -403,14 +437,39 @@ export class SpeechOutputController {
       const task=session.queue.shift()!;
       session.queuedChars-=task.text.length;
       for(const resolve of session.waitingWriters.splice(0))resolve();
-      try{await this.synthesizeSentence(session,task);}
-      catch(error){
-        if(session.abort.signal.aborted||error&&typeof error==="object"&&(error as {name?:unknown}).name==="AbortError")return;
-        const message=safeError(error);
-        this.reportDiagnostic("TTS_SYNTHESIS_FAILED",message);
-        this.cancelSession(session,message,true);
-        this.setStatus({state:"error",message});
-        return;
+      this.armStartTimeout(session);
+      let attempts=0,synthesized=false;
+      let lastError:unknown;
+      while(attempts<MAX_SYNTHESIS_ATTEMPTS&&!session.abort.signal.aborted){
+        attempts++;
+        session.segmentStates.set(task.sequence,"synthesizing");
+        try{
+          await this.synthesizeSentence(session,task);
+          synthesized=true;
+          break;
+        }catch(error){
+          if(session.abort.signal.aborted||error&&typeof error==="object"&&(error as {name?:unknown}).name==="AbortError")return;
+          lastError=error;
+          // Output adapter failures are not synthesis failures. Retrying after partial queueing could
+          // duplicate audio, so mark only this segment failed and continue with the next one.
+          if(error instanceof TtsOutputError)break;
+          if(attempts<MAX_SYNTHESIS_ATTEMPTS){
+            this.reportDiagnostic(
+              "TTS_SEGMENT_RETRY",
+              "Segment "+(task.sequence+1)+" attempt "+attempts+"/"+MAX_SYNTHESIS_ATTEMPTS+
+                " failed; retrying the same segment. Reason: "+safeError(error)
+            );
+          }
+        }
+      }
+      if(!synthesized){
+        if(session.abort.signal.aborted)return;
+        session.segmentStates.set(task.sequence,"failed");
+        this.reportDiagnostic(
+          "TTS_SEGMENT_SKIPPED",
+          "Segment "+(task.sequence+1)+" skipped after "+attempts+" attempt(s). Reason: "+safeError(lastError)
+        );
+        // A bad sentence is isolated: don't clear the FIFO queue or cancel the speech session.
       }
     }
   }
@@ -422,6 +481,7 @@ export class SpeechOutputController {
       ...(expression.instruction?{instruction:expression.instruction}:{})
     };
     let metadata:TtsAudioMetadata|undefined,done=false;
+    const audioChunks:Uint8Array[]=[];
     for await(const event of session.provider.synthesize(request,{signal:session.abort.signal})){
       if(session.abort.signal.aborted||this.active!==session||event.sessionId!==session.id)throw abortError();
       if(event.type==="routing"){
@@ -430,17 +490,56 @@ export class SpeechOutputController {
         this.setStatus({state:"synthesizing",message,sessionId:session.id});
       }else if(event.type==="start"){
         metadata=event.audio;
-        this.options.output.startSession(session.id,metadata);
         this.setStatus({state:"synthesizing",message:"Synthesizing public Nova speech.",sessionId:session.id});
       }else if(event.type==="audio"){
         if(!metadata)throw new Error("TTS provider sent audio before format metadata.");
         if(event.data.byteLength>MAX_AUDIO_EVENT_BYTES)throw new Error("TTS provider exceeded the audio chunk limit.");
-        await this.options.output.enqueue(session.id,session.outputSequence++,metadata,event.data,session.abort.signal);
+        // Keep each attempt isolated until the provider confirms "done". A failed partial
+        // stream must never leak into playback and then repeat when the segment is retried.
+        audioChunks.push(event.data.slice());
       }else if(event.type==="done")done=true;
       else if(event.type==="error")throw new Error(event.error.message);
     }
     if(!done)throw new Error("TTS provider ended synthesis without a completion event.");
-    // The next sentence may synthesize ahead, but the next turn waits for playback to finish.
+    if(!metadata)throw new Error("TTS provider completed synthesis without audio format metadata.");
+    if(audioChunks.length===0)throw new Error("TTS provider completed synthesis without returning audio.");
+
+    try{this.options.output.startSession(session.id,metadata);}catch(error){throw new TtsOutputError(error);}
+    for(let index=0;index<audioChunks.length;index++){
+      const chunk=audioChunks[index]!;
+      const playback={
+        segmentSequence:task.sequence,
+        gapBeforeMs:index===0&&session.hasAudio?session.segmentGapMs:0,
+        onPlaybackStarted:()=>{
+          session.playbackStarted=true;
+          this.clearStartTimeout(session);
+          if(session.segmentStates.get(task.sequence)!=="failed"&&!session.failed)
+            session.segmentStates.set(task.sequence,"playing");
+        }
+      };
+      try{
+        await this.options.output.enqueue(session.id,session.outputSequence,metadata,chunk,session.abort.signal,playback);
+      }catch(error){throw new TtsOutputError(error);}
+      session.outputSequence++;
+      session.hasAudio=true;
+      // Older adapters without segment-playback notifications treat accepted audio as started;
+      // the production Web Audio adapter keeps the real start deadline armed until scheduling begins.
+      if(!this.options.output.waitForSegmentPlayback){
+        session.playbackStarted=true;
+        this.clearStartTimeout(session);
+      }
+      if(session.segmentStates.get(task.sequence)==="synthesizing")session.segmentStates.set(task.sequence,"buffered");
+    }
+    this.options.output.markSegmentSynthesisComplete?.(session.id,task.sequence);
+    if(this.options.output.waitForSegmentPlayback){
+      void this.options.output.waitForSegmentPlayback(session.id,task.sequence,session.abort.signal).then(()=>{
+        if(session.segmentStates.get(task.sequence)!=="failed"&&session.segmentStates.get(task.sequence)!=="cancelled")
+          session.segmentStates.set(task.sequence,"completed");
+      }).catch(()=>{
+        if(!session.abort.signal.aborted)session.segmentStates.set(task.sequence,"failed");
+      });
+    }else session.segmentStates.set(task.sequence,"buffered");
+    // The next sentence synthesizes while this segment is playing; turn completion waits for physical playback.
   }
   private async waitForSynthesis(session:Session):Promise<void>{
     while(!session.failed&&!aborted(session.abort.signal)&&(session.queue.length>0||session.worker)){
@@ -449,7 +548,8 @@ export class SpeechOutputController {
         continue;
       }
       if(session.worker){
-        await session.worker;
+        // Cancellation/first-audio timeout must release Life even if a provider ignores AbortSignal.
+        await Promise.race([session.worker,new Promise<void>(resolve=>session.queueWaiters.push(resolve))]);
       }else{
         this.ensureWorker(session);
         if(!session.worker&&session.queue.length>0)
@@ -460,10 +560,28 @@ export class SpeechOutputController {
   private wakeQueueWaiters(session:Session):void{
     for(const resolve of session.queueWaiters.splice(0))resolve();
   }
+  private armStartTimeout(session:Session):void{
+    if(session.playbackStarted||session.startTimer!==undefined||session.failed)return;
+    session.startTimer=setTimeout(()=>{
+      session.startTimer=undefined;
+      if(this.sessions.get(session.id)!==session||session.failed||session.abort.signal.aborted||session.playbackStarted)return;
+      const message="TTS playback did not start within "+session.startTimeoutMs+" ms.";
+      this.reportDiagnostic("TTS_START_TIMEOUT",message);
+      this.cancelSession(session,message,true);
+      this.setStatus({state:"error",message,sessionId:session.id});
+    },session.startTimeoutMs);
+  }
+  private clearStartTimeout(session:Session):void{
+    if(session.startTimer!==undefined)clearTimeout(session.startTimer);
+    session.startTimer=undefined;
+  }
   private cancelSession(session:Session,message:string,failed=false,advanceQueue=true):void{
     const wasActive=this.active===session;
     session.failed=failed;
+    this.clearStartTimeout(session);
     if(!session.abort.signal.aborted)session.abort.abort();
+    for(const [sequence,state] of session.segmentStates)
+      if(state!=="completed"&&state!=="failed")session.segmentStates.set(sequence,"cancelled");
     session.segmenter.reset();
     session.queue.length=0;session.queuedChars=0;session.finishing=true;
     for(const resolve of session.waitingWriters.splice(0))resolve();

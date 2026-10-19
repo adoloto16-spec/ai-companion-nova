@@ -40,14 +40,18 @@ class RecordingOutput implements AudioOutputAdapter{
 class PlaybackControlledOutput implements AudioOutputAdapter{
   unlocked=false;
   queued:Array<{sessionId:string;sequence:number;metadata:TtsAudioMetadata;text:string}>=[];
+  gaps:number[]=[];
   pendingPlayback=new Map<number,string>();
   stops:Array<string|undefined>=[];
   private playbackWaiters=new Set<()=>void>();
   async unlock(){this.unlocked=true;}
   startSession(_sessionId:string,_metadata:TtsAudioMetadata){}
-  async enqueue(sessionId:string,sequence:number,audio:TtsAudioMetadata,data:Uint8Array,signal:AbortSignal){
+  async enqueue(sessionId:string,sequence:number,audio:TtsAudioMetadata,data:Uint8Array,signal:AbortSignal,
+    segment?:{segmentSequence:number;gapBeforeMs:number;onPlaybackStarted?:()=>void}){
     if(signal.aborted){const error=new Error("cancelled");error.name="AbortError";throw error;}
     this.queued.push({sessionId,sequence,metadata:audio,text:new TextDecoder().decode(data)});
+    this.gaps.push(segment?.gapBeforeMs??0);
+    segment?.onPlaybackStarted?.();
     this.pendingPlayback.set(sequence,sessionId);
   }
   async waitForPlayback(sessionId:string,signal:AbortSignal):Promise<void>{
@@ -78,16 +82,26 @@ class RecordingProvider implements TtsProvider{
   readonly requests:string[]=[];
   readonly emotions:string[]=[];
   gateFirst?:Promise<void>;
+  failText?:string;
+  failCount:number;
+  private readonly attemptsByText=new Map<string,number>();
   active=0;
   maxActive=0;
-  constructor(gateFirst?:Promise<void>){this.gateFirst=gateFirst;}
+  constructor(gateFirst?:Promise<void>,failText?:string,failCount=0){
+    this.gateFirst=gateFirst;this.failText=failText;this.failCount=failCount;
+  }
   capabilities(){return capabilities;}
   async testConnection(_preset:TtsPreset,_signal:AbortSignal):Promise<TtsProviderHealth>{return {status:"healthy",message:"fake provider ready"};}
   async *synthesize(request:TtsSynthesisRequest,options:{signal:AbortSignal}):AsyncIterable<TtsStreamEvent>{
     this.requests.push(request.text);this.emotions.push(request.emotion);
+    const textKey=request.text.trim();
+    const textAttempt=(this.attemptsByText.get(textKey)??0)+1;
+    this.attemptsByText.set(textKey,textAttempt);
     this.active++;this.maxActive=Math.max(this.maxActive,this.active);
     try{
       yield {type:"start",sessionId:request.sessionId,audio:metadata};
+      if(this.failText!==undefined&&textKey===this.failText.trim()&&textAttempt<=this.failCount)
+        throw new Error("synthetic segment synthesis failure");
       yield {type:"audio",sessionId:request.sessionId,sequence:0,data:new TextEncoder().encode(request.text)};
       if(this.requests.length===1&&this.gateFirst){await this.gateFirst; if(options.signal.aborted){const error=new Error("cancelled");error.name="AbortError";throw error;}}
       yield {type:"done",sessionId:request.sessionId};
@@ -217,8 +231,76 @@ async function synthesisRunsAheadOfPlaybackAndKeepsFifo():Promise<void>{
   output.finishPlayback(1);
   await finish;
   ok(finished,"turn finalization resolves after the final audio segment physically ends");
+  equal(output.gaps.join(","),"0,500","configured sentence gap is applied only at segment boundaries");
   controller.stop();
   ok(output.stops.some(id=>id===undefined),"explicit Stop cancels output even when synthesis has finalized");
+}
+async function segmentSynthesisRetriesTransientFailuresAndPreservesFifo():Promise<void>{
+  const output=new PlaybackControlledOutput(),provider=new RecordingProvider(undefined,"Second sentence.",2);
+  const diagnostics:Array<{code:string;message:string}>=[];
+  const settings:TtsSettings={...DEFAULT_TTS_SETTINGS,enabled:true,activePresetId:"test-preset",presets:[preset()]};
+  const controller=new SpeechOutputController({
+    getSettings:()=>settings,getProvider:id=>id===provider.id?provider:undefined,output,
+    onDiagnostic:(code,message)=>diagnostics.push({code,message})
+  });
+  await controller.unlockPlayback();
+  await controller.handleSpeechEvent({type:"start",turnId:"turn-retry-segment"});
+  const text="First sentence. Second sentence. Third sentence.";
+  await controller.handleSpeechEvent({type:"delta",turnId:"turn-retry-segment",text});
+  let finished=false;
+  const finish=controller.finishTurn("turn-retry-segment").then(()=>{finished=true;});
+  await until(()=>provider.requests.length===5&&output.pendingPlayback.size===3,
+    "a transiently failing sentence should retry twice, then resume the FIFO queue");
+  equal(provider.requests.filter(item=>item.trim()==="Second sentence.").length,3,
+    "the exact same failed sentence is requested three times total");
+  equal(output.queued.map(item=>item.text).join(""),text,
+    "successful retry preserves the original text and FIFO order without partial duplicate audio");
+  equal(diagnostics.filter(item=>item.code==="TTS_SEGMENT_RETRY").length,2,
+    "each retry is recorded with segment and attempt details");
+  ok(diagnostics.some(item=>item.code==="TTS_SEGMENT_RETRY"&&item.message.includes("attempt 1/3")),
+    "retry diagnostics identify the attempt number");
+  ok(!finished,"turn completion still waits for all successful audio to finish playing");
+  output.finishPlayback(0);output.finishPlayback(1);output.finishPlayback(2);
+  await finish;
+  ok(finished,"turn completes after recovered segments drain");
+  ok(!output.stops.includes("nova-tts-1-turn-retry-segment"),
+    "recoverable synthesis errors do not stop the playback session");
+  controller.stop();
+}
+async function segmentSynthesisSkipsAfterThreeFailuresAndContinuesFifo():Promise<void>{
+  const output=new PlaybackControlledOutput(),provider=new RecordingProvider(undefined,"Second sentence.",3);
+  const diagnostics:Array<{code:string;message:string}>=[];
+  const settings:TtsSettings={...DEFAULT_TTS_SETTINGS,enabled:true,activePresetId:"test-preset",presets:[preset()]};
+  const controller=new SpeechOutputController({
+    getSettings:()=>settings,getProvider:id=>id===provider.id?provider:undefined,output,
+    onDiagnostic:(code,message)=>diagnostics.push({code,message})
+  });
+  await controller.unlockPlayback();
+  await controller.handleSpeechEvent({type:"start",turnId:"turn-skip-segment"});
+  const text="First sentence. Second sentence. Third sentence.";
+  await controller.handleSpeechEvent({type:"delta",turnId:"turn-skip-segment",text});
+  let finished=false;
+  const finish=controller.finishTurn("turn-skip-segment").then(()=>{finished=true;});
+  await until(()=>provider.requests.length===5&&output.pendingPlayback.size===2,
+    "after three failures only the bad sentence is skipped and the next sentence is synthesized");
+  equal(provider.requests.filter(item=>item.trim()==="Second sentence.").length,3,
+    "a permanently failing sentence is attempted exactly three times");
+  equal(output.queued.map(item=>item.text).join(""),"First sentence. Third sentence.",
+    "only the bad sentence is omitted; successful surrounding sentences remain FIFO");
+  const skipped=diagnostics.find(item=>item.code==="TTS_SEGMENT_SKIPPED");
+  ok(skipped?.message.includes("Segment 2 skipped after 3 attempt(s)"),
+    "skip diagnostics record the 1-based segment index and total attempt count");
+  ok(skipped?.message.includes("synthetic segment synthesis failure"),
+    "skip diagnostics record the final synthesis error reason");
+  ok(diagnostics.filter(item=>item.code==="TTS_SEGMENT_RETRY").length===2,
+    "both retries are diagnosed before the final skip");
+  ok(!finished,"the turn waits for the remaining good segments to finish playback");
+  ok(!output.stops.includes("nova-tts-1-turn-skip-segment"),
+    "skipping one segment does not cancel the session or clear the output queue");
+  output.finishPlayback(0);output.finishPlayback(1);
+  await finish;
+  ok(finished,"FIFO synthesis and playback reach the end of the message after a skip");
+  controller.stop();
 }
 async function assistantTurnsWaitForPlaybackAndInterruptionClearsQueue():Promise<void>{
   const output=new PlaybackControlledOutput(),provider=new RecordingProvider();
@@ -264,6 +346,35 @@ async function assistantTurnsWaitForPlaybackAndInterruptionClearsQueue():Promise
   output.finishPlayback(0);
   await fresh;
   equal(provider.requests.length,requestCount+1,"stale queued speech does not resume after interruption");
+  controller.stop();
+}
+async function noFirstAudioTimesOutAndReleasesTurn():Promise<void>{
+  const gate=deferred<void>();
+  const provider:TtsProvider={
+    id:"delayed-first-audio",
+    capabilities:()=>capabilities,
+    async testConnection(_preset:TtsPreset,_signal:AbortSignal){return {status:"healthy"};},
+    async *synthesize(request:TtsSynthesisRequest,options:{signal:AbortSignal}):AsyncIterable<TtsStreamEvent>{
+      yield {type:"start",sessionId:request.sessionId,audio:metadata};
+      await gate.promise;
+      if(options.signal.aborted){const error=new Error("cancelled");error.name="AbortError";throw error;}
+      yield {type:"audio",sessionId:request.sessionId,sequence:0,data:new TextEncoder().encode(request.text)};
+      yield {type:"done",sessionId:request.sessionId};
+    }
+  };
+  const output=new RecordingOutput();
+  const settings:TtsSettings={...DEFAULT_TTS_SETTINGS,enabled:true,activePresetId:"test-preset",startTimeoutMs:1000,presets:[preset(provider.id)]};
+  const controller=new SpeechOutputController({getSettings:()=>settings,getProvider:id=>id===provider.id?provider:undefined,output});
+  await controller.unlockPlayback();
+  await controller.handleSpeechEvent({type:"start",turnId:"turn-no-audio"});
+  await controller.handleSpeechEvent({type:"delta",turnId:"turn-no-audio",text:"Delayed first sentence."});
+  const before=Date.now();
+  await controller.finishTurn("turn-no-audio");
+  ok(Date.now()-before>=900,"first-audio timeout respects the configured 1000 ms budget");
+  equal(output.queued.length,0,"a provider that never starts audio is cancelled without late playback");
+  ok(controller.getStatus().message.includes("playback did not start"),"startup timeout is observable through the TTS status");
+  gate.resolve();
+  await Promise.resolve();await Promise.resolve();
   controller.stop();
 }
 async function boundedBackpressureAndCancellation():Promise<void>{
@@ -621,13 +732,16 @@ async function webAudioSchedulesFifoWithoutOverlap():Promise<void>{
   };
   const output=new WebAudioOutputAdapter({createContext:()=>mockContext as unknown as AudioContext,maxScheduleAheadSeconds:10});
   await output.unlock();output.startSession("fifo",metadata);
-  await output.enqueue("fifo",20,metadata,new Uint8Array([0xe8,0x03,0x18,0xfc]),new AbortController().signal);
+  await output.enqueue("fifo",20,metadata,new Uint8Array([0xe8,0x03,0x18,0xfc]),new AbortController().signal,
+    {segmentSequence:0,gapBeforeMs:0});
   const other:TtsAudioMetadata={format:"pcm16le",sampleRate:44100,channels:1};
-  await output.enqueue("fifo",10,other,new Uint8Array([0xd0,0x07,0x30,0xf8]),new AbortController().signal);
+  await output.enqueue("fifo",10,other,new Uint8Array([0xd0,0x07,0x30,0xf8]),new AbortController().signal,
+    {segmentSequence:1,gapBeforeMs:500});
   await until(()=>scheduled.length===2,"two queued PCM chunks should be scheduled");
   equal(Math.round(scheduled[0]!.sample*1000),31,"PCM16 samples are converted to Float32 correctly");
   equal(Math.round(scheduled[1]!.sample*1000),61,"second chunk retains FIFO order regardless of transport sequence labels");
   ok(scheduled[1]!.when+1e-9>=scheduled[0]!.when+scheduled[0]!.duration,"consecutive chunks do not overlap");
+  ok(scheduled[1]!.when+1e-9>=scheduled[0]!.when+scheduled[0]!.duration+0.5,"configured 500 ms sentence pause is applied by the Web Audio scheduler");
   output.stop("fifo");
   await output.dispose();
 }
@@ -894,6 +1008,42 @@ async function lifeSpeechEventsReachAudioAndAwaitPhysicalPlayback():Promise<void
   }
 }
 
+async function failedNovaLifeTurnWaitsForStreamedSpeech():Promise<void>{
+  const output=new PlaybackControlledOutput(),provider=new RecordingProvider();
+  const settings:TtsSettings={...DEFAULT_TTS_SETTINGS,enabled:true,activePresetId:"test-preset",presets:[preset()]};
+  const controller=new SpeechOutputController({getSettings:()=>settings,getProvider:id=>id===provider.id?provider:undefined,output});
+  await controller.unlockPlayback();
+  const runtime=new MindRuntime({
+    cognitiveStep:{async run(context){
+      await context.onSpeechEvent?.({type:"start",conversationId:"conversation.failed-speech"});
+      await context.onSpeechEvent?.({type:"delta",conversationId:"conversation.failed-speech",text:"This streamed speech must finish."});
+      // Mimic another native-tool round; it must not clear speech streamed by the prior round.
+      await context.onSpeechEvent?.({type:"start",conversationId:"conversation.failed-speech"});
+      throw new Error("fixture provider failure after public speech");
+    }},
+    schedule:{mode:"fixed",defaultIntervalMs:30_000,minIntervalMs:3_000,maxIntervalMs:300_000,maxRequestsPerHour:null},
+    turnSink:{
+      async commit(){throw new Error("failed cognitive turn must not commit");},
+      async streamSpeech(event){
+        if(event.type==="finish"){await controller.finishTurn(event.turnId);return;}
+        await controller.handleSpeechEvent(event);
+      }
+    }
+  });
+  runtime.setActiveCharacter("character.failed-speech");
+  try{
+    await runtime.start();
+    await until(()=>output.pendingPlayback.size===1,"public speech from a failed turn must reach playback");
+    equal(runtime.getState().lifecycleState,"thinking","Nova Life waits while streamed speech is still playing after a model error");
+    equal(provider.requests.length,1,"a repeated native-tool start does not erase streamed public speech");
+    output.finishPlayback(0);
+    await until(()=>runtime.getState().lifecycleState==="waiting","failed turn schedules its backoff only after started speech drains");
+    ok(runtime.getState().recentTrace?.some(entry=>entry.result==="error"),"failed model turn remains visible in the trace");
+  }finally{
+    controller.stop("Failure-drain test cleanup.");
+    await runtime.stop();
+  }
+}
 async function healthyConnectionDoesNotMaskLockedPlayback():Promise<void>{
   const output=new PlaybackControlledOutput(),provider=new RecordingProvider(),diagnostics:string[]=[];
   const settings:TtsSettings={...DEFAULT_TTS_SETTINGS,enabled:true,activePresetId:"test-preset",presets:[preset()]};
@@ -973,7 +1123,11 @@ async function main():Promise<void>{
   emotionMappingOnlyUsesSupportedActions();
   emotionDecodersDoNotGateSpeech();
   await synthesisRunsAheadOfPlaybackAndKeepsFifo();
+  await segmentSynthesisRetriesTransientFailuresAndPreservesFifo();
+  await segmentSynthesisSkipsAfterThreeFailuresAndContinuesFifo();
   await assistantTurnsWaitForPlaybackAndInterruptionClearsQueue();
+  await failedNovaLifeTurnWaitsForStreamedSpeech();
+  await noFirstAudioTimesOutAndReleasesTurn();
   await healthyConnectionDoesNotMaskLockedPlayback();
   await lifeTurnFinalizesAfterPlaybackTimeoutWithoutLosingText();
   await lifeSpeechEventsReachAudioAndAwaitPhysicalPlayback();

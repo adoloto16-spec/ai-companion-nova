@@ -99,6 +99,20 @@ async function main(){
   equal(contextChatRequests[0]?.context.messages.at(-1)?.content,"memory context","assembled context reaches ChatRequest");
   equal(contextChatRequests[0]?.context.messages.at(-1)?.metadata?.contextSource,"memory","ChatRequest preserves memory provenance");
 
+  const reasoningSession=new ConversationSession("reasoning-conversation","character.reasoning");
+  let ordinaryReasoningRequest:ChatRequest|undefined;
+  const reasoningController=new ChatSessionController(reasoningSession,{
+    async chat(request:ChatRequest):Promise<ChatResponse>{
+      ordinaryReasoningRequest=request;
+      return responseFor(request,"reasoning setting response");
+    }
+  },{
+    requestIdFactory:()=>"reasoning-disabled-1",
+    reasoningOptionsProvider:()=>({mode:"disabled"})
+  });
+  equal((await reasoningController.submit("ordinary chat reasoning","fake-chat")).status,"sent","ordinary chat request succeeds with reasoning configured");
+  equal(ordinaryReasoningRequest?.reasoning?.mode,"disabled","ordinary ChatSessionController sends explicit reasoning disabled to the runtime");
+
   const errorSession=new ConversationSession("error-conversation","character.error");
   const errorController=new ChatSessionController(errorSession,{
     async chat(_request:ChatRequest):Promise<ChatResponse>{throw {chatError:{code:"PROVIDER_ERROR",message:"internal detail"}}}

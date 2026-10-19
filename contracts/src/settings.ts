@@ -88,7 +88,7 @@ export interface AppSettings{
   };
 }
 
-function cloneTtsSettings(settings:TtsSettings):TtsSettings{return {enabled:settings.enabled,activePresetId:settings.activePresetId,presets:settings.presets.map(preset=>({...preset,credentialReference:preset.credentialReference?{...preset.credentialReference}:null,providerOptions:{...preset.providerOptions}}))};}
+function cloneTtsSettings(settings:TtsSettings):TtsSettings{return {enabled:settings.enabled,activePresetId:settings.activePresetId,finishTimeoutMs:settings.finishTimeoutMs??DEFAULT_TTS_SETTINGS.finishTimeoutMs,startTimeoutMs:settings.startTimeoutMs??DEFAULT_TTS_SETTINGS.startTimeoutMs,segmentGapMs:settings.segmentGapMs??DEFAULT_TTS_SETTINGS.segmentGapMs,presets:settings.presets.map(preset=>({...preset,credentialReference:preset.credentialReference?{...preset.credentialReference}:null,providerOptions:{...preset.providerOptions}}))};}
 
 export const DEFAULT_APP_SETTINGS:AppSettings={
   apiVersion:APP_SETTINGS_API_VERSION,
@@ -181,7 +181,7 @@ const SECURITY_MAX={
 function normalizeTtsSettings(value:unknown):TtsSettings{
   if(!value||typeof value!=="object"||Array.isArray(value))throw new Error("TTS settings must be an object.");
   const root=value as Record<string,unknown>;
-  if(Object.keys(root).some(key=>key!=="enabled"&&key!=="activePresetId"&&key!=="presets"))throw new Error("Unsupported TTS settings field.");
+  if(Object.keys(root).some(key=>!["enabled","activePresetId","presets","finishTimeoutMs","startTimeoutMs","segmentGapMs"].includes(key)))throw new Error("Unsupported TTS settings field.");
   if(typeof root.enabled!=="boolean")throw new Error("TTS enabled state must be boolean.");
   if(root.activePresetId!==null&&typeof root.activePresetId!=="string")throw new Error("TTS active preset id must be a string or null.");
   if(!Array.isArray(root.presets)||root.presets.length>32)throw new Error("TTS presets must be an array with at most 32 entries.");
@@ -200,7 +200,14 @@ function normalizeTtsSettings(value:unknown):TtsSettings{
     if(!preset.providerOptions||typeof preset.providerOptions!=="object"||Array.isArray(preset.providerOptions))throw new Error("TTS provider options must be an object.");
     return {id:preset.id as string,name:preset.name as string,providerId:preset.providerId as string,baseUrl:preset.baseUrl as string,voiceProfileId:preset.voiceProfileId as string,language:preset.language as string,speed:preset.speed as number,credentialReference,providerOptions:{...(preset.providerOptions as Record<string,unknown>)}};
   });
-  return {enabled:root.enabled as boolean,activePresetId:root.activePresetId as string|null,presets};
+  return {
+    enabled:root.enabled as boolean,
+    activePresetId:root.activePresetId as string|null,
+    finishTimeoutMs:typeof root.finishTimeoutMs==="number"?root.finishTimeoutMs:DEFAULT_TTS_SETTINGS.finishTimeoutMs,
+    startTimeoutMs:typeof root.startTimeoutMs==="number"?root.startTimeoutMs:DEFAULT_TTS_SETTINGS.startTimeoutMs,
+    segmentGapMs:typeof root.segmentGapMs==="number"?root.segmentGapMs:DEFAULT_TTS_SETTINGS.segmentGapMs,
+    presets
+  };
 }
 
 export function validateAppSettings(settings:AppSettings):string[]{
@@ -273,6 +280,9 @@ export function validateAppSettings(settings:AppSettings):string[]{
   if(!tts||typeof tts!=="object"||!Array.isArray(tts.presets))errors.push("TTS settings must contain a preset array.");
   else{
     if(typeof tts.enabled!=="boolean")errors.push("TTS enabled state must be boolean.");
+    integer(tts.finishTimeoutMs,"TTS maximum turn duration",10_000,600_000);
+    integer(tts.startTimeoutMs,"TTS initial audio timeout",1_000,60_000);
+    integer(tts.segmentGapMs,"TTS segment gap",0,5_000);
     if(tts.presets.length>32)errors.push("At most 32 TTS presets are allowed.");
     const ids=new Set<string>();
     for(const [index,preset] of tts.presets.entries()){

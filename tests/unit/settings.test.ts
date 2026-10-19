@@ -184,15 +184,26 @@ async function main(){
   equal(migratedV12.prompts.overrides["nova-system-json"],"preserved v12 prompt override","v12 migration preserves prompt registry overrides");
   equal(migratedV12.tts.enabled,false,"v12 migration leaves TTS disabled");
   equal(migratedV12.tts.presets[0]?.baseUrl,"http://127.0.0.1:3900","v12 migration uses safe loopback TTS defaults");
+  const oldV14Tts=JSON.parse(JSON.stringify(defaultAppSettings())) as Record<string,any>;
+  delete oldV14Tts.tts.finishTimeoutMs;delete oldV14Tts.tts.startTimeoutMs;delete oldV14Tts.tts.segmentGapMs;
+  const migratedOldV14Tts=migrateAppSettings(oldV14Tts);
+  equal(migratedOldV14Tts.tts.finishTimeoutMs,60000,"existing v14 settings receive the TTS maximum duration default");
+  equal(migratedOldV14Tts.tts.startTimeoutMs,10000,"existing v14 settings receive the TTS start timeout default");
+  equal(migratedOldV14Tts.tts.segmentGapMs,500,"existing v14 settings receive the TTS sentence gap default");
   const invalidTtsSecret={...defaultAppSettings(),tts:{...defaultAppSettings().tts,presets:[{...defaultAppSettings().tts.presets[0]!,providerOptions:{apiKey:"should-not-be-persisted"}}]}};
   ok(validateAppSettings(invalidTtsSecret).some(error=>error.toLowerCase().includes("secret")),"TTS settings reject secret-bearing provider option keys");
   let rejectedUnknownTts=false;
   try{migrateAppSettings({...defaultAppSettings(),tts:{...defaultAppSettings().tts,unknown:true} as any});}catch{rejectedUnknownTts=true;}
   ok(rejectedUnknownTts,"TTS settings reject unknown schema fields");
-  const alteredTts={...defaultAppSettings(),tts:{...defaultAppSettings().tts,enabled:true}};
+  const alteredTts={...defaultAppSettings(),tts:{...defaultAppSettings().tts,enabled:true,finishTimeoutMs:120000,startTimeoutMs:5000,segmentGapMs:250}};
   await manager.set(alteredTts);
   const ttsReload=await new SettingsManager(store,validator).initialize();
   equal(ttsReload.tts.enabled,true,"TTS enabled setting survives settings storage reload");
+  equal(ttsReload.tts.finishTimeoutMs,120000,"TTS maximum turn duration persists");
+  equal(ttsReload.tts.startTimeoutMs,5000,"TTS initial audio timeout persists");
+  equal(ttsReload.tts.segmentGapMs,250,"TTS sentence gap persists");
+  ok(validateAppSettings({...defaultAppSettings(),tts:{...defaultAppSettings().tts,segmentGapMs:5001}}).some(error=>error.includes("TTS segment gap")),"unsafe TTS sentence gap is rejected");
+  ok(validateAppSettings({...defaultAppSettings(),tts:{...defaultAppSettings().tts,finishTimeoutMs:9999}}).some(error=>error.includes("TTS maximum turn duration")),"unsafe TTS turn timeout is rejected");
   const ttsReset=await manager.reset();
   equal(ttsReset.tts.enabled,false,"settings reset turns TTS off");
   console.log("PASS Settings and diagnostics unit tests");
