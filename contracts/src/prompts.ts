@@ -174,6 +174,21 @@ export function clonePromptConfiguration(configuration: PromptConfiguration): Pr
     ...(preset.metadata?{metadata:{...preset.metadata}}:{})
   }))};
 }
+
+/** Increase a preset's user-visible revision once when its saved content changes. */
+export function bumpChangedPromptPresetVersions(current:PromptConfiguration,draft:PromptConfiguration):PromptConfiguration {
+  const oldPresets=new Map(current.presets.map(preset=>[preset.id,preset]));
+  return {
+    ...draft,
+    presets:draft.presets.map(preset=>{
+      const old=oldPresets.get(preset.id);
+      if(!old)return preset;
+      const withOldVersion={...preset,version:old.version};
+      if(JSON.stringify(withOldVersion)===JSON.stringify(old))return {...preset,version:old.version};
+      return {...preset,version:Math.max(old.version+1,preset.version)};
+    })
+  };
+}
 export function createDefaultPromptConfiguration(overrides: PromptOverrides = {}): PromptConfiguration {
   const preset=createDefaultPromptPreset();
   for(const prompt of preset.prompts)if(prompt.legacyId&&typeof overrides[prompt.legacyId]==="string")prompt.text=overrides[prompt.legacyId]!;
@@ -187,12 +202,14 @@ export function assemblePromptInstructions(configuration: PromptConfiguration | 
     error:"The active prompt preset is missing. Select a valid preset; no fallback instructions were added."};
   const included:PromptPresetPrompt[]=[];
   const excluded:PromptAssembly["excluded"]=[];
+  // Composite scenarios (for example reactive+after-tool) inherit every matching phase condition.
+  const scenarioParts=new Set(scenario.split("+").map(value=>value.trim()).filter(Boolean));
   for(const prompt of active.prompts){
     if(prompt.agentId!==agentId)excluded.push({prompt,reason:"different-agent"});
     else if(!prompt.enabled)excluded.push({prompt,reason:"disabled"});
     else{
       const scenarios=prompt.conditions?.scenarios;
-      if(Array.isArray(scenarios)&&scenarios.length>0&&!scenarios.includes("*")&&!scenarios.includes(scenario))excluded.push({prompt,reason:"scenario"});
+      if(Array.isArray(scenarios)&&scenarios.length>0&&!scenarios.some(value=>value==="*"||scenarioParts.has(value)))excluded.push({prompt,reason:"scenario"});
       else included.push(prompt);
     }
   }

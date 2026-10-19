@@ -18,7 +18,7 @@ function context(onSpeechEvent:CognitiveStepContext["onSpeechEvent"]):CognitiveS
   return {characterId:character.id,state:{lifecycleState:"thinking",nextWakeAt:null,recentTrace:[]},signal:new AbortController().signal,wakeReason:"user-message",
     userTurn:{characterId:character.id,conversationId:conversation.id,userMessageId:userMessage.id!,turnId:"turn.stream"},onSpeechEvent};
 }
-function createStep(runtime:unknown,getPrompt?:(id:import("../../contracts/src").PromptId)=>string,overrides:Partial<Pick<LLMCognitiveStepOptions,"getAvailableTools"|"executeTool"|"getReasoningOptions"|"getShowReasoningInDiagnostics"|"getGenerationOptions"|"getProviderIdForPreset"|"onDiagnostic">>={}):LLMCognitiveStep{
+function createStep(runtime:unknown,getPrompt?:(id:import("../../contracts/src").PromptId,scenario?:string)=>string,overrides:Partial<Pick<LLMCognitiveStepOptions,"getAvailableTools"|"executeTool"|"getReasoningOptions"|"getShowReasoningInDiagnostics"|"getGenerationOptions"|"getProviderIdForPreset"|"onDiagnostic">>={}):LLMCognitiveStep{
   return new LLMCognitiveStep({
     runtime:runtime as never,
     getCharacter:async()=>character,
@@ -144,6 +144,7 @@ async function ordinaryTextStreamsSeparatelyFromReasoning():Promise<void>{
 async function nativeToolRoundsReturnResultsBeforeFinalSpeech():Promise<void>{
   const calls:ChatRequest[]=[];
   const executed:string[]=[];
+  const promptScenarios:string[]=[];
   const runtime={
     getChatProviderCapabilities:()=>({toolCalling:true,streaming:true}),
     getActiveProviderPresetId:()=>undefined,getChatModel:()=>"fake-model",
@@ -161,7 +162,10 @@ async function nativeToolRoundsReturnResultsBeforeFinalSpeech():Promise<void>{
       return responseFor(request,text);
     }
   };
-  const step=createStep(runtime,undefined,{
+  const step=createStep(runtime,(_id,scenario)=>{
+    promptScenarios.push(scenario??"");
+    return scenario==="reactive+after-tool"?"PROMPT_AFTER_TOOL":"PROMPT_REACTIVE";
+  },{
     getAvailableTools:()=>[{name:"read_memory",description:"Search saved character memory",parameters:{type:"object",properties:{query:{type:"string"}},required:["query"]}}],
     executeTool:async(call,toolContext)=>{
       executed.push(call.name);
@@ -171,6 +175,9 @@ async function nativeToolRoundsReturnResultsBeforeFinalSpeech():Promise<void>{
   let visible="";
   const result=await step.run(context(item=>{if(item.type==="delta")visible+=item.text??"";}));
   equal(calls.length,2,"runtime requests a continuation after native tool execution");
+  equal(promptScenarios,["reactive","reactive+after-tool"],"runtime selects the after-tool prompt phase for the continuation request");
+  equal(calls[0]?.context.messages.find(message=>message.id?.endsWith(":nova-turn:system"))?.content,"PROMPT_REACTIVE","first request receives the original reactive instructions");
+  equal(calls[1]?.context.messages.find(message=>message.id?.endsWith(":nova-turn:system"))?.content,"PROMPT_AFTER_TOOL","tool continuation receives the after-tool instructions");
   equal(calls[0]?.tools?.map(tool=>tool.name),["read_memory"],"only registered tools are advertised to the model");
   equal(calls[0]?.generation?.responseFormat,undefined,"tool-capable request still uses the native provider response format");
   equal(executed,["read_memory"],"registered native function executes exactly once");

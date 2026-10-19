@@ -1,5 +1,5 @@
 import {
-  APP_SETTINGS_SCHEMA_VERSION,DEFAULT_PROMPT_PRESET,DEFAULT_PROMPT_TEXTS,PROMPT_REGISTRY,StandardContractValidator,assemblePromptInstructions,clonePromptConfiguration,createDefaultPromptPreset,
+  APP_SETTINGS_SCHEMA_VERSION,DEFAULT_PROMPT_PRESET,DEFAULT_PROMPT_TEXTS,PROMPT_REGISTRY,StandardContractValidator,assemblePromptInstructions,bumpChangedPromptPresetVersions,clonePromptConfiguration,createDefaultPromptPreset,
   applyPromptOverride,defaultAppSettings,migrateAppSettings,resolvePromptText,restoreAllPromptDefaults,
   restorePromptDefault,validateAppSettings
 } from "../../contracts/src";
@@ -33,6 +33,21 @@ async function main():Promise<void>{
   ok(!reactive.included.some(prompt=>prompt.id==="nova-cue-background-plain"),"reactive scenario excludes the background cue");
   ok(!reactive.included.some(prompt=>prompt.id==="nova-system-json"||prompt.id==="nova-system-tagged"),"native Nova request excludes disabled legacy response protocols");
   equal(reactive.text,reactive.included.map(prompt=>prompt.text).join("\n\n"),"runtime instruction text exactly matches ordered prompt records");
+  const phaseConfiguration=clonePromptConfiguration(initial.prompts);
+  phaseConfiguration.presets.find(preset=>preset.id==="default")!.prompts.push({
+    id:"diagnostic-after-tool",title:"After-tool instruction",text:"AFTER_TOOL_ONLY",agentId:"nova",enabled:true,order:500,
+    conditions:{scenarios:["after-tool"]}
+  });
+  const afterTool=assemblePromptInstructions(phaseConfiguration,"nova","reactive+after-tool");
+  ok(afterTool.included.some(prompt=>prompt.id==="diagnostic-after-tool"),"after-tool conditions match composite runtime phases");
+  ok(afterTool.included.some(prompt=>prompt.id==="nova-cue-reactive-plain"),"after-tool phase retains the reactive cue for the original user turn");
+  ok(!afterTool.included.some(prompt=>prompt.id==="nova-cue-background-plain"),"reactive after-tool phase does not include the background cue");
+  const presetVersionDraft=clonePromptConfiguration(initial.prompts);
+  presetVersionDraft.presets.find(preset=>preset.id==="default")!.prompts.find(prompt=>prompt.id==="nova-system-plain")!.text+=" revised";
+  const versioned= bumpChangedPromptPresetVersions(initial.prompts,presetVersionDraft);
+  equal(versioned.presets.find(preset=>preset.id==="default")!.version,initial.prompts.presets.find(preset=>preset.id==="default")!.version+1,"saving changed preset content advances its revision once");
+  const unchangedVersions=bumpChangedPromptPresetVersions(initial.prompts,clonePromptConfiguration(initial.prompts));
+  equal(unchangedVersions.presets.find(preset=>preset.id==="default")!.version,initial.prompts.presets.find(preset=>preset.id==="default")!.version,"saving an unchanged preset does not advance its revision");
   const memoryStructured=assemblePromptInstructions(initial.prompts,"memory-agent","structured");
   ok(memoryStructured.included.some(prompt=>prompt.id==="memory-agent-safety"),"Memory Agent safety guidance is visible as a preset record");
   ok(memoryStructured.included.some(prompt=>prompt.id==="memory-agent-output-structured"),"Memory Agent structured protocol is assembled from preset records");

@@ -1,6 +1,6 @@
 import React from "react";
 import {
-  assemblePromptInstructions, clonePromptConfiguration, createDefaultPromptPreset,
+  assemblePromptInstructions, bumpChangedPromptPresetVersions, clonePromptConfiguration, createDefaultPromptPreset,
   type AppSettings, type PromptConfiguration, type PromptPreset, type PromptPresetPrompt
 } from "../../../contracts/src/index";
 
@@ -97,7 +97,8 @@ export function PromptRegistryView({settings,saving,message,onSaveSettings}:Prom
     updatePreset(active.id,preset=>({...preset,prompts:preset.prompts.filter(p=>p.id!==selected.id)}));setSelectedPromptId("");
   };
   const save=async()=>{
-    const next=clonePromptConfiguration(draft),errors=validatePresetConfig(next);
+    const next=bumpChangedPromptPresetVersions(settings.prompts,clonePromptConfiguration(draft));
+    const errors=validatePresetConfig(next);
     if(errors.length){setLocalMessage(errors.join(" "));return;}
     await onSaveSettings({...settings,prompts:next},"Изменения пресетов сохранены и применены.");
   };
@@ -178,7 +179,9 @@ export function PromptRegistryView({settings,saving,message,onSaveSettings}:Prom
         <label>Агент<select value={agent} onChange={event=>setAgent(event.target.value)}>{agents.map(a=><option key={a} value={a}>{a}</option>)}</select></label>
         <label>Сценарий<select value={scenario} onChange={event=>setScenario(event.target.value)}>
           <option value="reactive">reactive — реактивный ход</option><option value="background">background — фоновый ход</option>
-          <option value="after-tool">after-tool — после инструмента</option><option value="structured">structured — формат JSON</option><option value="plain">plain — обычный текст</option><option value="custom">Пользовательский</option>
+          <option value="reactive+after-tool">reactive+after-tool — после инструмента в реактивном ходе</option>
+          <option value="background+after-tool">background+after-tool — после инструмента в фоновом ходе</option>
+          <option value="after-tool">after-tool — пользовательский этап после инструмента</option><option value="structured">structured — формат JSON</option><option value="plain">plain — обычный текст</option><option value="custom">Пользовательский</option>
         </select></label>
       </div>
       {scenario==="custom"&&<label>Имя сценария<input value={customScenario} onChange={event=>setCustomScenario(event.target.value)}/></label>}
@@ -186,9 +189,9 @@ export function PromptRegistryView({settings,saving,message,onSaveSettings}:Prom
       {assembly.error&&<p className="error">{assembly.error}</p>}
       <h4>Включённые записи в порядке runtime</h4>
       {assembly.included.length===0&&<p className="hint">Ни одной инструкции не включено; скрытые заводские инструкции не добавляются.</p>}
-      <ol className="prompt-diagnostic-records">{assembly.included.map(p=><li key={p.id}><strong>{p.title}</strong> <small>{p.id} · order {p.order}</small><pre>{p.text}</pre></li>)}</ol>
+      <ol className="prompt-diagnostic-records">{assembly.included.map(p=><li key={p.id}><strong>{p.title}</strong> <small>{p.id} · agent {p.agentId} matched · enabled · scenarios {(p.conditions?.scenarios??[]).join(", ")||"all"} · order {p.order}</small><pre>{p.text}</pre></li>)}</ol>
       <h4>Итоговый текст системных инструкций</h4><pre className="prompt-assembled-text">{assembly.text||"(пусто)"}</pre>
-      <details><summary>Исключённые записи ({assembly.excluded.length})</summary><ul>{assembly.excluded.map(item=><li key={item.prompt.id}><strong>{item.prompt.title}</strong> — {item.reason} · {item.prompt.id}</li>)}</ul></details>
+      <details><summary>Исключённые записи ({assembly.excluded.length})</summary><ul>{assembly.excluded.map(item=><li key={item.prompt.id}><strong>{item.prompt.title}</strong> — {item.reason} · {item.prompt.id} · agent {item.prompt.agentId} · enabled {String(item.prompt.enabled)} · scenarios {(item.prompt.conditions?.scenarios??[]).join(", ")||"all"}</li>)}</ul></details>
       <h4>Данные и контракты, передаваемые отдельно</h4>
       {agent==="nova"?<ul><li>Персонаж: имя и описание.</li><li>История диалога, Core Book и собранные воспоминания.</li><li>Числовые параметры когнитивного расписания.</li><li>Схемы зарегистрированных нативных инструментов и параметры генерации / reasoning.</li></ul>
       :agent==="memory-agent"?<ul><li>Релевантный контекст разговора, сообщение пользователя и публичный ответ Nova передаются отдельным user-сообщением.</li><li>JSON Schema structured-ответа передаётся отдельно как responseFormat; валидация и MemoryBroker остаются программными.</li></ul>

@@ -104,9 +104,10 @@ export class LLMCognitiveStep implements CognitiveStep {
     });
     throwIfAborted(context.signal);
     const promptScenario=context.userTurn?"reactive":"background";
-    const promptText=this.options.getPrompt
-      ?this.options.getPrompt("nova-system-plain",promptScenario)
-      :assemblePromptInstructions(createDefaultPromptConfiguration(),"nova",promptScenario).text;
+    const promptTextForScenario=(scenario:string)=>this.options.getPrompt
+      ?this.options.getPrompt("nova-system-plain",scenario)
+      :assemblePromptInstructions(createDefaultPromptConfiguration(),"nova",scenario).text;
+    const initialPromptText=promptTextForScenario(promptScenario);
     const schedule=this.options.getCognitiveSchedule?.();
     const scheduleContext=schedule?[
       "Cognitive schedule data (milliseconds):",
@@ -118,7 +119,7 @@ export class LLMCognitiveStep implements CognitiveStep {
     const messages=assembled.messages.map(message=>normalizeHistoricalMessage(message));
     if(reactiveUserMessage&&!messages.some(message=>message.id===reactiveUserMessage!.id))messages.push(cloneMessage(reactiveUserMessage));
     const baseMessages:ChatMessage[]=[
-      {id:conversation.id+":nova-turn:system",role:"system",content:promptText},
+      {id:conversation.id+":nova-turn:system",role:"system",content:initialPromptText},
       {id:conversation.id+":nova-turn:identity",role:"system",content:identity},
       {id:conversation.id+":nova-turn:schedule",role:"system",content:scheduleContext},
       ...messages,
@@ -150,14 +151,27 @@ export class LLMCognitiveStep implements CognitiveStep {
       ...(configuredGeneration?.repeatLastN!==undefined?{repeatLastN:configuredGeneration.repeatLastN}:{}),
       ...(configuredGeneration?.responseFormat!==undefined?{responseFormat:configuredGeneration.responseFormat}:{}),
     };
-    const reqFor=(id:string):ChatRequest=>({
-      apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION,requestId:id,model,
-      context:{conversationId:conversation.id,messages:[...baseMessages.map(cloneMessage),...history.map(cloneMessage)]},
-      generation:requestGeneration,
-      ...(toolDefinitions.length?{tools:toolDefinitions}:{}),
-      ...(reasoningOptions?{reasoning:reasoningOptions}:{}),
-      metadata:{cognition:true,protocol:"NATIVE_TOOL_CALLS",protocolVersion:2,outputMode:"plain"},
-    });
+    let activePromptScenario=promptScenario;
+    let activePromptText=initialPromptText;
+    const reqFor=(id:string):ChatRequest=>{
+      const nextScenario=roundsWithToolCalls>0?promptScenario+"+after-tool":promptScenario;
+      if(nextScenario!==activePromptScenario){
+        activePromptScenario=nextScenario;
+        activePromptText=promptTextForScenario(nextScenario);
+      }
+      const requestMessages=[...baseMessages.map(cloneMessage),...history.map(cloneMessage)];
+      const systemPromptIndex=requestMessages.findIndex(message=>message.id===conversation.id+":nova-turn:system");
+      if(systemPromptIndex<0)throw new Error("Nova cognitive request is missing its configured system prompt message.");
+      requestMessages[systemPromptIndex]={...requestMessages[systemPromptIndex]!,content:activePromptText};
+      return {
+        apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION,requestId:id,model,
+        context:{conversationId:conversation.id,messages:requestMessages},
+        generation:requestGeneration,
+        ...(toolDefinitions.length?{tools:toolDefinitions}:{}),
+        ...(reasoningOptions?{reasoning:reasoningOptions}:{}),
+        metadata:{cognition:true,protocol:"NATIVE_TOOL_CALLS",protocolVersion:2,outputMode:"plain"},
+      };
+    };
     while(true){
       throwIfAborted(context.signal);
       const currentRequestId=roundsWithToolCalls===0?request:request+"-tool-"+roundsWithToolCalls;
