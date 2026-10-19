@@ -82,18 +82,26 @@ class RecordingProvider implements TtsProvider{
   readonly requests:string[]=[];
   readonly emotions:string[]=[];
   gateFirst?:Promise<void>;
-  failAt?:number;
+  failText?:string;
+  failCount:number;
+  private readonly attemptsByText=new Map<string,number>();
   active=0;
   maxActive=0;
-  constructor(gateFirst?:Promise<void>,failAt?:number){this.gateFirst=gateFirst;this.failAt=failAt;}
+  constructor(gateFirst?:Promise<void>,failText?:string,failCount=0){
+    this.gateFirst=gateFirst;this.failText=failText;this.failCount=failCount;
+  }
   capabilities(){return capabilities;}
   async testConnection(_preset:TtsPreset,_signal:AbortSignal):Promise<TtsProviderHealth>{return {status:"healthy",message:"fake provider ready"};}
   async *synthesize(request:TtsSynthesisRequest,options:{signal:AbortSignal}):AsyncIterable<TtsStreamEvent>{
-    const index=this.requests.push(request.text)-1;this.emotions.push(request.emotion);
+    this.requests.push(request.text);this.emotions.push(request.emotion);
+    const textKey=request.text.trim();
+    const textAttempt=(this.attemptsByText.get(textKey)??0)+1;
+    this.attemptsByText.set(textKey,textAttempt);
     this.active++;this.maxActive=Math.max(this.maxActive,this.active);
     try{
       yield {type:"start",sessionId:request.sessionId,audio:metadata};
-      if(index===this.failAt)throw new Error("synthetic segment synthesis failure");
+      if(this.failText!==undefined&&textKey===this.failText.trim()&&textAttempt<=this.failCount)
+        throw new Error("synthetic segment synthesis failure");
       yield {type:"audio",sessionId:request.sessionId,sequence:0,data:new TextEncoder().encode(request.text)};
       if(this.requests.length===1&&this.gateFirst){await this.gateFirst; if(options.signal.aborted){const error=new Error("cancelled");error.name="AbortError";throw error;}}
       yield {type:"done",sessionId:request.sessionId};
@@ -227,23 +235,71 @@ async function synthesisRunsAheadOfPlaybackAndKeepsFifo():Promise<void>{
   controller.stop();
   ok(output.stops.some(id=>id===undefined),"explicit Stop cancels output even when synthesis has finalized");
 }
-async function segmentSynthesisFailureDoesNotStopAlreadyQueuedSpeech():Promise<void>{
-  const output=new PlaybackControlledOutput(),provider=new RecordingProvider(undefined,1);
+async function segmentSynthesisRetriesTransientFailuresAndPreservesFifo():Promise<void>{
+  const output=new PlaybackControlledOutput(),provider=new RecordingProvider(undefined,"Second sentence.",2);
+  const diagnostics:Array<{code:string;message:string}>=[];
   const settings:TtsSettings={...DEFAULT_TTS_SETTINGS,enabled:true,activePresetId:"test-preset",presets:[preset()]};
-  const controller=new SpeechOutputController({getSettings:()=>settings,getProvider:id=>id===provider.id?provider:undefined,output});
+  const controller=new SpeechOutputController({
+    getSettings:()=>settings,getProvider:id=>id===provider.id?provider:undefined,output,
+    onDiagnostic:(code,message)=>diagnostics.push({code,message})
+  });
   await controller.unlockPlayback();
-  await controller.handleSpeechEvent({type:"start",turnId:"turn-failed-segment"});
-  await controller.handleSpeechEvent({type:"delta",turnId:"turn-failed-segment",text:"First sentence. Second sentence."});
-  let cognitivelyReleased=false;
-  const finished=controller.finishTurn("turn-failed-segment").then(()=>{cognitivelyReleased=true;});
-  await until(()=>provider.requests.length===2&&output.pendingPlayback.size===1,"first segment must stay queued while second segment fails");
-  await finished;
-  ok(cognitivelyReleased&&output.pendingPlayback.size===1,"synthesis failure releases the turn while successful earlier audio continues playing");
-  ok(!output.stops.includes("nova-tts-1-turn-failed-segment"),"later synthesis failure does not stop the current playback session");
-  output.finishPlayback(0);
-  await until(()=>controller.getStatus().message.includes("Speech playback drained"),"the preserved audio drains after the early cognitive release");
-  equal(output.queued.length,1,"only the successful segment reaches playback");
-  ok(!output.stops.includes("nova-tts-1-turn-failed-segment"),"successful drain does not cancel preserved audio after a later segment error");
+  await controller.handleSpeechEvent({type:"start",turnId:"turn-retry-segment"});
+  const text="First sentence. Second sentence. Third sentence.";
+  await controller.handleSpeechEvent({type:"delta",turnId:"turn-retry-segment",text});
+  let finished=false;
+  const finish=controller.finishTurn("turn-retry-segment").then(()=>{finished=true;});
+  await until(()=>provider.requests.length===5&&output.pendingPlayback.size===3,
+    "a transiently failing sentence should retry twice, then resume the FIFO queue");
+  equal(provider.requests.filter(item=>item.trim()==="Second sentence.").length,3,
+    "the exact same failed sentence is requested three times total");
+  equal(output.queued.map(item=>item.text).join(""),text,
+    "successful retry preserves the original text and FIFO order without partial duplicate audio");
+  equal(diagnostics.filter(item=>item.code==="TTS_SEGMENT_RETRY").length,2,
+    "each retry is recorded with segment and attempt details");
+  ok(diagnostics.some(item=>item.code==="TTS_SEGMENT_RETRY"&&item.message.includes("attempt 1/3")),
+    "retry diagnostics identify the attempt number");
+  ok(!finished,"turn completion still waits for all successful audio to finish playing");
+  output.finishPlayback(0);output.finishPlayback(1);output.finishPlayback(2);
+  await finish;
+  ok(finished,"turn completes after recovered segments drain");
+  ok(!output.stops.includes("nova-tts-1-turn-retry-segment"),
+    "recoverable synthesis errors do not stop the playback session");
+  controller.stop();
+}
+async function segmentSynthesisSkipsAfterThreeFailuresAndContinuesFifo():Promise<void>{
+  const output=new PlaybackControlledOutput(),provider=new RecordingProvider(undefined,"Second sentence.",3);
+  const diagnostics:Array<{code:string;message:string}>=[];
+  const settings:TtsSettings={...DEFAULT_TTS_SETTINGS,enabled:true,activePresetId:"test-preset",presets:[preset()]};
+  const controller=new SpeechOutputController({
+    getSettings:()=>settings,getProvider:id=>id===provider.id?provider:undefined,output,
+    onDiagnostic:(code,message)=>diagnostics.push({code,message})
+  });
+  await controller.unlockPlayback();
+  await controller.handleSpeechEvent({type:"start",turnId:"turn-skip-segment"});
+  const text="First sentence. Second sentence. Third sentence.";
+  await controller.handleSpeechEvent({type:"delta",turnId:"turn-skip-segment",text});
+  let finished=false;
+  const finish=controller.finishTurn("turn-skip-segment").then(()=>{finished=true;});
+  await until(()=>provider.requests.length===5&&output.pendingPlayback.size===2,
+    "after three failures only the bad sentence is skipped and the next sentence is synthesized");
+  equal(provider.requests.filter(item=>item.trim()==="Second sentence.").length,3,
+    "a permanently failing sentence is attempted exactly three times");
+  equal(output.queued.map(item=>item.text).join(""),"First sentence. Third sentence.",
+    "only the bad sentence is omitted; successful surrounding sentences remain FIFO");
+  const skipped=diagnostics.find(item=>item.code==="TTS_SEGMENT_SKIPPED");
+  ok(skipped?.message.includes("Segment 2 skipped after 3 attempt(s)"),
+    "skip diagnostics record the 1-based segment index and total attempt count");
+  ok(skipped?.message.includes("synthetic segment synthesis failure"),
+    "skip diagnostics record the final synthesis error reason");
+  ok(diagnostics.filter(item=>item.code==="TTS_SEGMENT_RETRY").length===2,
+    "both retries are diagnosed before the final skip");
+  ok(!finished,"the turn waits for the remaining good segments to finish playback");
+  ok(!output.stops.includes("nova-tts-1-turn-skip-segment"),
+    "skipping one segment does not cancel the session or clear the output queue");
+  output.finishPlayback(0);output.finishPlayback(1);
+  await finish;
+  ok(finished,"FIFO synthesis and playback reach the end of the message after a skip");
   controller.stop();
 }
 async function assistantTurnsWaitForPlaybackAndInterruptionClearsQueue():Promise<void>{
@@ -1067,7 +1123,8 @@ async function main():Promise<void>{
   emotionMappingOnlyUsesSupportedActions();
   emotionDecodersDoNotGateSpeech();
   await synthesisRunsAheadOfPlaybackAndKeepsFifo();
-  await segmentSynthesisFailureDoesNotStopAlreadyQueuedSpeech();
+  await segmentSynthesisRetriesTransientFailuresAndPreservesFifo();
+  await segmentSynthesisSkipsAfterThreeFailuresAndContinuesFifo();
   await assistantTurnsWaitForPlaybackAndInterruptionClearsQueue();
   await failedNovaLifeTurnWaitsForStreamedSpeech();
   await noFirstAudioTimesOutAndReleasesTurn();
