@@ -80,8 +80,8 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
   },
   "app-settings": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v14",
-    "title": "AI Companion Nova App Settings v14",
+    "$id": "https://schemas.ai-companion-nova.dev/app-settings/v15",
+    "title": "AI Companion Nova App Settings v15",
     "type": "object",
     "additionalProperties": false,
     "required": [
@@ -104,7 +104,7 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
         "const": "1"
       },
       "schemaVersion": {
-        "const": "14"
+        "const": "15"
       },
       "chat": {
         "type": "object",
@@ -402,70 +402,147 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
       },
       "prompts": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "required": [
-          "overrides"
+          "overrides",
+          "presets",
+          "activePresetId"
         ],
         "properties": {
           "overrides": {
             "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "nova-system-json": {
-                "type": "string",
-                "maxLength": 12000
-              },
-              "nova-system-tagged": {
-                "type": "string",
-                "maxLength": 12000
-              },
-              "nova-system-plain": {
-                "type": "string",
-                "maxLength": 12000
-              },
-              "nova-cue-reactive-json": {
-                "type": "string",
-                "maxLength": 12000
-              },
-              "nova-cue-background-json": {
-                "type": "string",
-                "maxLength": 12000
-              },
-              "nova-cue-reactive-tagged": {
-                "type": "string",
-                "maxLength": 12000
-              },
-              "nova-cue-background-tagged": {
-                "type": "string",
-                "maxLength": 12000
-              },
-              "nova-cue-reactive-plain": {
-                "type": "string",
-                "maxLength": 12000
-              },
-              "nova-cue-background-plain": {
-                "type": "string",
-                "maxLength": 12000
-              },
-              "nova-schedule-structured": {
-                "type": "string",
-                "maxLength": 12000
-              },
-              "nova-schedule-plain": {
-                "type": "string",
-                "maxLength": 12000
-              },
-              "nova-tools-allowlist": {
-                "type": "string",
-                "maxLength": 12000
-              },
-              "memory-judge.system": {
-                "type": "string",
-                "maxLength": 12000
-              },
-              "memory-agent.system": {
-                "type": "string",
-                "maxLength": 12000
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 12000
+            }
+          },
+          "activePresetId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "presets": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": [
+                "id",
+                "name",
+                "description",
+                "schemaVersion",
+                "version",
+                "isBuiltIn",
+                "prompts"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$"
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "description": {
+                  "type": "string",
+                  "maxLength": 2000
+                },
+                "schemaVersion": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "version": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "isBuiltIn": {
+                  "type": "boolean"
+                },
+                "createdAt": {
+                  "type": "string",
+                  "maxLength": 80
+                },
+                "updatedAt": {
+                  "type": "string",
+                  "maxLength": 80
+                },
+                "metadata": {
+                  "type": "object",
+                  "additionalProperties": true
+                },
+                "prompts": {
+                  "type": "array",
+                  "maxItems": 128,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "required": [
+                      "id",
+                      "title",
+                      "text",
+                      "agentId",
+                      "enabled",
+                      "order"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$"
+                      },
+                      "title": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120
+                      },
+                      "text": {
+                        "type": "string",
+                        "maxLength": 12000
+                      },
+                      "agentId": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9._-]{0,79}$"
+                      },
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "order": {
+                        "type": "integer",
+                        "minimum": -100000,
+                        "maximum": 100000
+                      },
+                      "category": {
+                        "type": "string",
+                        "maxLength": 120
+                      },
+                      "legacyId": {
+                        "type": "string",
+                        "maxLength": 100
+                      },
+                      "conditions": {
+                        "type": "object",
+                        "additionalProperties": true,
+                        "properties": {
+                          "scenarios": {
+                            "type": "array",
+                            "maxItems": 32,
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 80
+                            }
+                          }
+                        }
+                      },
+                      "metadata": {
+                        "type": "object",
+                        "additionalProperties": true
+                      }
+                    }
+                  }
+                }
               }
             }
           }

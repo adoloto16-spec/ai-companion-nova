@@ -5,7 +5,7 @@ use std::{fs,io::Write,path::{Path,PathBuf}};
 use tauri::Manager;
 
 const API_VERSION:&str="1";
-const SCHEMA_VERSION:&str="14";
+const SCHEMA_VERSION:&str="15";
 const FILE_NAME:&str="app-settings-v1.json";
 const LEGACY_SCHEMA_VERSION:&str="0";
 const PREVIOUS_SCHEMA_VERSION:&str="3";
@@ -79,10 +79,15 @@ fn default_memory_agent_settings()->MemoryAgentSettings{
     MemoryAgentSettings{enabled:true,provider_preset_id:None,model:String::new(),output_mode:"auto".into(),prompt:DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS.to_string(),prompt_backup:None,default_prompt_version:DEFAULT_MEMORY_AGENT_PROMPT_VERSION.into()}
 }
 #[derive(Debug,Deserialize,Serialize,Clone,Default)]
-#[serde(deny_unknown_fields)]
 pub struct PromptSettings{
     #[serde(default)]
-    pub overrides:BTreeMap<String,String>
+    pub overrides:BTreeMap<String,String>,
+    #[serde(default)]
+    pub presets:Vec<Value>,
+    #[serde(rename="activePresetId",default)]
+    pub active_preset_id:Option<String>,
+    #[serde(flatten)]
+    pub extra:BTreeMap<String,Value>
 }
 #[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(deny_unknown_fields)]
@@ -288,7 +293,7 @@ fn valid_integer(value:i64,min:i64,max:i64,label:&str)->Result<(),String>{
     Ok(())
 }
 fn validate(settings:&AppSettings)->Result<(),String>{
-    if settings.api_version!=API_VERSION||!(settings.schema_version==SCHEMA_VERSION||matches!(settings.schema_version.as_str(),"5"|"6"|"7"|"8"|"9"|"10"|"11"|"12"|"13")){return Err("unsupported AppSettings version".into());}
+    if settings.api_version!=API_VERSION||!(settings.schema_version==SCHEMA_VERSION||matches!(settings.schema_version.as_str(),"5"|"6"|"7"|"8"|"9"|"10"|"11"|"12"|"13"|"14")){return Err("unsupported AppSettings version".into());}
     if !matches!(settings.cognitive_schedule.mode.as_str(),"adaptive"|"fixed"){return Err("Unsupported cognitive schedule mode.".into());}
     valid_integer(settings.cognitive_schedule.default_interval_ms,1000,3_600_000,"Cognitive schedule interval")?;
     valid_integer(settings.cognitive_schedule.min_interval_ms,1000,3_600_000,"Minimum cognitive interval")?;
@@ -474,12 +479,12 @@ fn migrate(value:Value)->Result<(AppSettings,bool),String>{
         if let Some(root)=normalized.as_object_mut(){
             migrated=migrate_memory_judge_default_prompt(root);
             let old_schema=root.get("schemaVersion").and_then(Value::as_str).unwrap_or_default().to_string();
-            if old_schema!=SCHEMA_VERSION && matches!(old_schema.as_str(),"5"|"6"|"7"|"8"|"9"|"10"|"11"|"12"|"13"){
+            if old_schema!=SCHEMA_VERSION && matches!(old_schema.as_str(),"5"|"6"|"7"|"8"|"9"|"10"|"11"|"12"|"13"|"14"){
                 root.insert("schemaVersion".into(),Value::String(SCHEMA_VERSION.to_string()));
                 migrated=true;
             }
-            if matches!(old_schema.as_str(),"13"|"14") && !root.contains_key("tts"){return Err("schema v13+ settings require a TTS settings object".into());}
-            if !matches!(old_schema.as_str(),"13"|"14") && !root.contains_key("tts"){
+            if matches!(old_schema.as_str(),"13"|"14"|"15") && !root.contains_key("tts"){return Err("schema v13+ settings require a TTS settings object".into());}
+            if !matches!(old_schema.as_str(),"13"|"14"|"15") && !root.contains_key("tts"){
                 root.insert("tts".into(),serde_json::to_value(default_tts_settings()).map_err(|e|format!("failed to encode TTS defaults: {e}"))?);
                 migrated=true;
             }
@@ -503,8 +508,12 @@ fn migrate(value:Value)->Result<(AppSettings,bool),String>{
                 }
             }
             if !root.contains_key("prompts"){
-                root.insert("prompts".into(),serde_json::json!({"overrides":{}}));
+                root.insert("prompts".into(),serde_json::json!({"overrides":{},"presets":[],"activePresetId":"default"}));
                 migrated=true;
+            }
+            if let Some(prompts)=root.get_mut("prompts").and_then(Value::as_object_mut){
+                if !prompts.contains_key("presets"){prompts.insert("presets".into(),Value::Array(vec![]));migrated=true;}
+                if !prompts.contains_key("activePresetId"){prompts.insert("activePresetId".into(),Value::String("default".into()));migrated=true;}
             }
             let effective_judge_prompt=root.get("prompts").and_then(Value::as_object)
                 .and_then(|prompts|prompts.get("overrides")).and_then(Value::as_object)
