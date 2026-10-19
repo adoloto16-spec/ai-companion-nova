@@ -4,6 +4,8 @@ import type {
   MemoryBroker,MemoryMutationAuthority,MemoryItem
 } from "../../contracts/src/index";
 
+type MemoryAgentResponseMode="structured"|"plain";
+
 function buildMemoryAgentPrompt(settings:AppSettings,outputMode:MemoryAgentResponseMode):string{
   const assembly=assemblePromptInstructions(settings.prompts,"memory-agent",outputMode);
   if(assembly.error)throw new Error(assembly.error);

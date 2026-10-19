@@ -12,7 +12,7 @@ import {
 import type {
   AppSettings,ChatRequest,ChatResponse,EmbeddingProvider,HealthStatus,MemoryItem,ProviderCapabilities
 } from "../../contracts/src";
-import {StandardContractValidator,STANDARD_SCHEMAS,defaultAppSettings,defaultModelProfile,migrateAppSettings,applyPromptOverride} from "../../contracts/src";
+import {StandardContractValidator,STANDARD_SCHEMAS,defaultAppSettings,defaultModelProfile,migrateAppSettings,applyPromptOverride,assemblePromptInstructions} from "../../contracts/src";
 import {ChatSessionController,ConversationSession,InMemoryAuditService,InMemoryDiagnosticsStore,InMemoryEventBus,MemoryBrokerImpl,SettingsManager} from "../../core/src";
 import {createFoundationRuntime} from "../../runtime/bootstrap/src/index";
 import type {HttpClient} from "../../providers/chat/openai-compatible/src/index";
@@ -345,7 +345,8 @@ async function manualLikeSequentialScenarioTest(){
   equal((await f.broker.get("character.a","real-memory-2"))?.status,"archived","after step 3 real memory 2 is archived");
   equal((await f.broker.get("character.a","real-memory-1"))?.status,"archived","after step 3 real memory 1 stays archived");
   ok(f.judge.calls.length>0,"production semantic deduplication invoked the Judge");
-  ok(f.judge.calls.every(call=>call.context.messages.some(message=>message.role==="system"&&message.content===editedJudgePrompt)),"edited prompt from the centralized registry is sent to each real Memory Judge request");
+  const assembledEditedJudge=assemblePromptInstructions(customized.prompts,"memory-judge","structured").text;
+  ok(f.judge.calls.every(call=>call.context.messages.some(message=>message.role==="system"&&message.content===assembledEditedJudge)),"edited prompt and structured protocol from the active preset are sent to each real Memory Judge request");
 }
 
 
@@ -364,7 +365,7 @@ async function settingsV5PersistenceTest(){
     chat:{automaticLongTermMemory:false,responseMode:"plain"},
     memoryAgent:{enabled:true,providerPresetId:"legacy-agent",model:"legacy-model",outputMode:"plain",prompt:"legacy prompt",promptBackup:"backup",defaultPromptVersion:"9"}
   });
-  equal(migrated.schemaVersion,"14","legacy saved settings migrate to AppSettings v14");
+  equal(migrated.schemaVersion,"15","legacy saved settings migrate to AppSettings v15");
   equal(migrated.chat.automaticLongTermMemory,false,"LONGMEMORY persistence setting remains intentional and preserved");
   equal(migrated.chat.responseMode,"plain","response mode remains preserved during settings migration");
   equal(migrated.memoryAgent.enabled,true,"legacy Memory Agent enable state is retained during migration");

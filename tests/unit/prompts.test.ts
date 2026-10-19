@@ -1,5 +1,5 @@
 import {
-  APP_SETTINGS_SCHEMA_VERSION,DEFAULT_PROMPT_TEXTS,PROMPT_REGISTRY,StandardContractValidator,
+  APP_SETTINGS_SCHEMA_VERSION,DEFAULT_PROMPT_PRESET,DEFAULT_PROMPT_TEXTS,PROMPT_REGISTRY,StandardContractValidator,assemblePromptInstructions,clonePromptConfiguration,createDefaultPromptPreset,
   applyPromptOverride,defaultAppSettings,migrateAppSettings,resolvePromptText,restoreAllPromptDefaults,
   restorePromptDefault,validateAppSettings
 } from "../../contracts/src";
@@ -28,6 +28,16 @@ async function main():Promise<void>{
   const manager=new SettingsManager(store,validator);
   const initial=await manager.initialize();
   equal(initial.schemaVersion,APP_SETTINGS_SCHEMA_VERSION,"settings manager initializes current schema");
+  const reactive=assemblePromptInstructions(initial.prompts,"nova","reactive");
+  ok(reactive.included.some(prompt=>prompt.id==="nova-cue-reactive-plain"),"reactive scenario includes its assigned cue");
+  ok(!reactive.included.some(prompt=>prompt.id==="nova-cue-background-plain"),"reactive scenario excludes the background cue");
+  ok(!reactive.included.some(prompt=>prompt.id==="nova-system-json"||prompt.id==="nova-system-tagged"),"native Nova request excludes disabled legacy response protocols");
+  equal(reactive.text,reactive.included.map(prompt=>prompt.text).join("\n\n"),"runtime instruction text exactly matches ordered prompt records");
+  const memoryStructured=assemblePromptInstructions(initial.prompts,"memory-agent","structured");
+  ok(memoryStructured.included.some(prompt=>prompt.id==="memory-agent-safety"),"Memory Agent safety guidance is visible as a preset record");
+  ok(memoryStructured.included.some(prompt=>prompt.id==="memory-agent-output-structured"),"Memory Agent structured protocol is assembled from preset records");
+  ok(!memoryStructured.included.some(prompt=>prompt.id==="memory-agent-output-plain"),"Memory Agent excludes plain protocol on structured calls");
+  ok(DEFAULT_PROMPT_PRESET.prompts.some(prompt=>prompt.id==="memory-judge-output-plain"),"reference Default retains the editable plain Judge protocol");
 
   let custom=applyPromptOverride(initial,"nova-system-json","CUSTOM JSON SYSTEM");
   custom=applyPromptOverride(custom,"nova-cue-reactive-tagged","CUSTOM REACTIVE TAG CUE");
@@ -96,7 +106,7 @@ async function main():Promise<void>{
   legacy.semanticDedup.embeddingModel="legacy-embedding-model";
   legacy.context.availableContextTokens=6144;
   const migrated=migrateAppSettings(legacy);
-  equal(migrated.schemaVersion,"14","previous AppSettings version migrates to the current v14 schema");
+  equal(migrated.schemaVersion,"15","previous AppSettings version migrates to the current v15 schema");
   equal(migrated.prompts.overrides["memory-judge.system"],"Legacy user-authored Judge prompt","migration promotes custom Judge text into the central registry");
   equal(migrated.prompts.overrides["memory-agent.system"],"Legacy custom Automatic Memory Agent prompt","migration preserves old agent prompt in the editable registry");
   equal(migrated.memoryAgent.prompt,"Legacy custom Automatic Memory Agent prompt","migration keeps legacy agent prompt setting compatible");
@@ -106,12 +116,41 @@ async function main():Promise<void>{
   equal(migrated.semanticDedup.embeddingProviderPresetId,"legacy-embedding-preset","migration preserves embedding provider preset");
   equal(migrated.semanticDedup.embeddingModel,"legacy-embedding-model","migration preserves embedding model");
   equal(migrated.context.availableContextTokens,6144,"migration preserves unrelated context settings");
+  const legacyDefault=migrated.prompts.presets.find(preset=>preset.id==="default");
+  equal(legacyDefault?.prompts.find(prompt=>prompt.legacyId==="memory-agent.system")?.text,"Legacy custom Automatic Memory Agent prompt","legacy prompt text is copied into a Default preset record");
+  const extensible=clonePromptConfiguration(initial.prompts);
+  const defaultPreset=extensible.presets.find(preset=>preset.id==="default")!;
+  defaultPreset.futurePresetField={kept:true};
+  defaultPreset.prompts[0]!.futurePromptField="keep-this-field";
+  extensible.futureConfigurationField={revision:9};
+  const extended=JSON.parse(JSON.stringify({...initial,prompts:extensible})) as Record<string,any>;
+  const extendedReload=migrateAppSettings(extended);
+  equal(extendedReload.prompts.futureConfigurationField,{revision:9},"migration preserves unknown prompt configuration fields");
+  equal(extendedReload.prompts.presets.find((preset:Record<string,any>)=>preset.id==="default")?.futurePresetField,{kept:true},"migration preserves unknown preset fields");
+  equal(extendedReload.prompts.presets.find((preset:Record<string,any>)=>preset.id==="default")?.prompts[0]?.futurePromptField,"keep-this-field","migration preserves unknown prompt-record fields");
+  const emptyPreset={...createDefaultPromptPreset(),id:"empty-lab",name:"Empty Lab",isBuiltIn:false,prompts:[]};
+  const emptyConfiguration={...initial.prompts,presets:[...initial.prompts.presets,emptyPreset],activePresetId:"empty-lab"};
+  const emptyAssembly=assemblePromptInstructions(emptyConfiguration,"nova","reactive");
+  equal(emptyAssembly.text,"","an intentionally empty preset does not restore factory instructions");
+  ok(!emptyAssembly.error,"an empty but valid preset is not a configuration error");
+  const missingAssembly=assemblePromptInstructions({...initial.prompts,activePresetId:"missing"},"nova","reactive");
+  ok(!!missingAssembly.error&&missingAssembly.text==="","a missing active preset reports an error without fallback text");
 
   const invalid={...defaultAppSettings(),prompts:{overrides:{"unregistered-prompt":"custom"}}} as unknown as AppSettings;
   ok(validateAppSettings(invalid).some(error=>error.includes("Unsupported prompt id")),"unknown prompt ids are rejected");
   let rejected=false;
   try{migrateAppSettings({...defaultAppSettings(),prompts:{overrides:{"nova-system-json":"x".repeat(12001)}}});}catch{rejected=true;}
   ok(rejected,"prompt values exceeding the limit are rejected during migration");
-  console.log("PASS editable prompt registry, settings persistence, resets, and migration");
+  const emptyManager=new SettingsManager(store,validator);
+  await emptyManager.initialize();
+  const activeEmpty={...emptyManager.get(),prompts:emptyConfiguration};
+  await emptyManager.set(activeEmpty);
+  const emptyReload=await new SettingsManager(store,validator).initialize();
+  equal(emptyReload.prompts.activePresetId,"empty-lab","active custom preset persists across settings-manager restart");
+  equal(assemblePromptInstructions(emptyReload.prompts,"nova","reactive").text,"","empty active preset remains empty after restart");
+  const removedActive={...emptyReload,prompts:{...emptyReload.prompts,presets:emptyReload.prompts.presets.filter(preset=>preset.id!=="empty-lab")}};
+  const normalizedRemoved=migrateAppSettings(removedActive);
+  equal(normalizedRemoved.prompts.activePresetId,"default","removed active preset is repaired to Default during settings normalization");
+  console.log("PASS editable prompt presets, routing, unknown-field migration, persistence, resets, and no-fallback behavior");
 }
 void main().catch(error=>{console.error(error);process.exitCode=1;});

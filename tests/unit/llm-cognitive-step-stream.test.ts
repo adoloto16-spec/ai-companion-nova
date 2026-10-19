@@ -128,7 +128,7 @@ async function ordinaryTextStreamsSeparatelyFromReasoning():Promise<void>{
   equal(returned,false,"provider stream is still open when the first speech delta arrives");
   equal(calls[0]?.generation?.responseFormat,undefined,"native cognition does not request mandatory JSON Schema");
   equal(calls[0]?.context.messages.find(message=>message.role==="system")?.content,"CUSTOM PROMPT: nova-system-plain","native cognition uses the ordinary-text system prompt");
-  equal(calls[0]?.context.messages.find(message=>message.id?.endsWith(":user-cue"))?.content,"CUSTOM PROMPT: nova-cue-reactive-plain","native cognition uses the ordinary reactive cue");
+  ok(!calls[0]?.context.messages.some(message=>message.id?.endsWith(":user-cue")),"reactive/background cues are assembled into the preset system instructions rather than injected as a separate user message");
   ok(!speechEvents.some(item=>item.text?.includes("Provider-only reasoning")),"provider reasoning is never forwarded to speech or TTS events");
   resume();
   const result=await run;
