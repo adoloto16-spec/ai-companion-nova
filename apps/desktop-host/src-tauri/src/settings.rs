@@ -515,6 +515,32 @@ fn migrate(value:Value)->Result<(AppSettings,bool),String>{
                 if !prompts.contains_key("presets"){prompts.insert("presets".into(),Value::Array(vec![]));migrated=true;}
                 if !prompts.contains_key("activePresetId"){prompts.insert("activePresetId".into(),Value::String("default".into()));migrated=true;}
             }
+            let custom_memory_prompt=root.get("memoryAgent").and_then(Value::as_object)
+                .and_then(|agent|agent.get("prompt")).and_then(Value::as_str).map(str::to_string);
+            let has_memory_override=root.get("prompts").and_then(Value::as_object)
+                .and_then(|prompts|prompts.get("overrides")).and_then(Value::as_object)
+                .map(|overrides|overrides.contains_key("memory-agent.system")).unwrap_or(false);
+            if !has_memory_override {
+                if let Some(prompt)=custom_memory_prompt.as_deref(){
+                    if !prompt.trim().is_empty() && prompt!=DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS{
+                        if let Some(prompt_settings)=root.get_mut("prompts").and_then(Value::as_object_mut){
+                            let overrides=prompt_settings.entry("overrides").or_insert_with(||Value::Object(serde_json::Map::new()));
+                            if !overrides.is_object(){*overrides=Value::Object(serde_json::Map::new());}
+                            overrides.as_object_mut().expect("prompt overrides object").insert("memory-agent.system".into(),Value::String(prompt.into()));
+                            migrated=true;
+                        }
+                    }
+                }
+            }
+            let effective_memory_prompt=root.get("prompts").and_then(Value::as_object)
+                .and_then(|prompts|prompts.get("overrides")).and_then(Value::as_object)
+                .and_then(|overrides|overrides.get("memory-agent.system")).and_then(Value::as_str)
+                .filter(|prompt|!prompt.trim().is_empty())
+                .unwrap_or(DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS).to_string();
+            if let Some(agent)=root.get_mut("memoryAgent").and_then(Value::as_object_mut){
+                if agent.get("prompt").and_then(Value::as_str)!=Some(effective_memory_prompt.as_str()){migrated=true;}
+                agent.insert("prompt".into(),Value::String(effective_memory_prompt));
+            }
             let effective_judge_prompt=root.get("prompts").and_then(Value::as_object)
                 .and_then(|prompts|prompts.get("overrides")).and_then(Value::as_object)
                 .and_then(|overrides|overrides.get("memory-judge.system")).and_then(Value::as_str)
@@ -683,11 +709,16 @@ mod tests{
                     judge.insert("model".into(),Value::String("judge-model".into()));
                 }
             }
+            if let Some(agent)=root.get_mut("memoryAgent").and_then(Value::as_object_mut){
+                agent.insert("prompt".into(),Value::String("custom legacy Memory Agent prompt".into()));
+            }
         }
         let (settings,migrated)=migrate(value).expect("previous settings version should migrate");
         assert!(migrated);
         assert_eq!(settings.schema_version,SCHEMA_VERSION);
         assert_eq!(settings.prompts.overrides.get("memory-judge.system").map(String::as_str),Some("custom legacy Judge prompt"));
+        assert_eq!(settings.prompts.overrides.get("memory-agent.system").map(String::as_str),Some("custom legacy Memory Agent prompt"));
+        assert_eq!(settings.memory_agent.prompt,"custom legacy Memory Agent prompt");
         assert_eq!(settings.semantic_dedup.judge.prompt,"custom legacy Judge prompt");
         assert_eq!(settings.semantic_dedup.judge.provider_preset_id.as_deref(),Some("judge-preset"));
         assert_eq!(settings.semantic_dedup.judge.model,"judge-model");
@@ -698,7 +729,7 @@ mod tests{
     }
 
 
-    #[test]fn migrates_schema_v12_to_v14_and_preserves_existing_settings(){
+    #[test]fn migrates_schema_v12_to_v15_and_preserves_existing_settings(){
         let mut value=serde_json::to_value(default_settings()).expect("encode defaults");
         let root=value.as_object_mut().expect("settings object");
         root.insert("schemaVersion".into(),Value::String("12".into()));
@@ -708,7 +739,7 @@ mod tests{
         root.insert("prompts".into(),serde_json::json!({"overrides":{"nova-system-json":"preserved prompt"}}));
         let (settings,migrated)=migrate(value).expect("schema v12 should migrate");
         assert!(migrated);
-        assert_eq!(settings.schema_version,"14");
+        assert_eq!(settings.schema_version,"15");
         assert_eq!(settings.context.available_context_tokens,6144);
         assert_eq!(settings.context.recent_conversation_messages,9);
         assert!(!settings.chat.automatic_long_term_memory);
