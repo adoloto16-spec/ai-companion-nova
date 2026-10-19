@@ -108,3 +108,23 @@ input,select{padding:9px;border:1px solid #394655;border-radius:7px;background:#
 .prompt-fields textarea[readonly]{opacity:.68}
 .prompt-card .actions{align-items:center}
 @media (max-width:900px){.prompt-registry-header{flex-direction:column}.prompt-fields{grid-template-columns:1fr}}
+
+.prompt-toolbar{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.prompt-preset-select,.prompt-preset-details,.prompt-editor-layout,.prompt-diagnostics{display:grid;gap:14px;padding:16px;border:1px solid #2a3441;border-radius:10px;background:#151c25}
+.prompt-preset-select{grid-template-columns:minmax(240px,1fr) auto auto;align-items:end}
+.prompt-preset-select label,.prompt-preset-details label,.prompt-editor label,.prompt-diagnostics label{display:grid;gap:6px;min-width:0}
+.prompt-preset-details{grid-template-columns:minmax(200px,1fr) minmax(260px,2fr)}
+.prompt-editor-layout{grid-template-columns:minmax(220px,.8fr) minmax(0,2fr);align-items:start}
+.prompt-records,.prompt-editor{display:grid;gap:12px;min-width:0}
+.prompt-record-row{display:grid;gap:4px;text-align:left;padding:10px;border:1px solid #394655;border-radius:8px;background:#0f141b;color:#e9eef5;cursor:pointer}
+.prompt-record-row.selected{border-color:#7b9ed0;background:#1b2b3d}
+.prompt-record-meta{font-size:11px;opacity:.72;overflow-wrap:anywhere}
+.prompt-section-title{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.prompt-section-title h3{margin:0;font-size:16px}
+.prompt-editor-layout input,.prompt-editor-layout textarea,.prompt-editor-layout select,.prompt-preset-select select,.prompt-preset-details input,.prompt-preset-details textarea,.prompt-diagnostics select,.prompt-diagnostics input{width:100%;box-sizing:border-box;padding:9px;border:1px solid #394655;border-radius:7px;background:#0f141b;color:#e9eef5}
+.prompt-editor textarea{font-family:Consolas,monospace;line-height:1.45;font-size:12px;resize:vertical}
+.prompt-diagnostics pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:440px;overflow:auto;padding:12px;border:1px solid #394655;border-radius:8px;background:#0f141b;color:#e9eef5;font-family:Consolas,monospace;font-size:12px}
+.prompt-diagnostic-records{padding-left:22px}
+.prompt-diagnostic-records li{margin:12px 0}
+.prompt-toolbar button{white-space:nowrap}
+@media(max-width:900px){.prompt-preset-select,.prompt-preset-details,.prompt-editor-layout{grid-template-columns:1fr}.prompt-toolbar{justify-content:flex-start}}

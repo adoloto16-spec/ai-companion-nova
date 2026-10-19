@@ -30,7 +30,7 @@ import {
   type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
   type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem, type ErrorDiagnostic,
-  defaultAppSettings, validateAppSettings, StandardContractValidator, applyPromptOverride, restorePromptDefault, restoreAllPromptDefaults, type PromptId,
+  defaultAppSettings, validateAppSettings, StandardContractValidator, applyPromptOverride, restorePromptDefault,
   type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo, type MindState, type MindTraceEntry, type MindTurnSink, type MindReactiveTurn
 } from "../../../contracts/src/index";
 import {countVisibleSpeechMessages,resolveNovaTurnMessagePresentation} from "./nova-turn-visibility";
@@ -1709,11 +1709,8 @@ function AppSettingsView({
         <textarea value={settings.semanticDedup.judge.prompt}
           onChange={event=>{
             const prompt=event.currentTarget.value;
-            onChange({
-              ...settings,
-              prompts:{overrides:{...settings.prompts.overrides,"memory-judge.system":prompt}},
-              semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,prompt}}
-            });
+            const updated=applyPromptOverride(settings,"memory-judge.system",prompt);
+            onChange({...updated,semanticDedup:{...updated.semanticDedup,judge:{...updated.semanticDedup.judge,prompt}}});
           }}
           rows={10} maxLength={12000} disabled={saving}/>
         <small>{settings.semanticDedup.judge.prompt===defaults.semanticDedup.judge.prompt?"Default prompt":"Custom prompt"} · default version {settings.semanticDedup.judge.defaultPromptVersion}. This setting is synchronized with the Prompts tab.</small>
@@ -3064,35 +3061,24 @@ function App(){
     finally{setSaving(false);}
   },[speechOutputController]);
 
-  const savePromptOverride=React.useCallback(async(id:PromptId,text:string)=>{
+  const savePromptSettings=React.useCallback(async(nextPromptSettings:AppSettings,message:string)=>{
     const foundation=foundationRef.current;
     if(!foundation){setSettingsLoadMessage("Settings runtime is not available.");return;}
-    const nextSettings=applyPromptOverride(appSettings,id,text);
+    const active=nextPromptSettings.prompts.presets.find(p=>p.id===nextPromptSettings.prompts.activePresetId);
+    const legacyText=(id:string)=>active?.prompts.find(p=>p.legacyId===id)?.text??"";
+    const nextSettings:AppSettings={...nextPromptSettings,
+      memoryAgent:{...nextPromptSettings.memoryAgent,prompt:legacyText("memory-agent.system")},
+      semanticDedup:{...nextPromptSettings.semanticDedup,judge:{...nextPromptSettings.semanticDedup.judge,prompt:legacyText("memory-judge.system")}}
+    };
     const errors=validateAppSettings(nextSettings);
     if(errors.length){setSettingsLoadMessage(errors.join(" "));return;}
     setSaving(true);setSettingsLoadMessage("");
     try{
       const next=await foundation.updateSettings(nextSettings);
-      setAppSettings(next);
-      setSettingsLoadMessage(text.trim().length>0?"Prompt saved and applied.":"Factory prompt restored and applied.");
-    }catch(error){setSettingsLoadMessage(error instanceof Error?error.message:"Prompt could not be saved.");}
+      setAppSettings(next);setSettingsLoadMessage(message);
+    }catch(error){setSettingsLoadMessage(error instanceof Error?error.message:"Prompt presets could not be saved.");}
     finally{setSaving(false);}
-  },[appSettings]);
-
-  const restoreAllPromptOverrides=React.useCallback(async()=>{
-    const foundation=foundationRef.current;
-    if(!foundation){setSettingsLoadMessage("Settings runtime is not available.");return;}
-    const nextSettings=restoreAllPromptDefaults(appSettings);
-    const errors=validateAppSettings(nextSettings);
-    if(errors.length){setSettingsLoadMessage(errors.join(" "));return;}
-    setSaving(true);setSettingsLoadMessage("");
-    try{
-      const next=await foundation.updateSettings(nextSettings);
-      setAppSettings(next);
-      setSettingsLoadMessage("All factory prompts restored and applied.");
-    }catch(error){setSettingsLoadMessage(error instanceof Error?error.message:"Prompts could not be restored.");}
-    finally{setSaving(false);}
-  },[appSettings]);
+  },[]);
 
   const activeChatDraftKey=activeCharacter&&activeConversation
     ?chatDraftKey(activeCharacter.id,activeConversation.id)
@@ -3125,8 +3111,7 @@ function App(){
     {view==="model-profile"&&activeCharacter&&activeModelProfile
       ?<ModelProfileView profile={activeModelProfile} runtime={runtime} presets={providerPresets} activePresetId={activePresetId} onSave={saveModelProfile}/>
       :view==="prompts"
-      ?<PromptRegistryView settings={appSettings} saving={saving} message={settingsLoadMessage}
-          onSavePrompt={savePromptOverride} onRestoreAll={restoreAllPromptOverrides}/>
+      ?<PromptRegistryView settings={appSettings} saving={saving} message={settingsLoadMessage} onSaveSettings={savePromptSettings}/>
       :view==="settings"
       ?<SettingsContainerView
           appSettings={appSettings}
