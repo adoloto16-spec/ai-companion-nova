@@ -231,7 +231,7 @@ async function backgroundStepMayReturnNoSpeech():Promise<void>{
   equal(result.turn.speech,"","background step may complete without inventing a user-facing message");
   equal(result.turn.nextWakeMs,30000,"background wake uses the configured bounded default interval");
   equal(requestList[0]?.generation?.responseFormat,undefined,"background requests use the same native plain response contract");
-  equal(requestList[0]?.context.messages.find(message=>message.id?.endsWith(":user-cue"))?.content.includes("Do not invent a reason to speak"),true,"background prompt explicitly permits silence");
+  equal(requestList[0]?.context.messages.find(message=>message.role==="system")?.content.includes("Do not invent a reason to speak"),true,"background silence guidance is part of the active preset's system instructions");
 }
 
 async function main():Promise<void>{
