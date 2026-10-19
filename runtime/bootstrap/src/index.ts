@@ -8,7 +8,7 @@ import {
   DefaultConfirmationService,DefaultRiskPolicy,BrowserTargetResolver,ScopedCapabilityContext,
   InMemoryActorIdentityResolver,createMemoryConfig,SettingsManager,InMemoryChatTraceStore
 } from "../../../core/src/index";
-import {StandardContractValidator,resolvePromptText} from "../../../contracts/src/index";
+import {StandardContractValidator,assemblePromptInstructions} from "../../../contracts/src/index";
 import {FakeBrowserModule,FakeCharacterModule,FakeMemoryModule} from "../../../modules/mock/src/index";
 import {FakeChatProvider,FakeSTTProvider,FakeEmbeddingProvider,FakeVisionProvider} from "../../../providers/mock/src/index";
 import {TtsProviderRegistry} from "../../../providers/tts/registry/src";
@@ -453,7 +453,11 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
         return getChatModelForPreset(providerPresetId);
       },
       getCognitiveSchedule:()=>settingsManager.get().cognitiveSchedule,
-      getPrompt:(id:PromptId)=>resolvePromptText(settingsManager.get().prompts,id),
+      getPrompt:(_id:PromptId,scenario="reactive")=>{
+        const assembly=assemblePromptInstructions(settingsManager.get().prompts,"nova",scenario);
+        if(assembly.error)throw new Error(assembly.error);
+        return assembly.text;
+      },
       getAvailableTools:()=>tools.list().map(tool=>({name:tool.name,description:tool.description,parameters:tool.parameters})),
       executeTool:executeRegisteredTool,
       getReasoningOptions:()=>{

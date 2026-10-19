@@ -1,4 +1,4 @@
-import {resolvePromptText} from "../../contracts/src";
+import {assemblePromptInstructions,createDefaultPromptConfiguration} from "../../contracts/src";
 import type {PromptId} from "../../contracts/src";
 import type {
   AssembledContext,Character,ChatMessage,ChatRequest,ChatRequestOptions,ChatResponse,
@@ -29,7 +29,7 @@ export interface LLMCognitiveStepOptions {
   getChatModel:()=>string;
   getChatModelForPreset:(providerPresetId:string)=>Promise<string>;
   getCognitiveSchedule?:()=>CognitiveScheduleSettings;
-  getPrompt?:(id:PromptId)=>string;
+  getPrompt?:(id:PromptId,scenario?:string)=>string;
   getAvailableTools?:()=>readonly {name:string;description:string;parameters:unknown}[];
   executeTool?:MindToolExecutor["execute"];
   getReasoningOptions?:()=>ChatReasoningOptions;
@@ -103,28 +103,25 @@ export class LLMCognitiveStep implements CognitiveStep {
       conversationId:conversation.id,messages:conversation.messages,budget:this.options.getContextBudget(),
     });
     throwIfAborted(context.signal);
-    const promptText=(id:PromptId)=>{
-      const configured=this.options.getPrompt?.(id);
-      return typeof configured==="string"&&configured.trim().length>0?configured:resolvePromptText(undefined,id);
-    };
+    const promptScenario=context.userTurn?"reactive":"background";
+    const promptText=this.options.getPrompt
+      ?this.options.getPrompt("nova-system-plain",promptScenario)
+      :assemblePromptInstructions(createDefaultPromptConfiguration(),"nova",promptScenario).text;
     const schedule=this.options.getCognitiveSchedule?.();
     const scheduleContext=schedule?[
-      "[COGNITIVE SCHEDULE]",
-      "Default next wake interval: "+schedule.defaultIntervalMs+" ms.",
-      "Permitted next wake interval: "+schedule.minIntervalMs+" to "+schedule.maxIntervalMs+" ms.",
-      "Use the scheduler tool only when changing the next interval is useful; the runtime enforces these bounds.",
-      "[/COGNITIVE SCHEDULE]",
+      "Cognitive schedule data (milliseconds):",
+      "default="+schedule.defaultIntervalMs,
+      "minimum="+schedule.minIntervalMs,
+      "maximum="+schedule.maxIntervalMs
     ].join("\n"):"";
     const identity=["[IDENTITY / CHARACTER]","Name: "+character.name,"Description: "+character.description,"[/IDENTITY / CHARACTER]"].join("\n");
     const messages=assembled.messages.map(message=>normalizeHistoricalMessage(message));
     if(reactiveUserMessage&&!messages.some(message=>message.id===reactiveUserMessage!.id))messages.push(cloneMessage(reactiveUserMessage));
     const baseMessages:ChatMessage[]=[
-      {id:conversation.id+":nova-turn:system",role:"system",content:promptText("nova-system-plain")},
+      {id:conversation.id+":nova-turn:system",role:"system",content:promptText},
       {id:conversation.id+":nova-turn:identity",role:"system",content:identity},
       {id:conversation.id+":nova-turn:schedule",role:"system",content:scheduleContext},
       ...messages,
-      {id:conversation.id+":nova-turn:user-cue",role:"user",content:promptText(context.userTurn?"nova-cue-reactive-plain":"nova-cue-background-plain")+
-        (context.userTurn?"":"\nThis is a background step. Do not invent a reason to speak. If no useful user-facing reply or action is needed, return an empty answer.")},
     ];
     const providerPresetId=this.options.getActiveProviderPresetId()??this.options.runtime.getActiveProviderPresetId?.();
     const model=providerPresetId?await this.options.getChatModelForPreset(providerPresetId):this.options.getChatModel();
