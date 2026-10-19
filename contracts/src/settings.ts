@@ -132,19 +132,16 @@ export function defaultAppSettings():AppSettings{
 
 export function applyPromptOverride(settings:AppSettings,id:PromptId,text:string):AppSettings{
   const overrides:PromptOverrides={...settings.prompts.overrides};
-  if(typeof text==="string"&&text.trim().length>0)overrides[id]=text;
-  else delete overrides[id];
-  const prompts={...settings.prompts,overrides};
-  const judgePrompt=resolvePromptText(prompts,"memory-judge.system");
-  return {
-    ...settings,
-    prompts,
-    ...(id==="memory-agent.system"?{memoryAgent:{...settings.memoryAgent,prompt:resolvePromptText(prompts,"memory-agent.system")}}:{}),
-    semanticDedup:{
-      ...settings.semanticDedup,
-      judge:{...settings.semanticDedup.judge,prompt:judgePrompt}
-    }
-  };
+  if(typeof text==="string"&&text.trim().length>0)overrides[id]=text;else delete overrides[id];
+  const replacement=typeof text==="string"&&text.trim().length>0?text:DEFAULT_PROMPT_TEXTS[id];
+  const presets=settings.prompts.presets.map(preset=>preset.id!==settings.prompts.activePresetId?preset:{
+    ...preset,version:preset.version+1,prompts:preset.prompts.map(prompt=>prompt.legacyId===id?{...prompt,text:replacement}:prompt)
+  });
+  const prompts={...settings.prompts,overrides,presets};
+  const active=presets.find(preset=>preset.id===settings.prompts.activePresetId);
+  const effective=(legacyId:PromptId)=>active?.prompts.find(prompt=>prompt.legacyId===legacyId)?.text??"";
+  return {...settings,prompts,memoryAgent:{...settings.memoryAgent,prompt:effective("memory-agent.system")},
+    semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,prompt:effective("memory-judge.system")}}};
 }
 
 export function restorePromptDefault(settings:AppSettings,id:PromptId):AppSettings{
@@ -406,7 +403,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const semanticJudgeOutputMode=semanticJudge.outputMode==="structured"||semanticJudge.outputMode==="plain"||semanticJudge.outputMode==="auto"?semanticJudge.outputMode:"auto";
   const semanticJudgeLegacyPrompt=typeof semanticJudge.instructions==="string"?semanticJudge.instructions.trim():"";
   const storedSemanticJudgePrompt=typeof semanticJudge.prompt==="string"?semanticJudge.prompt:"";
-  const previousBuiltInJudgePrompt="You are a memory deduplication judge.\n\nCompare NEW MEMORY with CANDIDATES.\n\nKeep the most complete and informative record.\n\nIf NEW MEMORY is less informative because its information is contained in a candidate, archive NEW.\n\nIf a candidate is less informative because its information is contained in NEW MEMORY, archive that candidate number.\n\nIf records contain essentially the same information, archive one duplicate.\n\nIf records contain different useful information, archive nothing.\n\nYour decision is the list of archive targets.\n\nIn structured mode, return only:\n{\\"archive\\":[\\"NEW\\",\\"1\\",\\"2\\"]}\n\nIn plain mode, return only:\nNO_ARCHIVE\nor NEW / candidate numbers, one per line.\n\nNever return explanations.\nNever invent candidate numbers.";
+  const previousBuiltInJudgePrompt="You are a memory deduplication judge.\n\nCompare NEW MEMORY with CANDIDATES.\n\nKeep the most complete and informative record.\n\nIf NEW MEMORY is less informative because its information is contained in a candidate, archive NEW.\n\nIf a candidate is less informative because its information is contained in NEW MEMORY, archive that candidate number.\n\nIf records contain essentially the same information, archive one duplicate.\n\nIf records contain different useful information, archive nothing.\n\nYour decision is the list of archive targets.\n\nIn structured mode, return only:\n{\"archive\":[\"NEW\",\"1\",\"2\"]}\n\nIn plain mode, return only:\nNO_ARCHIVE\nor NEW / candidate numbers, one per line.\n\nNever return explanations.\nNever invent candidate numbers.";
   const semanticJudgePromptIsLegacyDefault=(storedSemanticJudgePrompt===LEGACY_MEMORY_JUDGE_PROMPT&&semanticJudge.defaultPromptVersion==="1")||(storedSemanticJudgePrompt===previousBuiltInJudgePrompt&&semanticJudge.defaultPromptVersion==="2");
   const promptSettings=root.prompts&&typeof root.prompts==="object"?root.prompts:{};
   const rawPromptOverrides=promptSettings.overrides&&typeof promptSettings.overrides==="object"&&!Array.isArray(promptSettings.overrides)?promptSettings.overrides as Record<string,unknown>:{};

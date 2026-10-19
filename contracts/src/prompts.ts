@@ -169,9 +169,9 @@ export function clonePromptConfiguration(configuration: PromptConfiguration): Pr
   return {...configuration,overrides:{...(configuration.overrides??{})},presets:(configuration.presets??[]).map(preset=>({...preset,
     prompts:(preset.prompts??[]).map(prompt=>({...prompt,
       ...(prompt.conditions?{conditions:{...prompt.conditions,...(prompt.conditions.scenarios?{scenarios:[...prompt.conditions.scenarios]}:{})}}:{}),
-      ...(prompt.metadata?{metadata:{...prompt.metadata}:{})
+      ...(prompt.metadata?{metadata:{...prompt.metadata}}:{})
     })),
-    ...(preset.metadata?{metadata:{...preset.metadata}:{})
+    ...(preset.metadata?{metadata:{...preset.metadata}}:{})
   }))};
 }
 export function createDefaultPromptConfiguration(overrides: PromptOverrides = {}): PromptConfiguration {
