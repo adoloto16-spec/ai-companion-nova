@@ -484,7 +484,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
       keepRecentEntries:typeof diagnostics.keepRecentEntries==="number"?diagnostics.keepRecentEntries:defaults.diagnostics.keepRecentEntries
     },
     ui:{showDiagnosticsInChat:typeof ui.showDiagnosticsInChat==="boolean"?ui.showDiagnosticsInChat:defaults.ui.showDiagnosticsInChat,showReasoningInDiagnostics:typeof ui.showReasoningInDiagnostics==="boolean"?ui.showReasoningInDiagnostics:defaults.ui.showReasoningInDiagnostics},
-    tts:["13","14"].includes(String(input.schemaVersion))?normalizeTtsSettings(root.tts):cloneTtsSettings(defaults.tts)
+    tts:["13","14","15"].includes(String(input.schemaVersion))?normalizeTtsSettings(root.tts):cloneTtsSettings(defaults.tts)
   };
   const errors=validateAppSettings(next);
   if(errors.length>0)throw new Error("Invalid AppSettings: "+errors.join(" "));
