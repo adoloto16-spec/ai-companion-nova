@@ -63,7 +63,7 @@ const createConversationAction=blockBetween("const createConversation=React.useC
 const deleteConversationAction=blockBetween("const deleteConversation=React.useCallback(async(conversation:Conversation)=>{","const createCharacter=React.useCallback(async(name:string)=>{");
 const deleteCharacterAction=blockBetween("const deleteCharacter=React.useCallback(async(id:string)=>{","const configurationForPreset=");
 const settingsResetStart=source.indexOf("const resetAppSettings=React.useCallback(async()=>{");
-const settingsResetEnd=source.indexOf("const savePromptOverride=React.useCallback",settingsResetStart);
+const settingsResetEnd=source.indexOf("const savePromptSettings=React.useCallback",settingsResetStart);
 assert.ok(settingsResetStart>=0&&settingsResetEnd>settingsResetStart,"settings reset handler must be present");
 const settingsResetAction=source.slice(settingsResetStart,settingsResetEnd);
 assert.ok(chatStopAction.indexOf("onStopSpeech();")>=0&&chatStopAction.indexOf("onStopSpeech();")<chatStopAction.indexOf("await controller.stop();"),"Chat Stop cancels speech before stopping generation");
