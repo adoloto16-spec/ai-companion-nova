@@ -31,3 +31,17 @@ Log policy: append an entry for each implementation or verification action; reco
 ### Verification status
 - Baseline PR metadata and workflow status: checked.
 - Local execution, interactive rendering, and Windows desktop behavior are not available through the GitHub repository connector and remain unverified until CI/desktop smoke testing.
+
+
+## 2026-10-23 — Entry 002: renderer-neutral contracts and unit tests
+
+### Actions performed
+- Added `modules/character/src/index.ts`: renderer-independent avatar profile/settings/intent types, validated file extension handling, normalized setting bounds, deterministic dialogue-to-expression mapping, screen-region targeting, and a BroadcastChannel event bridge for the main/overlay webviews.
+- Added `modules/vision/src/index.ts`: injected vision-inference contract, bounded screenshot payload validation, JSON response parsing, normalized region validation, and stable screen observation output.
+- Added unit tests for settings validation, model format restrictions, dialogue intents, point target bounds, invalid model response geometry, and reuse of the configured vision model.
+- Added both unit test files to the root test command.
+
+### Verification after this action
+- Source blobs were created on GitHub but are not yet attached to the branch tree; this entry records the implementation stage, not a passing test claim.
+- Unit tests and TypeScript checks will be run through the branch's CI after the integrated code commit.
+- Decision: keep the module APIs independent of the provider and renderer implementations; no changes were made to Nova's conversational `Character` persistence or memory.
