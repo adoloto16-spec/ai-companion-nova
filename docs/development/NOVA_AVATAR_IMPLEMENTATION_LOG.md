@@ -99,3 +99,19 @@ Log policy: append an entry for each implementation or verification action; reco
 ### Verification status
 - The prior implementation's TypeScript typecheck/build passed; `pnpm test` failed only at the exact screen-placement equality assertion documented above.
 - The precision fix has not yet been checked by CI; rerun validation is required before treating the movement path as verified.
+
+
+## 2026-10-23 — Entry 006: use the supported Tauri window scale-factor API
+
+### Action performed
+- Inspected the React UI typecheck output from run [39958709467](https://github.com/adoloto16-spec/ai-companion-nova/actions/runs/39958709467), job `react-ui`.
+- The compiler reported `TS2339: Property 'currentMonitor' does not exist on type 'Window'` in `avatar-studio.tsx`. The frontend compile therefore correctly rejected the assumed API.
+- Replaced the unsupported method with the Tauri v2 `Window.scaleFactor()` API when converting the overlay's current physical position to logical coordinates.
+
+### Decision
+- Keep the geometry conversion based on the overlay window's actual scale factor, not the destination monitor's factor, because source and target monitors can use different DPI scaling.
+- Do not bypass TypeScript or cast the window API to an invented shape.
+
+### Verification status
+- After Entry 005, the full root `pnpm test` succeeded, including the screen placement geometry tests.
+- The same CI run's React UI typecheck exposed this compile-time API mismatch; the fix in this entry requires another full CI run.

@@ -125,9 +125,9 @@ export default function AvatarStudioView({ visionModel, visionBaseUrl }: { visio
       const overlay = await findOverlay();
       if (!overlay) throw new Error("The Tauri desktop overlay is not available.");
       const placement = resolveOverlayPlacement(region.bounds, monitor);
-      const previousMonitor = await overlay.currentMonitor();
+      const overlayScaleFactor = await overlay.scaleFactor();
       const physicalStart = await overlay.outerPosition();
-      const start = physicalStart.toLogical(previousMonitor?.scaleFactor ?? monitor.scaleFactor);
+      const start = physicalStart.toLogical(overlayScaleFactor);
       const walk: AvatarIntent = {
         action: "walk", expression: "happy", intensity: 1,
         target: next.target, label: region.label
