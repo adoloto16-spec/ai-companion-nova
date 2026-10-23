@@ -27,6 +27,25 @@
         "title": "AI Companion Nova",
         "width": 1100,
         "height": 760
+      },
+      {
+        "label": "avatar-overlay",
+        "title": "Nova Avatar",
+        "url": "avatar-overlay.html",
+        "width": 380,
+        "height": 620,
+        "x": 80,
+        "y": 120,
+        "center": false,
+        "visible": false,
+        "transparent": true,
+        "decorations": false,
+        "shadow": false,
+        "resizable": false,
+        "minimizable": false,
+        "maximizable": false,
+        "skipTaskbar": true,
+        "alwaysOnTop": true
       }
     ]
   },

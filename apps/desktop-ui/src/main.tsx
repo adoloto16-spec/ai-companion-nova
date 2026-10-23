@@ -1,5 +1,7 @@
 import React from "react";
 import PromptRegistryView from "./prompt-registry-view";
+import AvatarStudioView from "./avatar-studio";
+import { publishAvatarIntent, resolveDialogueIntent } from "../../../modules/character/src/index";
 import {createRoot} from "react-dom/client";
 import {invoke} from "@tauri-apps/api/core";
 import {NovaHttpClient} from "./ollama-http-client";
@@ -306,6 +308,15 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     return presentation.render&&Boolean(presentation.text.trim());
   });
   const lastAssistantStatus=lastAssistant?messageStreamStatus(lastAssistant):undefined;
+  React.useEffect(()=>{
+    if(!lastAssistant)return;
+    const presentation=resolveNovaTurnMessagePresentation(lastAssistant,false);
+    if(!presentation.render||!presentation.text.trim())return;
+    publishAvatarIntent(resolveDialogueIntent(
+      presentation.text,
+      snapshot.status==="streaming"&&messageStreamStatus(lastAssistant)==="streaming"
+    ));
+  },[lastAssistant?.id,lastAssistant?.content,snapshot.status]);
   const showContinue=snapshot.status==="interrupted"&&lastAssistantStatus==="interrupted"&&!snapshot.sending;
   const showRegenerate=(snapshot.status==="completed"||snapshot.status==="interrupted")&&(lastAssistantStatus==="complete"||lastAssistantStatus==="interrupted")&&!snapshot.sending;
   const showRetry=snapshot.status==="error"&&!snapshot.sending;
@@ -2337,7 +2348,7 @@ function credentialSavedEntries(
 }
 
 function App(){
-  const [view,setView]=React.useState<"chat"|"characters"|"memory"|"core-book"|"model-profile"|"prompts"|"settings"|"diagnostics">("chat");
+  const [view,setView]=React.useState<"chat"|"characters"|"memory"|"core-book"|"avatar"|"model-profile"|"prompts"|"settings"|"diagnostics">("chat");
   const [runtime,setRuntime]=React.useState<RuntimeDiagnostics>(preview);
   const [saving,setSaving]=React.useState(false);
   const [startupStatus,setStartupStatus]=React.useState<"initializing"|"ready"|"error">("initializing");
@@ -3092,6 +3103,7 @@ function App(){
         <button className={view==="characters"?"nav-button active":"nav-button"} onClick={()=>setView("characters")}>Characters</button>
         <button className={view==="memory"?"nav-button active":"nav-button"} onClick={()=>setView("memory")}>Character Memory</button>
         <button className={view==="core-book"?"nav-button active":"nav-button"} onClick={()=>setView("core-book")}>Core Book</button>
+        <button className={view==="avatar"?"nav-button active":"nav-button"} onClick={()=>setView("avatar")}>Avatar Studio</button>
         <button className={view==="prompts"?"nav-button active":"nav-button"} onClick={()=>setView("prompts")}>Промты</button>
         <button className={view==="model-profile"?"nav-button active":"nav-button"} onClick={()=>setView("model-profile")}>Model Profile</button>
         <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Settings</button>
@@ -3108,7 +3120,11 @@ function App(){
       </div>
     </header>
     <ViewErrorBoundary key={view} view={view} onError={reportViewError}>
-    {view==="model-profile"&&activeCharacter&&activeModelProfile
+    {view==="avatar"
+      ?<AvatarStudioView
+          visionModel={providerPresets.find(p=>p.id===activePresetId)?.sources.find(s=>s.id===providerPresets.find(p=>p.id===activePresetId)?.activeSourceId && s.providerId==="ollama" && s.enabled)?.model ?? providerPresets.flatMap(p=>p.sources).find(s=>s.providerId==="ollama"&&s.enabled)?.model ?? ""}
+          visionBaseUrl={providerPresets.find(p=>p.id===activePresetId)?.sources.find(s=>s.id===providerPresets.find(p=>p.id===activePresetId)?.activeSourceId && s.providerId==="ollama" && s.enabled)?.baseUrl ?? providerPresets.flatMap(p=>p.sources).find(s=>s.providerId==="ollama"&&s.enabled)?.baseUrl ?? "http://127.0.0.1:11434"} />
+      :view==="model-profile"&&activeCharacter&&activeModelProfile
       ?<ModelProfileView profile={activeModelProfile} runtime={runtime} presets={providerPresets} activePresetId={activePresetId} onSave={saveModelProfile}/>
       :view==="prompts"
       ?<PromptRegistryView settings={appSettings} saving={saving} message={settingsLoadMessage} onSaveSettings={savePromptSettings}/>

@@ -45,3 +45,20 @@ Log policy: append an entry for each implementation or verification action; reco
 - Source blobs were created on GitHub but are not yet attached to the branch tree; this entry records the implementation stage, not a passing test claim.
 - Unit tests and TypeScript checks will be run through the branch's CI after the integrated code commit.
 - Decision: keep the module APIs independent of the provider and renderer implementations; no changes were made to Nova's conversational `Character` persistence or memory.
+
+
+## 2026-10-23 — Entry 003: renderer, settings, and Tauri overlay integration
+
+### Actions performed
+- Added the frontend dependencies `three`, `@pixiv/three-vrm`, and `@types/three`; added Vite multi-page entry configuration for the main UI and `avatar-overlay.html`.
+- Added `avatar-library.ts` to import supported single-file models into local IndexedDB, keep profile settings separate from the source asset, and select/delete/rename saved profiles.
+- Added `vrm-avatar-canvas.tsx` using the official GLTFLoader + `VRMLoaderPlugin` flow. It adapts to available VRM humanoid bones and expression manager, plays the first GLB animation clip when present, and supplies basic breathing/head movement/blink/talk/wave/point behavior.
+- Added Avatar Studio UI, the secondary overlay view/entry, and styling. The main UI has a separate Avatar Studio navigation page. Assistant message presentation emits renderer-neutral intent events to the avatar subsystem.
+- Configured a separate initially hidden transparent, undecorated, always-on-top Tauri window. Added only the required narrow window commands to the existing Tauri capability and authorized the two intended window labels.
+- Added manual screen sharing and single-frame local Ollama image analysis UI, with validated normalized target regions and the ability to ask the avatar to look/point toward a selected region.
+
+### Decisions and limits
+- Avatar state is stored in a dedicated IndexedDB database and never added to Nova's conversational Character store or prompt instructions.
+- VRM/GLB rendering is the only implemented renderer in this stage. The Live2D status explicitly says the adapter runtime is not configured; there is no false claim that Cubism models play.
+- Screen capture is user-initiated; analysis happens only after pressing Analyze. No periodic capture loop is installed.
+- This action records intended integration. CI will determine whether the implementation compiles; runtime behavior on a physical Windows desktop remains separately unverified.

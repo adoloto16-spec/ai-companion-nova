@@ -3,7 +3,8 @@
   "identifier": "default",
   "description": "Minimal desktop capability. No filesystem, shell, process or automation plugin permissions.",
   "windows": [
-    "main"
+    "main",
+    "avatar-overlay"
   ],
   "permissions": [
     "core:app:default",
@@ -56,6 +57,10 @@
     "allow-ollama-http-stream",
     "allow-ollama-http-cancel",
     "allow-silero-http-request",
-    "allow-silero-http-cancel"
+    "allow-silero-http-cancel",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-focus",
+    "core:window:allow-set-ignore-cursor-events"
   ]
 }
