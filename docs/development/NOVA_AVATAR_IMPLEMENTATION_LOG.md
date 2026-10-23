@@ -62,3 +62,25 @@ Log policy: append an entry for each implementation or verification action; reco
 - VRM/GLB rendering is the only implemented renderer in this stage. The Live2D status explicitly says the adapter runtime is not configured; there is no false claim that Cubism models play.
 - Screen capture is user-initiated; analysis happens only after pressing Analyze. No periodic capture loop is installed.
 - This action records intended integration. CI will determine whether the implementation compiles; runtime behavior on a physical Windows desktop remains separately unverified.
+
+
+## 2026-10-23 — Entry 004: CI verification and screen-space movement refinement
+
+### Actions performed
+- Waited for GitHub Actions run [39956481804](https://github.com/adoloto16-spec/ai-companion-nova/actions/runs/39956481804) to complete on HEAD `823648a152c0c969ed61c184da18af816b585a05`.
+- Recorded the run's final overall conclusion: `success`. The TypeScript Foundation job (including the root test command), React UI job, Rust/Tauri validation job, and Windows installer job all succeeded. The Windows job built the NSIS installer, installed the staged application, passed its startup smoke test, calculated its SHA-256, and uploaded the artifact.
+- Tried to clone the branch into the execution container for local reruns; the container could not resolve `github.com` (DNS failure), so local execution remains unavailable. CI outcomes are from GitHub Actions, not local execution.
+- Added normalized monitor matching and work-area placement helpers to the avatar contract module, with tests for unique monitor matches, refusal to guess when capture is a window/ambiguous, and clamped placement.
+- Added basic upper-leg/arm gait for a walking intent, capture-surface/dimension metadata, and native overlay window movement toward a selected region when the full-monitor geometry can be matched.
+- Added narrow Tauri permissions for native overlay position/size changes and updated the user-facing architecture/limitation documentation.
+
+### Decisions
+- Move the avatar window only when the captured image dimensions match exactly one available monitor within a 1.5% tolerance; never infer desktop coordinates from a browser-tab/window crop or ambiguous monitor sizes.
+- Use the monitor work area rather than raw screen bounds so the avatar is less likely to be hidden under the taskbar.
+- Publish a walking intent during the window-position transition, followed by the pointing intent. The walk is still procedural and does not claim full IK or physical locomotion simulation.
+- The first CI run verified the preceding implementation only. The movement refinement, new monitor tests, capability changes, and journal update still require a new CI run.
+
+### Verification status
+- Pre-refinement commit `823648a152c0c969ed61c184da18af816b585a05`: GitHub Actions fully green.
+- Refinement in this entry: verification pending the next GitHub Actions run.
+- Real-world monitor/DPI mapping, transparent compositing, mouse pass-through, and smooth movement across mixed-DPI monitors remain unverified in a live Windows desktop session.

@@ -25,9 +25,9 @@ VRM is the priority renderer, but the source model must contain appropriate huma
 
 Live2D remains an explicit adapter boundary, not a working renderer. A licensed Cubism SDK/Core installation is required before it can be implemented and tested. No proprietary SDK binaries are bundled here.
 
-Pointing currently maps a selected region in the captured image to an approximate gaze direction and arm gesture. It does **not** move the model to the edge of a particular YouTube/browser window. The generic display-capture stream does not provide reliable cross-platform desktop origin/window geometry; physical screen-space navigation needs a separate, platform-aware window geometry service and collision/positioning controller.
+When the capture geometry matches exactly one monitor, selecting a recognized region moves the separate overlay window beside that region and publishes a walking intent before the final pointing gesture. The match is fail-closed: sharing a browser tab/window, unknown or downscaled dimensions, or multiple monitors with the same resolution falls back to pointing from the current location rather than guessing. This movement uses the monitor work area and region estimate; it does not identify exact browser/video window borders or use YouTube's DOM/timestamp.
 
-The current motion layer is a small procedural behavior controller, not full-body IK, physical balance simulation, cloth/hair simulation or learned motion generation. The controller and profile schema are designed so those layers can be added without a dependency from core chat to the renderer.
+The current motion layer is a small procedural behavior controller with basic VRM upper-leg/arm gait while the overlay window traverses the desktop. It is not full-body IK, physical balance simulation, cloth/hair simulation or learned motion generation. The controller and profile schema are designed so those layers can be added without a dependency from core chat to the renderer.
 
 ## Screen capture privacy
 

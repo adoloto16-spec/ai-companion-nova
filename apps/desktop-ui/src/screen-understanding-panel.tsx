@@ -1,11 +1,12 @@
 import React from "react";
 import { TauriOllamaHttpClient } from "./ollama-http-client";
 import { analyzeScreenFrame, type ScreenFrame, type ScreenRegion, type ScreenObservation } from "../../../modules/vision/src/index";
+import type { ScreenCaptureGeometry } from "../../../modules/character/src/index";
 
 const ollama = new TauriOllamaHttpClient(120_000);
 
 export default function ScreenUnderstandingPanel({ model, baseUrl, onPointAt }: {
-  model: string; baseUrl: string; onPointAt: (region: ScreenRegion) => void;
+  model: string; baseUrl: string; onPointAt: (region: ScreenRegion, capture: ScreenCaptureGeometry) => void;
 }) {
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
   const [stream, setStream] = React.useState<MediaStream | null>(null);
@@ -25,6 +26,17 @@ export default function ScreenUnderstandingPanel({ model, baseUrl, onPointAt }: 
     return () => { if (video?.srcObject === stream) video.srcObject = null; };
   }, [stream]);
   React.useEffect(() => () => stream?.getTracks().forEach(track => track.stop()), [stream]);
+
+  const captureGeometry = React.useCallback((): ScreenCaptureGeometry => {
+    const video = videoRef.current;
+    const track = stream?.getVideoTracks()[0];
+    const raw = (track?.getSettings() ?? {}) as MediaTrackSettings & { displaySurface?: string };
+    const surface = raw.displaySurface === "monitor" || raw.displaySurface === "window" || raw.displaySurface === "browser"
+      ? raw.displaySurface : "unknown";
+    const width = typeof raw.width === "number" && Number.isFinite(raw.width) ? raw.width : video?.videoWidth ?? 0;
+    const height = typeof raw.height === "number" && Number.isFinite(raw.height) ? raw.height : video?.videoHeight ?? 0;
+    return { surface, width, height };
+  }, [stream]);
 
   const stopCapture = React.useCallback(() => {
     stream?.getTracks().forEach(track => track.stop());
@@ -123,7 +135,7 @@ export default function ScreenUnderstandingPanel({ model, baseUrl, onPointAt }: 
             <button type="button" className="secondary-button" onClick={stopCapture} disabled={busy}>Stop sharing</button>
           </>}
     </div>
-    <p className="privacy-note">No continuous analysis is started. Use Stop sharing to end capture. Regions are model estimates and may not match exact pixels or a video's timestamp.</p>
+    <p className="privacy-note">No continuous analysis is started. Use Stop sharing to end capture. Regions are estimates. To move the desktop avatar beside a target, share the entire monitor rather than a window or browser tab.</p>
     {error && <p className="form-error" role="alert">{error}</p>}
     {observation && <div className="screen-observation">
       <p className="screen-summary">{observation.summary}</p>
@@ -132,12 +144,12 @@ export default function ScreenUnderstandingPanel({ model, baseUrl, onPointAt }: 
         {observation.regions.map(region => <button key={region.id} type="button" className="vision-region-hitbox"
           style={{ left: region.bounds.x * 100 + "%", top: region.bounds.y * 100 + "%", width: region.bounds.width * 100 + "%", height: region.bounds.height * 100 + "%" }}
           aria-label={"Point avatar at " + region.label} title={region.label + " · " + Math.round(region.confidence * 100) + "%"}
-          onClick={() => onPointAt(region)}/>)}
+          onClick={() => onPointAt(region, captureGeometry())}/>)}
       </div>}
       <div className="screen-region-list">
         {observation.regions.map(region => <article className="screen-region-row" key={region.id}>
           <div><strong>{region.label}</strong><p>{region.description}</p><small>Model confidence estimate: {Math.round(region.confidence * 100)}%</small></div>
-          <button type="button" className="secondary-button" onClick={() => onPointAt(region)}>Point</button>
+          <button type="button" className="secondary-button" onClick={() => onPointAt(region, captureGeometry())}>Point</button>
         </article>)}
         {!observation.regions.length && <p>No visible regions were returned. Try a clearer frame or check that the configured model supports image input.</p>}
       </div>

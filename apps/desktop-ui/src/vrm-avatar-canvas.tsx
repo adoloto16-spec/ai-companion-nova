@@ -20,6 +20,10 @@ interface LoadedModel {
   leftArmBase?: THREE.Euler;
   rightArm?: THREE.Object3D;
   rightArmBase?: THREE.Euler;
+  leftLeg?: THREE.Object3D;
+  leftLegBase?: THREE.Euler;
+  rightLeg?: THREE.Object3D;
+  rightLegBase?: THREE.Euler;
 }
 
 export default function VrmAvatarCanvas({ profile, settings, intent, className = "" }: {
@@ -102,6 +106,8 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
         const head = vrm?.humanoid?.getNormalizedBoneNode("head") ?? undefined;
         const leftArm = vrm?.humanoid?.getNormalizedBoneNode("leftUpperArm") ?? undefined;
         const rightArm = vrm?.humanoid?.getNormalizedBoneNode("rightUpperArm") ?? undefined;
+        const leftLeg = vrm?.humanoid?.getNormalizedBoneNode("leftUpperLeg") ?? undefined;
+        const rightLeg = vrm?.humanoid?.getNormalizedBoneNode("rightUpperLeg") ?? undefined;
         scene.add(root);
         loaded = {
           root, ...(vrm ? { vrm } : {}),
@@ -110,7 +116,9 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
           height: Math.max(size.y, 1),
           ...(head ? { head, headBase: head.rotation.clone() } : {}),
           ...(leftArm ? { leftArm, leftArmBase: leftArm.rotation.clone() } : {}),
-          ...(rightArm ? { rightArm, rightArmBase: rightArm.rotation.clone() } : {})
+          ...(rightArm ? { rightArm, rightArmBase: rightArm.rotation.clone() } : {}),
+          ...(leftLeg ? { leftLeg, leftLegBase: leftLeg.rotation.clone() } : {}),
+          ...(rightLeg ? { rightLeg, rightLegBase: rightLeg.rotation.clone() } : {})
         };
         if (loaded.mixer && gltf.animations[0]) loaded.mixer.clipAction(gltf.animations[0]).play();
         setStatus(vrm ? "VRM loaded" : gltf.animations.length ? "GLB loaded · animation playing" : "GLB loaded");
@@ -135,21 +143,31 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
         const prefs = settingsRef.current, action = intentRef.current;
         const activity = prefs.idleMotion && prefs.autonomy !== "off" ? prefs.motionIntensity : 0;
         current.root.scale.copy(current.baseScale).multiplyScalar(prefs.scale);
-        current.root.position.y = current.baseY + (prefs.breathing ? Math.sin(elapsed * 1.25) * 0.008 * activity : 0);
+        const walking = action.action === "walk" ? Math.sin(elapsed * 8) * 0.28 * action.intensity : 0;
+        const walkBounce = action.action === "walk" ? Math.abs(Math.sin(elapsed * 8)) * 0.012 * action.intensity : 0;
+        current.root.position.y = current.baseY + (prefs.breathing ? Math.sin(elapsed * 1.25) * 0.008 * activity : 0) + walkBounce;
         if (current.head && current.headBase) {
-          const target = action.action === "point" ? action.target : undefined;
+          const target = action.action === "point" || action.action === "walk" ? action.target : undefined;
           const yaw = target ? (target.x - 0.5) * 0.45 : prefs.lookAround ? Math.sin(elapsed * 0.37) * 0.12 * activity : 0;
           const pitch = target ? -(target.y - 0.5) * 0.28 : prefs.lookAround ? Math.sin(elapsed * 0.23) * 0.04 * activity : 0;
           current.head.rotation.set(current.headBase.x + pitch, current.headBase.y + yaw, current.headBase.z);
         }
         if (current.rightArm && current.rightArmBase) {
           const wave = action.action === "wave" ? Math.sin(elapsed * 7) * 0.15 * action.intensity : 0;
+          const swing = action.action === "walk" ? Math.sin(elapsed * 8 + Math.PI) * 0.18 * action.intensity : 0;
           const point = action.action === "point" && (!action.target || action.target.x >= 0.5) ? 0.65 * action.intensity : 0;
-          current.rightArm.rotation.set(current.rightArmBase.x, current.rightArmBase.y, current.rightArmBase.z - (wave || point));
+          current.rightArm.rotation.set(current.rightArmBase.x + swing, current.rightArmBase.y, current.rightArmBase.z - (wave || point));
         }
         if (current.leftArm && current.leftArmBase) {
+          const swing = action.action === "walk" ? Math.sin(elapsed * 8) * 0.18 * action.intensity : 0;
           const point = action.action === "point" && action.target && action.target.x < 0.5 ? 0.65 * action.intensity : 0;
-          current.leftArm.rotation.set(current.leftArmBase.x, current.leftArmBase.y, current.leftArmBase.z - point);
+          current.leftArm.rotation.set(current.leftArmBase.x + swing, current.leftArmBase.y, current.leftArmBase.z - point);
+        }
+        if (current.leftLeg && current.leftLegBase) {
+          current.leftLeg.rotation.set(current.leftLegBase.x + walking, current.leftLegBase.y, current.leftLegBase.z);
+        }
+        if (current.rightLeg && current.rightLegBase) {
+          current.rightLeg.rotation.set(current.rightLegBase.x - walking, current.rightLegBase.y, current.rightLegBase.z);
         }
         if (current.vrm?.expressionManager) {
           const expressions = current.vrm.expressionManager;
