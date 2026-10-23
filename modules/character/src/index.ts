@@ -102,11 +102,10 @@ export function resolveOverlayPlacement(
   const targetY = monitor.logicalPosition.y + centerY * monitor.logicalSize.height;
   const proposedX = centerX > 0.55 ? targetX - width - margin : targetX + margin;
   const proposedY = targetY - height * 0.68;
-  return {
-    x: Math.min(monitor.workAreaPosition.x + monitor.workAreaSize.width - width, Math.max(monitor.workAreaPosition.x, proposedX)),
-    y: Math.min(monitor.workAreaPosition.y + monitor.workAreaSize.height - height, Math.max(monitor.workAreaPosition.y, proposedY)),
-    width, height
-  };
+  const x = Math.min(monitor.workAreaPosition.x + monitor.workAreaSize.width - width, Math.max(monitor.workAreaPosition.x, proposedX));
+  const y = Math.min(monitor.workAreaPosition.y + monitor.workAreaSize.height - height, Math.max(monitor.workAreaPosition.y, proposedY));
+  // Native window placement is pixel-based; remove IEEE-754 residue before sending coordinates to Tauri.
+  return { x: Math.round(x), y: Math.round(y), width, height };
 }
 
 let channel: BroadcastChannel | undefined;

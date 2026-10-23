@@ -84,3 +84,18 @@ Log policy: append an entry for each implementation or verification action; reco
 - Pre-refinement commit `823648a152c0c969ed61c184da18af816b585a05`: GitHub Actions fully green.
 - Refinement in this entry: verification pending the next GitHub Actions run.
 - Real-world monitor/DPI mapping, transparent compositing, mouse pass-through, and smooth movement across mixed-DPI monitors remain unverified in a live Windows desktop session.
+
+
+## 2026-10-23 — Entry 005: diagnose and fix monitor placement precision
+
+### Action performed
+- Inspected the failed test output from GitHub Actions run [39958446273](https://github.com/adoloto16-spec/ai-companion-nova/actions/runs/39958446273), job `typescript-foundation`.
+- Identified the exact failing assertion: screen placement calculated `x: 1197.9999999999998` while native logical-pixel placement/test expectation was `x: 1198`. No other failure was reported before the unit-test command stopped.
+- Fixed the production placement helper by rounding final logical x/y window positions to whole pixels. Kept the expected test value unchanged.
+
+### Decision
+- Native desktop windows are placed on logical-pixel coordinates in this flow; returning fractional residue has no value and makes deterministic placement brittle. Rounding at the boundary is preferable to weakening the test or using an approximate test matcher.
+
+### Verification status
+- The prior implementation's TypeScript typecheck/build passed; `pnpm test` failed only at the exact screen-placement equality assertion documented above.
+- The precision fix has not yet been checked by CI; rerun validation is required before treating the movement path as verified.
