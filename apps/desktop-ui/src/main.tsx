@@ -240,8 +240,8 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     if(runtime.getMindState().lifecycleState!=="off"){
       try{
         const result=await controller.submitToLife(messageText,async()=>{await onPersist();},turn=>runtime.wakeMindForUserMessage(turn),submittedImages);
-        if(result.status==="awaiting-life"||result.status==="life-failed"){
-          onClearSubmittedDraft(submittedDraft);
+        if(result.status==="awaiting-life")onClearSubmittedDraft(submittedDraft);
+        if(result.status==="awaiting-life"){
           setPendingImages([]);
           setCaptureError("");
         }
@@ -253,8 +253,8 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     }
     controller.clearFailedLifeTurnForOrdinaryChat();
     const result=await controller.submit(messageText,runtime.getActiveChatModel(),submittedImages);
+    if(result.status==="sent")onClearSubmittedDraft(submittedDraft);
     if(result.status==="sent"){
-      onClearSubmittedDraft(submittedDraft);
       setPendingImages([]);
       setCaptureError("");
     }

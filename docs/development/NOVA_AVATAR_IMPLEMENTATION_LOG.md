@@ -187,3 +187,19 @@ Log policy: append an entry for each implementation or verification action; reco
 ### Verification status
 - The source fix is awaiting a new full CI run.
 - The previous root test run confirmed the schema/type/build steps, capture/provider unit tests, and existing streaming UI regression passed before the desktop navigation regression test stopped the suite.
+
+
+## 2026-10-24 — Entry 012: preserve the existing draft-clear semantics
+
+### Diagnosis
+- The latest root test run [40049091664](https://github.com/adoloto16-spec/ai-companion-nova/actions/runs/40049091664) passed the screenshot/provider tests, navigation test, and streaming UI contract, then failed at `desktop-ui-regression.test.ts`: “ordinary Chat clears a draft only after a successful send”.
+- The original UI regression test also explicitly requires Nova Life to clear only on `awaiting-life`, not on `life-failed`. The screenshot integration had grouped these conditions together, inadvertently changing existing retry behavior.
+
+### Corrective action
+- Restored the explicit `if(result.status==="sent") onClearSubmittedDraft(submittedDraft)` and `if(result.status==="awaiting-life") onClearSubmittedDraft(submittedDraft)` guards.
+- Kept screenshot preview clearing in separate blocks with the same success conditions. On `life-failed`, the draft and pending screenshot remain available, matching the existing Chat retry semantics.
+- No tests were modified.
+
+### Verification status
+- The latest root run passed TypeScript checks/build, screenshot capture helper tests, provider image mapping tests, the chat streaming UI regression, and the primary navigation checks before the draft-clear assertion failed.
+- This correction requires another complete GitHub Actions run, including React UI, Rust/Tauri, and Windows installer.
