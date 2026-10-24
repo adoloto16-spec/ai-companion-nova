@@ -159,20 +159,20 @@ async function modelDiscoveryAndNoKeyTest(): Promise<void> {
   equal(http.requests[0]?.method, "GET", "model discovery method");
   ok(http.requests.every(item => !("Authorization" in item.headers) && !("authorization" in item.headers)), "no API key is sent");
   equal(provider(http).capabilities().structuredOutput, true, "structured output capability is explicit");
-  equal(provider(http).capabilities().vision, false, "vision capability remains disabled");
+  equal(provider(http).capabilities().vision, true, "Ollama advertises vision support for its image-bearing /api/chat transport");
   equal(provider(http).capabilities().toolCalling, true, "native tool calling is supported by this adapter");
   equal(provider(http).capabilities().reasoning, true, "native reasoning is supported by this adapter");
 }
 
 async function imageAttachmentsUseTheNormalOllamaChatRequest(): Promise<void> {
   const http = new FakeOllamaHttpClient();
-  const attachment = { mimeType: "image/jpeg" as const, dataBase64: "aGVsbG8=", alt: "screenshot" };
+  const attachment = { mimeType: "image/png" as const, dataBase64: "aGVsbG8=", alt: "screenshot" };
   await provider(http).chat(chatRequest({
     context: { conversationId: "ollama-image-conversation", messages: [{ role: "user", content: "What is shown?", images: [attachment] }] }
   }));
-  equal(http.requests.length, 1, "a screenshot does not trigger a separate inference request");
+  equal(http.requests.length, 1, "a PNG screenshot does not trigger a separate inference request");
   const body = JSON.parse(http.requests[0]!.body!) as { messages: Array<{role:string;content:string;images?:string[]}> };
-  deepEqual(body.messages[0], { role: "user", content: "What is shown?", images: ["aGVsbG8="] }, "image bytes are included in the same Ollama chat message");
+  deepEqual(body.messages[0], { role: "user", content: "What is shown?", images: ["aGVsbG8="] }, "PNG base64 is included in the same Ollama chat message");
 }
 
 async function ordinaryRequestMappingTest(): Promise<void> {

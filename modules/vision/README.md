@@ -1,9 +1,11 @@
-# Screen capture for Chat
+# Vision and screen context
 
-`modules/vision/src/index.ts` manages the explicit Vision capture session; it does not run inference or select a model.
+`modules/vision/src/index.ts` owns the user-authorized screen-capture session. It never calls a model itself.
 
-Press **Vision: Off** in the main Chat composer to request the operating-system screen-share picker and choose the screen/window Nova may see. While **Vision: On**, the authorized media stream remains active. Immediately before each outgoing Chat or Nova Life message, the composer captures one fresh, compressed frame and attaches it to that same user message. No separate Screenshot action, upload preview, or second vision-model call is required. Turning Vision off or unmounting Chat stops the media tracks; ending screen sharing through the OS also turns Vision off.
+**Vision: On/Off** in the main Chat composer controls live screen sharing. Once enabled, every outgoing Chat/Nova Life message captures a fresh frame immediately before submission, encodes it as a real `image/png` attachment, and sends it in the same ordinary request as message text. PNGs are progressively downscaled only when necessary to fit the attachment limit. Turning Vision off, leaving Chat, or stopping sharing in the operating system stops the capture stream.
 
-The same request is sent through the selected provider (Ollama `images`, OpenAI-compatible `image_url`, or Gemini `inlineData`). Image understanding requires the selected model to support image input. When the provider rejects an image request, Chat explains that the model may not support images and points to Diagnostics for the provider-specific failure details. The utility never chooses or calls a model, and screenshot base64 data is redacted from retained diagnostic traces.
+**Agent Vision: On/Off** is separate. It affects only Nova Life's cognitive context: Off strips image attachments from the agent's context; On reuses only the most recent image-bearing user message already stored in the conversation. This switch does not call the screen-capture API or create a new image.
 
-Tests validate MIME/base64 limits and the image-attachment contract without depending on an operating-system capture picker. Actual desktop permissions and capture-picker behavior still require an interactive Windows smoke test.
+The normal selected-provider request maps the PNG through Ollama's `/api/chat` `messages[].images`, OpenAI-compatible `image_url`, or Gemini `inlineData` format. A second vision-model call is not used. Ollama advertises vision support for its image-bearing chat transport. If the provider rejects the image request, Chat shows the provider's original error message when available instead of replacing it with a generic claim about model capabilities.
+
+Screenshot base64 is omitted from retained diagnostic traces. Automated tests cover the attachment contract and the serialized Ollama request; OS screen-picker behavior still requires interactive Windows verification.

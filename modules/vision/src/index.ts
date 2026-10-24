@@ -75,22 +75,22 @@ function encodeCurrentFrame(video: HTMLVideoElement): ChatImageAttachment {
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d");
   if (!context) throw new Error("Could not prepare the screen screenshot.");
-  const maxDimensions = [1440, 1152, 960, 768, 640, 512];
-  const qualities = [0.72, 0.64, 0.58, 0.52, 0.46, 0.4];
-  for (let attempt = 0; attempt < maxDimensions.length; attempt++) {
-    const scale = Math.min(1, maxDimensions[attempt]! / Math.max(video.videoWidth, video.videoHeight));
+  // PNG keeps UI text and edges crisp and carries an honest image/png MIME type.
+  // Shrink the frame only as needed to satisfy the same bounded attachment contract.
+  const maxDimensions = [1600, 1440, 1280, 1120, 960, 800, 672, 560, 448, 352, 256];
+  for (const maxDimension of maxDimensions) {
+    const scale = Math.min(1, maxDimension / Math.max(video.videoWidth, video.videoHeight));
     canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
     canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL("image/jpeg", qualities[attempt]!);
+    const dataUrl = canvas.toDataURL("image/png");
     const comma = dataUrl.indexOf(",");
     if (comma >= 0 && dataUrl.length - comma - 1 <= MAX_CHAT_IMAGE_BASE64_CHARS) {
-      return createChatImageAttachment(dataUrl, "Automatic screen snapshot for the current chat request");
+      return createChatImageAttachment(dataUrl, "Automatic PNG screenshot for the current chat request");
     }
   }
-  throw new Error("The screen could not be compressed to the supported request size.");
+  throw new Error("The screen could not be compressed to the supported PNG request size. Try sharing a smaller window.");
 }
-
 export async function startScreenVisionSession(): Promise<ScreenVisionSession> {
   if (typeof navigator === "undefined" || !navigator.mediaDevices?.getDisplayMedia) {
     throw new Error("Screen capture is not available in this WebView.");

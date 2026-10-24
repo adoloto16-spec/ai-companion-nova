@@ -38,6 +38,7 @@ import {
   type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo, type MindState, type MindTraceEntry, type MindTurnSink, type MindReactiveTurn
 } from "../../../contracts/src/index";
 import {countVisibleSpeechMessages,resolveNovaTurnMessagePresentation} from "./nova-turn-visibility";
+import {parseNovaTurn} from "../../../contracts/src/nova-turn";
 import {chatDraftKey,readChatDraft,writeChatDraft,clearSubmittedChatDraft} from "./chat-drafts";
 import "./styles.css";
 
@@ -403,6 +404,8 @@ function ChatView({controller,runtime,character,conversations,activeConversation
   const lastAssistantStatus=lastAssistant?messageStreamStatus(lastAssistant):undefined;
   React.useEffect(()=>{
     if(!lastAssistant)return;
+    const nativeTurn=parseNovaTurn(lastAssistant.content).turn;
+    if(nativeTurn?.tools.some(tool=>tool.name==="avatar.set_intent"))return;
     const presentation=resolveNovaTurnMessagePresentation(lastAssistant,false);
     if(!presentation.render||!presentation.text.trim())return;
     publishAvatarIntent(resolveDialogueIntent(

@@ -223,3 +223,25 @@ Log policy: append an entry for each implementation or verification action; reco
 ### Verification status
 - GitHub Actions will run against the new commit. Its final outcome must be observed before calling this validated.
 - CI cannot prove the OS screen-picker interaction or visually confirm the user's particular VRM in a live Windows WebView; those remain explicit interactive checks.
+
+
+## 2026-10-24 — Entry 014: PNG request contract, independent agent vision, and avatar action
+
+### Reported failures and findings
+- The user reported that screenshot requests were still returning a generic provider rejection and explicitly requested PNG wire format.
+- The capture utility still used JPEG. The Ollama adapter serialized image base64 in the ordinary `/api/chat` request but incorrectly advertised `vision: false`.
+- Chat's image-error normalization replaced the provider's actual `chatError.message` with a generic model-capability diagnosis, preventing useful troubleshooting.
+- The existing cognitive path restored every historical screenshot without an agent-specific consent/toggle. Avatar movement was confined mostly to head/breathing, and the high light intensities could wash out material colors.
+
+### Implementation
+- Changed automatic screen-frame encoding to real `image/png` with a progressive downscale ladder and retained the existing base64 limits.
+- Aligned Ollama's advertised vision capability with its existing image-bearing `/api/chat` mapping and changed the wire-format test fixture to PNG.
+- Updated Chat error normalization to surface the provider's actual error message (bounded to 500 characters) for image-bearing requests. This is diagnostic improvement; a successful provider request must still be verified against the user's installed model and exact runtime configuration.
+- Added a second **Agent Vision** toggle, independent from capture Vision. It never captures a screen: Off strips all images from cognitive context; On allows only the latest existing screenshot-bearing user message to remain in Nova Life's request.
+- Registered the secured `avatar.set_intent` native tool (idle/talk/wave/look with bounded expression and intensity) and prevented the generic dialogue-expression heuristic from overwriting an explicit avatar-action tool result.
+- Reworked avatar rendering to use lower scene lights, ACES filmic tone mapping, a persistent relaxed upper-arm baseline, and procedural shoulder/elbow/head/spine/hips motion on humanoid bones. This cannot supply joint animation for a model with no humanoid rig or embedded animation.
+
+### Verification plan
+- Added cognitive-context regression coverage for Agent Vision on/off and latest-image selection, updated the Ollama PNG/capability tests, and added avatar-rig source assertions.
+- The exact provider error is now shown in Chat when present, which will help identify a remaining configuration/serialization issue if the next run still fails.
+- GitHub Actions and interactive Windows verification must be observed before claiming success. This CI cannot confirm the user's model's actual textures, poses, or live screen-picker interaction.

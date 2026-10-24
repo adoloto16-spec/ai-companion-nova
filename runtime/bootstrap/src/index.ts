@@ -1,5 +1,7 @@
 import type {ActionInvocation,ActionTarget,ActionTargetResolver,ActorIdentity,RuntimeDiagnostics,ToolDefinition,ActionDriver,ActionTarget as Target,ChatRequest,ChatRequestOptions,ChatResponse,ChatReasoningOptions,CredentialStore,ProviderConfiguration,ProviderPreset,Character,CharacterId,CharacterStore,CoreBookEntry,CoreBookEntryId,CoreBookStore,ContextBuildRequest,AssembledContext,ContextEngine,MemoryBroker,MemoryCreateInput,MemoryArchiveReason,MemoryItem,MemoryItemId,MemoryMutationAuthority,MemorySearchQuery,MemoryStore,MemoryUpdateInput,MemorySemanticIndexStore,RetrievalIndexWriter,RetrievalQuery,RetrievalResult,Retriever,ChatProvider,MindToolExecutor,MemoryExtractionRequest} from "../../../contracts/src/index";
 import {FOUNDATION_SCHEMA_VERSION} from "../../../contracts/src/index";
+import {publishAvatarIntent} from "../../../modules/character/src/index";
+import type {AvatarIntent} from "../../../modules/character/src/index";
 import type {HealthStatus,AppSettings,AppSettingsStore,ChatTraceStore,MindReactiveTurn,MindTurnExecutionContext,MindTurnSink,MindToolExecutionContext,NovaToolCall,NovaToolResult,PromptId} from "../../../contracts/src/index";
 import type {Conversation,ConversationCreateInput,ConversationId,ConversationStore,ConversationUpdateInput} from "../../../contracts/src/index";
 import {
@@ -85,6 +87,8 @@ export interface FoundationRuntime{
   setNovaTurnSink(sink:MindTurnSink|undefined):void;
   wakeMind():void;
   wakeMindForUserMessage(turn:MindReactiveTurn):boolean;
+  /** Controls reuse of the latest stored screenshot by Nova Life; does not capture screens. */
+  setCognitiveVisionEnabled?(enabled:boolean):void;
   subscribeMindState(listener:(state:import("../../../contracts/src/index").MindState)=>void):import("../../../contracts/src/index").Unsubscribe;
   getTtsProvider(providerId:string):TtsProvider|undefined;
   listTtsProviders():TtsProviderDescriptor[];
@@ -204,6 +208,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
   const logger={debug(){},info(){},warn(){},error(){}};
   const events=new InMemoryEventBus(diagnosticsStore,logger);
   const _state=new InMemoryStateStore(diagnosticsStore,logger);
+  let cognitiveVisionEnabled=false;
   const providers=new ProviderRegistry();
   const ttsProviders=new TtsProviderRegistry();
   // Concrete TTS adapters are registered only at the composition root.
@@ -295,7 +300,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     actorType:"module",
     moduleId:"character.fake",
     trusted:true,
-    capabilities:["browser.navigate","browser.control","character.expression","memory.search","memory.create","scheduler.wake"]
+    capabilities:["browser.navigate","browser.control","character.expression","character.avatar","memory.search","memory.create","scheduler.wake"]
   });
 
   providers.register(new FakeChatProvider(),["chat"]);
@@ -446,7 +451,8 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
         const settings=settingsManager.get();
         return {availableContextTokens:settings.context.availableContextTokens,reservedOutputTokens:settings.context.reservedOutputTokens,systemOverheadTokens:0,safetyMarginTokens:settings.context.safetyMarginTokens};
       },
-      getActiveProviderPresetId:()=>activeModelProfile?.providerPresetId?.trim()||activeProviderPresetId,
+      getVisionEnabled:()=>cognitiveVisionEnabled,
+       getActiveProviderPresetId:()=>activeModelProfile?.providerPresetId?.trim()||activeProviderPresetId,
       getChatModel:()=>activeModelProfile?.model?.trim()||(providerConfiguration?.enabled?providerConfiguration.model:"fake-chat"),
       getChatModelForPreset:async(providerPresetId)=>{
         if(activeModelProfile?.model?.trim()&&(!activeModelProfile.providerPresetId||activeModelProfile.providerPresetId===providerPresetId))return activeModelProfile.model.trim();
@@ -635,6 +641,41 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     }
   };
   tools.register(navigateDefinition,browserDriver);
+
+  const avatarIntentResolver:ActionTargetResolver={
+    id:"avatar.intent-target",
+    async resolve(request){
+      const action=request.arguments?.action;
+      const expression=request.arguments?.expression;
+      if(!["idle","talk","wave","look"].includes(String(action)))throw new Error("Avatar action is invalid.");
+      if(expression!==undefined&&!["neutral","happy","sad","surprised"].includes(String(expression)))throw new Error("Avatar expression is invalid.");
+      return {kind:"resource",resource:"avatar"};
+    }
+  };
+  targetResolvers.set(avatarIntentResolver.id,avatarIntentResolver);
+  const avatarIntentDefinition:ToolDefinition={
+    id:"character.avatar.intent",version:"1.0.0",schemaVersion:FOUNDATION_SCHEMA_VERSION,
+    name:"avatar.set_intent",
+    description:"Control Nova\u0027s loaded avatar. Use wave to greet, look to direct attention, talk while speaking, or idle to return to a resting animation. Choose a facial expression and intensity.",
+    risk:"low",requiredCapabilities:["character.avatar"],resourceType:"resource",action:"avatar.set_intent",
+    targetResolverId:avatarIntentResolver.id,confirmation:"never",
+    parameters:objectSchema({action:{type:"string",enum:["idle","talk","wave","look"]},expression:{type:"string",enum:["neutral","happy","sad","surprised"]},intensity:{type:"number",minimum:0,maximum:1}},["action"])
+  };
+  const avatarIntentDriver:ActionDriver={
+    id:"avatar-intent-driver",
+    async execute(request,target){
+      if(target.kind!=="resource"||target.resource!=="avatar")throw new Error("Avatar intent target is invalid.");
+      const action=request.arguments.action as AvatarIntent["action"];
+      const expression=request.arguments.expression as AvatarIntent["expression"]|undefined;
+      const suppliedIntensity=request.arguments.intensity;
+      const intensity=typeof suppliedIntensity==="number"&&Number.isFinite(suppliedIntensity)?Math.max(0,Math.min(1,suppliedIntensity)):0.7;
+      const intent:AvatarIntent={action,expression:expression??(action==="wave"?"happy":"neutral"),intensity};
+      publishAvatarIntent(intent);
+      return {accepted:true,action:intent.action,expression:intent.expression,intensity:intent.intensity};
+    }
+  };
+  tools.register(avatarIntentDefinition,avatarIntentDriver);
+  permissions.add({id:"character-avatar-intent",schemaVersion:FOUNDATION_SCHEMA_VERSION,subject:"character",resourceType:"resource",action:"avatar.set_intent",effect:"allow",scope:{}});
   permissions.add({
     id:"character-browser-youtube",
     schemaVersion:FOUNDATION_SCHEMA_VERSION,
@@ -996,6 +1037,7 @@ export async function createFoundationRuntime(options:FoundationRuntimeOptions={
     setNovaTurnSink:sink=>mindRuntime.setNovaTurnSink(sink),
     wakeMind:()=>mindRuntime.wake("scheduled"),
     wakeMindForUserMessage:turn=>mindRuntime.wakeForUserMessage(turn),
+    setCognitiveVisionEnabled:enabled=>{cognitiveVisionEnabled=enabled;},
     subscribeMindState:listener=>mindRuntime.subscribe(listener),
     getChatProviderDiagnostics:providerPresetId=>{
       const effectiveId=providerPresetId??activeProviderPresetId;

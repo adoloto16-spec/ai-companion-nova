@@ -100,16 +100,24 @@ function readChatErrorCode(error:unknown):ChatErrorCode|undefined{
   const code=(candidate as {code?:unknown}).code;
   return typeof code==="string"&&CHAT_ERROR_CODES.has(code as ChatErrorCode)?code as ChatErrorCode:undefined;
 }
+function readChatErrorMessage(error:unknown):string|undefined{
+  if(!error||typeof error!=="object"||!("chatError" in error))return undefined;
+  const candidate=(error as {chatError?:unknown}).chatError;
+  if(!candidate||typeof candidate!=="object"||!("message" in candidate))return undefined;
+  const message=(candidate as {message?:unknown}).message;
+  return typeof message==="string"&&message.trim()?message.trim().slice(0,500):undefined;
+}
 function userMessageForError(error:unknown,hasImageAttachments=false):{code:ChatErrorCode;message:string}{
   const code=readChatErrorCode(error)??"PROVIDER_ERROR";
-  if(hasImageAttachments&&(code==="INVALID_REQUEST"||code==="UNSUPPORTED"||code==="PROVIDER_ERROR")){
-    return {
-      code,
-      message:"The selected provider could not process this screenshot request. Confirm that the active model supports image input, then check Diagnostics for the underlying provider error."
-    };
+  if(hasImageAttachments){
+    const providerMessage=readChatErrorMessage(error);
+    return {code,message:providerMessage
+      ?"Screenshot request failed: "+providerMessage
+      :"Screenshot request failed ("+code+"). Check Diagnostics for the provider's original error details."};
   }
   return {code,message:USER_MESSAGES[code]};
 }
+
 function isAbortError(error:unknown):boolean{
   return Boolean(error&&typeof error==="object"&&"name" in error&&(error as {name?:unknown}).name==="AbortError");
 }

@@ -6,18 +6,28 @@ import type { VRM } from "@pixiv/three-vrm";
 import { getAvatarAsset } from "./avatar-library";
 import type { AvatarIntent, AvatarProfile, AvatarSettings } from "../../../modules/character/src/index";
 
+type HumanoidBone =
+  | "head" | "neck" | "hips" | "spine" | "chest"
+  | "leftUpperArm" | "rightUpperArm" | "leftLowerArm" | "rightLowerArm"
+  | "leftUpperLeg" | "rightUpperLeg" | "leftLowerLeg" | "rightLowerLeg";
+
+const HUMANOID_BONES: readonly HumanoidBone[] = [
+  "head", "neck", "hips", "spine", "chest",
+  "leftUpperArm", "rightUpperArm", "leftLowerArm", "rightLowerArm",
+  "leftUpperLeg", "rightUpperLeg", "leftLowerLeg", "rightLowerLeg"
+];
+
 interface LoadedModel {
   root: THREE.Object3D;
   vrm?: VRM;
   mixer?: THREE.AnimationMixer;
   baseScale: THREE.Vector3;
   baseY: number;
+  baseRotation: THREE.Euler;
   center: THREE.Vector3;
   height: number;
-  head?: THREE.Object3D;
-  headBase?: THREE.Euler;
-  rightArm?: THREE.Object3D;
-  rightArmBase?: THREE.Euler;
+  bones: Partial<Record<HumanoidBone, THREE.Object3D>>;
+  boneBases: Partial<Record<HumanoidBone, THREE.Euler>>;
 }
 
 export default function VrmAvatarCanvas({ profile, settings, intent, className = "" }: {
@@ -51,11 +61,11 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
     let blinkRemaining = 0;
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(32, 1, 0.01, 1000);
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x76809a, 2));
-    const key = new THREE.DirectionalLight(0xffffff, 2.5);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x76809a, 0.9));
+    const key = new THREE.DirectionalLight(0xffffff, 1.25);
     key.position.set(1.5, 2.5, 3);
     scene.add(key);
-    const fill = new THREE.DirectionalLight(0xb8d4ff, 1);
+    const fill = new THREE.DirectionalLight(0xb8d4ff, 0.35);
     fill.position.set(-2, 1, 1.5);
     scene.add(fill);
 
@@ -64,6 +74,8 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
       renderer.setClearColor(0x000000, 0);
       renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1;
       renderer.setSize(Math.max(1, container.clientWidth), Math.max(1, container.clientHeight));
       // This ref targets a dedicated empty renderer host, not the parent holding React overlays.
       container.replaceChildren(renderer.domElement);
@@ -98,16 +110,21 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
         setError("The selected file did not produce a visible 3D mesh. Verify that it is a valid, self-contained VRM/GLB file.");
         return;
       }
-      const head = vrm?.humanoid?.getNormalizedBoneNode("head") ?? undefined;
-      const rightArm = vrm?.humanoid?.getNormalizedBoneNode("rightUpperArm") ?? undefined;
+      const bones: Partial<Record<HumanoidBone, THREE.Object3D>> = {};
+      const boneBases: Partial<Record<HumanoidBone, THREE.Euler>> = {};
+      for (const name of HUMANOID_BONES) {
+        const node = vrm?.humanoid?.getNormalizedBoneNode(name);
+        if (node) {
+          bones[name] = node;
+          boneBases[name] = node.rotation.clone();
+        }
+      }
       scene.add(root);
       loaded = {
         root, ...(vrm ? { vrm } : {}),
         ...(gltf.animations.length ? { mixer: new THREE.AnimationMixer(root) } : {}),
-        baseScale: root.scale.clone(), baseY: root.position.y, center,
-        height: Math.max(size.y, 1),
-        ...(head ? { head, headBase: head.rotation.clone() } : {}),
-        ...(rightArm ? { rightArm, rightArmBase: rightArm.rotation.clone() } : {})
+        baseScale: root.scale.clone(), baseY: root.position.y, baseRotation: root.rotation.clone(), center,
+        height: Math.max(size.y, 1), bones, boneBases
       };
       if (loaded.mixer && gltf.animations[0]) loaded.mixer.clipAction(gltf.animations[0]).play();
       setError("");
@@ -144,16 +161,72 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
         const prefs = settingsRef.current, action = intentRef.current;
         const activity = prefs.idleMotion && prefs.autonomy !== "off" ? prefs.motionIntensity : 0;
         current.root.scale.copy(current.baseScale).multiplyScalar(prefs.scale);
-        current.root.position.y = current.baseY + (prefs.breathing ? Math.sin(elapsed * 1.25) * 0.008 * activity : 0);
-        if (current.head && current.headBase) {
-          const yaw = prefs.lookAround ? Math.sin(elapsed * 0.37) * 0.12 * activity : 0;
-          const pitch = prefs.lookAround ? Math.sin(elapsed * 0.23) * 0.04 * activity : 0;
-          current.head.rotation.set(current.headBase.x + pitch, current.headBase.y + yaw, current.headBase.z);
+        current.root.position.y = current.baseY + (prefs.breathing ? Math.sin(elapsed * 1.25) * 0.018 * activity : 0);
+        if (current.vrm || !current.mixer) {
+          current.root.rotation.set(
+            current.baseRotation.x + Math.sin(elapsed * 0.42) * 0.018 * activity,
+            current.baseRotation.y + Math.sin(elapsed * 0.31) * 0.035 * activity,
+            current.baseRotation.z + Math.sin(elapsed * 0.58) * 0.012 * activity
+          );
         }
-        if (current.rightArm && current.rightArmBase) {
-          const wave = action.action === "wave" ? Math.sin(elapsed * 7) * 0.15 * action.intensity : 0;
-          current.rightArm.rotation.set(current.rightArmBase.x, current.rightArmBase.y, current.rightArmBase.z - wave);
+        // Let embedded GLB animation update its own tracks before applying the procedural VRM pose.
+        current.mixer?.update(delta);
+
+        const bone = (name: HumanoidBone) => current.bones[name];
+        const base = (name: HumanoidBone) => current.boneBases[name];
+        const head = bone("head"), headBase = base("head");
+        if (head && headBase) {
+          const yaw = prefs.lookAround ? Math.sin(elapsed * 0.57) * 0.18 * Math.max(activity, 0.5) : 0;
+          const pitch = prefs.lookAround ? Math.sin(elapsed * 0.37) * 0.06 * Math.max(activity, 0.5) : 0;
+          head.rotation.set(headBase.x + pitch, headBase.y + yaw, headBase.z);
         }
+        const leftUpper = bone("leftUpperArm"), leftBase = base("leftUpperArm");
+        const rightUpper = bone("rightUpperArm"), rightBase = base("rightUpperArm");
+        const leftLower = bone("leftLowerArm"), leftLowerBase = base("leftLowerArm");
+        const rightLower = bone("rightLowerArm"), rightLowerBase = base("rightLowerArm");
+        const wave = action.action === "wave" ? Math.sin(elapsed * 8) * 0.22 * action.intensity : 0;
+        const talkingGesture = action.action === "talk" ? Math.sin(elapsed * 2.6) * 0.22 * action.intensity : 0;
+        // Establish a relaxed non-T-pose as the baseline for ordinary humanoid VRMs.
+        // The left/right signs are mirrored because humanoid upper-arm local axes are mirrored.
+        if (leftUpper && leftBase) {
+          const shoulderSwing = Math.sin(elapsed * 1.7) * 0.07 * activity;
+          leftUpper.rotation.set(leftBase.x + talkingGesture * 0.55, leftBase.y + shoulderSwing, leftBase.z + 0.52 + talkingGesture);
+        }
+        if (rightUpper && rightBase) {
+          if (action.action === "wave") {
+            rightUpper.rotation.set(rightBase.x - 0.65, rightBase.y - 0.12, rightBase.z - 1.15 + wave);
+          } else {
+            const shoulderSwing = Math.sin(elapsed * 1.7 + 0.7) * 0.07 * activity;
+            rightUpper.rotation.set(rightBase.x + talkingGesture * 0.55, rightBase.y - shoulderSwing, rightBase.z - 0.52 - talkingGesture);
+          }
+        }
+        if (leftLower && leftLowerBase) {
+          const elbowBend = action.action === "talk" ? 0.38 + Math.abs(Math.sin(elapsed * 2.6)) * 0.25 : 0.12;
+          leftLower.rotation.set(leftLowerBase.x, leftLowerBase.y, leftLowerBase.z - elbowBend * Math.max(activity, action.action === "talk" ? 0.8 : 0.2));
+        }
+        if (rightLower && rightLowerBase) {
+          if (action.action === "wave") rightLower.rotation.set(rightLowerBase.x, rightLowerBase.y - 0.12, rightLowerBase.z - 0.72 + wave * 1.35);
+          else {
+            const elbowBend = action.action === "talk" ? 0.38 + Math.abs(Math.sin(elapsed * 2.3 + 1)) * 0.25 : 0.12;
+            rightLower.rotation.set(rightLowerBase.x, rightLowerBase.y, rightLowerBase.z + elbowBend * Math.max(activity, action.action === "talk" ? 0.8 : 0.2));
+          }
+        }
+        const spine = bone("spine"), spineBase = base("spine");
+        if (spine && spineBase) spine.rotation.set(spineBase.x + Math.sin(elapsed * 0.8) * 0.025 * activity, spineBase.y + talkingGesture * 0.2, spineBase.z);
+        const chest = bone("chest"), chestBase = base("chest");
+        if (chest && chestBase) chest.rotation.set(chestBase.x + Math.sin(elapsed * 1.2) * 0.018 * activity, chestBase.y, chestBase.z);
+        const hips = bone("hips"), hipsBase = base("hips");
+        if (hips && hipsBase) hips.rotation.set(hipsBase.x, hipsBase.y + Math.sin(elapsed * 0.34) * 0.025 * activity, hipsBase.z);
+        const leftLeg = bone("leftUpperLeg"), leftLegBase = base("leftUpperLeg");
+        const rightLeg = bone("rightUpperLeg"), rightLegBase = base("rightUpperLeg");
+        const leftShin = bone("leftLowerLeg"), leftShinBase = base("leftLowerLeg");
+        const rightShin = bone("rightLowerLeg"), rightShinBase = base("rightLowerLeg");
+        const weightShift = Math.sin(elapsed * 1.45) * 0.035 * activity;
+        if (leftLeg && leftLegBase) leftLeg.rotation.set(leftLegBase.x + weightShift, leftLegBase.y, leftLegBase.z);
+        if (rightLeg && rightLegBase) rightLeg.rotation.set(rightLegBase.x - weightShift, rightLegBase.y, rightLegBase.z);
+        if (leftShin && leftShinBase) leftShin.rotation.set(leftShinBase.x + Math.max(0, weightShift) * 0.5, leftShinBase.y, leftShinBase.z);
+        if (rightShin && rightShinBase) rightShin.rotation.set(rightShinBase.x + Math.max(0, -weightShift) * 0.5, rightShinBase.y, rightShinBase.z);
+
         if (current.vrm?.expressionManager) {
           const expressions = current.vrm.expressionManager;
           expressions.setValue("happy", action.expression === "happy" ? action.intensity : 0);
@@ -167,7 +240,6 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
           } else expressions.setValue("blink", 0);
         }
         current.vrm?.update(delta);
-        current.mixer?.update(delta);
         const center = current.center.clone().multiplyScalar(prefs.scale);
         const height = current.height * prefs.scale;
         camera.position.set(center.x, center.y + height * 0.04, center.z + height * prefs.cameraDistance);

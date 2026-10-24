@@ -18,7 +18,7 @@ function context(onSpeechEvent:CognitiveStepContext["onSpeechEvent"]):CognitiveS
   return {characterId:character.id,state:{lifecycleState:"thinking",nextWakeAt:null,recentTrace:[]},signal:new AbortController().signal,wakeReason:"user-message",
     userTurn:{characterId:character.id,conversationId:conversation.id,userMessageId:userMessage.id!,turnId:"turn.stream"},onSpeechEvent};
 }
-function createStep(runtime:unknown,getPrompt?:(id:import("../../contracts/src").PromptId,scenario?:string)=>string,overrides:Partial<Pick<LLMCognitiveStepOptions,"getAvailableTools"|"executeTool"|"getReasoningOptions"|"getShowReasoningInDiagnostics"|"getGenerationOptions"|"getProviderIdForPreset"|"onDiagnostic">>={}):LLMCognitiveStep{
+function createStep(runtime:unknown,getPrompt?:(id:import("../../contracts/src").PromptId,scenario?:string)=>string,overrides:Partial<Pick<LLMCognitiveStepOptions,"getAvailableTools"|"executeTool"|"getReasoningOptions"|"getShowReasoningInDiagnostics"|"getGenerationOptions"|"getProviderIdForPreset"|"onDiagnostic"|"getVisionEnabled"|"getActiveConversation">>={}):LLMCognitiveStep{
   return new LLMCognitiveStep({
     runtime:runtime as never,
     getCharacter:async()=>character,
@@ -241,11 +241,29 @@ async function backgroundStepMayReturnNoSpeech():Promise<void>{
   equal(requestList[0]?.context.messages.find(message=>message.role==="system")?.content.includes("Do not invent a reason to speak"),true,"background silence guidance is part of the active preset's system instructions");
 }
 
+async function cognitiveVisionOnlyPassesLatestStoredScreenshot():Promise<void>{
+  const olderScreenshot:ChatMessage={id:"old-screenshot",role:"user",content:"Older screen state.",images:[{mimeType:"image/png",dataBase64:"aGVsbG8=",alt:"old"}]};
+  const latestUser:ChatMessage={...userMessage,content:"What is on this screen?",images:[{mimeType:"image/png",dataBase64:"aGVsbG8=",alt:"latest"}]};
+  const history={...conversation,messages:[olderScreenshot,latestUser]} as unknown as Conversation;
+  for(const enabled of [false,true]){
+    const requests:ChatRequest[]=[];
+    const runtime={async chat(request:ChatRequest):Promise<ChatResponse>{requests.push(request);return responseFor(request,"Screen-aware reply.");}};
+    await createStep(runtime,undefined,{
+      getVisionEnabled:()=>enabled,
+      getActiveConversation:async()=>history
+    }).run(context(()=>{}));
+    const images=requests[0]!.context.messages.filter(message=>message.images?.length);
+    equal(images.map(message=>message.id),enabled?["user-message"]:[],"Agent Vision controls stored screenshot reuse and only passes the latest image");
+    if(enabled)equal(images[0]?.images?.[0]?.alt,"latest","the most recent existing screenshot is chosen, without taking a new capture");
+  }
+}
+
 async function main():Promise<void>{
   await disabledReasoningReachesProvidersWithoutReasoningCapability();
   await enabledReasoningReachesProvidersWithoutReasoningCapability();
   await providerRequestLifecycleDiagnosticsAreStructured();
   await profileGenerationOptionsReachNativeRequests();
+  await cognitiveVisionOnlyPassesLatestStoredScreenshot();
   await ordinaryTextStreamsSeparatelyFromReasoning();
   await nativeToolRoundsReturnResultsBeforeFinalSpeech();
   await plainContentIsNeverParsedAsCommands();

@@ -6,7 +6,9 @@ import {
   classifyAvatarFileName,
   normalizeAvatarSettings,
   resolveAvatarSignal,
-  resolveDialogueIntent
+  resolveDialogueIntent,
+  publishAvatarIntent,
+  subscribeAvatarEvents
 } from "../../modules/character/src/index";
 
 const settings = normalizeAvatarSettings({ scale: 99, cameraDistance: Number.NaN, motionIntensity: -2, autonomy: "invalid", blink: false });
@@ -26,4 +28,14 @@ assert.deepEqual(resolveAvatarSignal({ type: "user-action", action: "wave" }), {
 const canvasSource=fs.readFileSync(path.resolve(process.cwd(),"apps/desktop-ui/src/vrm-avatar-canvas.tsx"),"utf8");
 assert.ok(canvasSource.includes('className="vrm-avatar-canvas-renderer" ref={host}'),"Three.js receives a dedicated inner host that React does not populate with overlay nodes");
 assert.ok(canvasSource.includes('className={"vrm-avatar-canvas " + className} aria-label='),"the React-owned avatar overlay remains mounted outside the imperative Three.js host");
+let receivedIntent:unknown;
+const unsubscribeAvatar = subscribeAvatarEvents(event=>{if(event.kind==="intent")receivedIntent=event;});
+const publishedIntent={action:"wave" as const,expression:"happy" as const,intensity:1};
+publishAvatarIntent(publishedIntent);
+assert.deepEqual(receivedIntent,{kind:"intent",intent:publishedIntent},"avatar actions are delivered synchronously in the current Chat view as well as across windows");
+unsubscribeAvatar();
+assert.ok(canvasSource.includes("toneMappingExposure = 1"),"VRM renderer tones down overexposed material colors");
+assert.ok(canvasSource.includes("leftUpperArm")&&canvasSource.includes("leftLowerArm"),"procedural avatar rig moves upper and lower arms instead of remaining in a T-pose");
+assert.ok(canvasSource.includes("const leftLeg = bone(\"leftUpperLeg\")"),"humanoid locomotion includes weight-shift animation for the legs");
+assert.ok(canvasSource.includes("action.action === \"wave\""),"the avatar rig has a dedicated arm-wave animation");
 console.log("avatar-runtime.test.ts: passed");

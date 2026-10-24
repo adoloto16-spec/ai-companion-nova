@@ -40,6 +40,8 @@ export interface LLMCognitiveStepOptions {
   getGenerationOptions?:()=>import("../../contracts/src/index").ChatGenerationOptions|undefined;
   consumeRequestedWakeInterval?:(turnId:string)=>number|undefined;
   clock?:()=>string;
+  /** Reuse the latest already-stored screenshot in Nova Life cognition; never captures one. */
+  getVisionEnabled?:()=>boolean;
 }
 
 const MAX_NATIVE_TOOL_ROUNDS=12;
@@ -64,6 +66,12 @@ function normalizeHistoricalMessage(message:ChatMessage):ChatMessage{
   const parsed=parseNovaTurn(message.content);
   if(!parsed.turn)return cloneMessage(message);
   return {...cloneMessage(message),content:parsed.turn.speech};
+}
+function applyCognitiveVisionPolicy(message:ChatMessage,enabled:boolean,latestImageMessageId:string|undefined):ChatMessage{
+  if(message.images?.length&&enabled&&message.role==="user"&&message.id===latestImageMessageId)return message;
+  if(!message.images?.length)return message;
+  const {images:_ignored,...textOnly}=message;
+  return textOnly;
 }
 function safeToolResultText(value:unknown):string{
   let serialized:string;
@@ -121,11 +129,17 @@ export class LLMCognitiveStep implements CognitiveStep {
       "maximum="+schedule.maxIntervalMs
     ].join("\n"):"";
     const identity=["[IDENTITY / CHARACTER]","Name: "+character.name,"Description: "+character.description,"[/IDENTITY / CHARACTER]"].join("\n");
-    const messages=restoreChatImageAttachments(
+    const visionEnabled=this.options.getVisionEnabled?.()===true;
+    const latestImageMessage=visionEnabled?[...conversation.messages].reverse().find(message=>message.role==="user"&&Boolean(message.images?.length)):undefined;
+    const latestImageMessageId=latestImageMessage?.id;
+    const restoredMessages=restoreChatImageAttachments(
       assembled.messages.map(message=>normalizeHistoricalMessage(message)),
       conversation.messages
     );
-    if(reactiveUserMessage&&!messages.some(message=>message.id===reactiveUserMessage!.id))messages.push(cloneMessage(reactiveUserMessage));
+    const messages=restoredMessages.map(message=>applyCognitiveVisionPolicy(message,visionEnabled,latestImageMessageId));
+    if(reactiveUserMessage&&!messages.some(message=>message.id===reactiveUserMessage!.id)){
+      messages.push(applyCognitiveVisionPolicy(cloneMessage(reactiveUserMessage),visionEnabled,latestImageMessageId));
+    }
     const baseMessages:ChatMessage[]=[
       {id:conversation.id+":nova-turn:system",role:"system",content:initialPromptText},
       {id:conversation.id+":nova-turn:identity",role:"system",content:identity},

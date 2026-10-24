@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { createChatImageAttachment } from "../../modules/vision/src/index";
 import { MAX_CHAT_IMAGE_BASE64_CHARS } from "../../contracts/src/index";
 
@@ -11,4 +13,7 @@ assert.throws(
   /too large/
 );
 assert.equal(createChatImageAttachment("data:image/png;base64,aGVsbG8=", " ").alt, undefined);
+const visionSource=fs.readFileSync(path.resolve(process.cwd(),"modules/vision/src/index.ts"),"utf8");
+assert.ok(visionSource.includes('canvas.toDataURL("image/png")'),"automatic screenshots are encoded as true PNG data URLs");
+assert.ok(!visionSource.includes('canvas.toDataURL("image/jpeg"'),"automatic screenshots are not re-encoded as JPEG");
 console.log("screen-capture.test.ts: passed");

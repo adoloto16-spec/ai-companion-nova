@@ -7,7 +7,7 @@ The avatar is an optional visual subsystem. The existing `Character` contract de
 - `modules/character/src/index.ts` defines avatar profiles, bounded display settings, and renderer-neutral dialogue/user-action intents.
 - `apps/desktop-ui/src/avatar-library.ts` stores imported `.vrm` and self-contained `.glb` files locally.
 - `apps/desktop-ui/src/vrm-avatar-canvas.tsx` renders VRM through Three.js + `@pixiv/three-vrm`. It parses stored binary bytes directly, avoiding a `blob:` URL fetch under the packaged Tauri CSP. It adapts to available humanoid bones, expression shapes, and existing GLB animation clips.
-- `apps/desktop-ui/src/avatar-studio.tsx` owns model import, profile selection, settings, overlay visibility, and basic wave/look actions. The desktop overlay is a separate transparent Tauri window.
+- `apps/desktop-ui/src/avatar-studio.tsx` owns model import, profile selection, settings, overlay visibility, and wave/look actions. Nova Life can call the registered, permission-gated `avatar.set_intent` tool to choose idle/talk/wave/look actions and a bounded expression/intensity; its event updates the in-window studio and any separate overlay. The desktop overlay is a separate transparent Tauri window.
 - `modules/vision/src/index.ts` only captures and bounds a one-shot screenshot attachment. It never calls any model.
 
 ## Screenshot flow

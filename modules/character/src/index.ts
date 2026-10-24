@@ -43,6 +43,12 @@ export type AvatarSignal =
 export type AvatarBroadcastEvent = { kind: "intent"; intent: AvatarIntent } | { kind: "profile-updated" };
 
 let channel: BroadcastChannel | undefined;
+const localAvatarListeners = new Set<(event:AvatarBroadcastEvent)=>void>();
+function publishLocally(event:AvatarBroadcastEvent):void{
+  for(const listener of [...localAvatarListeners]){
+    try{listener(event);}catch{/* Avatar UI listeners must not interrupt runtime action dispatch. */}
+  }
+}
 function getChannel(): BroadcastChannel | undefined {
   if (typeof BroadcastChannel === "undefined") return undefined;
   if (!channel) channel = new BroadcastChannel(AVATAR_CHANNEL_NAME);
@@ -100,14 +106,19 @@ export function resolveAvatarSignal(signal: AvatarSignal): AvatarIntent {
 }
 
 export function publishAvatarIntent(intent: AvatarIntent): void {
-  getChannel()?.postMessage({ kind: "intent", intent } satisfies AvatarBroadcastEvent);
+  const event={kind:"intent",intent} satisfies AvatarBroadcastEvent;
+  publishLocally(event);
+  getChannel()?.postMessage(event);
 }
 export function publishAvatarProfileUpdated(): void {
-  getChannel()?.postMessage({ kind: "profile-updated" } satisfies AvatarBroadcastEvent);
+  const event={kind:"profile-updated"} satisfies AvatarBroadcastEvent;
+  publishLocally(event);
+  getChannel()?.postMessage(event);
 }
 export function subscribeAvatarEvents(listener: (event: AvatarBroadcastEvent) => void): () => void {
+  localAvatarListeners.add(listener);
   const current = getChannel();
-  if (!current) return () => undefined;
+  if (!current) return () => { localAvatarListeners.delete(listener); };
   const handler = (message: MessageEvent<unknown>) => {
     const value = message.data;
     if (!isRecord(value)) return;
@@ -127,5 +138,8 @@ export function subscribeAvatarEvents(listener: (event: AvatarBroadcastEvent) =>
     listener({ kind: "intent", intent });
   };
   current.addEventListener("message", handler);
-  return () => current.removeEventListener("message", handler);
+  return () => {
+    localAvatarListeners.delete(listener);
+    current.removeEventListener("message", handler);
+  };
 }

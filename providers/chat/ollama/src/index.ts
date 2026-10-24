@@ -224,7 +224,7 @@ export class OllamaChatProvider implements ChatProvider {
   }
 
   capabilities(): ProviderCapabilities {
-    return { streaming: true, toolCalling: true, vision: false, structuredOutput: true, reasoning: true };
+    return { streaming: true, toolCalling: true, vision: true, structuredOutput: true, reasoning: true };
   }
 
   async listModels(): Promise<ModelInfo[]> {
