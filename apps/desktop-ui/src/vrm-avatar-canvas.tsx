@@ -50,7 +50,6 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
     }
     let disposed = false;
     let frame = 0;
-    let objectUrl: string | undefined;
     let loaded: LoadedModel | undefined;
     let renderer: THREE.WebGLRenderer | undefined;
     let previousTime = 0;
@@ -91,42 +90,55 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
     loader.register(parser => new VRMLoaderPlugin(parser));
     setError("");
     setStatus("Reading local model…");
-    void getAvatarAsset(profile.assetId).then(blob => {
+    const acceptGltf = (gltf: import("three/addons/loaders/GLTFLoader.js").GLTF) => {
+      if (disposed) return;
+      const vrm = gltf.userData.vrm as VRM | undefined;
+      const root = vrm?.scene ?? gltf.scene;
+      root.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(root);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      if (![size.x, size.y, size.z, center.x, center.y, center.z].every(Number.isFinite) || size.y <= 0.01 || size.x <= 0 || size.z <= 0) {
+        setStatus("Model has no renderable geometry");
+        setError("The selected file did not produce a visible 3D mesh. Verify that it is a valid, self-contained VRM/GLB file.");
+        return;
+      }
+      const head = vrm?.humanoid?.getNormalizedBoneNode("head") ?? undefined;
+      const leftArm = vrm?.humanoid?.getNormalizedBoneNode("leftUpperArm") ?? undefined;
+      const rightArm = vrm?.humanoid?.getNormalizedBoneNode("rightUpperArm") ?? undefined;
+      const leftLeg = vrm?.humanoid?.getNormalizedBoneNode("leftUpperLeg") ?? undefined;
+      const rightLeg = vrm?.humanoid?.getNormalizedBoneNode("rightUpperLeg") ?? undefined;
+      scene.add(root);
+      loaded = {
+        root, ...(vrm ? { vrm } : {}),
+        ...(gltf.animations.length ? { mixer: new THREE.AnimationMixer(root) } : {}),
+        baseScale: root.scale.clone(), baseY: root.position.y, center,
+        height: Math.max(size.y, 1),
+        ...(head ? { head, headBase: head.rotation.clone() } : {}),
+        ...(leftArm ? { leftArm, leftArmBase: leftArm.rotation.clone() } : {}),
+        ...(rightArm ? { rightArm, rightArmBase: rightArm.rotation.clone() } : {}),
+        ...(leftLeg ? { leftLeg, leftLegBase: leftLeg.rotation.clone() } : {}),
+        ...(rightLeg ? { rightLeg, rightLegBase: rightLeg.rotation.clone() } : {})
+      };
+      if (loaded.mixer && gltf.animations[0]) loaded.mixer.clipAction(gltf.animations[0]).play();
+      setError("");
+      setStatus(vrm ? "VRM loaded" : gltf.animations.length ? "GLB loaded · animation playing" : "GLB loaded");
+    };
+    const failGltf = (cause: unknown) => {
+      if (disposed) return;
+      setStatus("Model load failed");
+      setError(cause instanceof Error ? cause.message : "Three.js could not parse this model.");
+    };
+    setStatus("Reading local model…");
+    void getAvatarAsset(profile.assetId).then(async blob => {
       if (disposed) return;
       if (!blob) throw new Error("The stored model file is missing. Re-import the model.");
-      objectUrl = URL.createObjectURL(blob);
-      loader.load(objectUrl, gltf => {
-        if (disposed) return;
-        const vrm = gltf.userData.vrm as VRM | undefined;
-        const root = vrm?.scene ?? gltf.scene;
-        root.updateMatrixWorld(true);
-        const box = new THREE.Box3().setFromObject(root);
-        const size = box.getSize(new THREE.Vector3());
-        const center = box.getCenter(new THREE.Vector3());
-        const head = vrm?.humanoid?.getNormalizedBoneNode("head") ?? undefined;
-        const leftArm = vrm?.humanoid?.getNormalizedBoneNode("leftUpperArm") ?? undefined;
-        const rightArm = vrm?.humanoid?.getNormalizedBoneNode("rightUpperArm") ?? undefined;
-        const leftLeg = vrm?.humanoid?.getNormalizedBoneNode("leftUpperLeg") ?? undefined;
-        const rightLeg = vrm?.humanoid?.getNormalizedBoneNode("rightUpperLeg") ?? undefined;
-        scene.add(root);
-        loaded = {
-          root, ...(vrm ? { vrm } : {}),
-          ...(gltf.animations.length ? { mixer: new THREE.AnimationMixer(root) } : {}),
-          baseScale: root.scale.clone(), baseY: root.position.y, center,
-          height: Math.max(size.y, 1),
-          ...(head ? { head, headBase: head.rotation.clone() } : {}),
-          ...(leftArm ? { leftArm, leftArmBase: leftArm.rotation.clone() } : {}),
-          ...(rightArm ? { rightArm, rightArmBase: rightArm.rotation.clone() } : {}),
-          ...(leftLeg ? { leftLeg, leftLegBase: leftLeg.rotation.clone() } : {}),
-          ...(rightLeg ? { rightLeg, rightLegBase: rightLeg.rotation.clone() } : {})
-        };
-        if (loaded.mixer && gltf.animations[0]) loaded.mixer.clipAction(gltf.animations[0]).play();
-        setStatus(vrm ? "VRM loaded" : gltf.animations.length ? "GLB loaded · animation playing" : "GLB loaded");
-      }, undefined, cause => {
-        if (disposed) return;
-        setStatus("Model load failed");
-        setError(cause instanceof Error ? cause.message : "Three.js could not parse this model.");
-      });
+      // VRM and the supported GLB import flow are self-contained binary glTF files. Parsing
+      // bytes directly avoids fetching a blob: URL, which the packaged Tauri CSP does not allow.
+      const buffer = await blob.arrayBuffer();
+      if (disposed) return;
+      setStatus("Parsing model…");
+      loader.parse(buffer, "", acceptGltf, failGltf);
     }).catch(cause => {
       if (disposed) return;
       setStatus("Model unavailable");
@@ -197,7 +209,6 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
       disposed = true;
       cancelAnimationFrame(frame);
       resize.disconnect();
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
       loaded?.mixer?.stopAllAction();
       renderer?.dispose();
       renderer?.domElement.remove();
@@ -207,6 +218,6 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
 
   return <div className={"vrm-avatar-canvas " + className} ref={host} aria-label={profile ? "Avatar preview" : "Avatar preview empty"}>
     {status !== "VRM loaded" && status !== "GLB loaded" && status !== "GLB loaded · animation playing" &&
-      <div className="avatar-canvas-status" aria-live="polite"><strong>{status}</strong>{error && <span role="alert">{error}</span>}</div>}
+      <div className={"avatar-canvas-status" + (error ? " avatar-canvas-status-error" : "")} aria-live="polite"><strong>{status}</strong>{error && <span role="alert">{error}</span>}</div>}
   </div>;
 }

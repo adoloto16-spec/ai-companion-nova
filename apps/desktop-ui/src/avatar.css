@@ -66,7 +66,8 @@ html.avatar-transparent-document, body.avatar-transparent-document, body.avatar-
 .avatar-notice.error { border-color: #804454; background: #311c25; color: #ffd0d6; }
 .avatar-overlay-root { width: 100vw; height: 100vh; overflow: hidden; background: transparent; }
 .avatar-overlay-canvas { width: 100%; height: 100%; background: transparent; pointer-events: none; }
-.avatar-overlay-canvas .avatar-canvas-status { display: none; }
+.avatar-overlay-canvas .avatar-canvas-status:not(.avatar-canvas-status-error) { display: none; }
+.avatar-overlay-canvas .avatar-canvas-status-error { z-index: 5; pointer-events: auto; max-height: 50%; overflow: auto; }
 .avatar-overlay-empty, .avatar-overlay-error { margin: 12px; padding: 14px; font: 13px/1.45 system-ui, sans-serif; color: #f0f4fa; background: #111927de; border: 1px solid #4e5c71; border-radius: 10px; }
 @media (max-width: 1000px) { .avatar-studio { padding: 16px; } .avatar-studio-grid { grid-template-columns: 1fr; } .avatar-preview-stage { min-height: 320px; height: 55vh; } }
 @media (max-width: 640px) { .screen-vision-fields, .avatar-toggle-grid { grid-template-columns: 1fr; } }

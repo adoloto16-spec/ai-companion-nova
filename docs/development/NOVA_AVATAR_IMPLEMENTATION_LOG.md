@@ -115,3 +115,19 @@ Log policy: append an entry for each implementation or verification action; reco
 ### Verification status
 - After Entry 005, the full root `pnpm test` succeeded, including the screen placement geometry tests.
 - The same CI run's React UI typecheck exposed this compile-time API mismatch; the fix in this entry requires another full CI run.
+
+
+## 2026-10-24 — Entry 007: VRM loading path in packaged Tauri
+
+### User-reported symptom
+- The VRM avatar does not appear after importing/selecting a model.
+
+### Inspection and decision
+- Confirmed that the renderer fetched the stored Blob by creating a `blob:` object URL and then calling `GLTFLoader.load(blobUrl)`.
+- The packaged Tauri Content Security Policy allows `blob:` under `img-src`, but not under `connect-src`. Three.js loads a URL through its resource loader/fetch path, so relying on a `blob:` URL can be rejected by the packaged application's CSP.
+- Replaced the URL roundtrip with `Blob.arrayBuffer()` + `GLTFLoader.parse()`. The supported model flow already only accepts binary VRM and self-contained GLB, so it should not need external resource URL resolution.
+- Added a bounds sanity check that reports an explicit error for a file with no renderable geometry. The overlay now keeps load/renderer errors visible instead of hiding all status messages.
+
+### Verification
+- Source change is committed in the same branch as PR #47. A new GitHub Actions run is required to check TypeScript, React UI build, and Windows install/smoke-test.
+- Visual rendering of the user's particular VRM remains unverified until a real desktop launch with that file.
