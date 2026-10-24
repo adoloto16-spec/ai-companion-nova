@@ -259,3 +259,23 @@ Log policy: append an entry for each implementation or verification action; reco
 
 ### Verification status
 - The previous commit's TypeScript typecheck/build passed. The current full test job has not completed yet; this small lifecycle correction is on the new head and requires its own full Actions run.
+
+
+## 2026-10-24 — Entry 016: correct the Chat Agent Vision UI integration and verify the complete workflow
+
+### Diagnosis
+- The first Actions run for the PNG/agent/rig changes passed TypeScript and React build but the root regression suite correctly caught that the new Agent Vision props and tests existed without the corresponding button rendered in `ChatView`.
+- This was an incomplete UI integration, not a model/provider diagnosis. The subsequent source correction now places the Agent Vision button in the actual main Chat composer, binds its pressed state to App state, and forwards the toggle to `FoundationRuntime.setCognitiveVisionEnabled`.
+
+### Verification and outcome
+- Actions run [40055887803](https://github.com/adoloto16-spec/ai-companion-nova/actions/runs/40055887803) completed successfully for code commit `fc63625b7a7a20298f909f381624143156af79a8`.
+- `typescript-foundation`: success (schema generation/diff, typecheck, build, and complete unit/regression suite).
+- `react-ui`: success (typecheck and production build).
+- `rust-tauri-validation`: success (workspace checks and targeted Tauri tests).
+- `windows-installer`: success (NSIS build, staged installation, installed-app startup smoke-test, SHA-256 calculation, and artifact upload).
+- Available installer artifact: [ai-companion-nova-windows-x64](https://github.com/adoloto16-spec/ai-companion-nova/actions/runs/40055887803/artifacts).
+
+### Remaining interactive verification
+- CI proves the source/build/installer paths, not the user's actual running provider configuration, chosen screen, or specific avatar file.
+- After installing the latest artifact, turn **Vision** on, send a normal chat message, and inspect the original provider error if it still rejects the image. The new UI now exposes that error rather than guessing that the model lacks image support.
+- Verify the model's texture appearance and the joint animation with the user's actual VRM in Windows WebView; the renderer now has a separate React-safe canvas host, reduced lighting, and humanoid procedural motion, but no automated test can validate the visual result of a specific asset.
