@@ -136,6 +136,12 @@ export class LLMCognitiveStep implements CognitiveStep {
       assembled.messages.map(message=>normalizeHistoricalMessage(message)),
       conversation.messages
     );
+    // The context builder is allowed to omit older messages to meet the token budget. Agent Vision
+    // explicitly means "reuse the latest stored screenshot", even if later text-only messages exist
+    // and the screenshot's original message was omitted from the assembled text context.
+    if(visionEnabled&&latestImageMessage?.id&&!restoredMessages.some(message=>message.id===latestImageMessage.id)){
+      restoredMessages.push(cloneMessage(latestImageMessage));
+    }
     const messages=restoredMessages.map(message=>applyCognitiveVisionPolicy(message,visionEnabled,latestImageMessageId));
     if(reactiveUserMessage&&!messages.some(message=>message.id===reactiveUserMessage!.id)){
       messages.push(applyCognitiveVisionPolicy(cloneMessage(reactiveUserMessage),visionEnabled,latestImageMessageId));

@@ -18,7 +18,7 @@ function context(onSpeechEvent:CognitiveStepContext["onSpeechEvent"]):CognitiveS
   return {characterId:character.id,state:{lifecycleState:"thinking",nextWakeAt:null,recentTrace:[]},signal:new AbortController().signal,wakeReason:"user-message",
     userTurn:{characterId:character.id,conversationId:conversation.id,userMessageId:userMessage.id!,turnId:"turn.stream"},onSpeechEvent};
 }
-function createStep(runtime:unknown,getPrompt?:(id:import("../../contracts/src").PromptId,scenario?:string)=>string,overrides:Partial<Pick<LLMCognitiveStepOptions,"getAvailableTools"|"executeTool"|"getReasoningOptions"|"getShowReasoningInDiagnostics"|"getGenerationOptions"|"getProviderIdForPreset"|"onDiagnostic"|"getVisionEnabled"|"getActiveConversation">>={}):LLMCognitiveStep{
+function createStep(runtime:unknown,getPrompt?:(id:import("../../contracts/src").PromptId,scenario?:string)=>string,overrides:Partial<Pick<LLMCognitiveStepOptions,"getAvailableTools"|"executeTool"|"getReasoningOptions"|"getShowReasoningInDiagnostics"|"getGenerationOptions"|"getProviderIdForPreset"|"onDiagnostic"|"getVisionEnabled"|"getActiveConversation"|"buildContext">>={}):LLMCognitiveStep{
   return new LLMCognitiveStep({
     runtime:runtime as never,
     getCharacter:async()=>character,
@@ -255,6 +255,23 @@ async function cognitiveVisionOnlyPassesLatestStoredScreenshot():Promise<void>{
     const images=requests[0]!.context.messages.filter(message=>message.images?.length);
     equal(images.map(message=>message.id),enabled?["user-message"]:[],"Agent Vision controls stored screenshot reuse and only passes the latest image");
     if(enabled)equal(images[0]?.images?.[0]?.alt,"latest","the most recent existing screenshot is chosen, without taking a new capture");
+  }
+
+  // A text-only turn can become the latest user message after a screenshot. If context budgeting
+  // drops the old screenshot message, Agent Vision must still reuse that latest stored image.
+  const screenshot:ChatMessage={id:"stored-screen",role:"user",content:"Previous screen state.",images:[{mimeType:"image/png",dataBase64:"iVBORw0KGgo=",alt:"stored-screen"}]};
+  const latestText:ChatMessage={...userMessage,content:"Summarize what you see now.",images:undefined};
+  const textOnlyHistory={...conversation,messages:[screenshot,latestText]} as unknown as Conversation;
+  for(const enabled of [false,true]){
+    const requests:ChatRequest[]=[];
+    const runtime={async chat(request:ChatRequest):Promise<ChatResponse>{requests.push(request);return responseFor(request,"Screen-aware reply.");}};
+    await createStep(runtime,undefined,{
+      getVisionEnabled:()=>enabled,
+      getActiveConversation:async()=>textOnlyHistory,
+      buildContext:async request=>({...request,messages:request.messages.filter(message=>message.id!=="stored-screen"),includedCandidates:[],omittedCandidates:[],budget:request.budget,estimatedTokens:100} as AssembledContext)
+    }).run(context(()=>{}));
+    const images=requests[0]!.context.messages.filter(message=>message.images?.length);
+    equal(images.map(message=>message.id),enabled?["stored-screen"]:[],"Agent Vision reuses the latest stored screenshot even when context budgeting drops its original message");
   }
 }
 

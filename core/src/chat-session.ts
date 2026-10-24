@@ -88,7 +88,15 @@ function traceSafeRequest(request:ChatRequest):ChatRequest{
       messages:request.context.messages.map(message=>{
         if(!message.images?.length)return message;
         const {images,...withoutImages}=message;
-        return {...withoutImages,metadata:{...(message.metadata??{}),traceImageAttachmentCount:images.length}};
+        return {...withoutImages,metadata:{
+          ...(message.metadata??{}),
+          traceImageAttachmentCount:images.length,
+          traceImageAttachments:images.map(image=>({
+            mimeType:image.mimeType,
+            base64Chars:image.dataBase64.length,
+            base64Prefix:image.dataBase64.slice(0,12)
+          }))
+        }};
       })
     }
   };

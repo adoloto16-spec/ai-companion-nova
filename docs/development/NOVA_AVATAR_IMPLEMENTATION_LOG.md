@@ -297,3 +297,20 @@ Log policy: append an entry for each implementation or verification action; reco
 ### Verification status
 - The next full CI run must validate the Rust bridge, TypeScript/React build, regression suite and Windows installer.
 - A live request against the user's running Ollama installation and visual confirmation of the user's specific VRM are still necessary to prove the end-to-end result; CI cannot execute those user-specific checks.
+
+
+## 2026-10-24 — Entry 018: make Agent Vision survive context budgeting and expose safe image-wire diagnostics
+
+### Findings
+- Ollama's documented `POST /api/chat` format is `messages: [{ role: "user", content, images: [base64] }]`. The adapter maps the attachment's raw `dataBase64` directly into that array; it must not include a `data:image/png;base64,` prefix. The main screenshot encoder already produces PNG.
+- The adapter's existing unit test used `aGVsbG8=` (the Base64 encoding of ordinary text, not a PNG). It proved that an `images` property was serialized, but was not a meaningful PNG-format regression fixture.
+- Agent Vision selected the most recent image message, but it relied on the context builder retaining that message. A later text-only user message plus context-budget omission could therefore remove the image from the agent request even though Vision was enabled.
+
+### Corrective implementation
+- Agent Vision now explicitly restores the most recent stored image-bearing user message if context assembly omitted it. The policy remains unchanged when Agent Vision is off: no stored image is passed to the cognitive request, and no new capture occurs.
+- Updated the Ollama request-mapping regression fixture to use the PNG signature in Base64 and assert that the raw Base64, not a data URL, is included in the normal `/api/chat` user message.
+- Redacted chat traces now retain safe image metadata (MIME type, Base64 character count, and signature prefix) without retaining the image payload. This helps distinguish a PNG attachment reaching the assembled provider request from a capture or context-restoration failure.
+
+### Verification status
+- This commit requires a fresh GitHub Actions run. The provider test validates request serialization, not a live call to the user's local Ollama instance. The exact installed build and live request still need to be checked if the model continues to answer as if no image were attached.
+- Texture rendering and procedural pose remain subject to the user's specific VRM file and live Windows WebView; the app should not claim that asset-specific visual verification has passed.

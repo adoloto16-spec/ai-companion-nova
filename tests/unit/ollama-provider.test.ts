@@ -166,13 +166,15 @@ async function modelDiscoveryAndNoKeyTest(): Promise<void> {
 
 async function imageAttachmentsUseTheNormalOllamaChatRequest(): Promise<void> {
   const http = new FakeOllamaHttpClient();
-  const attachment = { mimeType: "image/png" as const, dataBase64: "aGVsbG8=", alt: "screenshot" };
+  // PNG signature bytes only: enough to verify the adapter preserves the real PNG encoding
+  // as raw base64 rather than forwarding a data URL or unrelated text payload.
+  const attachment = { mimeType: "image/png" as const, dataBase64: "iVBORw0KGgo=", alt: "screenshot" };
   await provider(http).chat(chatRequest({
     context: { conversationId: "ollama-image-conversation", messages: [{ role: "user", content: "What is shown?", images: [attachment] }] }
   }));
   equal(http.requests.length, 1, "a PNG screenshot does not trigger a separate inference request");
   const body = JSON.parse(http.requests[0]!.body!) as { messages: Array<{role:string;content:string;images?:string[]}> };
-  deepEqual(body.messages[0], { role: "user", content: "What is shown?", images: ["aGVsbG8="] }, "PNG base64 is included in the same Ollama chat message");
+  deepEqual(body.messages[0], { role: "user", content: "What is shown?", images: ["iVBORw0KGgo="] }, "raw PNG base64 is included in the same Ollama chat message without a data URL prefix");
 }
 
 async function ordinaryRequestMappingTest(): Promise<void> {
