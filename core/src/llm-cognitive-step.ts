@@ -1,4 +1,4 @@
-import {resolvePromptText} from "../../contracts/src";
+import {assemblePromptInstructions,createDefaultPromptConfiguration} from "../../contracts/src";
 import type {PromptId} from "../../contracts/src";
 import type {
   AssembledContext,Character,ChatMessage,ChatRequest,ChatRequestOptions,ChatResponse,
@@ -7,6 +7,7 @@ import type {
   MindToolExecutor,NovaToolCall,NovaToolResult
 } from "../../contracts/src";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,CONTEXT_API_VERSION,CONTEXT_SCHEMA_VERSION,parseNovaTurn} from "../../contracts/src";
+import {cloneChatImageAttachments,restoreChatImageAttachments} from "./chat-message-attachments";
 import {NOVA_TURN_MAX_SERIALIZED_CHARS} from "../../contracts/src/nova-turn";
 import type {NovaTurn} from "../../contracts/src/nova-turn";
 import type {CognitiveStep,CognitiveStepContext,CognitiveStepResult} from "./mind-runtime";
@@ -29,7 +30,7 @@ export interface LLMCognitiveStepOptions {
   getChatModel:()=>string;
   getChatModelForPreset:(providerPresetId:string)=>Promise<string>;
   getCognitiveSchedule?:()=>CognitiveScheduleSettings;
-  getPrompt?:(id:PromptId)=>string;
+  getPrompt?:(id:PromptId,scenario?:string)=>string;
   getAvailableTools?:()=>readonly {name:string;description:string;parameters:unknown}[];
   executeTool?:MindToolExecutor["execute"];
   getReasoningOptions?:()=>ChatReasoningOptions;
@@ -39,6 +40,8 @@ export interface LLMCognitiveStepOptions {
   getGenerationOptions?:()=>import("../../contracts/src/index").ChatGenerationOptions|undefined;
   consumeRequestedWakeInterval?:(turnId:string)=>number|undefined;
   clock?:()=>string;
+  /** Reuse the latest already-stored screenshot in Nova Life cognition; never captures one. */
+  getVisionEnabled?:()=>boolean;
 }
 
 const MAX_NATIVE_TOOL_ROUNDS=12;
@@ -53,12 +56,22 @@ function defaultCognitiveInterval(schedule:CognitiveScheduleSettings|undefined):
 function throwIfAborted(signal:AbortSignal):void {
   if(signal.aborted){const error=new Error("Mind Runtime cognitive step aborted.");error.name="AbortError";throw error;}
 }
-function cloneMessage(message:ChatMessage):ChatMessage{return {...message,...(message.metadata?{metadata:{...message.metadata}}:{})};}
+function cloneMessage(message:ChatMessage):ChatMessage{return {
+  ...message,
+  ...(message.metadata?{metadata:{...message.metadata}}:{}),
+  ...(message.images?{images:cloneChatImageAttachments(message.images)}:{})
+};}
 function normalizeHistoricalMessage(message:ChatMessage):ChatMessage{
   if(message.role!=="assistant")return cloneMessage(message);
   const parsed=parseNovaTurn(message.content);
   if(!parsed.turn)return cloneMessage(message);
   return {...cloneMessage(message),content:parsed.turn.speech};
+}
+function applyCognitiveVisionPolicy(message:ChatMessage,enabled:boolean,latestImageMessageId:string|undefined):ChatMessage{
+  if(message.images?.length&&enabled&&message.role==="user"&&message.id===latestImageMessageId)return message;
+  if(!message.images?.length)return message;
+  const {images:_ignored,...textOnly}=message;
+  return textOnly;
 }
 function safeToolResultText(value:unknown):string{
   let serialized:string;
@@ -103,28 +116,41 @@ export class LLMCognitiveStep implements CognitiveStep {
       conversationId:conversation.id,messages:conversation.messages,budget:this.options.getContextBudget(),
     });
     throwIfAborted(context.signal);
-    const promptText=(id:PromptId)=>{
-      const configured=this.options.getPrompt?.(id);
-      return typeof configured==="string"&&configured.trim().length>0?configured:resolvePromptText(undefined,id);
-    };
+    const promptScenario=context.userTurn?"reactive":"background";
+    const promptTextForScenario=(scenario:string)=>this.options.getPrompt
+      ?this.options.getPrompt("nova-system-plain",scenario)
+      :assemblePromptInstructions(createDefaultPromptConfiguration(),"nova",scenario).text;
+    const initialPromptText=promptTextForScenario(promptScenario);
     const schedule=this.options.getCognitiveSchedule?.();
     const scheduleContext=schedule?[
-      "[COGNITIVE SCHEDULE]",
-      "Default next wake interval: "+schedule.defaultIntervalMs+" ms.",
-      "Permitted next wake interval: "+schedule.minIntervalMs+" to "+schedule.maxIntervalMs+" ms.",
-      "Use the scheduler tool only when changing the next interval is useful; the runtime enforces these bounds.",
-      "[/COGNITIVE SCHEDULE]",
+      "Cognitive schedule data (milliseconds):",
+      "default="+schedule.defaultIntervalMs,
+      "minimum="+schedule.minIntervalMs,
+      "maximum="+schedule.maxIntervalMs
     ].join("\n"):"";
     const identity=["[IDENTITY / CHARACTER]","Name: "+character.name,"Description: "+character.description,"[/IDENTITY / CHARACTER]"].join("\n");
-    const messages=assembled.messages.map(message=>normalizeHistoricalMessage(message));
-    if(reactiveUserMessage&&!messages.some(message=>message.id===reactiveUserMessage!.id))messages.push(cloneMessage(reactiveUserMessage));
+    const visionEnabled=this.options.getVisionEnabled?.()===true;
+    const latestImageMessage=visionEnabled?[...conversation.messages].reverse().find(message=>message.role==="user"&&Boolean(message.images?.length)):undefined;
+    const latestImageMessageId=latestImageMessage?.id;
+    const restoredMessages=restoreChatImageAttachments(
+      assembled.messages.map(message=>normalizeHistoricalMessage(message)),
+      conversation.messages
+    );
+    // The context builder is allowed to omit older messages to meet the token budget. Agent Vision
+    // explicitly means "reuse the latest stored screenshot", even if later text-only messages exist
+    // and the screenshot's original message was omitted from the assembled text context.
+    if(visionEnabled&&latestImageMessage?.id&&!restoredMessages.some(message=>message.id===latestImageMessage.id)){
+      restoredMessages.push(cloneMessage(latestImageMessage));
+    }
+    const messages=restoredMessages.map(message=>applyCognitiveVisionPolicy(message,visionEnabled,latestImageMessageId));
+    if(reactiveUserMessage&&!messages.some(message=>message.id===reactiveUserMessage!.id)){
+      messages.push(applyCognitiveVisionPolicy(cloneMessage(reactiveUserMessage),visionEnabled,latestImageMessageId));
+    }
     const baseMessages:ChatMessage[]=[
-      {id:conversation.id+":nova-turn:system",role:"system",content:promptText("nova-system-plain")},
+      {id:conversation.id+":nova-turn:system",role:"system",content:initialPromptText},
       {id:conversation.id+":nova-turn:identity",role:"system",content:identity},
       {id:conversation.id+":nova-turn:schedule",role:"system",content:scheduleContext},
       ...messages,
-      {id:conversation.id+":nova-turn:user-cue",role:"user",content:promptText(context.userTurn?"nova-cue-reactive-plain":"nova-cue-background-plain")+
-        (context.userTurn?"":"\nThis is a background step. Do not invent a reason to speak. If no useful user-facing reply or action is needed, return an empty answer.")},
     ];
     const providerPresetId=this.options.getActiveProviderPresetId()??this.options.runtime.getActiveProviderPresetId?.();
     const model=providerPresetId?await this.options.getChatModelForPreset(providerPresetId):this.options.getChatModel();
@@ -153,14 +179,27 @@ export class LLMCognitiveStep implements CognitiveStep {
       ...(configuredGeneration?.repeatLastN!==undefined?{repeatLastN:configuredGeneration.repeatLastN}:{}),
       ...(configuredGeneration?.responseFormat!==undefined?{responseFormat:configuredGeneration.responseFormat}:{}),
     };
-    const reqFor=(id:string):ChatRequest=>({
-      apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION,requestId:id,model,
-      context:{conversationId:conversation.id,messages:[...baseMessages.map(cloneMessage),...history.map(cloneMessage)]},
-      generation:requestGeneration,
-      ...(toolDefinitions.length?{tools:toolDefinitions}:{}),
-      ...(reasoningOptions?{reasoning:reasoningOptions}:{}),
-      metadata:{cognition:true,protocol:"NATIVE_TOOL_CALLS",protocolVersion:2,outputMode:"plain"},
-    });
+    let activePromptScenario=promptScenario;
+    let activePromptText=initialPromptText;
+    const reqFor=(id:string):ChatRequest=>{
+      const nextScenario=roundsWithToolCalls>0?promptScenario+"+after-tool":promptScenario;
+      if(nextScenario!==activePromptScenario){
+        activePromptScenario=nextScenario;
+        activePromptText=promptTextForScenario(nextScenario);
+      }
+      const requestMessages=[...baseMessages.map(cloneMessage),...history.map(cloneMessage)];
+      const systemPromptIndex=requestMessages.findIndex(message=>message.id===conversation.id+":nova-turn:system");
+      if(systemPromptIndex<0)throw new Error("Nova cognitive request is missing its configured system prompt message.");
+      requestMessages[systemPromptIndex]={...requestMessages[systemPromptIndex]!,content:activePromptText};
+      return {
+        apiVersion:CHAT_API_VERSION,schemaVersion:CHAT_SCHEMA_VERSION,requestId:id,model,
+        context:{conversationId:conversation.id,messages:requestMessages},
+        generation:requestGeneration,
+        ...(toolDefinitions.length?{tools:toolDefinitions}:{}),
+        ...(reasoningOptions?{reasoning:reasoningOptions}:{}),
+        metadata:{cognition:true,protocol:"NATIVE_TOOL_CALLS",protocolVersion:2,outputMode:"plain"},
+      };
+    };
     while(true){
       throwIfAborted(context.signal);
       const currentRequestId=roundsWithToolCalls===0?request:request+"-tool-"+roundsWithToolCalls;

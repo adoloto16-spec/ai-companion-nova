@@ -1,0 +1,316 @@
+# Nova Avatar & Screen Understanding — Development Log
+
+Repository: `adoloto16-spec/ai-companion-nova`
+Workstream: PR #47, branch `feat/prompt-presets-system`
+Baseline HEAD inspected: `7a6f92b2c2c6a24bcc4571bc5892cb483ecacea6`
+Log policy: append an entry for each implementation or verification action; record observed results, decisions, and unverified platform-only behavior. Never rewrite prior entries to hide failures.
+
+## 2026-10-23 — Entry 001: baseline inspection and initial decisions
+
+### Actions performed
+- Read PR #47 metadata and confirmed it is open; its base is `fix/nova-tts-queue-reasoning-settings`, and its head branch is `feat/prompt-presets-system`.
+- Read the head commit's recursive Git tree, repository manifests, the existing character and vision module placeholders, contracts, desktop UI entry point, and CI workflow.
+- Read the completed workflow/check metadata for baseline HEAD.
+
+### Observations
+- Baseline HEAD: `7a6f92b2c2c6a24bcc4571bc5892cb483ecacea6`.
+- The latest completed CI run found for that HEAD is run [39248836911](https://github.com/adoloto16-spec/ai-companion-nova/actions/runs/39248836911); all four reported jobs completed successfully.
+- The repository already has React + TypeScript, Rust/Tauri, versioned contracts, a reserved `modules/character` placeholder for VRM/Live2D, and a reserved `modules/vision` placeholder.
+- The existing `Character` contract represents Nova's conversational character/persona, so avatar-model profiles must use a different name and storage key.
+- The existing workspace configuration does not include a renderer/VRM package. CI currently uses `pnpm install --no-frozen-lockfile`; schema catalog generation is checked for a clean diff.
+- Live2D's official Cubism Core is distributed through its SDK package under proprietary licensing terms; do not vendor SDK/Core binaries or invent a renderer implementation.
+
+### Decisions
+- Add the work on PR #47's head branch, not `main`, and do not create or retarget a PR.
+- Keep avatar state and rendering optional and separate from chat/persona state. Define renderer-neutral contracts before concrete renderer integration.
+- Prioritize a real VRM path via Three.js and `@pixiv/three-vrm`; keep Live2D behind an adapter boundary until the user supplies/obtains the SDK files needed for a legitimate runtime integration.
+- Screen understanding stays a separate service with an injected capture source and vision analyzer; it must not import or depend on the avatar runtime.
+- Use a hybrid behavior controller: deterministic low-latency idle/motion orchestration first, with an optional context director later. A model/LLM is not required for basic movement.
+- The desired desktop overlay is a separate Tauri webview window; its support and click-through details must be validated on Windows, not assumed from a TypeScript build.
+
+### Verification status
+- Baseline PR metadata and workflow status: checked.
+- Local execution, interactive rendering, and Windows desktop behavior are not available through the GitHub repository connector and remain unverified until CI/desktop smoke testing.
+
+
+## 2026-10-23 — Entry 002: renderer-neutral contracts and unit tests
+
+### Actions performed
+- Added `modules/character/src/index.ts`: renderer-independent avatar profile/settings/intent types, validated file extension handling, normalized setting bounds, deterministic dialogue-to-expression mapping, screen-region targeting, and a BroadcastChannel event bridge for the main/overlay webviews.
+- Added `modules/vision/src/index.ts`: injected vision-inference contract, bounded screenshot payload validation, JSON response parsing, normalized region validation, and stable screen observation output.
+- Added unit tests for settings validation, model format restrictions, dialogue intents, point target bounds, invalid model response geometry, and reuse of the configured vision model.
+- Added both unit test files to the root test command.
+
+### Verification after this action
+- Source blobs were created on GitHub but are not yet attached to the branch tree; this entry records the implementation stage, not a passing test claim.
+- Unit tests and TypeScript checks will be run through the branch's CI after the integrated code commit.
+- Decision: keep the module APIs independent of the provider and renderer implementations; no changes were made to Nova's conversational `Character` persistence or memory.
+
+
+## 2026-10-23 — Entry 003: renderer, settings, and Tauri overlay integration
+
+### Actions performed
+- Added the frontend dependencies `three`, `@pixiv/three-vrm`, and `@types/three`; added Vite multi-page entry configuration for the main UI and `avatar-overlay.html`.
+- Added `avatar-library.ts` to import supported single-file models into local IndexedDB, keep profile settings separate from the source asset, and select/delete/rename saved profiles.
+- Added `vrm-avatar-canvas.tsx` using the official GLTFLoader + `VRMLoaderPlugin` flow. It adapts to available VRM humanoid bones and expression manager, plays the first GLB animation clip when present, and supplies basic breathing/head movement/blink/talk/wave/point behavior.
+- Added Avatar Studio UI, the secondary overlay view/entry, and styling. The main UI has a separate Avatar Studio navigation page. Assistant message presentation emits renderer-neutral intent events to the avatar subsystem.
+- Configured a separate initially hidden transparent, undecorated, always-on-top Tauri window. Added only the required narrow window commands to the existing Tauri capability and authorized the two intended window labels.
+- Added manual screen sharing and single-frame local Ollama image analysis UI, with validated normalized target regions and the ability to ask the avatar to look/point toward a selected region.
+
+### Decisions and limits
+- Avatar state is stored in a dedicated IndexedDB database and never added to Nova's conversational Character store or prompt instructions.
+- VRM/GLB rendering is the only implemented renderer in this stage. The Live2D status explicitly says the adapter runtime is not configured; there is no false claim that Cubism models play.
+- Screen capture is user-initiated; analysis happens only after pressing Analyze. No periodic capture loop is installed.
+- This action records intended integration. CI will determine whether the implementation compiles; runtime behavior on a physical Windows desktop remains separately unverified.
+
+
+## 2026-10-23 — Entry 004: CI verification and screen-space movement refinement
+
+### Actions performed
+- Waited for GitHub Actions run [39956481804](https://github.com/adoloto16-spec/ai-companion-nova/actions/runs/39956481804) to complete on HEAD `823648a152c0c969ed61c184da18af816b585a05`.
+- Recorded the run's final overall conclusion: `success`. The TypeScript Foundation job (including the root test command), React UI job, Rust/Tauri validation job, and Windows installer job all succeeded. The Windows job built the NSIS installer, installed the staged application, passed its startup smoke test, calculated its SHA-256, and uploaded the artifact.
+- Tried to clone the branch into the execution container for local reruns; the container could not resolve `github.com` (DNS failure), so local execution remains unavailable. CI outcomes are from GitHub Actions, not local execution.
+- Added normalized monitor matching and work-area placement helpers to the avatar contract module, with tests for unique monitor matches, refusal to guess when capture is a window/ambiguous, and clamped placement.
+- Added basic upper-leg/arm gait for a walking intent, capture-surface/dimension metadata, and native overlay window movement toward a selected region when the full-monitor geometry can be matched.
+- Added narrow Tauri permissions for native overlay position/size changes and updated the user-facing architecture/limitation documentation.
+
+### Decisions
+- Move the avatar window only when the captured image dimensions match exactly one available monitor within a 1.5% tolerance; never infer desktop coordinates from a browser-tab/window crop or ambiguous monitor sizes.
+- Use the monitor work area rather than raw screen bounds so the avatar is less likely to be hidden under the taskbar.
+- Publish a walking intent during the window-position transition, followed by the pointing intent. The walk is still procedural and does not claim full IK or physical locomotion simulation.
+- The first CI run verified the preceding implementation only. The movement refinement, new monitor tests, capability changes, and journal update still require a new CI run.
+
+### Verification status
+- Pre-refinement commit `823648a152c0c969ed61c184da18af816b585a05`: GitHub Actions fully green.
+- Refinement in this entry: verification pending the next GitHub Actions run.
+- Real-world monitor/DPI mapping, transparent compositing, mouse pass-through, and smooth movement across mixed-DPI monitors remain unverified in a live Windows desktop session.
+
+
+## 2026-10-23 — Entry 005: diagnose and fix monitor placement precision
+
+### Action performed
+- Inspected the failed test output from GitHub Actions run [39958446273](https://github.com/adoloto16-spec/ai-companion-nova/actions/runs/39958446273), job `typescript-foundation`.
+- Identified the exact failing assertion: screen placement calculated `x: 1197.9999999999998` while native logical-pixel placement/test expectation was `x: 1198`. No other failure was reported before the unit-test command stopped.
+- Fixed the production placement helper by rounding final logical x/y window positions to whole pixels. Kept the expected test value unchanged.
+
+### Decision
+- Native desktop windows are placed on logical-pixel coordinates in this flow; returning fractional residue has no value and makes deterministic placement brittle. Rounding at the boundary is preferable to weakening the test or using an approximate test matcher.
+
+### Verification status
+- The prior implementation's TypeScript typecheck/build passed; `pnpm test` failed only at the exact screen-placement equality assertion documented above.
+- The precision fix has not yet been checked by CI; rerun validation is required before treating the movement path as verified.
+
+
+## 2026-10-23 — Entry 006: use the supported Tauri window scale-factor API
+
+### Action performed
+- Inspected the React UI typecheck output from run [39958709467](https://github.com/adoloto16-spec/ai-companion-nova/actions/runs/39958709467), job `react-ui`.
+- The compiler reported `TS2339: Property 'currentMonitor' does not exist on type 'Window'` in `avatar-studio.tsx`. The frontend compile therefore correctly rejected the assumed API.
+- Replaced the unsupported method with the Tauri v2 `Window.scaleFactor()` API when converting the overlay's current physical position to logical coordinates.
+
+### Decision
+- Keep the geometry conversion based on the overlay window's actual scale factor, not the destination monitor's factor, because source and target monitors can use different DPI scaling.
+- Do not bypass TypeScript or cast the window API to an invented shape.
+
+### Verification status
+- After Entry 005, the full root `pnpm test` succeeded, including the screen placement geometry tests.
+- The same CI run's React UI typecheck exposed this compile-time API mismatch; the fix in this entry requires another full CI run.
+
+
+## 2026-10-24 — Entry 007: VRM loading path in packaged Tauri
+
+### User-reported symptom
+- The VRM avatar does not appear after importing/selecting a model.
+
+### Inspection and decision
+- Confirmed that the renderer fetched the stored Blob by creating a `blob:` object URL and then calling `GLTFLoader.load(blobUrl)`.
+- The packaged Tauri Content Security Policy allows `blob:` under `img-src`, but not under `connect-src`. Three.js loads a URL through its resource loader/fetch path, so relying on a `blob:` URL can be rejected by the packaged application's CSP.
+- Replaced the URL roundtrip with `Blob.arrayBuffer()` + `GLTFLoader.parse()`. The supported model flow already only accepts binary VRM and self-contained GLB, so it should not need external resource URL resolution.
+- Added a bounds sanity check that reports an explicit error for a file with no renderable geometry. The overlay now keeps load/renderer errors visible instead of hiding all status messages.
+
+### Verification
+- Source change is committed in the same branch as PR #47. A new GitHub Actions run is required to check TypeScript, React UI build, and Windows install/smoke-test.
+- Visual rendering of the user's particular VRM remains unverified until a real desktop launch with that file.
+
+
+## 2026-10-24 — Entry 008: verify VRM loading fix and align screen understanding with Chat
+
+### Verification of the previous commit
+- Waited for GitHub Actions run [40047099452](https://github.com/adoloto16-spec/ai-companion-nova/actions/runs/40047099452) for HEAD `06e242883eb8b31f6d8080e82eb8412b01f7be9a` to complete.
+- All four jobs completed with `success`: TypeScript foundation/tests, React UI typecheck/build, Windows NSIS installer including staged install/startup smoke-test, and Rust/Tauri validation.
+- This validates compilation, automated tests, installer packaging, and application startup. It does not visually verify the user's actual VRM file in an interactive desktop session.
+
+## 2026-10-24 — Entry 009: one screenshot, one normal Chat request
+
+### User-reported mismatch
+- The previous design put capture and a separate Ollama vision call in Avatar Studio. That was not the intended user path: the Screenshot button should attach an image to the main chat message so the selected chat model receives it with ordinary context, without a second model request.
+- The VRM load path in Entry 007 passed the CI run noted above; interactive display of the user's specific model still requires desktop verification.
+
+### Actions and decisions
+- Introduced `ChatImageAttachment` as an optional part of `ChatMessage`, with MIME/count/payload bounds. Updated the generated schema catalog and Rust conversation persistence/validation so screenshots survive app restarts.
+- Added a common context-assembly restoration helper. The context engine works on textual candidates, but original image payloads are reattached by message ID before provider invocation; the newest user screenshot is not silently dropped if budget filtering omits its message.
+- Added same-request image encoding for the existing providers: Ollama message `images`, OpenAI-compatible `image_url` parts, and Gemini `inlineData`. Unit tests assert one ordinary provider request contains both text and image.
+- Moved one-shot screen capture and removable image preview into the main Chat composer. Capture stops its tracks after one frame; the capture module has no provider, prompt, or inference dependency.
+- Removed the detached screen-analysis path and its region-pointing UI/motion code so the screenshot action cannot invoke a second model.
+
+### Verification status
+- The preceding VRM-fix HEAD passed all GitHub Actions jobs.
+- The chat attachment integration still requires fresh TypeScript/unit-test, React UI, Rust/Tauri, and Windows installer validation.
+- OS screenshot-picker behavior and actual VRM visual rendering require interactive desktop checks; GitHub CI cannot prove those user-specific paths.
+
+
+## 2026-10-24 — Entry 010: preserve the existing composer busy-state contract
+
+### Action
+- Read the failed root unit-test output from run [40048828462](https://github.com/adoloto16-spec/ai-companion-nova/actions/runs/40048828462).
+- The exact failure was in the existing `chat-stream-ui-regression.test.ts`: it verifies that the main composer explicitly uses `disabled={chatBusy}`, where `chatBusy` combines normal streaming and pending Nova Life work.
+- The screenshot change had broadened the textarea binding to `disabled={chatBusy||captureBusy}`, which did not preserve that explicit source-level contract even though the expression also blocked input while streaming. The test correctly caught a regression in the UI contract; the test itself was not changed.
+- Restored the textarea's `disabled={chatBusy}` binding and exposed capture-in-progress state through `aria-busy={captureBusy}`. Sending remains blocked during capture by the submit handler and submit button.
+
+### Verification
+- The schema-catalog generation, schema diff check, root typecheck, and root build passed before the failing regression assertion.
+- Provider image tests (OpenAI-compatible and Ollama), the avatar runtime tests, and the capture attachment test all passed earlier in the same root test run.
+- This focused JSX fix requires a new CI run; UI, Windows, Rust, and full root test completion still need to be observed.
+
+
+## 2026-10-24 — Entry 011: restore primary navigation after an imprecise JSX anchor
+
+### Diagnosis
+- The follow-up CI run [40048941993](https://github.com/adoloto16-spec/ai-companion-nova/actions/runs/40048941993) passed foundation build, but the root unit tests failed at `desktop-ui-regression.test.ts`: “Primary navigation must expose Model Profile”.
+- Inspection showed the route-replacement search had matched `className={view==="avatar"...}` on the **navigation button** instead of the rendered view branch. It therefore removed part of the navigation markup. This was an implementation defect, not an invalid test.
+
+### Corrective action
+- Rebased the main UI source on the verified pre-screenshot-integration version of `main.tsx`, then reapplied the screenshot composer changes using a unique, multiline anchor for the rendered Avatar Studio branch.
+- Added a pre-commit source check that the primary navigation still contains Chat, Avatar Studio and Model Profile. Kept `disabled={chatBusy}` on the textarea and left capture-in-progress as `aria-busy`; form submission remains disabled while capture is active.
+- No tests were edited.
+
+### Verification status
+- The source fix is awaiting a new full CI run.
+- The previous root test run confirmed the schema/type/build steps, capture/provider unit tests, and existing streaming UI regression passed before the desktop navigation regression test stopped the suite.
+
+
+## 2026-10-24 — Entry 012: preserve the existing draft-clear semantics
+
+### Diagnosis
+- The latest root test run [40049091664](https://github.com/adoloto16-spec/ai-companion-nova/actions/runs/40049091664) passed the screenshot/provider tests, navigation test, and streaming UI contract, then failed at `desktop-ui-regression.test.ts`: “ordinary Chat clears a draft only after a successful send”.
+- The original UI regression test also explicitly requires Nova Life to clear only on `awaiting-life`, not on `life-failed`. The screenshot integration had grouped these conditions together, inadvertently changing existing retry behavior.
+
+### Corrective action
+- Restored the explicit `if(result.status==="sent") onClearSubmittedDraft(submittedDraft)` and `if(result.status==="awaiting-life") onClearSubmittedDraft(submittedDraft)` guards.
+- Kept screenshot preview clearing in separate blocks with the same success conditions. On `life-failed`, the draft and pending screenshot remain available, matching the existing Chat retry semantics.
+- No tests were modified.
+
+### Verification status
+- The latest root run passed TypeScript checks/build, screenshot capture helper tests, provider image mapping tests, the chat streaming UI regression, and the primary navigation checks before the draft-clear assertion failed.
+- This correction requires another complete GitHub Actions run, including React UI, Rust/Tauri, and Windows installer.
+
+
+## 2026-10-24 — Entry 013: correct the Vision interaction and React-owned canvas lifecycle
+
+### User-reported failures
+- Vision required a manual one-frame Screenshot action and a second deliberate send of the queued attachment. This did not meet the intended toggle-controlled, automatic-per-request behavior.
+- A screenshot-bearing Chat request surfaced only “The message could not be sent.”, making image-input/model failures difficult to distinguish from ordinary text submissions.
+- Avatar Studio intermittently failed with `removeChild`: the Three.js renderer imperatively replaced and removed children on the same DOM element where React rendered the status/error overlay.
+
+### Corrective implementation
+- Replaced the one-shot composer workflow with a **Vision: Off/On** control. Enabling Vision asks the user to choose a display surface once; the stream remains active until toggled off, the Chat view unmounts, or screen sharing ends by the operating system.
+- Each outgoing Chat/Nova Life message captures a fresh bounded JPEG immediately before submission and adds it to the same user message. No screenshot preview/attachment queue or second model call is required. Turning Vision off stops the stream, and capture failures leave the user's draft unsent.
+- Made automatic capture robust to repeated send attempts, view unmounts during the permission prompt, the OS ending the stream, and screenshots that need more compression attempts to satisfy the payload limit.
+- Kept the renderer canvas in a dedicated inner host, separate from React-owned status overlays. React no longer has to reconcile nodes that Three.js has removed.
+- Made image-bearing provider errors actionable: Chat now states that the active model/provider may not support screenshots and points to Diagnostics for provider-specific details. Existing draft-clear conditions are unchanged.
+- Added regression assertions for automatic Vision and the isolated renderer host. No existing tests were weakened or deleted.
+
+### Verification status
+- GitHub Actions will run against the new commit. Its final outcome must be observed before calling this validated.
+- CI cannot prove the OS screen-picker interaction or visually confirm the user's particular VRM in a live Windows WebView; those remain explicit interactive checks.
+
+
+## 2026-10-24 — Entry 014: PNG request contract, independent agent vision, and avatar action
+
+### Reported failures and findings
+- The user reported that screenshot requests were still returning a generic provider rejection and explicitly requested PNG wire format.
+- The capture utility still used JPEG. The Ollama adapter serialized image base64 in the ordinary `/api/chat` request but incorrectly advertised `vision: false`.
+- Chat's image-error normalization replaced the provider's actual `chatError.message` with a generic model-capability diagnosis, preventing useful troubleshooting.
+- The existing cognitive path restored every historical screenshot without an agent-specific consent/toggle. Avatar movement was confined mostly to head/breathing, and the high light intensities could wash out material colors.
+
+### Implementation
+- Changed automatic screen-frame encoding to real `image/png` with a progressive downscale ladder and retained the existing base64 limits.
+- Aligned Ollama's advertised vision capability with its existing image-bearing `/api/chat` mapping and changed the wire-format test fixture to PNG.
+- Updated Chat error normalization to surface the provider's actual error message (bounded to 500 characters) for image-bearing requests. This is diagnostic improvement; a successful provider request must still be verified against the user's installed model and exact runtime configuration.
+- Added a second **Agent Vision** toggle, independent from capture Vision. It never captures a screen: Off strips all images from cognitive context; On allows only the latest existing screenshot-bearing user message to remain in Nova Life's request.
+- Registered the secured `avatar.set_intent` native tool (idle/talk/wave/look with bounded expression and intensity) and prevented the generic dialogue-expression heuristic from overwriting an explicit avatar-action tool result.
+- Reworked avatar rendering to use lower scene lights, ACES filmic tone mapping, a persistent relaxed upper-arm baseline, and procedural shoulder/elbow/head/spine/hips motion on humanoid bones. This cannot supply joint animation for a model with no humanoid rig or embedded animation.
+
+### Verification plan
+- Added cognitive-context regression coverage for Agent Vision on/off and latest-image selection, updated the Ollama PNG/capability tests, and added avatar-rig source assertions.
+- The exact provider error is now shown in Chat when present, which will help identify a remaining configuration/serialization issue if the next run still fails.
+- GitHub Actions and interactive Windows verification must be observed before claiming success. This CI cannot confirm the user's model's actual textures, poses, or live screen-picker interaction.
+
+
+## 2026-10-24 — Entry 015: keep browser-only BroadcastChannel out of Node test processes
+
+### Finding
+- The newly added local avatar event test uses synchronous in-process dispatch to verify that a cognitive tool can control the Avatar Studio in the same WebView.
+- Node exposes a global `BroadcastChannel` API even when no browser window exists. Creating a channel during a Node unit test can keep the test process alive after assertions have completed.
+
+### Corrective action
+- Restricted BroadcastChannel creation to browser contexts. Local avatar-intent listeners still receive synchronous events in tests and in the Chat WebView; the broadcast channel continues to deliver intents to a separate Tauri window.
+- The existing test covers local delivery and unsubscribes the listener. No test was weakened.
+
+### Verification status
+- The previous commit's TypeScript typecheck/build passed. The current full test job has not completed yet; this small lifecycle correction is on the new head and requires its own full Actions run.
+
+
+## 2026-10-24 — Entry 016: correct the Chat Agent Vision UI integration and verify the complete workflow
+
+### Diagnosis
+- The first Actions run for the PNG/agent/rig changes passed TypeScript and React build but the root regression suite correctly caught that the new Agent Vision props and tests existed without the corresponding button rendered in `ChatView`.
+- This was an incomplete UI integration, not a model/provider diagnosis. The subsequent source correction now places the Agent Vision button in the actual main Chat composer, binds its pressed state to App state, and forwards the toggle to `FoundationRuntime.setCognitiveVisionEnabled`.
+
+### Verification and outcome
+- Actions run [40055887803](https://github.com/adoloto16-spec/ai-companion-nova/actions/runs/40055887803) completed successfully for code commit `fc63625b7a7a20298f909f381624143156af79a8`.
+- `typescript-foundation`: success (schema generation/diff, typecheck, build, and complete unit/regression suite).
+- `react-ui`: success (typecheck and production build).
+- `rust-tauri-validation`: success (workspace checks and targeted Tauri tests).
+- `windows-installer`: success (NSIS build, staged installation, installed-app startup smoke-test, SHA-256 calculation, and artifact upload).
+- Available installer artifact: [ai-companion-nova-windows-x64](https://github.com/adoloto16-spec/ai-companion-nova/actions/runs/40055887803/artifacts).
+
+### Remaining interactive verification
+- CI proves the source/build/installer paths, not the user's actual running provider configuration, chosen screen, or specific avatar file.
+- After installing the latest artifact, turn **Vision** on, send a normal chat message, and inspect the original provider error if it still rejects the image. The new UI now exposes that error rather than guessing that the model lacks image support.
+- Verify the model's texture appearance and the joint animation with the user's actual VRM in Windows WebView; the renderer now has a separate React-safe canvas host, reduced lighting, and humanoid procedural motion, but no automated test can validate the visual result of a specific asset.
+
+
+## 2026-10-24 — Entry 017: fix the native multimodal payload limit and VRM front/material handling
+
+### Root-cause diagnosis
+- The actual desktop Ollama transport serializes the screenshot and conversation history into one JSON request, but the Rust IPC bridge rejected any body over **2 MiB** before making the HTTP request. The screenshot contract allows up to 1,750,000 base64 characters, so adding existing message history can exceed 2 MiB while still satisfying the app's screenshot limit. That means the normal provider adapter test could pass even though real screenshot requests never reached Ollama.
+- The renderer always placed the camera on +Z. The VRM specification uses opposite forward directions for VRM 0.x (-Z) and VRM 1.0 (+Z), so this fixed camera can show a VRM 0.x model from the back.
+- The renderer did not explicitly reassert sRGB for base-color maps or report an imported mesh set with no base-color maps, leaving a textureless white result ambiguous.
+
+### Corrective implementation
+- Increased the bounded native Ollama request JSON cap to 8 MiB, shared its validation between streaming and non-streaming commands, and added Rust regression tests for a valid screenshot-plus-history body over the old 2 MiB limit and rejection above the new cap.
+- Chose the avatar camera side from `vrm.meta.metaVersion`, kept VRM 1.0 on +Z and moved the camera to -Z for VRM 0.x.
+- Reasserted `THREE.SRGBColorSpace` and marked the base-color map for upload before the first render. When the mesh/material set has no base-color texture maps, the viewer now shows the mesh/material diagnosis and asks for a self-contained textured asset instead of silently treating the render as fully loaded.
+- Added source regression assertions for the VRM camera direction and explicit material preparation. No existing test assertions were weakened or deleted.
+
+### Verification status
+- The next full CI run must validate the Rust bridge, TypeScript/React build, regression suite and Windows installer.
+- A live request against the user's running Ollama installation and visual confirmation of the user's specific VRM are still necessary to prove the end-to-end result; CI cannot execute those user-specific checks.
+
+
+## 2026-10-24 — Entry 018: make Agent Vision survive context budgeting and expose safe image-wire diagnostics
+
+### Findings
+- Ollama's documented `POST /api/chat` format is `messages: [{ role: "user", content, images: [base64] }]`. The adapter maps the attachment's raw `dataBase64` directly into that array; it must not include a `data:image/png;base64,` prefix. The main screenshot encoder already produces PNG.
+- The adapter's existing unit test used `aGVsbG8=` (the Base64 encoding of ordinary text, not a PNG). It proved that an `images` property was serialized, but was not a meaningful PNG-format regression fixture.
+- Agent Vision selected the most recent image message, but it relied on the context builder retaining that message. A later text-only user message plus context-budget omission could therefore remove the image from the agent request even though Vision was enabled.
+
+### Corrective implementation
+- Agent Vision now explicitly restores the most recent stored image-bearing user message if context assembly omitted it. The policy remains unchanged when Agent Vision is off: no stored image is passed to the cognitive request, and no new capture occurs.
+- Updated the Ollama request-mapping regression fixture to use the PNG signature in Base64 and assert that the raw Base64, not a data URL, is included in the normal `/api/chat` user message.
+- Redacted chat traces now retain safe image metadata (MIME type, Base64 character count, and signature prefix) without retaining the image payload. This helps distinguish a PNG attachment reaching the assembled provider request from a capture or context-restoration failure.
+
+### Verification status
+- This commit requires a fresh GitHub Actions run. The provider test validates request serialization, not a live call to the user's local Ollama instance. The exact installed build and live request still need to be checked if the model continues to answer as if no image were attached.
+- Texture rendering and procedural pose remain subject to the user's specific VRM file and live Windows WebView; the app should not claim that asset-specific visual verification has passed.

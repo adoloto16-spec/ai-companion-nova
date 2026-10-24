@@ -1,4 +1,4 @@
-import {DEFAULT_PROMPT_TEXTS,PROMPT_REGISTRY,resolvePromptText,type PromptId,type PromptOverrides} from "./prompts";
+import {DEFAULT_PROMPT_TEXTS,PROMPT_REGISTRY,clonePromptConfiguration,createDefaultPromptConfiguration,createDefaultPromptPreset,resolvePromptText,type PromptId,type PromptOverrides,type PromptPreset,type PromptConfiguration} from "./prompts";
 import {DEFAULT_TTS_SETTINGS} from "./tts";
 import type {TtsPreset,TtsSettings} from "./tts";
 export type DiagnosticsLogLevel="off"|"errors"|"normal"|"verbose"|"debug";
@@ -18,7 +18,7 @@ export const DEFAULT_COGNITIVE_SCHEDULE:CognitiveScheduleSettings={
   maxRequestsPerHour:null
 };
 export const APP_SETTINGS_API_VERSION:"1"="1";
-export const APP_SETTINGS_SCHEMA_VERSION:"14"="14";
+export const APP_SETTINGS_SCHEMA_VERSION:"15"="15";
 export const DEFAULT_MEMORY_JUDGE_PROMPT_VERSION="2";
 export const DEFAULT_AUTOMATIC_MEMORY_PROMPT_VERSION="1";
 export const DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS="You are a long-term memory agent.\nDecide whether the exchange contains durable information worth remembering after this conversation ends.\nReturn only the requested output.\nGood memories are brief, self-contained, durable, and understandable without the original conversation.\nDo not invent ids or metadata; the application supplies all internal state.";
@@ -36,7 +36,7 @@ export interface AutomaticMemoryAgentSettings{
 }
 export interface AppSettings{
   apiVersion:"1";
-  schemaVersion:"14";
+  schemaVersion:"15";
   cognitiveSchedule:CognitiveScheduleSettings;
   chat:{
     automaticLongTermMemory:boolean;
@@ -45,7 +45,7 @@ export interface AppSettings{
     reasoningEffort:"provider-default"|"low"|"medium"|"high";
   };
   memoryAgent:AutomaticMemoryAgentSettings;
-  prompts:{overrides:PromptOverrides};
+  prompts:PromptConfiguration;
   tts:TtsSettings;
   semanticDedup:{
     enabled:boolean;
@@ -96,7 +96,7 @@ export const DEFAULT_APP_SETTINGS:AppSettings={
   cognitiveSchedule:{...DEFAULT_COGNITIVE_SCHEDULE},
   chat:{automaticLongTermMemory:true,responseMode:"structured",reasoningMode:"provider-default",reasoningEffort:"low"},
   memoryAgent:{enabled:true,providerPresetId:null,model:"",outputMode:"auto",prompt:DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS,promptBackup:null,defaultPromptVersion:DEFAULT_AUTOMATIC_MEMORY_PROMPT_VERSION},
-  prompts:{overrides:{}},
+  prompts:createDefaultPromptConfiguration(),
   tts:cloneTtsSettings(DEFAULT_TTS_SETTINGS),
   semanticDedup:{enabled:false,embeddingProviderPresetId:null,embeddingModel:"",candidateSimilarityThreshold:0.88,candidateLimit:5,judge:{enabled:true,providerPresetId:null,model:"",outputMode:"auto",prompt:DEFAULT_MEMORY_JUDGE_PROMPT,promptBackup:null,defaultPromptVersion:DEFAULT_MEMORY_JUDGE_PROMPT_VERSION}},
   context:{
@@ -118,7 +118,7 @@ export function defaultAppSettings():AppSettings{
     cognitiveSchedule:{...DEFAULT_APP_SETTINGS.cognitiveSchedule},
     chat:{...DEFAULT_APP_SETTINGS.chat},
     memoryAgent:{...DEFAULT_APP_SETTINGS.memoryAgent},
-    prompts:{overrides:{...DEFAULT_APP_SETTINGS.prompts.overrides}},
+    prompts:clonePromptConfiguration(DEFAULT_APP_SETTINGS.prompts),
     tts:cloneTtsSettings(DEFAULT_APP_SETTINGS.tts),
     semanticDedup:{...DEFAULT_APP_SETTINGS.semanticDedup,judge:{...DEFAULT_APP_SETTINGS.semanticDedup.judge}},
     context:{...DEFAULT_APP_SETTINGS.context},
@@ -132,19 +132,30 @@ export function defaultAppSettings():AppSettings{
 
 export function applyPromptOverride(settings:AppSettings,id:PromptId,text:string):AppSettings{
   const overrides:PromptOverrides={...settings.prompts.overrides};
-  if(typeof text==="string"&&text.trim().length>0)overrides[id]=text;
-  else delete overrides[id];
-  const prompts={overrides};
-  const judgePrompt=resolvePromptText(prompts,"memory-judge.system");
-  return {
-    ...settings,
-    prompts,
-    ...(id==="memory-agent.system"?{memoryAgent:{...settings.memoryAgent,prompt:resolvePromptText(prompts,"memory-agent.system")}}:{}),
-    semanticDedup:{
-      ...settings.semanticDedup,
-      judge:{...settings.semanticDedup.judge,prompt:judgePrompt}
+  if(typeof text==="string"&&text.trim().length>0)overrides[id]=text;else delete overrides[id];
+  const replacement=typeof text==="string"&&text.trim().length>0?text:DEFAULT_PROMPT_TEXTS[id];
+  const defaultRecord=createDefaultPromptPreset().prompts.find(prompt=>prompt.legacyId===id);
+  const presets=settings.prompts.presets.map(preset=>{
+    if(preset.id!==settings.prompts.activePresetId)return preset;
+    let found=false;
+    const updated=preset.prompts.map(prompt=>{
+      if(prompt.legacyId!==id)return prompt;
+      found=true;
+      return {...prompt,text:replacement,enabled:true};
+    });
+    if(!found&&defaultRecord){
+      const ids=new Set(updated.map(prompt=>prompt.id));
+      let recordId=defaultRecord.id;
+      while(ids.has(recordId))recordId=recordId+"-compat";
+      updated.push({...defaultRecord,id:recordId,text:replacement,enabled:true,order:defaultRecord.order});
     }
-  };
+    return {...preset,version:preset.version+1,prompts:updated};
+  });
+  const prompts={...settings.prompts,overrides,presets};
+  const active=presets.find(preset=>preset.id===settings.prompts.activePresetId);
+  const effective=(legacyId:PromptId)=>active?.prompts.find(prompt=>prompt.legacyId===legacyId)?.text??"";
+  return {...settings,prompts,memoryAgent:{...settings.memoryAgent,prompt:effective("memory-agent.system")},
+    semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,prompt:effective("memory-judge.system")}}};
 }
 
 export function restorePromptDefault(settings:AppSettings,id:PromptId):AppSettings{
@@ -154,7 +165,12 @@ export function restorePromptDefault(settings:AppSettings,id:PromptId):AppSettin
 export function restoreAllPromptDefaults(settings:AppSettings):AppSettings{
   return {
     ...settings,
-    prompts:{overrides:{}},
+    prompts:{
+      ...settings.prompts,
+      overrides:{},
+      presets:[...settings.prompts.presets.filter(preset=>preset.id!=="default"),createDefaultPromptPreset()],
+      activePresetId:"default"
+    },
     memoryAgent:{...settings.memoryAgent,prompt:DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS},
     semanticDedup:{
       ...settings.semanticDedup,
@@ -234,6 +250,39 @@ export function validateAppSettings(settings:AppSettings):string[]{
   else for(const [id,text] of Object.entries(settings.prompts.overrides)){
     if(!PROMPT_REGISTRY.some(definition=>definition.id===id))errors.push("Unsupported prompt id: "+id+".");
     if(typeof text!=="string"||Array.from(text).length>12000)errors.push("Prompt overrides must contain strings up to 12000 characters.");
+  }
+  if(!Array.isArray(settings.prompts?.presets)||settings.prompts.presets.length>64)errors.push("Prompt presets must be an array with at most 64 entries.");
+  else {
+    const presetIds=new Set<string>(); let foundBuiltin=false;
+    for(const [presetIndex,preset] of settings.prompts.presets.entries()){
+      if(!preset||typeof preset!=="object"||Array.isArray(preset)){errors.push("Prompt preset "+presetIndex+" must be an object.");continue;}
+      if(typeof preset.id!=="string"||!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(preset.id))errors.push("Prompt preset id is invalid.");
+      else if(presetIds.has(preset.id))errors.push("Prompt preset ids must be unique.");else presetIds.add(preset.id);
+      if(typeof preset.name!=="string"||!preset.name.trim()||preset.name.length>100)errors.push("Prompt preset name must contain 1 to 100 characters.");
+      if(typeof preset.description!=="string"||preset.description.length>2000)errors.push("Prompt preset description must be a string up to 2000 characters.");
+      if(!Number.isInteger(preset.schemaVersion)||preset.schemaVersion<1)errors.push("Prompt preset schemaVersion must be a positive integer.");
+      if(!Number.isInteger(preset.version)||preset.version<1)errors.push("Prompt preset version must be a positive integer.");
+      if(typeof preset.isBuiltIn!=="boolean")errors.push("Prompt preset isBuiltIn must be boolean.");
+      if(preset.id==="default"&&preset.isBuiltIn===true)foundBuiltin=true;
+      if(preset.id==="default"&&preset.isBuiltIn!==true)errors.push("The Default prompt preset must remain marked built-in.");
+      if(!Array.isArray(preset.prompts)||preset.prompts.length>128){errors.push("Prompt preset "+preset.id+" must contain at most 128 prompt records.");continue;}
+      const promptIds=new Set<string>();
+      for(const [promptIndex,prompt] of preset.prompts.entries()){
+        if(!prompt||typeof prompt!=="object"||Array.isArray(prompt)){errors.push("Prompt record "+promptIndex+" in "+preset.id+" must be an object.");continue;}
+        if(typeof prompt.id!=="string"||!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/.test(prompt.id))errors.push("Prompt record id is invalid in "+preset.id+".");
+        else if(promptIds.has(prompt.id))errors.push("Prompt record ids must be unique within "+preset.id+".");else promptIds.add(prompt.id);
+        if(typeof prompt.title!=="string"||!prompt.title.trim()||prompt.title.length>120)errors.push("Prompt record title must contain 1 to 120 characters.");
+        if(typeof prompt.text!=="string"||Array.from(prompt.text).length>12000)errors.push("Prompt record text must be a string up to 12000 characters.");
+        if(typeof prompt.agentId!=="string"||!/^[a-z][a-z0-9._-]{0,79}$/.test(prompt.agentId))errors.push("Prompt record agentId must be a stable lowercase identifier.");
+        if(typeof prompt.enabled!=="boolean")errors.push("Prompt record enabled must be boolean.");
+        if(!Number.isInteger(prompt.order)||prompt.order < -100000||prompt.order > 100000)errors.push("Prompt record order must be an integer between -100000 and 100000.");
+        if(prompt.category!==undefined&&(typeof prompt.category!=="string"||prompt.category.length>120))errors.push("Prompt record category must be a string up to 120 characters.");
+        if(prompt.conditions!==undefined&&(!prompt.conditions||typeof prompt.conditions!=="object"||Array.isArray(prompt.conditions)))errors.push("Prompt record conditions must be an object.");
+        else if(prompt.conditions?.scenarios!==undefined&&(!Array.isArray(prompt.conditions.scenarios)||prompt.conditions.scenarios.some((item:unknown)=>typeof item!=="string"||!item.trim()||item.length>80)))errors.push("Prompt record scenarios must be non-empty strings up to 80 characters.");
+      }
+    }
+    if(!foundBuiltin)errors.push("The built-in Default prompt preset is required.");
+    if(typeof settings.prompts.activePresetId!=="string"||!presetIds.has(settings.prompts.activePresetId))errors.push("The active prompt preset must reference an existing preset.");
   }
   if(typeof settings.semanticDedup.enabled!=="boolean")errors.push("Semantic Memory Deduplication enabled must be boolean.");
   if(settings.semanticDedup.embeddingProviderPresetId!==null&&(typeof settings.semanticDedup.embeddingProviderPresetId!=="string"||settings.semanticDedup.embeddingProviderPresetId.trim().length===0))errors.push("Semantic embedding provider preset must be empty or a non-empty string.");
@@ -321,7 +370,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const input=value as Record<string,unknown>;
   const legacy=input.schemaVersion==="0"||input.schemaVersion===undefined||input.schemaVersion==="1";
   if(input.apiVersion!==undefined&&input.apiVersion!=="1"&&!legacy)throw new Error("Unsupported AppSettings apiVersion.");
-  if(input.schemaVersion!==undefined&&!["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14"].includes(String(input.schemaVersion)))throw new Error("Unsupported AppSettings schemaVersion.");
+  if(input.schemaVersion!==undefined&&!["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"].includes(String(input.schemaVersion)))throw new Error("Unsupported AppSettings schemaVersion.");
   const root=value as Record<string,any>;
   const context=root.context&&typeof root.context==="object"?root.context:{};
   const memory=root.memory&&typeof root.memory==="object"?root.memory:{};
@@ -368,9 +417,11 @@ export function migrateAppSettings(value:unknown):AppSettings{
   const semanticJudgeOutputMode=semanticJudge.outputMode==="structured"||semanticJudge.outputMode==="plain"||semanticJudge.outputMode==="auto"?semanticJudge.outputMode:"auto";
   const semanticJudgeLegacyPrompt=typeof semanticJudge.instructions==="string"?semanticJudge.instructions.trim():"";
   const storedSemanticJudgePrompt=typeof semanticJudge.prompt==="string"?semanticJudge.prompt:"";
-  const semanticJudgePromptIsLegacyDefault=storedSemanticJudgePrompt===LEGACY_MEMORY_JUDGE_PROMPT&&semanticJudge.defaultPromptVersion==="1";
+  const previousBuiltInJudgePrompt="You are a memory deduplication judge.\n\nCompare NEW MEMORY with CANDIDATES.\n\nKeep the most complete and informative record.\n\nIf NEW MEMORY is less informative because its information is contained in a candidate, archive NEW.\n\nIf a candidate is less informative because its information is contained in NEW MEMORY, archive that candidate number.\n\nIf records contain essentially the same information, archive one duplicate.\n\nIf records contain different useful information, archive nothing.\n\nYour decision is the list of archive targets.\n\nIn structured mode, return only:\n{\"archive\":[\"NEW\",\"1\",\"2\"]}\n\nIn plain mode, return only:\nNO_ARCHIVE\nor NEW / candidate numbers, one per line.\n\nNever return explanations.\nNever invent candidate numbers.";
+  const semanticJudgePromptIsLegacyDefault=(storedSemanticJudgePrompt===LEGACY_MEMORY_JUDGE_PROMPT&&semanticJudge.defaultPromptVersion==="1")||(storedSemanticJudgePrompt===previousBuiltInJudgePrompt&&semanticJudge.defaultPromptVersion==="2");
   const promptSettings=root.prompts&&typeof root.prompts==="object"?root.prompts:{};
   const rawPromptOverrides=promptSettings.overrides&&typeof promptSettings.overrides==="object"&&!Array.isArray(promptSettings.overrides)?promptSettings.overrides as Record<string,unknown>:{};
+  const hadPresetConfiguration=String(input.schemaVersion)==="15"&&Array.isArray(promptSettings.presets);
   const promptOverrides:PromptOverrides={};
   for(const [key,rawText] of Object.entries(rawPromptOverrides)){
     if(!PROMPT_REGISTRY.some(definition=>definition.id===key))throw new Error("Unsupported prompt id: "+key+".");
@@ -381,19 +432,26 @@ export function migrateAppSettings(value:unknown):AppSettings{
     ?DEFAULT_MEMORY_JUDGE_PROMPT
     :(storedSemanticJudgePrompt.trim()||semanticJudgeLegacyPrompt||DEFAULT_MEMORY_JUDGE_PROMPT);
   const hasJudgeOverrideSetting=Object.prototype.hasOwnProperty.call(rawPromptOverrides,"memory-judge.system");
-  if(!hasJudgeOverrideSetting&&!promptOverrides["memory-judge.system"]&&migratedLegacyJudgePrompt!==DEFAULT_MEMORY_JUDGE_PROMPT){
+  if(!hadPresetConfiguration&&!hasJudgeOverrideSetting&&!promptOverrides["memory-judge.system"]&&migratedLegacyJudgePrompt!==DEFAULT_MEMORY_JUDGE_PROMPT){
     promptOverrides["memory-judge.system"]=migratedLegacyJudgePrompt;
   }
   const semanticJudgePrompt=resolvePromptText({overrides:promptOverrides},"memory-judge.system");
   const semanticJudgeBackup=typeof semanticJudge.promptBackup==="string"&&semanticJudge.promptBackup.length>0?semanticJudge.promptBackup:null;
   const semanticJudgeVersion=semanticJudgePromptIsLegacyDefault?DEFAULT_MEMORY_JUDGE_PROMPT_VERSION:(typeof semanticJudge.defaultPromptVersion==="string"&&semanticJudge.defaultPromptVersion.trim()?semanticJudge.defaultPromptVersion.trim():DEFAULT_MEMORY_JUDGE_PROMPT_VERSION);
   const hasMemoryAgentPromptOverride=Object.prototype.hasOwnProperty.call(rawPromptOverrides,"memory-agent.system");
-  if(!hasMemoryAgentPromptOverride&&memoryAgentPrompt!==DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS){
+  if(!hadPresetConfiguration&&!hasMemoryAgentPromptOverride&&memoryAgentPrompt!==DEFAULT_AUTOMATIC_MEMORY_INSTRUCTIONS){
     promptOverrides["memory-agent.system"]=memoryAgentPrompt;
   }
   const effectiveMemoryAgentPrompt=resolvePromptText({overrides:promptOverrides},"memory-agent.system");
+  const rawPresetValues=Array.isArray(promptSettings.presets)?promptSettings.presets as PromptPreset[]:[];
+  let presets:PromptPreset[]=rawPresetValues.length?rawPresetValues.slice():[createDefaultPromptConfiguration(promptOverrides).presets[0]!];
+  const builtinDefault=presets.find(preset=>preset.id==="default"&&preset.isBuiltIn===true&&Array.isArray(preset.prompts));
+  if(!builtinDefault){presets=presets.filter(preset=>preset.id!=="default");presets.unshift(createDefaultPromptPreset());}
+  const activePresetValue=typeof promptSettings.activePresetId==="string"?promptSettings.activePresetId:"default";
+  const activePresetId=presets.some(preset=>preset.id===activePresetValue)?activePresetValue:"default";
+  const normalizedPrompts:PromptConfiguration={...promptSettings,overrides:promptOverrides,presets,activePresetId};
   const next:AppSettings={
-    apiVersion:"1",schemaVersion:"14",
+    apiVersion:"1",schemaVersion:"15",
     cognitiveSchedule:{
       mode:typeof cognitiveSchedule.mode==="string"?cognitiveSchedule.mode as CognitiveScheduleMode:defaults.cognitiveSchedule.mode,
       defaultIntervalMs:typeof cognitiveSchedule.defaultIntervalMs==="number"?cognitiveSchedule.defaultIntervalMs:defaults.cognitiveSchedule.defaultIntervalMs,
@@ -403,7 +461,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
     },
     chat:{automaticLongTermMemory:chatAutomaticMemoryEnabled,responseMode:chat.responseMode==="plain"?"plain":"structured",reasoningMode:["provider-default","enabled","disabled"].includes(chat.reasoningMode)?chat.reasoningMode:defaults.chat.reasoningMode,reasoningEffort:["provider-default","low","medium","high"].includes(chat.reasoningEffort)?chat.reasoningEffort:"provider-default"},
     memoryAgent:{enabled:memoryAgentEnabled,providerPresetId:memoryAgentPreset,model:memoryAgentModel,outputMode:memoryAgentOutputMode,prompt:effectiveMemoryAgentPrompt,promptBackup:memoryAgentBackup,defaultPromptVersion:memoryAgentPromptVersion},
-    prompts:{overrides:promptOverrides},
+    prompts:normalizedPrompts,
     semanticDedup:{
       enabled:semanticDedupEnabled,
       embeddingProviderPresetId:semanticEmbeddingPreset,
@@ -440,7 +498,7 @@ export function migrateAppSettings(value:unknown):AppSettings{
       keepRecentEntries:typeof diagnostics.keepRecentEntries==="number"?diagnostics.keepRecentEntries:defaults.diagnostics.keepRecentEntries
     },
     ui:{showDiagnosticsInChat:typeof ui.showDiagnosticsInChat==="boolean"?ui.showDiagnosticsInChat:defaults.ui.showDiagnosticsInChat,showReasoningInDiagnostics:typeof ui.showReasoningInDiagnostics==="boolean"?ui.showReasoningInDiagnostics:defaults.ui.showReasoningInDiagnostics},
-    tts:["13","14"].includes(String(input.schemaVersion))?normalizeTtsSettings(root.tts):cloneTtsSettings(defaults.tts)
+    tts:["13","14","15"].includes(String(input.schemaVersion))?normalizeTtsSettings(root.tts):cloneTtsSettings(defaults.tts)
   };
   const errors=validateAppSettings(next);
   if(errors.length>0)throw new Error("Invalid AppSettings: "+errors.join(" "));

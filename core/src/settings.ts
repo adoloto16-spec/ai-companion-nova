@@ -1,12 +1,12 @@
 import type {AppSettings,AppSettingsStore,SchemaValidator} from "../../contracts/src/index";
-import {APP_SETTINGS_API_VERSION,APP_SETTINGS_SCHEMA_VERSION,DEFAULT_APP_SETTINGS,STANDARD_SCHEMAS,defaultAppSettings,migrateAppSettings,validateAppSettings} from "../../contracts/src/index";
+import {APP_SETTINGS_API_VERSION,APP_SETTINGS_SCHEMA_VERSION,DEFAULT_APP_SETTINGS,STANDARD_SCHEMAS,clonePromptConfiguration,defaultAppSettings,migrateAppSettings,validateAppSettings} from "../../contracts/src/index";
 
 function cloneSettings(settings:AppSettings):AppSettings{
   return {
     ...settings,
     cognitiveSchedule:{...settings.cognitiveSchedule},
     chat:{...settings.chat},
-    prompts:{overrides:{...settings.prompts.overrides}},
+    prompts:clonePromptConfiguration(settings.prompts),
     context:{...settings.context},
     memory:{...settings.memory},
     semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge}},

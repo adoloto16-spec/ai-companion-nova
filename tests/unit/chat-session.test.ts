@@ -80,7 +80,7 @@ async function main(){
         return {
           apiVersion:"1",schemaVersion:"1",characterId:request.characterId,conversationId:request.conversationId,
           messages:[
-            ...request.messages,
+            ...request.messages.map(message=>{const {images:_images,...textOnly}=message;return textOnly;}),
             {id:"memory-ctx",role:"user",content:"memory context",metadata:{contextSource:"memory",contextReferenceId:"memory-ctx"}}
           ],
           includedCandidates:[],
@@ -92,11 +92,14 @@ async function main(){
     },
     contextBudget:{availableContextTokens:100,reservedOutputTokens:10,systemOverheadTokens:0,safetyMarginTokens:0}
   });
-  await contextController.submit("hello","fake-chat");
+  await contextController.submit("hello","fake-chat",[{mimeType:"image/jpeg",dataBase64:"aGVsbG8=",alt:"test screenshot"}]);
   equal(contextRequests.length,1,"chat invokes the unified context engine boundary");
   equal(contextRequests[0]?.characterId,"character.context","context build is character scoped");
   equal(contextRequests[0]?.messages.at(-1)?.content,"hello","context query contains latest user message");
+  equal(contextRequests[0]?.messages.at(-1)?.images?.[0]?.dataBase64,"aGVsbG8=","original user message contains the screenshot before context assembly");
   equal(contextChatRequests[0]?.context.messages.at(-1)?.content,"memory context","assembled context reaches ChatRequest");
+  equal(contextChatRequests[0]?.context.messages.find(message=>message.id==="context-1:user")?.images?.[0]?.dataBase64,"aGVsbG8=","screenshot payload is restored after text-only context assembly");
+  equal(contextChatRequests[0]?.context.messages.find(message=>message.id==="context-1:user")?.metadata?.traceImageAttachmentCount,undefined,"live Chat request uses the attachment, not the redacted trace request");
   equal(contextChatRequests[0]?.context.messages.at(-1)?.metadata?.contextSource,"memory","ChatRequest preserves memory provenance");
 
   const reasoningSession=new ConversationSession("reasoning-conversation","character.reasoning");

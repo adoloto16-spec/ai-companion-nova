@@ -18,7 +18,7 @@ function context(onSpeechEvent:CognitiveStepContext["onSpeechEvent"]):CognitiveS
   return {characterId:character.id,state:{lifecycleState:"thinking",nextWakeAt:null,recentTrace:[]},signal:new AbortController().signal,wakeReason:"user-message",
     userTurn:{characterId:character.id,conversationId:conversation.id,userMessageId:userMessage.id!,turnId:"turn.stream"},onSpeechEvent};
 }
-function createStep(runtime:unknown,getPrompt?:(id:import("../../contracts/src").PromptId)=>string,overrides:Partial<Pick<LLMCognitiveStepOptions,"getAvailableTools"|"executeTool"|"getReasoningOptions"|"getShowReasoningInDiagnostics"|"getGenerationOptions"|"getProviderIdForPreset"|"onDiagnostic">>={}):LLMCognitiveStep{
+function createStep(runtime:unknown,getPrompt?:(id:import("../../contracts/src").PromptId,scenario?:string)=>string,overrides:Partial<Pick<LLMCognitiveStepOptions,"getAvailableTools"|"executeTool"|"getReasoningOptions"|"getShowReasoningInDiagnostics"|"getGenerationOptions"|"getProviderIdForPreset"|"onDiagnostic"|"getVisionEnabled"|"getActiveConversation"|"buildContext">>={}):LLMCognitiveStep{
   return new LLMCognitiveStep({
     runtime:runtime as never,
     getCharacter:async()=>character,
@@ -128,7 +128,7 @@ async function ordinaryTextStreamsSeparatelyFromReasoning():Promise<void>{
   equal(returned,false,"provider stream is still open when the first speech delta arrives");
   equal(calls[0]?.generation?.responseFormat,undefined,"native cognition does not request mandatory JSON Schema");
   equal(calls[0]?.context.messages.find(message=>message.role==="system")?.content,"CUSTOM PROMPT: nova-system-plain","native cognition uses the ordinary-text system prompt");
-  equal(calls[0]?.context.messages.find(message=>message.id?.endsWith(":user-cue"))?.content,"CUSTOM PROMPT: nova-cue-reactive-plain","native cognition uses the ordinary reactive cue");
+  ok(!calls[0]?.context.messages.some(message=>message.id?.endsWith(":user-cue")),"reactive/background cues are assembled into the preset system instructions rather than injected as a separate user message");
   ok(!speechEvents.some(item=>item.text?.includes("Provider-only reasoning")),"provider reasoning is never forwarded to speech or TTS events");
   resume();
   const result=await run;
@@ -144,6 +144,7 @@ async function ordinaryTextStreamsSeparatelyFromReasoning():Promise<void>{
 async function nativeToolRoundsReturnResultsBeforeFinalSpeech():Promise<void>{
   const calls:ChatRequest[]=[];
   const executed:string[]=[];
+  const promptScenarios:string[]=[];
   const runtime={
     getChatProviderCapabilities:()=>({toolCalling:true,streaming:true}),
     getActiveProviderPresetId:()=>undefined,getChatModel:()=>"fake-model",
@@ -161,7 +162,10 @@ async function nativeToolRoundsReturnResultsBeforeFinalSpeech():Promise<void>{
       return responseFor(request,text);
     }
   };
-  const step=createStep(runtime,undefined,{
+  const step=createStep(runtime,(_id,scenario)=>{
+    promptScenarios.push(scenario??"");
+    return scenario==="reactive+after-tool"?"PROMPT_AFTER_TOOL":"PROMPT_REACTIVE";
+  },{
     getAvailableTools:()=>[{name:"read_memory",description:"Search saved character memory",parameters:{type:"object",properties:{query:{type:"string"}},required:["query"]}}],
     executeTool:async(call,toolContext)=>{
       executed.push(call.name);
@@ -171,6 +175,9 @@ async function nativeToolRoundsReturnResultsBeforeFinalSpeech():Promise<void>{
   let visible="";
   const result=await step.run(context(item=>{if(item.type==="delta")visible+=item.text??"";}));
   equal(calls.length,2,"runtime requests a continuation after native tool execution");
+  equal(promptScenarios,["reactive","reactive+after-tool"],"runtime selects the after-tool prompt phase for the continuation request");
+  equal(calls[0]?.context.messages.find(message=>message.id?.endsWith(":nova-turn:system"))?.content,"PROMPT_REACTIVE","first request receives the original reactive instructions");
+  equal(calls[1]?.context.messages.find(message=>message.id?.endsWith(":nova-turn:system"))?.content,"PROMPT_AFTER_TOOL","tool continuation receives the after-tool instructions");
   equal(calls[0]?.tools?.map(tool=>tool.name),["read_memory"],"only registered tools are advertised to the model");
   equal(calls[0]?.generation?.responseFormat,undefined,"tool-capable request still uses the native provider response format");
   equal(executed,["read_memory"],"registered native function executes exactly once");
@@ -231,7 +238,41 @@ async function backgroundStepMayReturnNoSpeech():Promise<void>{
   equal(result.turn.speech,"","background step may complete without inventing a user-facing message");
   equal(result.turn.nextWakeMs,30000,"background wake uses the configured bounded default interval");
   equal(requestList[0]?.generation?.responseFormat,undefined,"background requests use the same native plain response contract");
-  equal(requestList[0]?.context.messages.find(message=>message.id?.endsWith(":user-cue"))?.content.includes("Do not invent a reason to speak"),true,"background prompt explicitly permits silence");
+  equal(requestList[0]?.context.messages.find(message=>message.role==="system")?.content.includes("Do not invent a reason to speak"),true,"background silence guidance is part of the active preset's system instructions");
+}
+
+async function cognitiveVisionOnlyPassesLatestStoredScreenshot():Promise<void>{
+  const olderScreenshot:ChatMessage={id:"old-screenshot",role:"user",content:"Older screen state.",images:[{mimeType:"image/png",dataBase64:"aGVsbG8=",alt:"old"}]};
+  const latestUser:ChatMessage={...userMessage,content:"What is on this screen?",images:[{mimeType:"image/png",dataBase64:"aGVsbG8=",alt:"latest"}]};
+  const history={...conversation,messages:[olderScreenshot,latestUser]} as unknown as Conversation;
+  for(const enabled of [false,true]){
+    const requests:ChatRequest[]=[];
+    const runtime={async chat(request:ChatRequest):Promise<ChatResponse>{requests.push(request);return responseFor(request,"Screen-aware reply.");}};
+    await createStep(runtime,undefined,{
+      getVisionEnabled:()=>enabled,
+      getActiveConversation:async()=>history
+    }).run(context(()=>{}));
+    const images=requests[0]!.context.messages.filter(message=>message.images?.length);
+    equal(images.map(message=>message.id),enabled?["user-message"]:[],"Agent Vision controls stored screenshot reuse and only passes the latest image");
+    if(enabled)equal(images[0]?.images?.[0]?.alt,"latest","the most recent existing screenshot is chosen, without taking a new capture");
+  }
+
+  // A text-only turn can become the latest user message after a screenshot. If context budgeting
+  // drops the old screenshot message, Agent Vision must still reuse that latest stored image.
+  const screenshot:ChatMessage={id:"stored-screen",role:"user",content:"Previous screen state.",images:[{mimeType:"image/png",dataBase64:"iVBORw0KGgo=",alt:"stored-screen"}]};
+  const latestText:ChatMessage={...userMessage,content:"Summarize what you see now.",images:undefined};
+  const textOnlyHistory={...conversation,messages:[screenshot,latestText]} as unknown as Conversation;
+  for(const enabled of [false,true]){
+    const requests:ChatRequest[]=[];
+    const runtime={async chat(request:ChatRequest):Promise<ChatResponse>{requests.push(request);return responseFor(request,"Screen-aware reply.");}};
+    await createStep(runtime,undefined,{
+      getVisionEnabled:()=>enabled,
+      getActiveConversation:async()=>textOnlyHistory,
+      buildContext:async request=>({...request,messages:request.messages.filter(message=>message.id!=="stored-screen"),includedCandidates:[],omittedCandidates:[],budget:request.budget,estimatedTokens:100} as AssembledContext)
+    }).run(context(()=>{}));
+    const images=requests[0]!.context.messages.filter(message=>message.images?.length);
+    equal(images.map(message=>message.id),enabled?["stored-screen"]:[],"Agent Vision reuses the latest stored screenshot even when context budgeting drops its original message");
+  }
 }
 
 async function main():Promise<void>{
@@ -239,6 +280,7 @@ async function main():Promise<void>{
   await enabledReasoningReachesProvidersWithoutReasoningCapability();
   await providerRequestLifecycleDiagnosticsAreStructured();
   await profileGenerationOptionsReachNativeRequests();
+  await cognitiveVisionOnlyPassesLatestStoredScreenshot();
   await ordinaryTextStreamsSeparatelyFromReasoning();
   await nativeToolRoundsReturnResultsBeforeFinalSpeech();
   await plainContentIsNeverParsedAsCommands();

@@ -63,7 +63,7 @@ const createConversationAction=blockBetween("const createConversation=React.useC
 const deleteConversationAction=blockBetween("const deleteConversation=React.useCallback(async(conversation:Conversation)=>{","const createCharacter=React.useCallback(async(name:string)=>{");
 const deleteCharacterAction=blockBetween("const deleteCharacter=React.useCallback(async(id:string)=>{","const configurationForPreset=");
 const settingsResetStart=source.indexOf("const resetAppSettings=React.useCallback(async()=>{");
-const settingsResetEnd=source.indexOf("const savePromptOverride=React.useCallback",settingsResetStart);
+const settingsResetEnd=source.indexOf("const savePromptSettings=React.useCallback",settingsResetStart);
 assert.ok(settingsResetStart>=0&&settingsResetEnd>settingsResetStart,"settings reset handler must be present");
 const settingsResetAction=source.slice(settingsResetStart,settingsResetEnd);
 assert.ok(chatStopAction.indexOf("onStopSpeech();")>=0&&chatStopAction.indexOf("onStopSpeech();")<chatStopAction.indexOf("await controller.stop();"),"Chat Stop cancels speech before stopping generation");
@@ -205,6 +205,17 @@ assert.equal(readChatDraft(unchangedOnFailure,draftA),"unsent A","failed or stal
 const afterSuccessfulSend=clearSubmittedChatDraft(drafts,draftA,"unsent A");
 assert.equal(readChatDraft(afterSuccessfulSend,draftA),"","successful send clears the matching submitted draft");
 assert.equal(readChatDraft(afterSuccessfulSend,draftB),"unsent B","successful send does not clear another conversation draft");
+
+const chatView=blockBetween("function ChatView(","function CharactersView(");
+assert.match(chatView,/const toggleVision=React\.useCallback/,"Chat exposes an explicit Vision on/off control");
+assert.match(chatView,/aria-pressed=\{visionEnabled\}/,"Vision toggle reports its active state accessibly");
+assert.match(chatView,/await activeSession\.capture\(\)/,"sending a message captures the current frame automatically while Vision is on");
+assert.match(chatView,/await controller\.submit\(messageText,runtime\.getActiveChatModel\(\),submittedImages\)/,"the screenshot travels through the same ordinary Chat submit");
+assert.doesNotMatch(chatView,/pendingImages|captureScreenshot/,"Chat no longer requires a manually queued screenshot attachment");
+assert.match(chatView,/className="chat-agent-vision-button"/,"Nova Life Agent Vision is a separate button from screen capture");
+assert.match(chatView,/Reuse the latest screenshot already in this conversation for Nova Life; this never captures a new image/,"Agent Vision is explicitly a reuse-only switch");
+assert.ok(foundationSource.includes('name:"avatar.set_intent"'),"Nova Life has a registered native tool to control avatar intent");
+assert.ok(foundationSource.includes("setCognitiveVisionEnabled"),"Agent Vision is independently connected to the cognitive context switch");
 const ttsSettings=blockBetween("function TtsSettingsView(","function SettingsContainerView(");
 assert.match(ttsSettings,/Enable audio playback/,"TTS UI requires an explicit user gesture before playback");
 assert.match(settingsContainer,/ttsController:SpeechOutputController/,"settings container owns the dedicated speech controller prop");

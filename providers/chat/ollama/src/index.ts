@@ -117,7 +117,7 @@ export class OllamaProviderError extends Error {
   }
 }
 
-interface OllamaMessage { role:"system"|"user"|"assistant"|"tool"; content:string; tool_name?:string; tool_calls?:{type:"function";function:{index:number;name:string;arguments:Record<string,unknown>}}[]; }
+interface OllamaMessage { role:"system"|"user"|"assistant"|"tool"; content:string; images?:string[]; tool_name?:string; tool_calls?:{type:"function";function:{index:number;name:string;arguments:Record<string,unknown>}}[]; }
 interface OllamaModelMetadata { capabilities:readonly string[]; thinking?:{values:readonly unknown[];default?:unknown}; }
 interface OllamaChunk {
   model?: unknown;
@@ -224,7 +224,7 @@ export class OllamaChatProvider implements ChatProvider {
   }
 
   capabilities(): ProviderCapabilities {
-    return { streaming: true, toolCalling: true, vision: false, structuredOutput: true, reasoning: true };
+    return { streaming: true, toolCalling: true, vision: true, structuredOutput: true, reasoning: true };
   }
 
   async listModels(): Promise<ModelInfo[]> {
@@ -503,6 +503,9 @@ export class OllamaChatProvider implements ChatProvider {
 
   private mapMessages(messages: readonly ChatMessage[], request: ChatRequest): OllamaMessage[] {
     const mapped: OllamaMessage[] = messages.map(message => {
+      if(message.images?.length && message.role!=="user") {
+        throw this.failure(request,"INVALID_REQUEST","Image attachments are supported on user messages only.","invalid_image_message");
+      }
       if(message.role==="tool"){
         if(!message.toolCallId||!message.toolName)throw this.failure(request,"INVALID_REQUEST","Ollama tool result is missing its call id or tool name.","invalid_tool_message");
         return {role:"tool",tool_name:message.toolName,content:message.content};
@@ -510,6 +513,7 @@ export class OllamaChatProvider implements ChatProvider {
       return {
         role:message.role,
         content:message.content,
+        ...(message.images?.length?{images:message.images.map(image=>image.dataBase64)}:{}),
         ...(message.toolCalls?.length?{tool_calls:message.toolCalls.map((call,index)=>({type:"function" as const,function:{index,name:call.name,arguments:call.arguments}}))}:{})
       };
     });

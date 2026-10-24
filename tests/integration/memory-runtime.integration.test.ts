@@ -1,6 +1,7 @@
 import {InMemoryAuditService} from "../../core/src";
 import {InMemoryMemoryStore} from "../../host/memory/src";
 import {createFoundationRuntime} from "../../runtime/bootstrap/src";
+import {applyPromptOverride} from "../../contracts/src";
 import {InMemoryCharacterStore} from "../../host/characters/src";
 import {InMemoryConversationStore} from "../../host/conversations/src";
 import type {MemoryStoreState,MemoryExtractionRequest} from "../../contracts/src";
@@ -91,11 +92,12 @@ async function main(){
       presetId:"preset.memory-agent",
       configuration:{apiVersion:"1",schemaVersion:"1",providerId:"openai-compatible",baseUrl:"https://memory-agent.example/v1",model:"memory-model",credentialReference:null,enabled:true,timeoutMs:1000}
     }],"preset.memory-agent");
+    const currentSettings=agentRuntime.getSettings();
+    const promptSettings=applyPromptOverride(currentSettings,"memory-agent.system","Custom durable-memory instructions.");
     await agentRuntime.updateSettings({
-      ...agentRuntime.getSettings(),
-      chat:{...agentRuntime.getSettings().chat,automaticLongTermMemory:false},
-      memoryAgent:{...agentRuntime.getSettings().memoryAgent,enabled:true,providerPresetId:"preset.memory-agent",model:"memory-model",outputMode:"auto"},
-      prompts:{overrides:{"memory-agent.system":"Custom durable-memory instructions."}}
+      ...promptSettings,
+      chat:{...promptSettings.chat,automaticLongTermMemory:false},
+      memoryAgent:{...promptSettings.memoryAgent,enabled:true,providerPresetId:"preset.memory-agent",model:"memory-model",outputMode:"auto"}
     });
     const memory=await agentRuntime.extractMemory({
       apiVersion:"1",schemaVersion:"1",characterId:character.id,conversationId:conversation.id,turnId:"native-agent-green-table",

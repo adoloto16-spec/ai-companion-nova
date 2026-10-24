@@ -1,8 +1,9 @@
 import type {
-  AssembledContext,ChatErrorCode,ChatGenerationOptions,ChatMessage,ChatReasoningOptions,ChatRequest,ChatResponse,ChatStreamEvent,
+  AssembledContext,ChatErrorCode,ChatGenerationOptions,ChatImageAttachment,ChatMessage,ChatReasoningOptions,ChatRequest,ChatResponse,ChatStreamEvent,
   ChatStreamHandlers,ChatStreamOptions,ChatUsage,CharacterId,ChatTraceStore,ContextBuildRequest,ContextBudget,MemoryExtractionRequest,MindReactiveTurn,MindTurnExecutionContext,ModelProfile,Unsubscribe
 } from "../../contracts/src/index";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,DEFAULT_APP_SETTINGS,parseNovaTurn} from "../../contracts/src/index";
+import {cloneChatImageAttachments,restoreChatImageAttachments} from "./chat-message-attachments";
 import type {NovaTurn} from "../../contracts/src/nova-turn";
 
 export interface ChatRuntimeBoundary{
@@ -73,7 +74,32 @@ function defaultRequestId():string{
   return "chat-"+Date.now()+"-"+requestSequence;
 }
 function cloneMessage(message:ChatMessage):ChatMessage{
-  return {...message,...(message.metadata?{metadata:{...message.metadata}}:{})};
+  return {
+    ...message,
+    ...(message.metadata?{metadata:{...message.metadata}}:{}),
+    ...(message.images?{images:cloneChatImageAttachments(message.images)}:{})
+  };
+}
+function traceSafeRequest(request:ChatRequest):ChatRequest{
+  return {
+    ...request,
+    context:{
+      ...request.context,
+      messages:request.context.messages.map(message=>{
+        if(!message.images?.length)return message;
+        const {images,...withoutImages}=message;
+        return {...withoutImages,metadata:{
+          ...(message.metadata??{}),
+          traceImageAttachmentCount:images.length,
+          traceImageAttachments:images.map(image=>({
+            mimeType:image.mimeType,
+            base64Chars:image.dataBase64.length,
+            base64Prefix:image.dataBase64.slice(0,12)
+          }))
+        }};
+      })
+    }
+  };
 }
 function readChatErrorCode(error:unknown):ChatErrorCode|undefined{
   if(!error||typeof error!=="object"||!("chatError" in error))return undefined;
@@ -82,10 +108,24 @@ function readChatErrorCode(error:unknown):ChatErrorCode|undefined{
   const code=(candidate as {code?:unknown}).code;
   return typeof code==="string"&&CHAT_ERROR_CODES.has(code as ChatErrorCode)?code as ChatErrorCode:undefined;
 }
-function userMessageForError(error:unknown):{code:ChatErrorCode;message:string}{
+function readChatErrorMessage(error:unknown):string|undefined{
+  if(!error||typeof error!=="object"||!("chatError" in error))return undefined;
+  const candidate=(error as {chatError?:unknown}).chatError;
+  if(!candidate||typeof candidate!=="object"||!("message" in candidate))return undefined;
+  const message=(candidate as {message?:unknown}).message;
+  return typeof message==="string"&&message.trim()?message.trim().slice(0,500):undefined;
+}
+function userMessageForError(error:unknown,hasImageAttachments=false):{code:ChatErrorCode;message:string}{
   const code=readChatErrorCode(error)??"PROVIDER_ERROR";
+  if(hasImageAttachments){
+    const providerMessage=readChatErrorMessage(error);
+    return {code,message:providerMessage
+      ?"Screenshot request failed: "+providerMessage
+      :"Screenshot request failed ("+code+"). Check Diagnostics for the provider's original error details."};
+  }
   return {code,message:USER_MESSAGES[code]};
 }
+
 function isAbortError(error:unknown):boolean{
   return Boolean(error&&typeof error==="object"&&"name" in error&&(error as {name?:unknown}).name==="AbortError");
 }
@@ -410,13 +450,14 @@ export class ChatSessionController{
     }
   }
 
-  async submitToLife(content:string,persist:(snapshot:ConversationSnapshot)=>Promise<void>,wake:(turn:MindReactiveTurn)=>boolean|void):Promise<ChatSubmitResult>{
+  async submitToLife(content:string,persist:(snapshot:ConversationSnapshot)=>Promise<void>,wake:(turn:MindReactiveTurn)=>boolean|void,images?:readonly ChatImageAttachment[]):Promise<ChatSubmitResult>{
     const text=content.trim();
-    if(!text)return {status:"rejected",reason:"empty"};
+    const safeImages=cloneChatImageAttachments(images);
+    if(!text&&!safeImages?.length)return {status:"rejected",reason:"empty"};
     if(this.isBusy())return {status:"rejected",reason:"busy"};
     const requestId=this.requestIdFactory();
     const turn:MindReactiveTurn={characterId:this.session.characterId,conversationId:this.session.conversationId,userMessageId:requestId+":user",turnId:requestId};
-    this.session.addMessage({id:turn.userMessageId,role:"user",content:text});
+    this.session.addMessage({id:turn.userMessageId,role:"user",content:text,...(safeImages?{images:safeImages}:{})});
     this.lifeTurn={...turn,status:"persisting"};
     this.status="awaiting-life";this.error=undefined;this.errorCode=undefined;this.notify();
     try{await persist(this.getSnapshot());}
@@ -503,13 +544,14 @@ export class ChatSessionController{
     this.notify();
   }
 
-  async submit(content:string,model:string):Promise<ChatSubmitResult>{
+  async submit(content:string,model:string,images?:readonly ChatImageAttachment[]):Promise<ChatSubmitResult>{
     const text=content.trim();
-    if(!text)return {status:"rejected",reason:"empty"};
+    const safeImages=cloneChatImageAttachments(images);
+    if(!text&&!safeImages?.length)return {status:"rejected",reason:"empty"};
     if(this.isBusy())return {status:"rejected",reason:"busy"};
     if(this.lifeTurn?.status==="completed")this.lifeTurn=undefined;
     const requestId=this.requestIdFactory();
-    const userMessage:ChatMessage={id:requestId+":user",role:"user",content:text};
+    const userMessage:ChatMessage={id:requestId+":user",role:"user",content:text,...(safeImages?{images:safeImages}:{})};
     this.session.addMessage(userMessage);
     return this.startRun("submit",requestId,model,userMessage);
   }
@@ -626,7 +668,7 @@ export class ChatSessionController{
           includedCandidates:assembled.includedCandidates,
           omittedCandidates:assembled.omittedCandidates
         }});
-        contextMessages=assembled.messages;
+        contextMessages=restoreChatImageAttachments(assembled.messages,contextMessages);
       }
       if(active.stopRequested)return this.markInterrupted(active,assistantMessage);
 
@@ -635,7 +677,7 @@ export class ChatSessionController{
       const providerDiagnostics=this.runtime.getChatProviderDiagnostics?.(providerPresetId);
       const chatTransport=this.runtime.stream?"stream":"chat";
       this.traceStore?.update(active.requestId,{
-        finalRequest:request,
+        finalRequest:traceSafeRequest(request),
         ...(providerDiagnostics?{
           provider:{
             chatProviderPresetId:providerDiagnostics.providerPresetId,
@@ -758,7 +800,7 @@ export class ChatSessionController{
         this.traceStore?.update(active.requestId,{status:"interrupted",durationMs:Date.now()-active.startedAt});
         return this.markInterrupted(active,this.session.getMessages().find(message=>message.id===active.assistantId));
       }
-      const normalized=userMessageForError(error);
+      const normalized=userMessageForError(error,Boolean(userMessage.images?.length));
       const chatError=error&&typeof error==="object"&&"chatError" in error
         ?(error as {chatError?:{providerId?:unknown;details?:Record<string,unknown>}}).chatError
         :undefined;

@@ -159,9 +159,22 @@ async function modelDiscoveryAndNoKeyTest(): Promise<void> {
   equal(http.requests[0]?.method, "GET", "model discovery method");
   ok(http.requests.every(item => !("Authorization" in item.headers) && !("authorization" in item.headers)), "no API key is sent");
   equal(provider(http).capabilities().structuredOutput, true, "structured output capability is explicit");
-  equal(provider(http).capabilities().vision, false, "vision capability remains disabled");
+  equal(provider(http).capabilities().vision, true, "Ollama advertises vision support for its image-bearing /api/chat transport");
   equal(provider(http).capabilities().toolCalling, true, "native tool calling is supported by this adapter");
   equal(provider(http).capabilities().reasoning, true, "native reasoning is supported by this adapter");
+}
+
+async function imageAttachmentsUseTheNormalOllamaChatRequest(): Promise<void> {
+  const http = new FakeOllamaHttpClient();
+  // PNG signature bytes only: enough to verify the adapter preserves the real PNG encoding
+  // as raw base64 rather than forwarding a data URL or unrelated text payload.
+  const attachment = { mimeType: "image/png" as const, dataBase64: "iVBORw0KGgo=", alt: "screenshot" };
+  await provider(http).chat(chatRequest({
+    context: { conversationId: "ollama-image-conversation", messages: [{ role: "user", content: "What is shown?", images: [attachment] }] }
+  }));
+  equal(http.requests.length, 1, "a PNG screenshot does not trigger a separate inference request");
+  const body = JSON.parse(http.requests[0]!.body!) as { messages: Array<{role:string;content:string;images?:string[]}> };
+  deepEqual(body.messages[0], { role: "user", content: "What is shown?", images: ["iVBORw0KGgo="] }, "raw PNG base64 is included in the same Ollama chat message without a data URL prefix");
 }
 
 async function ordinaryRequestMappingTest(): Promise<void> {
@@ -572,6 +585,7 @@ async function main(): Promise<void> {
   const tests: Array<[string, () => Promise<void>]> = [
     ["Loopback URL restrictions", loopbackValidationTest],
     ["Model discovery and no API key", modelDiscoveryAndNoKeyTest],
+    ["Image attachments use the normal chat request", imageAttachmentsUseTheNormalOllamaChatRequest],
     ["Ordinary request mapping and single system preservation", ordinaryRequestMappingTest],
     ["Multiple system messages normalized in wire JSON", multipleSystemMessagesAreNormalizedInWireBodyTest],
     ["Request without system messages stays system-free", requestWithoutSystemMessageStaysSystemFreeTest],

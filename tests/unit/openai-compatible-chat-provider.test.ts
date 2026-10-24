@@ -164,6 +164,24 @@ async function reasoningModesMapToExplicitProviderPayloads(){
   equal(defaultBody.reasoning_effort,undefined,"provider-default does not become explicit low/high just because an effort preference is persisted");
 }
 
+async function imageAttachmentsUseTheNormalOpenAICompatibleChatRequest(){
+  const http=new FakeHttpClient();
+  const p=provider(http);
+  await p.chat({
+    ...request(),
+    context:{conversationId:"openai-image-conversation",messages:[{
+      role:"user",content:"What is shown?",images:[{mimeType:"image/jpeg",dataBase64:"aGVsbG8=",alt:"screenshot"}]
+    }]}
+  });
+  equal(http.requests.length,1,"a screenshot does not trigger a separate inference request");
+  const sent=JSON.parse(http.requests[0]!.body!) as {messages:Array<{role:string;content:string|Array<{type:string;text?:string;image_url?:{url:string}}>}>};
+  const message=sent.messages[0]!;
+  equal(message.role,"user","attachment stays on the user message");
+  if(!Array.isArray(message.content))throw new Error("multimodal content must use content parts");
+  equal(message.content[0]?.text,"What is shown?","text and screenshot share one message");
+  equal(message.content[1]?.image_url?.url,"data:image/jpeg;base64,aGVsbG8=","OpenAI-compatible image data URL mapping");
+}
+
 async function requestMappingTest(){
   const http=new FakeHttpClient();
   const p=provider(http);
@@ -764,6 +782,7 @@ void (async()=>{
   for(const [name,test] of [
     ["Metadata and capabilities",metadataAndCapabilitiesTest],
     ["Reasoning mode payloads",reasoningModesMapToExplicitProviderPayloads],
+    ["Image attachments use the normal chat request",imageAttachmentsUseTheNormalOpenAICompatibleChatRequest],
     ["Request mapping",requestMappingTest],
     ["Cognition assistant role mapping",cognitionAssistantRoleRegressionTest],
     ["Structured request mapping",structuredRequestMappingTest],

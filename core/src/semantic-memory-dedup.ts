@@ -1,4 +1,4 @@
-import {resolvePromptText} from "../../contracts/src";
+import {assemblePromptInstructions} from "../../contracts/src";
 import type {
   AgentOutputMode,AppSettings,CharacterId,ChatRequest,ChatResponse,Clock,DiagnosticsStore,EmbeddingProvider,EventBus,
   MemoryBroker,MemoryItem,MemorySemanticIndexState,MemorySemanticIndexStore,MemorySemanticVectorRecord,SchemaValidator,JsonSchema
@@ -394,6 +394,10 @@ export class MemorySemanticDeduplicator{
       if(!presetId)return this.skip("memory_judge_provider_not_configured",characterId,selected,scores);
       const modelName=judge.model.trim()||await this.options.getChatModelForPreset(presetId);
       if(!modelName.trim())return this.skip("memory_judge_model_not_configured",characterId,selected,scores);
+      const promptConfiguration=this.options.settings().prompts;
+      const judgeInput=buildJudgeInput(newMemory,selected);
+      const assembly=assemblePromptInstructions(promptConfiguration,"memory-judge","structured");
+      if(assembly.error)throw new Error(assembly.error);
       const chatRequest:ChatRequest={
         apiVersion:"1",
         schemaVersion:"1",
@@ -402,10 +406,15 @@ export class MemorySemanticDeduplicator{
         context:{
           conversationId:"memory-judge:"+memoryId,
           messages:[
-            {role:"system",content:resolvePromptText(this.options.settings().prompts,"memory-judge.system")},
-            {role:"user",content:buildJudgeInput(newMemory,selected)}
+            {role:"system",content:assembly.text},
+            {role:"user",content:judgeInput}
           ]
         }
+      };
+      const requestForMode=(mode:"structured"|"plain"):ChatRequest=>{
+        const modeAssembly=assemblePromptInstructions(promptConfiguration,"memory-judge",mode);
+        if(modeAssembly.error)throw new Error(modeAssembly.error);
+        return {...chatRequest,context:{...chatRequest.context,messages:chatRequest.context.messages.map((message,index)=>index===0?{...message,content:modeAssembly.text}:message)}};
       };
       this.recordDiagnostic("SEMANTIC_DEDUP_JUDGE_STARTED","memory judge started",{
         characterId,
@@ -419,6 +428,7 @@ export class MemorySemanticDeduplicator{
       const execution=await this.outputRunner.run({
         outputMode:judge.outputMode,
         request:chatRequest,
+        requestForMode,
         providerPresetId:presetId,
         schemaName:"memory-judge-decision",
         schema,

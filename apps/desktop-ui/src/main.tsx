@@ -1,5 +1,9 @@
 import React from "react";
 import PromptRegistryView from "./prompt-registry-view";
+import AvatarStudioView from "./avatar-studio";
+import { publishAvatarIntent, resolveDialogueIntent } from "../../../modules/character/src/index";
+import { startScreenVisionSession } from "../../../modules/vision/src/index";
+import type { ScreenVisionSession } from "../../../modules/vision/src/index";
 import {createRoot} from "react-dom/client";
 import {invoke} from "@tauri-apps/api/core";
 import {NovaHttpClient} from "./ollama-http-client";
@@ -27,13 +31,14 @@ import {DEFAULT_TTS_SETTINGS} from "../../../contracts/src/tts";
 import type {TtsPreset,TtsProviderDescriptor,TtsSettings} from "../../../contracts/src/tts";
 import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
-  type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
+  type ChatImageAttachment, type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
   type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem, type ErrorDiagnostic,
-  defaultAppSettings, validateAppSettings, StandardContractValidator, applyPromptOverride, restorePromptDefault, restoreAllPromptDefaults, type PromptId,
+  defaultAppSettings, validateAppSettings, StandardContractValidator, applyPromptOverride, restorePromptDefault,
   type ProviderPreset, type ProviderPresetSource, type ProviderPresetStoreState, type ModelInfo, type MindState, type MindTraceEntry, type MindTurnSink, type MindReactiveTurn
 } from "../../../contracts/src/index";
 import {countVisibleSpeechMessages,resolveNovaTurnMessagePresentation} from "./nova-turn-visibility";
+import {parseNovaTurn} from "../../../contracts/src/nova-turn";
 import {chatDraftKey,readChatDraft,writeChatDraft,clearSubmittedChatDraft} from "./chat-drafts";
 import "./styles.css";
 
@@ -160,7 +165,7 @@ function ConversationSwitcher({conversations,activeConversationId,sending,onSele
   </div>;
 }
 
-function ChatView({controller,runtime,character,conversations,activeConversation,input,onDraftChange,onClearSubmittedDraft,onPersist,onClear,onSelectConversation,onCreateConversation,onRenameConversation,onDeleteConversation,onStopSpeech}:{
+function ChatView({controller,runtime,character,conversations,activeConversation,input,onDraftChange,onClearSubmittedDraft,onPersist,onClear,onSelectConversation,onCreateConversation,onRenameConversation,onDeleteConversation,onStopSpeech,agentVisionEnabled,onToggleAgentVision}:{
   controller:ChatSessionController;
   runtime:FoundationRuntime;
   character:Character;
@@ -176,12 +181,35 @@ function ChatView({controller,runtime,character,conversations,activeConversation
   onRenameConversation:(conversation:Conversation)=>Promise<void>;
   onDeleteConversation:(conversation:Conversation)=>Promise<void>;
   onStopSpeech:()=>void;
+  agentVisionEnabled:boolean;
+  onToggleAgentVision:()=>void;
 }){
   const [snapshot,setSnapshot]=React.useState(()=>controller.getSnapshot());
   const [editingId,setEditingId]=React.useState<string|undefined>();
   const [editingText,setEditingText]=React.useState("");
   const [showTechnicalData,setShowTechnicalData]=React.useState(false);
   const [persistenceError,setPersistenceError]=React.useState("");
+  const [visionEnabled,setVisionEnabled]=React.useState(false);
+  const [visionBusy,setVisionBusy]=React.useState(false);
+  const [captureBusy,setCaptureBusy]=React.useState(false);
+  const [captureError,setCaptureError]=React.useState("");
+  const visionSessionRef=React.useRef<ScreenVisionSession|null>(null);
+  const visionCleanupRef=React.useRef<(()=>void)|null>(null);
+  const visionOperationRef=React.useRef(false);
+  const sendLockRef=React.useRef(false);
+  const visionViewMountedRef=React.useRef(true);
+  React.useEffect(()=>{
+    visionViewMountedRef.current=true;
+    return ()=>{
+      visionViewMountedRef.current=false;
+      visionCleanupRef.current?.();
+      visionCleanupRef.current=null;
+      const session=visionSessionRef.current;
+      visionSessionRef.current=null;
+      session?.stop();
+    };
+  },[]);
+
   const bottomRef=React.useRef<HTMLDivElement|null>(null);
 
   React.useEffect(()=>{setSnapshot(controller.getSnapshot());return controller.subscribe(setSnapshot)},[controller]);
@@ -200,26 +228,96 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     catch(error){setPersistenceError(error instanceof Error?error.message:"Conversation could not be saved.");}
   },[onPersist]);
 
-  const send=React.useCallback(async()=>{
-    const submittedDraft=input;
-    // Sending a user message is an explicit interruption of ongoing and queued speech.
-    onStopSpeech();
-    setPersistenceError("");
-    if(runtime.getMindState().lifecycleState!=="off"){
-      try{
-        const result=await controller.submitToLife(submittedDraft,async()=>{await onPersist();},turn=>runtime.wakeMindForUserMessage(turn));
-        if(result.status==="awaiting-life")onClearSubmittedDraft(submittedDraft);
-        if(result.status==="life-failed")setPersistenceError(result.message);
-      }catch(error){
-        setPersistenceError(error instanceof Error?error.message:"User message could not be saved for Nova Life.");
-      }
+  const toggleVision=React.useCallback(async()=>{
+    if(chatBusy||captureBusy||visionOperationRef.current)return;
+    const activeSession=visionSessionRef.current;
+    if(activeSession){
+      visionSessionRef.current=null;
+      visionCleanupRef.current?.();
+      visionCleanupRef.current=null;
+      activeSession.stop();
+      setVisionEnabled(false);
+      setCaptureError("");
       return;
     }
-    controller.clearFailedLifeTurnForOrdinaryChat();
-    const result=await controller.submit(submittedDraft,runtime.getActiveChatModel());
-    if(result.status==="sent")onClearSubmittedDraft(submittedDraft);
-    await persistAfterAction(result);
-  },[controller,input,runtime,onPersist,onClearSubmittedDraft,persistAfterAction,onStopSpeech]);
+    visionOperationRef.current=true;
+    setVisionBusy(true);
+    setCaptureError("");
+    try{
+      const session=await startScreenVisionSession();
+      if(!visionViewMountedRef.current){session.stop();return;}
+      visionSessionRef.current=session;
+      const unsubscribe=session.onEnded(()=>{
+        if(visionSessionRef.current!==session)return;
+        visionSessionRef.current=null;
+        visionCleanupRef.current=null;
+        setVisionEnabled(false);
+        setCaptureError("Screen sharing stopped. Turn Vision on again to resume automatic screenshots.");
+      });
+      if(visionSessionRef.current===session){
+        visionCleanupRef.current=unsubscribe;
+        setVisionEnabled(true);
+      }else{
+        unsubscribe();
+        session.stop();
+      }
+    }catch(error){
+      if(visionViewMountedRef.current){
+        setVisionEnabled(false);
+        setCaptureError("Vision could not start: "+safeErrorMessage(error,"Screen capture is unavailable."));
+      }
+    }finally{
+      visionOperationRef.current=false;
+      if(visionViewMountedRef.current)setVisionBusy(false);
+    }
+  },[chatBusy,captureBusy]);
+
+  const send=React.useCallback(async()=>{
+    const submittedDraft=input;
+    const activeSession=visionSessionRef.current;
+    const messageText=submittedDraft.trim()||(activeSession?"Please analyze the current screen and use it as context for your response.":"");
+    if(!messageText||captureBusy||visionBusy||sendLockRef.current)return;
+    sendLockRef.current=true;
+    const submittedImages:ChatImageAttachment[]=[];
+    setPersistenceError("");
+    setCaptureError("");
+    onStopSpeech();
+    try{
+      if(activeSession){
+        setCaptureBusy(true);
+        try{
+          submittedImages.push(await activeSession.capture());
+          if(visionSessionRef.current!==activeSession)throw new Error("Vision was switched off before the screenshot finished.");
+        }catch(error){
+          if(visionViewMountedRef.current)setCaptureError("Vision screenshot failed; the message was not sent. "+safeErrorMessage(error,"Screen capture failed."));
+          return;
+        }finally{
+          if(visionViewMountedRef.current)setCaptureBusy(false);
+        }
+      }
+      if(runtime.getMindState().lifecycleState!=="off"){
+        try{
+          const result=await controller.submitToLife(messageText,async()=>{await onPersist();},turn=>runtime.wakeMindForUserMessage(turn),submittedImages);
+          if(result.status==="awaiting-life")onClearSubmittedDraft(submittedDraft);
+          if(result.status==="awaiting-life")setCaptureError("");
+          if(result.status==="life-failed")setPersistenceError(result.message);
+        }catch(error){
+          if(visionViewMountedRef.current)setPersistenceError(safeErrorMessage(error,"User message could not be saved for Nova Life."));
+        }
+        return;
+      }
+      controller.clearFailedLifeTurnForOrdinaryChat();
+      const result=await controller.submit(messageText,runtime.getActiveChatModel(),submittedImages);
+      if(result.status==="sent")onClearSubmittedDraft(submittedDraft);
+      if(result.status==="sent")setCaptureError("");
+      await persistAfterAction(result);
+    }catch(error){
+      if(visionViewMountedRef.current)setPersistenceError(safeErrorMessage(error,"The message could not be sent."));
+    }finally{
+      sendLockRef.current=false;
+      if(visionViewMountedRef.current)setCaptureBusy(false);
+    }
+  },[controller,input,captureBusy,visionBusy,runtime,onPersist,onClearSubmittedDraft,persistAfterAction,onStopSpeech]);
 
   const stop=React.useCallback(async()=>{
     onStopSpeech();
@@ -306,6 +404,17 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     return presentation.render&&Boolean(presentation.text.trim());
   });
   const lastAssistantStatus=lastAssistant?messageStreamStatus(lastAssistant):undefined;
+  React.useEffect(()=>{
+    if(!lastAssistant)return;
+    const nativeTurn=parseNovaTurn(lastAssistant.content).turn;
+    if(nativeTurn?.tools.some(tool=>tool.name==="avatar.set_intent"))return;
+    const presentation=resolveNovaTurnMessagePresentation(lastAssistant,false);
+    if(!presentation.render||!presentation.text.trim())return;
+    publishAvatarIntent(resolveDialogueIntent(
+      presentation.text,
+      snapshot.status==="streaming"&&messageStreamStatus(lastAssistant)==="streaming"
+    ));
+  },[lastAssistant?.id,lastAssistant?.content,snapshot.status]);
   const showContinue=snapshot.status==="interrupted"&&lastAssistantStatus==="interrupted"&&!snapshot.sending;
   const showRegenerate=(snapshot.status==="completed"||snapshot.status==="interrupted")&&(lastAssistantStatus==="complete"||lastAssistantStatus==="interrupted")&&!snapshot.sending;
   const showRetry=snapshot.status==="error"&&!snapshot.sending;
@@ -375,6 +484,12 @@ function ChatView({controller,runtime,character,conversations,activeConversation
               </div>
             </div>
             :<div className="message-content">{isNovaTurn?presentation.text:message.content}</div>}
+          {message.images?.length ? <div className="chat-message-images">
+            {message.images.map((image,imageIndex)=><figure key={messageKey+"-image-"+imageIndex}>
+              <img src={"data:"+image.mimeType+";base64,"+image.dataBase64} alt={image.alt??"Chat screenshot"}/>
+              <figcaption>{image.alt??"Screenshot attachment"}</figcaption>
+            </figure>)}
+          </div> : null}
           {isNovaTurn&&showTechnicalData&&<section className="nova-turn-technical" aria-label="NovaTurn technical data">
             <div><strong>Situation</strong><p>{textField(parseResult?.fields.situation)} <em>({statusText(parseResult?.fields.situation)})</em></p></div>
             <div><strong>Thoughts (private)</strong><p>{textField(parseResult?.fields.thoughts)} <em>({statusText(parseResult?.fields.thoughts)})</em></p></div>
@@ -410,11 +525,17 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     {snapshot.lifeTurn?.status==="persisting"&&<p className="chat-hint" role="status">Saving your message for Nova Life…</p>}
     {snapshot.lifeTurn?.status==="awaiting"&&<p className="chat-hint" role="status">Nova is thinking…</p>}
     {snapshot.lifeTurn?.status==="failed"&&<p className="chat-error" role="alert">Nova Life failed to produce a valid reply. The turn remains failed and can be retried with Retry Nova Life.</p>}
-    <form className="chat-composer" onSubmit={event=>{event.preventDefault();if(!chatBusy)void send()}}>
-      <textarea value={input} onChange={event=>onDraftChange(event.target.value)} onKeyDown={onKeyDown} placeholder="Write a message…" aria-label="Chat message" disabled={chatBusy} rows={2}/>
-      <button type="submit" disabled={chatBusy||input.trim().length===0}>{snapshot.sending?"Streaming…":lifeTurnBusy?"Nova is thinking…":"Send"}</button>
+    <form className="chat-composer" onSubmit={event=>{event.preventDefault();if(!chatBusy&&!captureBusy&&!visionBusy)void send()}}>
+      {captureError&&<div className="chat-capture-error" role="alert">{captureError}</div>}
+      <button type="button" className="chat-capture-button" onClick={()=>void toggleVision()} disabled={chatBusy||visionBusy||captureBusy} aria-pressed={visionEnabled}>
+        {visionBusy?"Starting Vision…":captureBusy&&visionEnabled?"Vision: Capturing…":visionEnabled?"Vision: On":"Vision: Off"}
+      </button>
+      <button type="button" className="chat-agent-vision-button" onClick={onToggleAgentVision} disabled={chatBusy||captureBusy||visionBusy} aria-pressed={agentVisionEnabled} title="Reuse the latest screenshot already in this conversation for Nova Life; this never captures a new image.">{agentVisionEnabled?"Agent Vision: On":"Agent Vision: Off"}</button>
+      <textarea value={input} onChange={event=>onDraftChange(event.target.value)} onKeyDown={onKeyDown} placeholder="Write a message…" aria-label="Chat message" disabled={chatBusy} aria-busy={captureBusy} rows={2}/>
+      <button type="submit" disabled={chatBusy||captureBusy||visionBusy||(input.trim().length===0&&!visionEnabled)}>{snapshot.sending?"Streaming…":lifeTurnBusy?"Nova is thinking…":"Send"}</button>
     </form>
-    <p className="chat-hint">Enter to send · Shift+Enter for a new line</p>
+    <p className="chat-hint">Enter to send · Shift+Enter for a new line. Vision captures a fresh PNG for outgoing Chat requests. Agent Vision is separate: Nova Life can reuse only the latest screenshot already in this conversation, and it never captures a new image. The selected model must support image input.</p>
+
     {snapshot.error&&<div className="chat-error" role="alert">{snapshot.error}</div>}
     {persistenceError&&<div className="chat-error" role="alert">{persistenceError}</div>}
   </section>;
@@ -1709,11 +1830,8 @@ function AppSettingsView({
         <textarea value={settings.semanticDedup.judge.prompt}
           onChange={event=>{
             const prompt=event.currentTarget.value;
-            onChange({
-              ...settings,
-              prompts:{overrides:{...settings.prompts.overrides,"memory-judge.system":prompt}},
-              semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge,prompt}}
-            });
+            const updated=applyPromptOverride(settings,"memory-judge.system",prompt);
+            onChange({...updated,semanticDedup:{...updated.semanticDedup,judge:{...updated.semanticDedup.judge,prompt}}});
           }}
           rows={10} maxLength={12000} disabled={saving}/>
         <small>{settings.semanticDedup.judge.prompt===defaults.semanticDedup.judge.prompt?"Default prompt":"Custom prompt"} · default version {settings.semanticDedup.judge.defaultPromptVersion}. This setting is synchronized with the Prompts tab.</small>
@@ -2340,7 +2458,7 @@ function credentialSavedEntries(
 }
 
 function App(){
-  const [view,setView]=React.useState<"chat"|"characters"|"memory"|"core-book"|"model-profile"|"prompts"|"settings"|"diagnostics">("chat");
+  const [view,setView]=React.useState<"chat"|"characters"|"memory"|"core-book"|"avatar"|"model-profile"|"prompts"|"settings"|"diagnostics">("chat");
   const [runtime,setRuntime]=React.useState<RuntimeDiagnostics>(preview);
   const [saving,setSaving]=React.useState(false);
   const [startupStatus,setStartupStatus]=React.useState<"initializing"|"ready"|"error">("initializing");
@@ -2352,6 +2470,7 @@ function App(){
   const [conversations,setConversations]=React.useState<readonly Conversation[]>([]);
   const [activeConversation,setActiveConversation]=React.useState<Conversation|undefined>();
   const [chatDrafts,setChatDrafts]=React.useState<Record<string,string>>({});
+  const [agentVisionEnabled,setAgentVisionEnabled]=React.useState(false);
   const [mindState,setMindState]=React.useState<MindState>({lifecycleState:"off",nextWakeAt:null,recentTrace:[]});
   const mindUnsubscribeRef=React.useRef<(()=>void)|undefined>(undefined);
   const [lifeBusy,setLifeBusy]=React.useState(false);
@@ -3064,35 +3183,24 @@ function App(){
     finally{setSaving(false);}
   },[speechOutputController]);
 
-  const savePromptOverride=React.useCallback(async(id:PromptId,text:string)=>{
+  const savePromptSettings=React.useCallback(async(nextPromptSettings:AppSettings,message:string)=>{
     const foundation=foundationRef.current;
     if(!foundation){setSettingsLoadMessage("Settings runtime is not available.");return;}
-    const nextSettings=applyPromptOverride(appSettings,id,text);
+    const active=nextPromptSettings.prompts.presets.find(p=>p.id===nextPromptSettings.prompts.activePresetId);
+    const legacyText=(id:string)=>active?.prompts.find(p=>p.legacyId===id)?.text??"";
+    const nextSettings:AppSettings={...nextPromptSettings,
+      memoryAgent:{...nextPromptSettings.memoryAgent,prompt:legacyText("memory-agent.system")},
+      semanticDedup:{...nextPromptSettings.semanticDedup,judge:{...nextPromptSettings.semanticDedup.judge,prompt:legacyText("memory-judge.system")}}
+    };
     const errors=validateAppSettings(nextSettings);
     if(errors.length){setSettingsLoadMessage(errors.join(" "));return;}
     setSaving(true);setSettingsLoadMessage("");
     try{
       const next=await foundation.updateSettings(nextSettings);
-      setAppSettings(next);
-      setSettingsLoadMessage(text.trim().length>0?"Prompt saved and applied.":"Factory prompt restored and applied.");
-    }catch(error){setSettingsLoadMessage(error instanceof Error?error.message:"Prompt could not be saved.");}
+      setAppSettings(next);setSettingsLoadMessage(message);
+    }catch(error){setSettingsLoadMessage(error instanceof Error?error.message:"Prompt presets could not be saved.");}
     finally{setSaving(false);}
-  },[appSettings]);
-
-  const restoreAllPromptOverrides=React.useCallback(async()=>{
-    const foundation=foundationRef.current;
-    if(!foundation){setSettingsLoadMessage("Settings runtime is not available.");return;}
-    const nextSettings=restoreAllPromptDefaults(appSettings);
-    const errors=validateAppSettings(nextSettings);
-    if(errors.length){setSettingsLoadMessage(errors.join(" "));return;}
-    setSaving(true);setSettingsLoadMessage("");
-    try{
-      const next=await foundation.updateSettings(nextSettings);
-      setAppSettings(next);
-      setSettingsLoadMessage("All factory prompts restored and applied.");
-    }catch(error){setSettingsLoadMessage(error instanceof Error?error.message:"Prompts could not be restored.");}
-    finally{setSaving(false);}
-  },[appSettings]);
+  },[]);
 
   const activeChatDraftKey=activeCharacter&&activeConversation
     ?chatDraftKey(activeCharacter.id,activeConversation.id)
@@ -3106,6 +3214,7 @@ function App(){
         <button className={view==="characters"?"nav-button active":"nav-button"} onClick={()=>setView("characters")}>Characters</button>
         <button className={view==="memory"?"nav-button active":"nav-button"} onClick={()=>setView("memory")}>Character Memory</button>
         <button className={view==="core-book"?"nav-button active":"nav-button"} onClick={()=>setView("core-book")}>Core Book</button>
+        <button className={view==="avatar"?"nav-button active":"nav-button"} onClick={()=>setView("avatar")}>Avatar Studio</button>
         <button className={view==="prompts"?"nav-button active":"nav-button"} onClick={()=>setView("prompts")}>Промты</button>
         <button className={view==="model-profile"?"nav-button active":"nav-button"} onClick={()=>setView("model-profile")}>Model Profile</button>
         <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Settings</button>
@@ -3122,11 +3231,10 @@ function App(){
       </div>
     </header>
     <ViewErrorBoundary key={view} view={view} onError={reportViewError}>
-    {view==="model-profile"&&activeCharacter&&activeModelProfile
+    {view==="avatar"?<AvatarStudioView/>:view==="model-profile"&&activeCharacter&&activeModelProfile
       ?<ModelProfileView profile={activeModelProfile} runtime={runtime} presets={providerPresets} activePresetId={activePresetId} onSave={saveModelProfile}/>
       :view==="prompts"
-      ?<PromptRegistryView settings={appSettings} saving={saving} message={settingsLoadMessage}
-          onSavePrompt={savePromptOverride} onRestoreAll={restoreAllPromptOverrides}/>
+      ?<PromptRegistryView settings={appSettings} saving={saving} message={settingsLoadMessage} onSaveSettings={savePromptSettings}/>
       :view==="settings"
       ?<SettingsContainerView
           appSettings={appSettings}
@@ -3159,6 +3267,8 @@ function App(){
         </section>
       :view==="chat"&&activeCharacter&&chatController&&activeConversation
       ?<ChatView key={activeChatDraftKey} controller={chatController} runtime={foundationRef.current!} character={activeCharacter}
+           agentVisionEnabled={agentVisionEnabled}
+           onToggleAgentVision={()=>{const next=!agentVisionEnabled;setAgentVisionEnabled(next);foundationRef.current?.setCognitiveVisionEnabled?.(next);}}
           conversations={conversations} activeConversation={activeConversation}
           input={activeChatDraftKey?readChatDraft(chatDrafts,activeChatDraftKey):""}
           onDraftChange={value=>{if(activeChatDraftKey)setChatDrafts(current=>writeChatDraft(current,activeChatDraftKey,value));}}

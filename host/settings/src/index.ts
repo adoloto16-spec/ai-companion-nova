@@ -1,12 +1,12 @@
 import type {AppSettings,AppSettingsStore,SchemaValidator} from "../../../contracts/src/index";
-import {STANDARD_SCHEMAS,defaultAppSettings,migrateAppSettings,validateAppSettings} from "../../../contracts/src/index";
+import {STANDARD_SCHEMAS,clonePromptConfiguration,defaultAppSettings,migrateAppSettings,validateAppSettings} from "../../../contracts/src/index";
 
 export type AppSettingsStoreInvoke=(command:string,args?:Record<string,unknown>)=>Promise<unknown>;
 export const APP_SETTINGS_COMMANDS={get:"get_app_settings",save:"save_app_settings"} as const;
 
 function clone(settings:AppSettings):AppSettings{
   // Persistence returns independent nested settings so provider/model bindings cannot be lost through shared mutable UI state.
-  return {...settings,chat:{...settings.chat},prompts:{overrides:{...settings.prompts.overrides}},semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge}},tts:{enabled:settings.tts.enabled,activePresetId:settings.tts.activePresetId,finishTimeoutMs:settings.tts.finishTimeoutMs,startTimeoutMs:settings.tts.startTimeoutMs,segmentGapMs:settings.tts.segmentGapMs,presets:settings.tts.presets.map(preset=>({...preset,credentialReference:preset.credentialReference?{...preset.credentialReference}:null,providerOptions:{...preset.providerOptions}}))},context:{...settings.context},memory:{...settings.memory},retrieval:{...settings.retrieval},diagnostics:{...settings.diagnostics},ui:{...settings.ui}};
+  return {...settings,chat:{...settings.chat},prompts:clonePromptConfiguration(settings.prompts),semanticDedup:{...settings.semanticDedup,judge:{...settings.semanticDedup.judge}},tts:{enabled:settings.tts.enabled,activePresetId:settings.tts.activePresetId,finishTimeoutMs:settings.tts.finishTimeoutMs,startTimeoutMs:settings.tts.startTimeoutMs,segmentGapMs:settings.tts.segmentGapMs,presets:settings.tts.presets.map(preset=>({...preset,credentialReference:preset.credentialReference?{...preset.credentialReference}:null,providerOptions:{...preset.providerOptions}}))},context:{...settings.context},memory:{...settings.memory},retrieval:{...settings.retrieval},diagnostics:{...settings.diagnostics},ui:{...settings.ui}};
 }
 function validate(settings:AppSettings,validator:SchemaValidator):void{
   const schema=validator.validate(settings,STANDARD_SCHEMAS["app-settings"]!);

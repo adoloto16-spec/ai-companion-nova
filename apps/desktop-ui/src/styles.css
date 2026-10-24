@@ -17,7 +17,16 @@ button:disabled{opacity:.55;cursor:default}
 .chat-message{max-width:78%;margin:0 0 14px;padding:11px 13px;border-radius:12px;white-space:pre-wrap;overflow-wrap:anywhere}
 .chat-message.user{margin-left:auto;background:#23354a}.chat-message.assistant{margin-right:auto;background:#1c2733}.chat-message.pending{opacity:.72}
 .message-author{font-size:12px;font-weight:700;opacity:.72;margin-bottom:4px}.message-content{line-height:1.45}
-.chat-composer{display:grid;grid-template-columns:1fr auto;gap:10px;padding:14px;border-top:1px solid #27313d;background:#121820}
+.chat-composer{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;align-items:stretch;gap:10px;padding:14px;border-top:1px solid #27313d;background:#121820}
+.chat-capture-button{white-space:nowrap;align-self:end}
+.chat-capture-button[aria-pressed="true"]{background:#254c43;border-color:#4f8e7e;color:#effff9}
+.chat-agent-vision-button{white-space:nowrap;align-self:end}
+.chat-agent-vision-button[aria-pressed="true"]{background:#3d355c;border-color:#8a7fc7;color:#f4f0ff}
+.chat-capture-error{grid-column:1/-1;padding:8px 10px;border-left:3px solid #e16d84;background:#321b24;color:#ffd0d6;font-size:12px;overflow-wrap:anywhere}
+.chat-message-images{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+.chat-message-images figure{max-width:min(100%,520px);margin:0;padding:8px;background:#0c1218;border:1px solid #354153;border-radius:9px}
+.chat-message-images img{display:block;max-width:100%;max-height:380px;object-fit:contain;border-radius:5px}
+.chat-message-images figcaption{margin-top:5px;color:#91a0b5;font-size:11px;overflow-wrap:anywhere}
 .chat-composer textarea{resize:none;width:100%;min-height:48px;max-height:180px;padding:10px;border:1px solid #394655;border-radius:8px;background:#0d1319;color:#e9eef5;line-height:1.4}
 .chat-composer button{min-width:82px}.chat-hint{margin:7px 14px 0;font-size:12px;opacity:.52}
 .chat-error{margin:10px 14px 14px;padding:10px 12px;border:1px solid #6b4b4b;border-radius:8px;background:#27191b}
@@ -108,3 +117,23 @@ input,select{padding:9px;border:1px solid #394655;border-radius:7px;background:#
 .prompt-fields textarea[readonly]{opacity:.68}
 .prompt-card .actions{align-items:center}
 @media (max-width:900px){.prompt-registry-header{flex-direction:column}.prompt-fields{grid-template-columns:1fr}}
+
+.prompt-toolbar{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.prompt-preset-select,.prompt-preset-details,.prompt-editor-layout,.prompt-diagnostics{display:grid;gap:14px;padding:16px;border:1px solid #2a3441;border-radius:10px;background:#151c25}
+.prompt-preset-select{grid-template-columns:minmax(240px,1fr) auto auto;align-items:end}
+.prompt-preset-select label,.prompt-preset-details label,.prompt-editor label,.prompt-diagnostics label{display:grid;gap:6px;min-width:0}
+.prompt-preset-details{grid-template-columns:minmax(200px,1fr) minmax(260px,2fr)}
+.prompt-editor-layout{grid-template-columns:minmax(220px,.8fr) minmax(0,2fr);align-items:start}
+.prompt-records,.prompt-editor{display:grid;gap:12px;min-width:0}
+.prompt-record-row{display:grid;gap:4px;text-align:left;padding:10px;border:1px solid #394655;border-radius:8px;background:#0f141b;color:#e9eef5;cursor:pointer}
+.prompt-record-row.selected{border-color:#7b9ed0;background:#1b2b3d}
+.prompt-record-meta{font-size:11px;opacity:.72;overflow-wrap:anywhere}
+.prompt-section-title{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.prompt-section-title h3{margin:0;font-size:16px}
+.prompt-editor-layout input,.prompt-editor-layout textarea,.prompt-editor-layout select,.prompt-preset-select select,.prompt-preset-details input,.prompt-preset-details textarea,.prompt-diagnostics select,.prompt-diagnostics input{width:100%;box-sizing:border-box;padding:9px;border:1px solid #394655;border-radius:7px;background:#0f141b;color:#e9eef5}
+.prompt-editor textarea{font-family:Consolas,monospace;line-height:1.45;font-size:12px;resize:vertical}
+.prompt-diagnostics pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:440px;overflow:auto;padding:12px;border:1px solid #394655;border-radius:8px;background:#0f141b;color:#e9eef5;font-family:Consolas,monospace;font-size:12px}
+.prompt-diagnostic-records{padding-left:22px}
+.prompt-diagnostic-records li{margin:12px 0}
+.prompt-toolbar button{white-space:nowrap}
+@media(max-width:900px){.prompt-preset-select,.prompt-preset-details,.prompt-editor-layout{grid-template-columns:1fr}.prompt-toolbar{justify-content:flex-start}}

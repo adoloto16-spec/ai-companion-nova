@@ -24,6 +24,7 @@ export interface AgentOutputRuntime{
 export interface AgentOutputRunnerOptions<T>{
   outputMode:AgentOutputMode;
   request:ChatRequest;
+  requestForMode?:(mode:"structured"|"plain")=>ChatRequest;
   providerPresetId?:string;
   schemaName:string;
   schema:JsonSchema;
@@ -69,8 +70,10 @@ export class AgentOutputRunner{
   async run<T>(options:AgentOutputRunnerOptions<T>):Promise<AgentOutputExecutionResult<T>>{
     const outputMode=options.outputMode;
     const source=options.source??"agent-output";
+    const structuredBase=options.requestForMode?.("structured")??options.request;
+    const plainBase=options.requestForMode?.("plain")??options.request;
     const structuredRequest:ChatRequest={
-      ...options.request,
+      ...structuredBase,
       generation:{
         ...(options.request.generation??{}),
         responseFormat:{
@@ -81,11 +84,11 @@ export class AgentOutputRunner{
         }
       }
     };
-    const plainGeneration=options.request.generation
-      ?Object.fromEntries(Object.entries(options.request.generation).filter(([key])=>key!=="responseFormat"))
+    const plainGeneration=plainBase.generation
+      ?Object.fromEntries(Object.entries(plainBase.generation).filter(([key])=>key!=="responseFormat"))
       :undefined;
     const plainRequest:ChatRequest={
-      ...options.request,
+      ...plainBase,
       ...(plainGeneration?{generation:plainGeneration}:{}),
       ...(plainGeneration===undefined?{generation:undefined}:{})
     };
