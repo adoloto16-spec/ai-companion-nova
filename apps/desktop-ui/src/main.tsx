@@ -3157,7 +3157,24 @@ function App(){
         <button className={view==="characters"?"nav-button active":"nav-button"} onClick={()=>setView("characters")}>Characters</button>
         <button className={view==="memory"?"nav-button active":"nav-button"} onClick={()=>setView("memory")}>Character Memory</button>
         <button className={view==="core-book"?"nav-button active":"nav-button"} onClick={()=>setView("core-book")}>Core Book</button>
-        <button className={view==="avatar"?<AvatarStudioView/>:view==="model-profile"&&activeCharacter&&activeModelProfile
+        <button className={view==="avatar"?"nav-button active":"nav-button"} onClick={()=>setView("avatar")}>Avatar Studio</button>
+        <button className={view==="prompts"?"nav-button active":"nav-button"} onClick={()=>setView("prompts")}>Промты</button>
+        <button className={view==="model-profile"?"nav-button active":"nav-button"} onClick={()=>setView("model-profile")}>Model Profile</button>
+        <button className={view==="settings"?"nav-button active":"nav-button"} onClick={()=>setView("settings")}>Settings</button>
+        {appSettings.ui.showDiagnosticsInChat&&<button className={view==="diagnostics"?"nav-button active":"nav-button"} onClick={()=>setView("diagnostics")}>Diagnostics</button>}
+      </nav>
+      <div className="life-control">
+        <span className="life-label">Nova Life: <strong>{mindState.lifecycleState.toUpperCase()}</strong>{mindState.lifecycleState==="waiting"&&mindState.nextWakeAt&&<small> · next wake {new Date(mindState.nextWakeAt).toLocaleTimeString()}</small>}</span>
+        <button type="button" onClick={async()=>{
+          const foundation=foundationRef.current;if(!foundation||lifeBusy)return;setLifeBusy(true);
+          try{if(mindState.lifecycleState==="off")await foundation.startLife();else await foundation.stopLife();}
+          catch(error){foundation.recordDiagnosticError("mind-runtime","LIFE_CONTROL_FAILED",safeErrorMessage(error));}
+          finally{setMindState(foundation.getMindState());setLifeBusy(false);}
+        }} disabled={lifeBusy||startupStatus!=="ready"}>{mindState.lifecycleState==="off"?"ON":"OFF"}</button>
+      </div>
+    </header>
+    <ViewErrorBoundary key={view} view={view} onError={reportViewError}>
+    {view==="avatar"?<AvatarStudioView/>:view==="model-profile"&&activeCharacter&&activeModelProfile
       ?<ModelProfileView profile={activeModelProfile} runtime={runtime} presets={providerPresets} activePresetId={activePresetId} onSave={saveModelProfile}/>
       :view==="prompts"
       ?<PromptRegistryView settings={appSettings} saving={saving} message={settingsLoadMessage} onSaveSettings={savePromptSettings}/>

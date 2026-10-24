@@ -171,3 +171,19 @@ Log policy: append an entry for each implementation or verification action; reco
 - The schema-catalog generation, schema diff check, root typecheck, and root build passed before the failing regression assertion.
 - Provider image tests (OpenAI-compatible and Ollama), the avatar runtime tests, and the capture attachment test all passed earlier in the same root test run.
 - This focused JSX fix requires a new CI run; UI, Windows, Rust, and full root test completion still need to be observed.
+
+
+## 2026-10-24 — Entry 011: restore primary navigation after an imprecise JSX anchor
+
+### Diagnosis
+- The follow-up CI run [40048941993](https://github.com/adoloto16-spec/ai-companion-nova/actions/runs/40048941993) passed foundation build, but the root unit tests failed at `desktop-ui-regression.test.ts`: “Primary navigation must expose Model Profile”.
+- Inspection showed the route-replacement search had matched `className={view==="avatar"...}` on the **navigation button** instead of the rendered view branch. It therefore removed part of the navigation markup. This was an implementation defect, not an invalid test.
+
+### Corrective action
+- Rebased the main UI source on the verified pre-screenshot-integration version of `main.tsx`, then reapplied the screenshot composer changes using a unique, multiline anchor for the rendered Avatar Studio branch.
+- Added a pre-commit source check that the primary navigation still contains Chat, Avatar Studio and Model Profile. Kept `disabled={chatBusy}` on the textarea and left capture-in-progress as `aria-busy`; form submission remains disabled while capture is active.
+- No tests were edited.
+
+### Verification status
+- The source fix is awaiting a new full CI run.
+- The previous root test run confirmed the schema/type/build steps, capture/provider unit tests, and existing streaming UI regression passed before the desktop navigation regression test stopped the suite.
