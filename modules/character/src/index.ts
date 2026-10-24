@@ -50,7 +50,7 @@ function publishLocally(event:AvatarBroadcastEvent):void{
   }
 }
 function getChannel(): BroadcastChannel | undefined {
-  if (typeof BroadcastChannel === "undefined") return undefined;
+  if (typeof window === "undefined" || typeof BroadcastChannel === "undefined") return undefined;
   if (!channel) channel = new BroadcastChannel(AVATAR_CHANNEL_NAME);
   return channel;
 }

@@ -245,3 +245,17 @@ Log policy: append an entry for each implementation or verification action; reco
 - Added cognitive-context regression coverage for Agent Vision on/off and latest-image selection, updated the Ollama PNG/capability tests, and added avatar-rig source assertions.
 - The exact provider error is now shown in Chat when present, which will help identify a remaining configuration/serialization issue if the next run still fails.
 - GitHub Actions and interactive Windows verification must be observed before claiming success. This CI cannot confirm the user's model's actual textures, poses, or live screen-picker interaction.
+
+
+## 2026-10-24 — Entry 015: keep browser-only BroadcastChannel out of Node test processes
+
+### Finding
+- The newly added local avatar event test uses synchronous in-process dispatch to verify that a cognitive tool can control the Avatar Studio in the same WebView.
+- Node exposes a global `BroadcastChannel` API even when no browser window exists. Creating a channel during a Node unit test can keep the test process alive after assertions have completed.
+
+### Corrective action
+- Restricted BroadcastChannel creation to browser contexts. Local avatar-intent listeners still receive synchronous events in tests and in the Chat WebView; the broadcast channel continues to deliver intents to a separate Tauri window.
+- The existing test covers local delivery and unsubscribes the listener. No test was weakened.
+
+### Verification status
+- The previous commit's TypeScript typecheck/build passed. The current full test job has not completed yet; this small lifecycle correction is on the new head and requires its own full Actions run.
