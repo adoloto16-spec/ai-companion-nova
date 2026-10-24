@@ -29,3 +29,8 @@ VRM is the primary renderer, but each model must include appropriate geometry an
 Screenshot capture requires a WebView that supports `getDisplayMedia`; real Windows desktop capture-picker behavior still needs a live smoke test. The actual screenshot analysis is performed by the selected chat model as part of the regular user request, not by a detached screen analysis view.
 
 The animation layer remains procedural and modest; it is not full-body inverse kinematics, learned motion generation, or physical simulation. Transparent overlay compositing and mouse pass-through should still be validated on the user's desktop.
+
+
+## Orientation and material diagnostics
+
+The viewer selects its front-camera side from VRM metadata: VRM 0.x faces -Z, while VRM 1.0 faces +Z. For loaded meshes, the renderer also reasserts sRGB color space and marks base-color maps for GPU upload. If the model contains meshes and materials but no base-color texture maps, Avatar Studio displays that diagnosis instead of silently reporting a complete load. This distinguishes a file exported without embedded textures from a rendering failure; confirm the actual map counts with the user's asset if it still appears white.

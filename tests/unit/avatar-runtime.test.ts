@@ -38,4 +38,7 @@ assert.ok(canvasSource.includes("toneMappingExposure = 1"),"VRM renderer tones d
 assert.ok(canvasSource.includes("leftUpperArm")&&canvasSource.includes("leftLowerArm"),"procedural avatar rig moves upper and lower arms instead of remaining in a T-pose");
 assert.ok(canvasSource.includes("const leftLeg = bone(\"leftUpperLeg\")"),"humanoid locomotion includes weight-shift animation for the legs");
 assert.ok(canvasSource.includes("action.action === \"wave\""),"the avatar rig has a dedicated arm-wave animation");
+assert.ok(canvasSource.includes('current.vrm?.meta.metaVersion === "0" ? -1 : 1'),"camera uses the VRM 0.x forward direction instead of viewing the back");
+assert.ok(canvasSource.includes("prepareAvatarMaterials(root)"),"loaded avatar material maps are reconfigured for sRGB and uploaded");
+assert.ok(canvasSource.includes("baseColorTextures === 0"),"textureless imports report the material/texture diagnosis instead of silently claiming a complete load");
 console.log("avatar-runtime.test.ts: passed");

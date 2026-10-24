@@ -279,3 +279,21 @@ Log policy: append an entry for each implementation or verification action; reco
 - CI proves the source/build/installer paths, not the user's actual running provider configuration, chosen screen, or specific avatar file.
 - After installing the latest artifact, turn **Vision** on, send a normal chat message, and inspect the original provider error if it still rejects the image. The new UI now exposes that error rather than guessing that the model lacks image support.
 - Verify the model's texture appearance and the joint animation with the user's actual VRM in Windows WebView; the renderer now has a separate React-safe canvas host, reduced lighting, and humanoid procedural motion, but no automated test can validate the visual result of a specific asset.
+
+
+## 2026-10-24 — Entry 017: fix the native multimodal payload limit and VRM front/material handling
+
+### Root-cause diagnosis
+- The actual desktop Ollama transport serializes the screenshot and conversation history into one JSON request, but the Rust IPC bridge rejected any body over **2 MiB** before making the HTTP request. The screenshot contract allows up to 1,750,000 base64 characters, so adding existing message history can exceed 2 MiB while still satisfying the app's screenshot limit. That means the normal provider adapter test could pass even though real screenshot requests never reached Ollama.
+- The renderer always placed the camera on +Z. The VRM specification uses opposite forward directions for VRM 0.x (-Z) and VRM 1.0 (+Z), so this fixed camera can show a VRM 0.x model from the back.
+- The renderer did not explicitly reassert sRGB for base-color maps or report an imported mesh set with no base-color maps, leaving a textureless white result ambiguous.
+
+### Corrective implementation
+- Increased the bounded native Ollama request JSON cap to 8 MiB, shared its validation between streaming and non-streaming commands, and added Rust regression tests for a valid screenshot-plus-history body over the old 2 MiB limit and rejection above the new cap.
+- Chose the avatar camera side from `vrm.meta.metaVersion`, kept VRM 1.0 on +Z and moved the camera to -Z for VRM 0.x.
+- Reasserted `THREE.SRGBColorSpace` and marked the base-color map for upload before the first render. When the mesh/material set has no base-color texture maps, the viewer now shows the mesh/material diagnosis and asks for a self-contained textured asset instead of silently treating the render as fully loaded.
+- Added source regression assertions for the VRM camera direction and explicit material preparation. No existing test assertions were weakened or deleted.
+
+### Verification status
+- The next full CI run must validate the Rust bridge, TypeScript/React build, regression suite and Windows installer.
+- A live request against the user's running Ollama installation and visual confirmation of the user's specific VRM are still necessary to prove the end-to-end result; CI cannot execute those user-specific checks.

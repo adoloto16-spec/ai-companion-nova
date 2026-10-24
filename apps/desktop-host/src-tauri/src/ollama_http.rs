@@ -13,9 +13,16 @@ use tauri::ipc::Channel;
 use tauri::State;
 use url::Url;
 
-const MAX_REQUEST_BODY_BYTES: usize = 2 * 1024 * 1024;
+const MAX_REQUEST_BODY_BYTES: usize = 8 * 1024 * 1024;
 const MAX_RESPONSE_BODY_BYTES: usize = 8 * 1024 * 1024;
 const MAX_REQUEST_ID_CHARS: usize = 128;
+
+fn validate_request_body(body: Option<&str>) -> Result<(), String> {
+    if body.map(str::len).unwrap_or(0) > MAX_REQUEST_BODY_BYTES {
+        return Err("Ollama request body exceeds the allowed size.".to_string());
+    }
+    Ok(())
+}
 
 #[derive(Default)]
 pub struct OllamaHttpState {
@@ -184,9 +191,7 @@ pub async fn ollama_http_request(
 ) -> Result<OllamaHttpResponse, String> {
     let url = validated_url(&base_url, &route, &method)?;
     let timeout = request_timeout(timeout_ms)?;
-    if body.as_ref().map(|value| value.len()).unwrap_or(0) > MAX_REQUEST_BODY_BYTES {
-        return Err("Ollama request body exceeds the allowed size.".to_string());
-    }
+    validate_request_body(body.as_deref())?;
     if method == "GET" && body.is_some() {
         return Err("Ollama GET requests must not contain a body.".to_string());
     }
@@ -246,9 +251,7 @@ pub async fn ollama_http_stream(
         return Err("Ollama streaming is allowed only for POST /api/chat.".to_string());
     }
     let timeout = request_timeout(timeout_ms)?;
-    if body.as_ref().map(|value| value.len()).unwrap_or(0) > MAX_REQUEST_BODY_BYTES {
-        return Err("Ollama request body exceeds the allowed size.".to_string());
-    }
+    validate_request_body(body.as_deref())?;
     let body = body.ok_or_else(|| "Ollama chat body is required.".to_string())?;
     let token = state.register(&request_id)?;
     let result = async {
@@ -302,6 +305,26 @@ pub fn ollama_http_cancel(request_id: String, state: State<'_, OllamaHttpState>)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn screenshot_request_with_history_can_exceed_the_old_two_mib_limit() {
+        let history = "h".repeat(400_000);
+        let image = "A".repeat(1_750_000);
+        let body = format!(
+            r#"{{"messages":[{{"role":"user","content":"{}","images":["{}"]}}]}}"#,
+            history, image
+        );
+        assert!(body.len() > 2 * 1024 * 1024, "regression fixture must exceed the old bridge cap");
+        assert!(body.len() < MAX_REQUEST_BODY_BYTES, "fixture must stay within the new bounded request cap");
+        assert!(validate_request_body(Some(&body)).is_ok());
+    }
+
+    #[test]
+    fn native_ollama_bridge_still_rejects_bodies_above_the_new_safety_limit() {
+        let body = "x".repeat(MAX_REQUEST_BODY_BYTES + 1);
+        assert!(validate_request_body(Some(&body)).is_err());
+        assert!(validate_request_body(None).is_ok());
+    }
 
     #[test]
     fn loopback_hosts_and_only_documented_routes_are_allowed() {

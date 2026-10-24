@@ -30,6 +30,30 @@ interface LoadedModel {
   boneBases: Partial<Record<HumanoidBone, THREE.Euler>>;
 }
 
+function prepareAvatarMaterials(root: THREE.Object3D): { meshes: number; materials: number; baseColorTextures: number } {
+  let meshes = 0;
+  let materials = 0;
+  let baseColorTextures = 0;
+  root.traverse(object => {
+    if (!(object instanceof THREE.Mesh)) return;
+    meshes++;
+    const slots = Array.isArray(object.material) ? object.material : [object.material];
+    for (const material of slots) {
+      materials++;
+      // GLTF/VRM base-color textures use sRGB. Reassert it for both standard and MToon materials
+      // and request an upload before the first frame instead of silently rendering as untextured.
+      const map = (material as THREE.Material & { map?: THREE.Texture | null }).map;
+      if (map instanceof THREE.Texture) {
+        map.colorSpace = THREE.SRGBColorSpace;
+        map.needsUpdate = true;
+        baseColorTextures++;
+      }
+      material.needsUpdate = true;
+    }
+  });
+  return { meshes, materials, baseColorTextures };
+}
+
 export default function VrmAvatarCanvas({ profile, settings, intent, className = "" }: {
   profile?: AvatarProfile;
   settings: AvatarSettings;
@@ -101,6 +125,7 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
       if (disposed) return;
       const vrm = gltf.userData.vrm as VRM | undefined;
       const root = vrm?.scene ?? gltf.scene;
+      const materialDiagnostics = prepareAvatarMaterials(root);
       root.updateMatrixWorld(true);
       const box = new THREE.Box3().setFromObject(root);
       const size = box.getSize(new THREE.Vector3());
@@ -127,8 +152,13 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
         height: Math.max(size.y, 1), bones, boneBases
       };
       if (loaded.mixer && gltf.animations[0]) loaded.mixer.clipAction(gltf.animations[0]).play();
-      setError("");
-      setStatus(vrm ? "VRM loaded" : gltf.animations.length ? "GLB loaded · animation playing" : "GLB loaded");
+      if (materialDiagnostics.meshes > 0 && materialDiagnostics.baseColorTextures === 0) {
+        setStatus(vrm ? "VRM loaded · no color textures" : "GLB loaded · no color textures");
+        setError("Loaded " + materialDiagnostics.meshes + " mesh(es) with " + materialDiagnostics.materials + " material slot(s), but none has a base-color texture map. This file may have been exported without embedded textures; import a self-contained textured VRM/GLB.");
+      } else {
+        setError("");
+        setStatus(vrm ? "VRM loaded" : gltf.animations.length ? "GLB loaded · animation playing" : "GLB loaded");
+      }
     };
     const failGltf = (cause: unknown) => {
       if (disposed) return;
@@ -242,7 +272,9 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
         current.vrm?.update(delta);
         const center = current.center.clone().multiplyScalar(prefs.scale);
         const height = current.height * prefs.scale;
-        camera.position.set(center.x, center.y + height * 0.04, center.z + height * prefs.cameraDistance);
+        // VRM 0.x faces -Z; VRM 1.0 faces +Z. A fixed +Z camera views VRM 0.x from behind.
+        const cameraSide = current.vrm?.meta.metaVersion === "0" ? -1 : 1;
+        camera.position.set(center.x, center.y + height * 0.04, center.z + height * prefs.cameraDistance * cameraSide);
         camera.lookAt(center);
       }
       renderer.render(scene, camera);
