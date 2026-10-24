@@ -65,6 +65,7 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
       renderer.setClearColor(0x000000, 0);
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       renderer.setSize(Math.max(1, container.clientWidth), Math.max(1, container.clientHeight));
+      // This ref targets a dedicated empty renderer host, not the parent holding React overlays.
       container.replaceChildren(renderer.domElement);
     } catch (cause) {
       setStatus("Renderer unavailable");
@@ -188,7 +189,8 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
     };
   }, [profile?.assetId, profile?.format, profile?.id]);
 
-  return <div className={"vrm-avatar-canvas " + className} ref={host} aria-label={profile ? "Avatar preview" : "Avatar preview empty"}>
+  return <div className={"vrm-avatar-canvas " + className} aria-label={profile ? "Avatar preview" : "Avatar preview empty"}>
+    <div className="vrm-avatar-canvas-renderer" ref={host} aria-hidden="true" />
     {status !== "VRM loaded" && status !== "GLB loaded" && status !== "GLB loaded · animation playing" &&
       <div className={"avatar-canvas-status" + (error ? " avatar-canvas-status-error" : "")} aria-live="polite"><strong>{status}</strong>{error && <span role="alert">{error}</span>}</div>}
   </div>;

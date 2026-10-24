@@ -17,6 +17,7 @@ html.avatar-transparent-document, body.avatar-transparent-document, body.avatar-
 .avatar-preview-stage { height: min(66vh, 660px); min-height: 380px; position: relative; overflow: hidden; background: radial-gradient(ellipse at 50% 42%, #31415d 0%, #192435 43%, #101722 100%); }
 .avatar-preview-stage .vrm-avatar-canvas { position: absolute; inset: 0; }
 .vrm-avatar-canvas { position: relative; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; }
+.vrm-avatar-canvas-renderer { position: absolute; inset: 0; width: 100%; height: 100%; }
 .vrm-avatar-canvas canvas { display: block; width: 100%; height: 100%; }
 .avatar-canvas-status { position: absolute; left: 14px; right: 14px; bottom: 14px; display: flex; flex-direction: column; gap: 5px; color: #dce5f3; padding: 11px 13px; background: #0b1019dc; border: 1px solid #43506a; border-radius: 9px; font-size: 12px; pointer-events: none; }
 .avatar-canvas-status span { color: #ffb9bd; overflow-wrap: anywhere; }

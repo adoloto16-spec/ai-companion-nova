@@ -100,8 +100,14 @@ function readChatErrorCode(error:unknown):ChatErrorCode|undefined{
   const code=(candidate as {code?:unknown}).code;
   return typeof code==="string"&&CHAT_ERROR_CODES.has(code as ChatErrorCode)?code as ChatErrorCode:undefined;
 }
-function userMessageForError(error:unknown):{code:ChatErrorCode;message:string}{
+function userMessageForError(error:unknown,hasImageAttachments=false):{code:ChatErrorCode;message:string}{
   const code=readChatErrorCode(error)??"PROVIDER_ERROR";
+  if(hasImageAttachments&&(code==="INVALID_REQUEST"||code==="UNSUPPORTED"||code==="PROVIDER_ERROR")){
+    return {
+      code,
+      message:"The selected provider could not process this screenshot request. Confirm that the active model supports image input, then check Diagnostics for the underlying provider error."
+    };
+  }
   return {code,message:USER_MESSAGES[code]};
 }
 function isAbortError(error:unknown):boolean{
@@ -778,7 +784,7 @@ export class ChatSessionController{
         this.traceStore?.update(active.requestId,{status:"interrupted",durationMs:Date.now()-active.startedAt});
         return this.markInterrupted(active,this.session.getMessages().find(message=>message.id===active.assistantId));
       }
-      const normalized=userMessageForError(error);
+      const normalized=userMessageForError(error,Boolean(userMessage.images?.length));
       const chatError=error&&typeof error==="object"&&"chatError" in error
         ?(error as {chatError?:{providerId?:unknown;details?:Record<string,unknown>}}).chatError
         :undefined;

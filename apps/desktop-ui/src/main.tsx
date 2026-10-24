@@ -2,7 +2,8 @@ import React from "react";
 import PromptRegistryView from "./prompt-registry-view";
 import AvatarStudioView from "./avatar-studio";
 import { publishAvatarIntent, resolveDialogueIntent } from "../../../modules/character/src/index";
-import { captureScreenAttachment } from "../../../modules/vision/src/index";
+import { startScreenVisionSession } from "../../../modules/vision/src/index";
+import type { ScreenVisionSession } from "../../../modules/vision/src/index";
 import {createRoot} from "react-dom/client";
 import {invoke} from "@tauri-apps/api/core";
 import {NovaHttpClient} from "./ollama-http-client";
@@ -30,7 +31,7 @@ import {DEFAULT_TTS_SETTINGS} from "../../../contracts/src/tts";
 import type {TtsPreset,TtsProviderDescriptor,TtsSettings} from "../../../contracts/src/tts";
 import {IpcFullTextRetriever} from "../../../host/retrieval/src/index";
 import {
-  MAX_CHAT_IMAGE_ATTACHMENTS, type ChatImageAttachment, type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
+  type ChatImageAttachment, type ProviderConfiguration, type ProviderConnectionTestResult, type Conversation,
   type ModelProfile, defaultModelProfile, type CredentialProfile, type CredentialProfileStoreState, type AppSettings, type ChatTurnTrace, type DiagnosticsLogLevel, type RuntimeDiagnostics,
   type Character, type CoreBookActivation, type CoreBookEntry, type MemoryItem, type ErrorDiagnostic,
   defaultAppSettings, validateAppSettings, StandardContractValidator, applyPromptOverride, restorePromptDefault,
@@ -185,15 +186,27 @@ function ChatView({controller,runtime,character,conversations,activeConversation
   const [editingText,setEditingText]=React.useState("");
   const [showTechnicalData,setShowTechnicalData]=React.useState(false);
   const [persistenceError,setPersistenceError]=React.useState("");
-  const [pendingImages,setPendingImages]=React.useState<ChatImageAttachment[]>([]);
+  const [visionEnabled,setVisionEnabled]=React.useState(false);
+  const [visionBusy,setVisionBusy]=React.useState(false);
   const [captureBusy,setCaptureBusy]=React.useState(false);
   const [captureError,setCaptureError]=React.useState("");
-  const captureConversationId=React.useRef(activeConversation.id);
+  const visionSessionRef=React.useRef<ScreenVisionSession|null>(null);
+  const visionCleanupRef=React.useRef<(()=>void)|null>(null);
+  const visionOperationRef=React.useRef(false);
+  const sendLockRef=React.useRef(false);
+  const visionViewMountedRef=React.useRef(true);
   React.useEffect(()=>{
-    captureConversationId.current=activeConversation.id;
-    setPendingImages([]);
-    setCaptureError("");
-  },[activeConversation.id]);
+    visionViewMountedRef.current=true;
+    return ()=>{
+      visionViewMountedRef.current=false;
+      visionCleanupRef.current?.();
+      visionCleanupRef.current=null;
+      const session=visionSessionRef.current;
+      visionSessionRef.current=null;
+      session?.stop();
+    };
+  },[]);
+
   const bottomRef=React.useRef<HTMLDivElement|null>(null);
 
   React.useEffect(()=>{setSnapshot(controller.getSnapshot());return controller.subscribe(setSnapshot)},[controller]);
@@ -212,54 +225,96 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     catch(error){setPersistenceError(error instanceof Error?error.message:"Conversation could not be saved.");}
   },[onPersist]);
 
-  const captureScreenshot=React.useCallback(async()=>{
-    if(chatBusy||captureBusy||pendingImages.length>=MAX_CHAT_IMAGE_ATTACHMENTS)return;
-    const conversationId=activeConversation.id;
-    setCaptureBusy(true);
+  const toggleVision=React.useCallback(async()=>{
+    if(chatBusy||captureBusy||visionOperationRef.current)return;
+    const activeSession=visionSessionRef.current;
+    if(activeSession){
+      visionSessionRef.current=null;
+      visionCleanupRef.current?.();
+      visionCleanupRef.current=null;
+      activeSession.stop();
+      setVisionEnabled(false);
+      setCaptureError("");
+      return;
+    }
+    visionOperationRef.current=true;
+    setVisionBusy(true);
     setCaptureError("");
     try{
-      const image=await captureScreenAttachment();
-      if(captureConversationId.current===conversationId){
-        setPendingImages(current=>current.length>=MAX_CHAT_IMAGE_ATTACHMENTS?current:[...current,image]);
+      const session=await startScreenVisionSession();
+      if(!visionViewMountedRef.current){session.stop();return;}
+      visionSessionRef.current=session;
+      const unsubscribe=session.onEnded(()=>{
+        if(visionSessionRef.current!==session)return;
+        visionSessionRef.current=null;
+        visionCleanupRef.current=null;
+        setVisionEnabled(false);
+        setCaptureError("Screen sharing stopped. Turn Vision on again to resume automatic screenshots.");
+      });
+      if(visionSessionRef.current===session){
+        visionCleanupRef.current=unsubscribe;
+        setVisionEnabled(true);
+      }else{
+        unsubscribe();
+        session.stop();
       }
     }catch(error){
-      if(captureConversationId.current===conversationId){
-        setCaptureError(error instanceof Error?error.message:"Screen capture failed.");
+      if(visionViewMountedRef.current){
+        setVisionEnabled(false);
+        setCaptureError("Vision could not start: "+safeErrorMessage(error,"Screen capture is unavailable."));
       }
-    }finally{setCaptureBusy(false);}
-  },[activeConversation.id,chatBusy,captureBusy,pendingImages.length]);
+    }finally{
+      visionOperationRef.current=false;
+      if(visionViewMountedRef.current)setVisionBusy(false);
+    }
+  },[chatBusy,captureBusy]);
 
   const send=React.useCallback(async()=>{
     const submittedDraft=input;
-    const submittedImages=pendingImages.map(image=>({...image}));
-    const messageText=submittedDraft.trim()||(submittedImages.length?"Please analyze the attached screenshot.":"");
-    if(!messageText||captureBusy)return;
-    // Sending a user message is an explicit interruption of ongoing and queued speech.
-    onStopSpeech();
+    const activeSession=visionSessionRef.current;
+    const messageText=submittedDraft.trim()||(activeSession?"Please analyze the current screen and use it as context for your response.":"");
+    if(!messageText||captureBusy||visionBusy||sendLockRef.current)return;
+    sendLockRef.current=true;
+    const submittedImages:ChatImageAttachment[]=[];
     setPersistenceError("");
-    if(runtime.getMindState().lifecycleState!=="off"){
-      try{
-        const result=await controller.submitToLife(messageText,async()=>{await onPersist();},turn=>runtime.wakeMindForUserMessage(turn),submittedImages);
-        if(result.status==="awaiting-life")onClearSubmittedDraft(submittedDraft);
-        if(result.status==="awaiting-life"){
-          setPendingImages([]);
-          setCaptureError("");
+    setCaptureError("");
+    onStopSpeech();
+    try{
+      if(activeSession){
+        setCaptureBusy(true);
+        try{
+          submittedImages.push(await activeSession.capture());
+          if(visionSessionRef.current!==activeSession)throw new Error("Vision was switched off before the screenshot finished.");
+        }catch(error){
+          if(visionViewMountedRef.current)setCaptureError("Vision screenshot failed; the message was not sent. "+safeErrorMessage(error,"Screen capture failed."));
+          return;
+        }finally{
+          if(visionViewMountedRef.current)setCaptureBusy(false);
         }
-        if(result.status==="life-failed")setPersistenceError(result.message);
-      }catch(error){
-        setPersistenceError(error instanceof Error?error.message:"User message could not be saved for Nova Life.");
       }
-      return;
+      if(runtime.getMindState().lifecycleState!=="off"){
+        try{
+          const result=await controller.submitToLife(messageText,async()=>{await onPersist();},turn=>runtime.wakeMindForUserMessage(turn),submittedImages);
+          if(result.status==="awaiting-life")onClearSubmittedDraft(submittedDraft);
+          if(result.status==="awaiting-life")setCaptureError("");
+          if(result.status==="life-failed")setPersistenceError(result.message);
+        }catch(error){
+          if(visionViewMountedRef.current)setPersistenceError(safeErrorMessage(error,"User message could not be saved for Nova Life."));
+        }
+        return;
+      }
+      controller.clearFailedLifeTurnForOrdinaryChat();
+      const result=await controller.submit(messageText,runtime.getActiveChatModel(),submittedImages);
+      if(result.status==="sent")onClearSubmittedDraft(submittedDraft);
+      if(result.status==="sent")setCaptureError("");
+      await persistAfterAction(result);
+    }catch(error){
+      if(visionViewMountedRef.current)setPersistenceError(safeErrorMessage(error,"The message could not be sent."));
+    }finally{
+      sendLockRef.current=false;
+      if(visionViewMountedRef.current)setCaptureBusy(false);
     }
-    controller.clearFailedLifeTurnForOrdinaryChat();
-    const result=await controller.submit(messageText,runtime.getActiveChatModel(),submittedImages);
-    if(result.status==="sent")onClearSubmittedDraft(submittedDraft);
-    if(result.status==="sent"){
-      setPendingImages([]);
-      setCaptureError("");
-    }
-    await persistAfterAction(result);
-  },[controller,input,pendingImages,captureBusy,runtime,onPersist,onClearSubmittedDraft,persistAfterAction,onStopSpeech]);
+  },[controller,input,captureBusy,visionBusy,runtime,onPersist,onClearSubmittedDraft,persistAfterAction,onStopSpeech]);
 
   const stop=React.useCallback(async()=>{
     onStopSpeech();
@@ -465,21 +520,16 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     {snapshot.lifeTurn?.status==="persisting"&&<p className="chat-hint" role="status">Saving your message for Nova Life…</p>}
     {snapshot.lifeTurn?.status==="awaiting"&&<p className="chat-hint" role="status">Nova is thinking…</p>}
     {snapshot.lifeTurn?.status==="failed"&&<p className="chat-error" role="alert">Nova Life failed to produce a valid reply. The turn remains failed and can be retried with Retry Nova Life.</p>}
-    <form className="chat-composer" onSubmit={event=>{event.preventDefault();if(!chatBusy&&!captureBusy)void send()}}>
-      {pendingImages.length>0&&<div className="chat-pending-images" aria-label="Screenshots attached to the next message">
-        {pendingImages.map((image,imageIndex)=><figure key={"pending-screenshot-"+imageIndex}>
-          <img src={"data:"+image.mimeType+";base64,"+image.dataBase64} alt={image.alt??"Chat screenshot preview"}/>
-          <figcaption>Screenshot {imageIndex+1}<button type="button" onClick={()=>setPendingImages(current=>current.filter((_item,index)=>index!==imageIndex))} disabled={chatBusy||captureBusy}>Remove</button></figcaption>
-        </figure>)}
-      </div>}
+    <form className="chat-composer" onSubmit={event=>{event.preventDefault();if(!chatBusy&&!captureBusy&&!visionBusy)void send()}}>
       {captureError&&<div className="chat-capture-error" role="alert">{captureError}</div>}
-      <button type="button" className="chat-capture-button" onClick={()=>void captureScreenshot()} disabled={chatBusy||captureBusy||pendingImages.length>=MAX_CHAT_IMAGE_ATTACHMENTS}>
-        {captureBusy?"Capturing…":"Screenshot"}
+      <button type="button" className="chat-capture-button" onClick={()=>void toggleVision()} disabled={chatBusy||visionBusy||captureBusy} aria-pressed={visionEnabled}>
+        {visionBusy?"Starting Vision…":captureBusy&&visionEnabled?"Vision: Capturing…":visionEnabled?"Vision: On":"Vision: Off"}
       </button>
       <textarea value={input} onChange={event=>onDraftChange(event.target.value)} onKeyDown={onKeyDown} placeholder="Write a message…" aria-label="Chat message" disabled={chatBusy} aria-busy={captureBusy} rows={2}/>
-      <button type="submit" disabled={chatBusy||captureBusy||(input.trim().length===0&&pendingImages.length===0)}>{snapshot.sending?"Streaming…":lifeTurnBusy?"Nova is thinking…":"Send"}</button>
+      <button type="submit" disabled={chatBusy||captureBusy||visionBusy||(input.trim().length===0&&!visionEnabled)}>{snapshot.sending?"Streaming…":lifeTurnBusy?"Nova is thinking…":"Send"}</button>
     </form>
-    <p className="chat-hint">Enter to send · Shift+Enter for a new line. Screenshots are attached to this chat request; image-capable models are required.</p>
+    <p className="chat-hint">Enter to send · Shift+Enter for a new line. With Vision on, a fresh screenshot is added automatically to each Chat or Nova Life request; turn Vision off to stop screen capture. The selected model must support image input.</p>
+
     {snapshot.error&&<div className="chat-error" role="alert">{snapshot.error}</div>}
     {persistenceError&&<div className="chat-error" role="alert">{persistenceError}</div>}
   </section>;

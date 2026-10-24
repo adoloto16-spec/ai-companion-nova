@@ -205,6 +205,13 @@ assert.equal(readChatDraft(unchangedOnFailure,draftA),"unsent A","failed or stal
 const afterSuccessfulSend=clearSubmittedChatDraft(drafts,draftA,"unsent A");
 assert.equal(readChatDraft(afterSuccessfulSend,draftA),"","successful send clears the matching submitted draft");
 assert.equal(readChatDraft(afterSuccessfulSend,draftB),"unsent B","successful send does not clear another conversation draft");
+
+const chatView=blockBetween("function ChatView(","function CharactersView(");
+assert.match(chatView,/const toggleVision=React\.useCallback/,"Chat exposes an explicit Vision on/off control");
+assert.match(chatView,/aria-pressed=\{visionEnabled\}/,"Vision toggle reports its active state accessibly");
+assert.match(chatView,/await activeSession\.capture\(\)/,"sending a message captures the current frame automatically while Vision is on");
+assert.match(chatView,/await controller\.submit\(messageText,runtime\.getActiveChatModel\(\),submittedImages\)/,"the screenshot travels through the same ordinary Chat submit");
+assert.doesNotMatch(chatView,/pendingImages|captureScreenshot/,"Chat no longer requires a manually queued screenshot attachment");
 const ttsSettings=blockBetween("function TtsSettingsView(","function SettingsContainerView(");
 assert.match(ttsSettings,/Enable audio playback/,"TTS UI requires an explicit user gesture before playback");
 assert.match(settingsContainer,/ttsController:SpeechOutputController/,"settings container owns the dedicated speech controller prop");

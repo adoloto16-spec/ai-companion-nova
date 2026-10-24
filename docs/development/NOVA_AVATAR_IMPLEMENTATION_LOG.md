@@ -203,3 +203,23 @@ Log policy: append an entry for each implementation or verification action; reco
 ### Verification status
 - The latest root run passed TypeScript checks/build, screenshot capture helper tests, provider image mapping tests, the chat streaming UI regression, and the primary navigation checks before the draft-clear assertion failed.
 - This correction requires another complete GitHub Actions run, including React UI, Rust/Tauri, and Windows installer.
+
+
+## 2026-10-24 — Entry 013: correct the Vision interaction and React-owned canvas lifecycle
+
+### User-reported failures
+- Vision required a manual one-frame Screenshot action and a second deliberate send of the queued attachment. This did not meet the intended toggle-controlled, automatic-per-request behavior.
+- A screenshot-bearing Chat request surfaced only “The message could not be sent.”, making image-input/model failures difficult to distinguish from ordinary text submissions.
+- Avatar Studio intermittently failed with `removeChild`: the Three.js renderer imperatively replaced and removed children on the same DOM element where React rendered the status/error overlay.
+
+### Corrective implementation
+- Replaced the one-shot composer workflow with a **Vision: Off/On** control. Enabling Vision asks the user to choose a display surface once; the stream remains active until toggled off, the Chat view unmounts, or screen sharing ends by the operating system.
+- Each outgoing Chat/Nova Life message captures a fresh bounded JPEG immediately before submission and adds it to the same user message. No screenshot preview/attachment queue or second model call is required. Turning Vision off stops the stream, and capture failures leave the user's draft unsent.
+- Made automatic capture robust to repeated send attempts, view unmounts during the permission prompt, the OS ending the stream, and screenshots that need more compression attempts to satisfy the payload limit.
+- Kept the renderer canvas in a dedicated inner host, separate from React-owned status overlays. React no longer has to reconcile nodes that Three.js has removed.
+- Made image-bearing provider errors actionable: Chat now states that the active model/provider may not support screenshots and points to Diagnostics for provider-specific details. Existing draft-clear conditions are unchanged.
+- Added regression assertions for automatic Vision and the isolated renderer host. No existing tests were weakened or deleted.
+
+### Verification status
+- GitHub Actions will run against the new commit. Its final outcome must be observed before calling this validated.
+- CI cannot prove the OS screen-picker interaction or visually confirm the user's particular VRM in a live Windows WebView; those remain explicit interactive checks.

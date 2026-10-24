@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import {
   DEFAULT_AVATAR_SETTINGS,
   classifyAvatarFileName,
@@ -21,4 +23,7 @@ assert.equal(resolveDialogueIntent("That is interesting", false).expression, "ha
 assert.deepEqual(resolveAvatarSignal({ type: "user-action", action: "wave" }), {
   action: "wave", expression: "happy", intensity: 1
 });
+const canvasSource=fs.readFileSync(path.resolve(process.cwd(),"apps/desktop-ui/src/vrm-avatar-canvas.tsx"),"utf8");
+assert.ok(canvasSource.includes('className="vrm-avatar-canvas-renderer" ref={host}'),"Three.js receives a dedicated inner host that React does not populate with overlay nodes");
+assert.ok(canvasSource.includes('className={"vrm-avatar-canvas " + className} aria-label='),"the React-owned avatar overlay remains mounted outside the imperative Three.js host");
 console.log("avatar-runtime.test.ts: passed");

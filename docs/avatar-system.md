@@ -12,13 +12,15 @@ The avatar is an optional visual subsystem. The existing `Character` contract de
 
 ## Screenshot flow
 
-Press **Screenshot** in the main Chat composer and select the desired screen/window/tab in the operating-system picker. Nova captures one frame, stops the capture stream, and adds the image to the current draft. The preview can be removed before sending. When sent, the screenshot is stored on the same user `ChatMessage` as the text, survives conversation persistence, passes through context assembly, and is encoded into the same request to the currently selected chat provider:
+Use **Vision: Off/On** in the main Chat composer. Turning Vision on opens the operating-system picker so the user can authorize a screen/window. Once enabled, the capture session remains active until Vision is switched off, the Chat view is closed, or screen sharing is stopped by the operating system.
+
+Every outgoing Chat or Nova Life message automatically captures a fresh frame immediately before submission. The screenshot is stored on the same user `ChatMessage` as the text, survives conversation persistence, passes through context assembly, and is encoded into the same request to the selected chat provider:
 
 - Ollama receives the image in its normal `/api/chat` user message `images` array.
 - OpenAI-compatible endpoints receive a standard `image_url` content part.
 - Gemini receives an `inlineData` part in the same user turn.
 
-Nova does not make a second "vision model" request and does not choose another model for the screenshot. Analysis depends on the selected model/provider actually supporting image input; a text-only model may reject the request. Image payloads are omitted from retained diagnostic traces to avoid duplicating screenshot data.
+Nova does not make a second vision-model request and does not select a model on the user's behalf. Image understanding depends on the active model/provider supporting image input. If a provider rejects a screenshot request, Chat gives an image-specific error and directs the user to Diagnostics. Screenshot base64 is omitted from retained diagnostic traces.
 
 ## Compatibility and limitations
 
