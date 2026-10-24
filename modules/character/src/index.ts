@@ -3,30 +3,14 @@ export const AVATAR_SCHEMA_VERSION = "1" as const;
 export const AVATAR_CHANNEL_NAME = "nova-avatar-runtime";
 
 export type AvatarFormat = "vrm" | "glb" | "live2d";
-export type AvatarAction = "idle" | "talk" | "wave" | "point" | "look" | "walk";
+export type AvatarAction = "idle" | "talk" | "wave" | "look";
 export type AvatarExpression = "neutral" | "happy" | "sad" | "surprised";
 export type AvatarAutonomy = "off" | "balanced" | "active";
 
-export interface NormalizedScreenTarget { x: number; y: number; }
-export interface NormalizedBounds { x: number; y: number; width: number; height: number; }
-export type DisplaySurface = "monitor" | "window" | "browser" | "unknown";
-export interface ScreenCaptureGeometry { surface: DisplaySurface; width: number; height: number; }
-export interface AvatarMonitorGeometry {
-  name?: string | null;
-  physicalSize: { width: number; height: number };
-  logicalPosition: { x: number; y: number };
-  logicalSize: { width: number; height: number };
-  workAreaPosition: { x: number; y: number };
-  workAreaSize: { width: number; height: number };
-  scaleFactor: number;
-}
-export interface OverlayPlacement { x: number; y: number; width: number; height: number; }
 export interface AvatarIntent {
   action: AvatarAction;
   expression: AvatarExpression;
   intensity: number;
-  target?: NormalizedScreenTarget;
-  label?: string;
 }
 export interface AvatarSettings {
   scale: number;
@@ -55,58 +39,8 @@ export const DEFAULT_AVATAR_SETTINGS: AvatarSettings = {
 export type AvatarSignal =
   | { type: "dialogue"; text: string; speaking: boolean }
   | { type: "user-action"; action: "wave" | "look" }
-  | { type: "screen-region"; label: string; bounds: { x: number; y: number; width: number; height: number }; confidence: number }
   | { type: "emotion"; expression: AvatarExpression; intensity?: number };
 export type AvatarBroadcastEvent = { kind: "intent"; intent: AvatarIntent } | { kind: "profile-updated" };
-
-/** A screen-capture stream may refer to a monitor, a window, or a browser tab. */
-export function findUniqueMatchingMonitor(
-  capture: ScreenCaptureGeometry,
-  monitors: readonly AvatarMonitorGeometry[]
-): AvatarMonitorGeometry | undefined {
-  if (capture.surface === "window" || capture.surface === "browser" ||
-      !Number.isFinite(capture.width) || !Number.isFinite(capture.height) || capture.width < 1 || capture.height < 1) return undefined;
-  const matches = monitors.filter(monitor => {
-    const { width, height } = monitor.physicalSize;
-    if (![width, height, monitor.scaleFactor].every(Number.isFinite) || width < 1 || height < 1 || monitor.scaleFactor <= 0) return false;
-    const widthTolerance = Math.max(8, width * 0.015);
-    const heightTolerance = Math.max(8, height * 0.015);
-    return Math.abs(capture.width - width) <= widthTolerance && Math.abs(capture.height - height) <= heightTolerance;
-  });
-  return matches.length === 1 ? matches[0] : undefined;
-}
-
-/** Place the overlay beside the selected region, clamped to the target monitor's work area. */
-export function resolveOverlayPlacement(
-  bounds: NormalizedBounds,
-  monitor: AvatarMonitorGeometry,
-  requested = { width: 320, height: 500 },
-  margin = 18
-): OverlayPlacement {
-  const values = [
-    bounds.x, bounds.y, bounds.width, bounds.height,
-    monitor.logicalPosition.x, monitor.logicalPosition.y, monitor.logicalSize.width, monitor.logicalSize.height,
-    monitor.workAreaPosition.x, monitor.workAreaPosition.y, monitor.workAreaSize.width, monitor.workAreaSize.height,
-    requested.width, requested.height, margin
-  ];
-  if (!values.every(Number.isFinite) || bounds.x < 0 || bounds.y < 0 || bounds.x >= 1 || bounds.y >= 1 ||
-      bounds.width <= 0 || bounds.height <= 0 || monitor.logicalSize.width <= 0 || monitor.logicalSize.height <= 0 ||
-      monitor.workAreaSize.width <= 0 || monitor.workAreaSize.height <= 0) {
-    throw new Error("Screen-to-overlay placement geometry is invalid.");
-  }
-  const width = Math.min(Math.max(1, requested.width), monitor.workAreaSize.width);
-  const height = Math.min(Math.max(1, requested.height), monitor.workAreaSize.height);
-  const centerX = Math.min(1, bounds.x + bounds.width / 2);
-  const centerY = Math.min(1, bounds.y + bounds.height / 2);
-  const targetX = monitor.logicalPosition.x + centerX * monitor.logicalSize.width;
-  const targetY = monitor.logicalPosition.y + centerY * monitor.logicalSize.height;
-  const proposedX = centerX > 0.55 ? targetX - width - margin : targetX + margin;
-  const proposedY = targetY - height * 0.68;
-  const x = Math.min(monitor.workAreaPosition.x + monitor.workAreaSize.width - width, Math.max(monitor.workAreaPosition.x, proposedX));
-  const y = Math.min(monitor.workAreaPosition.y + monitor.workAreaSize.height - height, Math.max(monitor.workAreaPosition.y, proposedY));
-  // Native window placement is pixel-based; remove IEEE-754 residue before sending coordinates to Tauri.
-  return { x: Math.round(x), y: Math.round(y), width, height };
-}
 
 let channel: BroadcastChannel | undefined;
 function getChannel(): BroadcastChannel | undefined {
@@ -160,17 +94,8 @@ export function resolveAvatarSignal(signal: AvatarSignal): AvatarIntent {
     action: signal.action, expression: signal.action === "wave" ? "happy" : "neutral",
     intensity: signal.action === "wave" ? 1 : 0.65
   };
-  if (signal.type === "emotion") return {
-    action: "idle", expression: signal.expression, intensity: clamp(signal.intensity ?? 0.5, 0, 1, 0.5)
-  };
-  const { x, y, width, height } = signal.bounds;
-  if (![x, y, width, height].every(Number.isFinite) || x < 0 || y < 0 || width <= 0 || height <= 0 || x >= 1 || y >= 1) {
-    throw new Error("Screen region bounds are invalid.");
-  }
   return {
-    action: "point", expression: "surprised", intensity: clamp(signal.confidence, 0.2, 1, 0.5),
-    target: { x: clamp(x + width / 2, 0, 1, 0.5), y: clamp(y + height / 2, 0, 1, 0.5) },
-    ...(signal.label.trim() ? { label: signal.label.trim().slice(0, 120) } : {})
+    action: "idle", expression: signal.expression, intensity: clamp(signal.intensity ?? 0.5, 0, 1, 0.5)
   };
 }
 
@@ -189,7 +114,7 @@ export function subscribeAvatarEvents(listener: (event: AvatarBroadcastEvent) =>
     if (value.kind === "profile-updated") { listener({ kind: "profile-updated" }); return; }
     if (value.kind !== "intent" || !isRecord(value.intent)) return;
     const raw = value.intent;
-    const actions: readonly string[] = ["idle", "talk", "wave", "point", "look", "walk"];
+    const actions: readonly string[] = ["idle", "talk", "wave", "look"];
     const expressions: readonly string[] = ["neutral", "happy", "sad", "surprised"];
     if (typeof raw.action !== "string" || !actions.includes(raw.action) ||
         typeof raw.expression !== "string" || !expressions.includes(raw.expression)) return;

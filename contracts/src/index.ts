@@ -572,7 +572,11 @@ export interface ToolDefinition{id:string;version:string;schemaVersion:string;na
 export interface ChatToolDefinition{name:string;description:string;parameters:JsonSchema}
 export interface ChatToolCall{id:string;name:string;arguments:Record<string,unknown>}
 export interface ChatReasoningOptions{mode:"provider-default"|"enabled"|"disabled";effort?:string}
-export interface ChatMessage{id?:string;role:"system"|"user"|"assistant"|"tool";content:string;toolCallId?:string;toolName?:string;toolCalls?:readonly ChatToolCall[];metadata?:Record<string,unknown>}
+export type ChatImageMimeType="image/jpeg"|"image/png"|"image/webp";
+export interface ChatImageAttachment{mimeType:ChatImageMimeType;dataBase64:string;alt?:string}
+export const MAX_CHAT_IMAGE_ATTACHMENTS=2 as const;
+export const MAX_CHAT_IMAGE_BASE64_CHARS=1_750_000 as const;
+export interface ChatMessage{id?:string;role:"system"|"user"|"assistant"|"tool";content:string;toolCallId?:string;toolName?:string;toolCalls?:readonly ChatToolCall[];metadata?:Record<string,unknown>;images?:readonly ChatImageAttachment[]}
 export interface ChatContext{conversationId:string;messages:readonly ChatMessage[];metadata?:Record<string,unknown>}
 export interface StructuredResponseFormat{type:"json-schema";schema:JsonSchema;name?:string;strict?:boolean}
 export type AgentOutputMode="auto"|"structured"|"plain";

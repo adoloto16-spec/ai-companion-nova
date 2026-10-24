@@ -19,7 +19,11 @@ export const CONVERSATION_COMMANDS={
 const DEFAULT_TITLE="Main";
 
 function cloneMessage(message:ChatMessage):ChatMessage{
-  return {...message,...(message.metadata?{metadata:{...message.metadata}}:{})};
+  return {
+    ...message,
+    ...(message.metadata?{metadata:{...message.metadata}}:{}),
+    ...(message.images?{images:message.images.map(image=>({...image}))}:{})
+  };
 }
 function cloneConversation(conversation:Conversation):Conversation{
   return {...conversation,messages:conversation.messages.map(cloneMessage)};

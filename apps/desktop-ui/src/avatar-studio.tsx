@@ -1,21 +1,18 @@
 import React from "react";
-import { availableMonitors, getAllWindows, LogicalPosition, LogicalSize } from "@tauri-apps/api/window";
+import { getAllWindows } from "@tauri-apps/api/window";
 import {
-  DEFAULT_AVATAR_SETTINGS, findUniqueMatchingMonitor, normalizeAvatarSettings, publishAvatarIntent, publishAvatarProfileUpdated,
-  resolveAvatarSignal, resolveOverlayPlacement, subscribeAvatarEvents, type AvatarIntent, type AvatarMonitorGeometry,
-  type AvatarProfile, type AvatarSettings, type ScreenCaptureGeometry
+  DEFAULT_AVATAR_SETTINGS, normalizeAvatarSettings, publishAvatarIntent, publishAvatarProfileUpdated,
+  resolveAvatarSignal, subscribeAvatarEvents, type AvatarIntent, type AvatarProfile, type AvatarSettings
 } from "../../../modules/character/src/index";
-import type { ScreenRegion } from "../../../modules/vision/src/index";
 import { addAvatarModel, deleteAvatarProfile, getActiveAvatarProfileId, listAvatarProfiles, saveAvatarProfile, setActiveAvatarProfile } from "./avatar-library";
 import VrmAvatarCanvas from "./vrm-avatar-canvas";
-import ScreenUnderstandingPanel from "./screen-understanding-panel";
 import "./avatar.css";
 
 async function findOverlay() {
   return (await getAllWindows()).find(window => window.label === "avatar-overlay");
 }
 
-export default function AvatarStudioView({ visionModel, visionBaseUrl }: { visionModel: string; visionBaseUrl: string }) {
+export default function AvatarStudioView() {
   const [profiles, setProfiles] = React.useState<AvatarProfile[]>([]);
   const [activeId, setActiveId] = React.useState<string | null>(null);
   const [name, setName] = React.useState("");
@@ -100,62 +97,6 @@ export default function AvatarStudioView({ visionModel, visionBaseUrl }: { visio
     try { const overlay = await findOverlay(); if (overlay) await overlay.hide(); setMessage("Desktop avatar window hidden."); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Could not hide desktop avatar."); }
   };
-  const pointAt = async (region: ScreenRegion, capture: ScreenCaptureGeometry) => {
-    setError(""); setMessage("");
-    try {
-      const next = resolveAvatarSignal({ type: "screen-region", label: region.label, bounds: region.bounds, confidence: region.confidence });
-      const monitorList = await availableMonitors();
-      const geometries: AvatarMonitorGeometry[] = monitorList.map(monitor => ({
-        name: monitor.name,
-        physicalSize: { width: monitor.size.width, height: monitor.size.height },
-        logicalPosition: monitor.position.toLogical(monitor.scaleFactor),
-        logicalSize: monitor.size.toLogical(monitor.scaleFactor),
-        workAreaPosition: monitor.workArea.position.toLogical(monitor.scaleFactor),
-        workAreaSize: monitor.workArea.size.toLogical(monitor.scaleFactor),
-        scaleFactor: monitor.scaleFactor
-      }));
-      const monitor = findUniqueMatchingMonitor(capture, geometries);
-      if (!monitor) {
-        setIntent(next); publishAvatarIntent(next);
-        setMessage(capture.surface === "window" || capture.surface === "browser"
-          ? "Pointing from the current location. To move beside the target, share the entire monitor rather than a window or browser tab."
-          : "Pointing from the current location. The captured dimensions did not match exactly one monitor, so Nova did not guess desktop coordinates.");
-        return;
-      }
-      const overlay = await findOverlay();
-      if (!overlay) throw new Error("The Tauri desktop overlay is not available.");
-      const placement = resolveOverlayPlacement(region.bounds, monitor);
-      const overlayScaleFactor = await overlay.scaleFactor();
-      const physicalStart = await overlay.outerPosition();
-      const start = physicalStart.toLogical(overlayScaleFactor);
-      const walk: AvatarIntent = {
-        action: "walk", expression: "happy", intensity: 1,
-        target: next.target, label: region.label
-      };
-      setIntent(walk); publishAvatarIntent(walk);
-      await overlay.setSize(new LogicalSize(placement.width, placement.height));
-      await overlay.setIgnoreCursorEvents(settings.overlayPassthrough);
-      await overlay.show();
-      for (let step = 1; step <= 12; step++) {
-        const t = step / 12;
-        const eased = t * t * (3 - 2 * t);
-        await overlay.setPosition(new LogicalPosition(
-          start.x + (placement.x - start.x) * eased,
-          start.y + (placement.y - start.y) * eased
-        ));
-        await new Promise<void>(resolve => window.setTimeout(resolve, 24));
-      }
-      await overlay.setPosition(new LogicalPosition(placement.x, placement.y));
-      setIntent(next); publishAvatarIntent(next);
-      setMessage("Nova moved the desktop avatar beside “" + region.label + "” and is pointing at the estimated region. Positioning is approximate.");
-    } catch (cause) {
-      try {
-        const fallback = resolveAvatarSignal({ type: "screen-region", label: region.label, bounds: region.bounds, confidence: region.confidence });
-        setIntent(fallback); publishAvatarIntent(fallback);
-      } catch { /* Preserve the original placement error. */ }
-      setError(cause instanceof Error ? cause.message : "Could not move the desktop avatar to this screen region.");
-    }
-  };
   const update = <K extends keyof AvatarSettings>(key: K, value: AvatarSettings[K]) => {
     setSettings(current => normalizeAvatarSettings({ ...current, [key]: value }));
   };
@@ -216,7 +157,6 @@ export default function AvatarStudioView({ visionModel, visionBaseUrl }: { visio
         <div className="live2d-status"><strong>Live2D adapter</strong><span>Not configured: Cubism SDK runtime is not installed or bundled.</span></div>
       </aside>
     </div>
-    <ScreenUnderstandingPanel model={visionModel} baseUrl={visionBaseUrl} onPointAt={pointAt}/>
     {(message || error) && <div className={error ? "avatar-notice error" : "avatar-notice"} role={error ? "alert" : "status"}>{error || message}</div>}
   </main>;
 }

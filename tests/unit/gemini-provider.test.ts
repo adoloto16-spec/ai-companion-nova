@@ -39,6 +39,26 @@ const request:ChatRequest={
 async function main(){
   {
     const http=new FakeHttpClient([{status:200,body:JSON.stringify({
+      candidates:[{content:{role:"model",parts:[{text:"screenshot response"}]},finishReason:"STOP"}]
+    })}]);
+    const provider=new GeminiChatProvider({
+      baseUrl:"https://generativelanguage.googleapis.com/v1beta",
+      model:"gemini-test-model",
+      credential
+    },new FakeCredentialStore(),http);
+    await provider.chat({...request,context:{conversationId:"gemini-image-conversation",messages:[{
+      role:"user",content:"What is shown?",images:[{mimeType:"image/jpeg",dataBase64:"aGVsbG8=",alt:"screenshot"}]
+    }]}});
+    equal(http.requests.length,1,"a screenshot does not trigger a separate inference request");
+    const sent=JSON.parse(http.requests[0]!.body!) as {contents:Array<{role:string;parts:Array<Record<string,unknown>>}>};
+    equal(sent.contents[0]?.role,"user","Gemini image stays in the same user turn");
+    equal((sent.contents[0]?.parts[0] as {text?:string}).text,"What is shown?","Gemini maps the textual part");
+    equal(JSON.stringify(sent.contents[0]?.parts[1]),JSON.stringify({inlineData:{mimeType:"image/jpeg",data:"aGVsbG8="}}),"Gemini maps base64 as inlineData");
+  }
+
+
+  {
+    const http=new FakeHttpClient([{status:200,body:JSON.stringify({
       candidates:[{
         content:{role:"model",parts:[{text:"Gemini response"}]},
         finishReason:"STOP"

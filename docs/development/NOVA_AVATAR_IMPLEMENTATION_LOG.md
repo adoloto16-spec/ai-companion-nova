@@ -131,3 +131,29 @@ Log policy: append an entry for each implementation or verification action; reco
 ### Verification
 - Source change is committed in the same branch as PR #47. A new GitHub Actions run is required to check TypeScript, React UI build, and Windows install/smoke-test.
 - Visual rendering of the user's particular VRM remains unverified until a real desktop launch with that file.
+
+
+## 2026-10-24 — Entry 008: verify VRM loading fix and align screen understanding with Chat
+
+### Verification of the previous commit
+- Waited for GitHub Actions run [40047099452](https://github.com/adoloto16-spec/ai-companion-nova/actions/runs/40047099452) for HEAD `06e242883eb8b31f6d8080e82eb8412b01f7be9a` to complete.
+- All four jobs completed with `success`: TypeScript foundation/tests, React UI typecheck/build, Windows NSIS installer including staged install/startup smoke-test, and Rust/Tauri validation.
+- This validates compilation, automated tests, installer packaging, and application startup. It does not visually verify the user's actual VRM file in an interactive desktop session.
+
+## 2026-10-24 — Entry 009: one screenshot, one normal Chat request
+
+### User-reported mismatch
+- The previous design put capture and a separate Ollama vision call in Avatar Studio. That was not the intended user path: the Screenshot button should attach an image to the main chat message so the selected chat model receives it with ordinary context, without a second model request.
+- The VRM load path in Entry 007 passed the CI run noted above; interactive display of the user's specific model still requires desktop verification.
+
+### Actions and decisions
+- Introduced `ChatImageAttachment` as an optional part of `ChatMessage`, with MIME/count/payload bounds. Updated the generated schema catalog and Rust conversation persistence/validation so screenshots survive app restarts.
+- Added a common context-assembly restoration helper. The context engine works on textual candidates, but original image payloads are reattached by message ID before provider invocation; the newest user screenshot is not silently dropped if budget filtering omits its message.
+- Added same-request image encoding for the existing providers: Ollama message `images`, OpenAI-compatible `image_url` parts, and Gemini `inlineData`. Unit tests assert one ordinary provider request contains both text and image.
+- Moved one-shot screen capture and removable image preview into the main Chat composer. Capture stops its tracks after one frame; the capture module has no provider, prompt, or inference dependency.
+- Removed the detached screen-analysis path and its region-pointing UI/motion code so the screenshot action cannot invoke a second model.
+
+### Verification status
+- The preceding VRM-fix HEAD passed all GitHub Actions jobs.
+- The chat attachment integration still requires fresh TypeScript/unit-test, React UI, Rust/Tauri, and Windows installer validation.
+- OS screenshot-picker behavior and actual VRM visual rendering require interactive desktop checks; GitHub CI cannot prove those user-specific paths.

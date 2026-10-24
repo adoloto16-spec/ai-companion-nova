@@ -12,6 +12,15 @@ const LEGACY_SCHEMA_VERSION:&str="1";
 pub enum ChatMessageRole{System,User,Assistant,Tool}
 
 #[derive(Debug,Deserialize,Serialize,Clone)]
+#[serde(rename_all="camelCase",deny_unknown_fields)]
+pub struct ChatImageAttachment{
+    pub mime_type:String,
+    pub data_base64:String,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub alt:Option<String>,
+}
+
+#[derive(Debug,Deserialize,Serialize,Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ChatMessage{
     #[serde(skip_serializing_if="Option::is_none")]
@@ -22,6 +31,8 @@ pub struct ChatMessage{
     pub tool_call_id:Option<String>,
     #[serde(skip_serializing_if="Option::is_none")]
     pub metadata:Option<Map<String,Value>>,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub images:Option<Vec<ChatImageAttachment>>,
 }
 
 #[derive(Debug,Deserialize,Serialize,Clone)]
@@ -100,7 +111,30 @@ fn validate_message(message:&ChatMessage)->Result<(),String>{
         if id.trim().is_empty(){return Err("conversation message id must not be empty".to_string());}
         if id.len()>200{return Err("conversation message id must not exceed 200 characters".to_string());}
     }
+    if let Some(images)=&message.images{
+        if images.len()>2{return Err("a conversation message may contain at most two images".to_string());}
+        for image in images{
+            if !matches!(image.mime_type.as_str(),"image/jpeg"|"image/png"|"image/webp"){
+                return Err("unsupported conversation image MIME type".to_string());
+            }
+            if !valid_base64_image_data(&image.data_base64){
+                return Err("conversation image data must be bounded base64".to_string());
+            }
+            if image.alt.as_ref().is_some_and(|alt|alt.len()>256){
+                return Err("conversation image alt text must not exceed 256 characters".to_string());
+            }
+        }
+    }
     Ok(())
+}
+
+fn valid_base64_image_data(value:&str)->bool{
+    if value.len()<4||value.len()>1_750_000||value.len()%4!=0{return false;}
+    let bytes=value.as_bytes();
+    let padding=bytes.iter().rev().take_while(|byte|**byte==b'=').count();
+    if padding>2{return false;}
+    bytes[..bytes.len()-padding].iter().all(|byte|byte.is_ascii_alphanumeric()||matches!(*byte,b'+'|b'/'))
+        &&bytes[bytes.len()-padding..].iter().all(|byte|*byte==b'=')
 }
 
 fn validate_conversation(conversation:&Conversation)->Result<(),String>{
@@ -381,8 +415,8 @@ mod tests{
             api_version:API_VERSION.to_string(),schema_version:SCHEMA_VERSION.to_string(),
             id:id.to_string(),character_id:character_id.to_string(),title:"Main".to_string(),
             messages:vec![
-                ChatMessage{id:Some("u1".to_string()),role:ChatMessageRole::User,content:content.to_string(),tool_call_id:None,metadata:None},
-                ChatMessage{id:Some("a1".to_string()),role:ChatMessageRole::Assistant,content:"response".to_string(),tool_call_id:None,metadata:None}
+                ChatMessage{id:Some("u1".to_string()),role:ChatMessageRole::User,content:content.to_string(),tool_call_id:None,metadata:None,images:None},
+                ChatMessage{id:Some("a1".to_string()),role:ChatMessageRole::Assistant,content:"response".to_string(),tool_call_id:None,metadata:None,images:None}
             ],
             created_at:"2026-09-28T00:00:00.000Z".to_string(),updated_at:"2026-09-28T00:00:01.000Z".to_string()
         }
@@ -396,6 +430,40 @@ mod tests{
             api_version:API_VERSION.to_string(),schema_version:SCHEMA_VERSION.to_string(),
             conversations:vec![nova],active_conversation_ids:active
         }
+    }
+
+
+    #[test]
+    fn persists_image_attachments_in_the_same_conversation_message(){
+        let mut state=valid_state();
+        state.conversations[0].messages[0].images=Some(vec![ChatImageAttachment{
+            mime_type:"image/jpeg".to_string(),
+            data_base64:"aGVsbG8=".to_string(),
+            alt:Some("captured screen".to_string())
+        }]);
+        let encoded=serde_json::to_vec(&state).expect("encode");
+        let decoded=decode_v2(&encoded).expect("decode");
+        let image=&decoded.conversations[0].messages[0].images.as_ref().expect("images")[0];
+        assert_eq!(image.mime_type,"image/jpeg");
+        assert_eq!(image.data_base64,"aGVsbG8=");
+        assert_eq!(image.alt.as_deref(),Some("captured screen"));
+    }
+
+    #[test]
+    fn rejects_unsupported_or_oversized_image_attachments(){
+        let mut state=valid_state();
+        state.conversations[0].messages[0].images=Some(vec![ChatImageAttachment{
+            mime_type:"image/svg+xml".to_string(),
+            data_base64:"aGVsbG8=".to_string(),
+            alt:None
+        }]);
+        assert!(decode_v2(&serde_json::to_vec(&state).expect("encode")).is_err());
+        state.conversations[0].messages[0].images=Some(vec![ChatImageAttachment{
+            mime_type:"image/jpeg".to_string(),
+            data_base64:"a".repeat(1_750_004),
+            alt:None
+        }]);
+        assert!(decode_v2(&serde_json::to_vec(&state).expect("encode")).is_err());
     }
 
     #[test]
@@ -461,7 +529,7 @@ mod tests{
                 api_version:API_VERSION.to_string(),schema_version:LEGACY_SCHEMA_VERSION.to_string(),
                 id:"conversation:character.nova.default.v1:default.v1".to_string(),
                 character_id:"character.nova.default.v1".to_string(),
-                messages:vec![ChatMessage{id:Some("u1".to_string()),role:ChatMessageRole::User,content:"legacy".to_string(),tool_call_id:None,metadata:None}],
+                messages:vec![ChatMessage{id:Some("u1".to_string()),role:ChatMessageRole::User,content:"legacy".to_string(),tool_call_id:None,metadata:None,images:None}],
                 created_at:"2026-09-28T00:00:00.000Z".to_string(),updated_at:"2026-09-28T00:00:01.000Z".to_string()
             }]
         };

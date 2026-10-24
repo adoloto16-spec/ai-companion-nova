@@ -164,6 +164,17 @@ async function modelDiscoveryAndNoKeyTest(): Promise<void> {
   equal(provider(http).capabilities().reasoning, true, "native reasoning is supported by this adapter");
 }
 
+async function imageAttachmentsUseTheNormalOllamaChatRequest(): Promise<void> {
+  const http = new FakeOllamaHttpClient();
+  const attachment = { mimeType: "image/jpeg" as const, dataBase64: "aGVsbG8=", alt: "screenshot" };
+  await provider(http).chat(chatRequest({
+    context: { conversationId: "ollama-image-conversation", messages: [{ role: "user", content: "What is shown?", images: [attachment] }] }
+  }));
+  equal(http.requests.length, 1, "a screenshot does not trigger a separate inference request");
+  const body = JSON.parse(http.requests[0]!.body!) as { messages: Array<{role:string;content:string;images?:string[]}> };
+  deepEqual(body.messages[0], { role: "user", content: "What is shown?", images: ["aGVsbG8="] }, "image bytes are included in the same Ollama chat message");
+}
+
 async function ordinaryRequestMappingTest(): Promise<void> {
   const http = new FakeOllamaHttpClient();
   const response = await provider(http).chat(chatRequest({
@@ -572,6 +583,7 @@ async function main(): Promise<void> {
   const tests: Array<[string, () => Promise<void>]> = [
     ["Loopback URL restrictions", loopbackValidationTest],
     ["Model discovery and no API key", modelDiscoveryAndNoKeyTest],
+    ["Image attachments use the normal chat request", imageAttachmentsUseTheNormalOllamaChatRequest],
     ["Ordinary request mapping and single system preservation", ordinaryRequestMappingTest],
     ["Multiple system messages normalized in wire JSON", multipleSystemMessagesAreNormalizedInWireBodyTest],
     ["Request without system messages stays system-free", requestWithoutSystemMessageStaysSystemFreeTest],

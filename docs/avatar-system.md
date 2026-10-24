@@ -1,38 +1,29 @@
 # Nova avatar system
 
-## Boundaries
+## Avatar rendering
 
-The avatar is an optional visual subsystem. The existing `Character` contract describes Nova's conversational persona; it is not a rendered avatar profile.
+The avatar is an optional visual subsystem. The existing `Character` contract describes Nova's conversational persona; avatar profiles and model blobs remain separate in the local IndexedDB database.
 
-- `modules/character/src/index.ts` defines renderer-neutral avatar profiles, settings, intents, lightweight deterministic behavior selection, validation, and the cross-window event boundary.
-- `apps/desktop-ui/src/avatar-library.ts` stores imported model blobs and editable profiles in a separate local IndexedDB database.
-- `apps/desktop-ui/src/vrm-avatar-canvas.tsx` renders VRM via Three.js and `@pixiv/three-vrm`. Self-contained GLB is also allowed; the first authored GLB animation is played when one exists.
-- `apps/desktop-ui/src/avatar-studio.tsx` owns model import, profile selection, settings, overlay visibility, and manual screen analysis.
-- `apps/desktop-ui/src/avatar-overlay.tsx` runs in a dedicated transparent Tauri window. Its intent channel is independent of the chat and provider interfaces.
-- `modules/vision/src/index.ts` validates/normalizes screen observations. `ScreenUnderstandingPanel` obtains user-granted display capture and sends a single chosen frame to the configured loopback Ollama `/api/chat` route via the existing Tauri transport.
+- `modules/character/src/index.ts` defines avatar profiles, bounded display settings, and renderer-neutral dialogue/user-action intents.
+- `apps/desktop-ui/src/avatar-library.ts` stores imported `.vrm` and self-contained `.glb` files locally.
+- `apps/desktop-ui/src/vrm-avatar-canvas.tsx` renders VRM through Three.js + `@pixiv/three-vrm`. It parses stored binary bytes directly, avoiding a `blob:` URL fetch under the packaged Tauri CSP. It adapts to available humanoid bones, expression shapes, and existing GLB animation clips.
+- `apps/desktop-ui/src/avatar-studio.tsx` owns model import, profile selection, settings, overlay visibility, and basic wave/look actions. The desktop overlay is a separate transparent Tauri window.
+- `modules/vision/src/index.ts` only captures and bounds a one-shot screenshot attachment. It never calls any model.
 
-## Current capabilities
+## Screenshot flow
 
-- Import .vrm and self-contained .glb files (maximum 300 MiB each), retain original model blobs locally, create named profiles, persist model selection and motion settings across app restarts.
-- Configure model scale, camera distance, idle movement, breathing, blinking, gaze activity, motion intensity, autonomy preset, and pointer pass-through for the overlay.
-- Basic procedural idle/talking facial expressions, head movement, wave/point gestures where the VRM model exposes the necessary humanoid bones, and playing an available first GLB animation clip.
-- Show/hide the separate always-on-top desktop overlay.
-- Manually share a screen, analyze one captured frame with the existing local Ollama model, inspect normalized region estimates, and request an approximate point/gaze gesture for a selected region.
+Press **Screenshot** in the main Chat composer and select the desired screen/window/tab in the operating-system picker. Nova captures one frame, stops the capture stream, and adds the image to the current draft. The preview can be removed before sending. When sent, the screenshot is stored on the same user `ChatMessage` as the text, survives conversation persistence, passes through context assembly, and is encoded into the same request to the currently selected chat provider:
 
-## Compatibility and deliberate limitations
+- Ollama receives the image in its normal `/api/chat` user message `images` array.
+- OpenAI-compatible endpoints receive a standard `image_url` content part.
+- Gemini receives an `inlineData` part in the same user turn.
 
-VRM is the priority renderer, but the source model must contain appropriate humanoid bones and expression shapes for every advanced behavior. GLB import is a single-file flow; external .gltf dependencies are not bundled automatically. Generic GLB files without animation or humanoid bones receive fewer procedural actions.
+Nova does not make a second "vision model" request and does not choose another model for the screenshot. Analysis depends on the selected model/provider actually supporting image input; a text-only model may reject the request. Image payloads are omitted from retained diagnostic traces to avoid duplicating screenshot data.
 
-Live2D remains an explicit adapter boundary, not a working renderer. A licensed Cubism SDK/Core installation is required before it can be implemented and tested. No proprietary SDK binaries are bundled here.
+## Compatibility and limitations
 
-When the capture geometry matches exactly one monitor, selecting a recognized region moves the separate overlay window beside that region and publishes a walking intent before the final pointing gesture. The match is fail-closed: sharing a browser tab/window, unknown or downscaled dimensions, or multiple monitors with the same resolution falls back to pointing from the current location rather than guessing. This movement uses the monitor work area and region estimate; it does not identify exact browser/video window borders or use YouTube's DOM/timestamp.
+VRM is the primary renderer, but each model must include appropriate geometry and humanoid bones for the corresponding procedural movement, and expression shapes for facial expressions. A self-contained `.glb` file may be imported; external-resource `.gltf` folders are not imported. Live2D remains an unconfigured adapter boundary because the licensed Cubism SDK/Core must be provided separately.
 
-The current motion layer is a small procedural behavior controller with basic VRM upper-leg/arm gait while the overlay window traverses the desktop. It is not full-body IK, physical balance simulation, cloth/hair simulation or learned motion generation. The controller and profile schema are designed so those layers can be added without a dependency from core chat to the renderer.
+Screenshot capture requires a WebView that supports `getDisplayMedia`; real Windows desktop capture-picker behavior still needs a live smoke test. The actual screenshot analysis is performed by the selected chat model as part of the regular user request, not by a detached screen analysis view.
 
-## Screen capture privacy
-
-Capture starts only after the user selects **Share screen…** in the platform's picker. Nova does not start continuous capture or save screen frames in the avatar library. Analysis occurs only on **Analyze current frame**. Press **Stop sharing** to end the capture tracks. Coordinates and confidence are estimates produced by the selected model; they are not pixel-accurate guarantees.
-
-## Verification status
-
-Automated checks can confirm TypeScript contracts, UI builds, and the Tauri window/capability configuration. A real Windows desktop smoke test is still required to verify transparent compositing, pointer pass-through, OS capture-picker behavior, WebView model loading, GPU compatibility, and the user's specific VRM assets.
+The animation layer remains procedural and modest; it is not full-body inverse kinematics, learned motion generation, or physical simulation. Transparent overlay compositing and mouse pass-through should still be validated on the user's desktop.

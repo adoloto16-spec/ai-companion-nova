@@ -164,9 +164,10 @@ export class OpenAICompatibleProviderError extends Error{
   }
 }
 
+type OpenAIChatContentPart={type:"text";text:string}|{type:"image_url";image_url:{url:string}};
 interface OpenAIChatMessage{
   role:"system"|"user"|"assistant"|"tool";
-  content:string|null;
+  content:string|null|OpenAIChatContentPart[];
   tool_call_id?:string;
   name?:string;
   tool_calls?:{id:string;type:"function";function:{name:string;arguments:string}}[];
@@ -724,6 +725,10 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
 
   private mapMessages(messages:readonly ChatMessage[],request:ChatRequest):OpenAIChatMessage[]{
     return messages.map(message=>{
+      if(message.images?.length&&message.role!=="user")throw this.failure({
+        code:"INVALID_REQUEST",message:"Image attachments are supported on user messages only.",request,retryable:false,
+        details:{category:"invalid_image_message",role:message.role}
+      });
       if(message.role==="tool"){
         if(!message.toolCallId||!message.toolName)throw this.failure({
           code:"INVALID_REQUEST",message:"Tool result is missing its call id or name.",request,retryable:false,
@@ -741,7 +746,13 @@ export class OpenAICompatibleChatProvider implements ChatProvider{
         code:"INVALID_REQUEST",message:"Tool-call id is only valid on tool result messages.",request,retryable:false,
         details:{category:"invalid_tool_message",role:message.role}
       });
-      return {role:message.role,content:message.content};
+      const content:OpenAIChatMessage["content"]=message.images?.length
+        ?[
+          ...(message.content?([{type:"text",text:message.content} as const]):[]),
+          ...message.images.map(image=>({type:"image_url" as const,image_url:{url:"data:"+image.mimeType+";base64,"+image.dataBase64}}))
+        ]
+        :message.content;
+      return {role:message.role,content};
     });
   }
 

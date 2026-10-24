@@ -245,6 +245,10 @@ export class GeminiChatProvider implements ChatProvider{
     const contents:Record<string,unknown>[]=[];
     const systemParts:Record<string,unknown>[]=[];
     for(const message of messages){
+      if(message.images?.length&&message.role!=="user")throw this.failure({
+        code:"INVALID_REQUEST",message:"Image attachments are supported on user messages only.",request,retryable:false,
+        details:{category:"invalid_image_message",role:message.role}
+      });
       if(message.role==="system"){
         if(message.toolCallId)throw this.failure({code:"UNSUPPORTED",message:"Gemini does not support tool metadata in system messages.",request,retryable:false,details:{category:"unsupported_message"}});
         if(message.content)systemParts.push({text:message.content});
@@ -254,7 +258,10 @@ export class GeminiChatProvider implements ChatProvider{
         throw this.failure({code:"UNSUPPORTED",message:"Gemini tool messages are not supported by this provider.",request,retryable:false,details:{category:"unsupported_message"}});
       }
       const role=message.role==="assistant"?"model":"user";
-      contents.push({role,parts:[{text:message.content}]});
+      const parts:Record<string,unknown>[]=[];
+      if(message.content)parts.push({text:message.content});
+      for(const image of message.images??[])parts.push({inlineData:{mimeType:image.mimeType,data:image.dataBase64}});
+      contents.push({role,parts});
     }
     if(contents.length===0)throw this.failure({code:"INVALID_REQUEST",message:"Gemini request requires at least one user or assistant message.",request,retryable:false,details:{category:"configuration"}});
     return {

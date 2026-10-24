@@ -7,6 +7,7 @@ import type {
   MindToolExecutor,NovaToolCall,NovaToolResult
 } from "../../contracts/src";
 import {CHAT_API_VERSION,CHAT_SCHEMA_VERSION,CONTEXT_API_VERSION,CONTEXT_SCHEMA_VERSION,parseNovaTurn} from "../../contracts/src";
+import {cloneChatImageAttachments,restoreChatImageAttachments} from "./chat-message-attachments";
 import {NOVA_TURN_MAX_SERIALIZED_CHARS} from "../../contracts/src/nova-turn";
 import type {NovaTurn} from "../../contracts/src/nova-turn";
 import type {CognitiveStep,CognitiveStepContext,CognitiveStepResult} from "./mind-runtime";
@@ -53,7 +54,11 @@ function defaultCognitiveInterval(schedule:CognitiveScheduleSettings|undefined):
 function throwIfAborted(signal:AbortSignal):void {
   if(signal.aborted){const error=new Error("Mind Runtime cognitive step aborted.");error.name="AbortError";throw error;}
 }
-function cloneMessage(message:ChatMessage):ChatMessage{return {...message,...(message.metadata?{metadata:{...message.metadata}}:{})};}
+function cloneMessage(message:ChatMessage):ChatMessage{return {
+  ...message,
+  ...(message.metadata?{metadata:{...message.metadata}}:{}),
+  ...(message.images?{images:cloneChatImageAttachments(message.images)}:{})
+};}
 function normalizeHistoricalMessage(message:ChatMessage):ChatMessage{
   if(message.role!=="assistant")return cloneMessage(message);
   const parsed=parseNovaTurn(message.content);
@@ -116,7 +121,10 @@ export class LLMCognitiveStep implements CognitiveStep {
       "maximum="+schedule.maxIntervalMs
     ].join("\n"):"";
     const identity=["[IDENTITY / CHARACTER]","Name: "+character.name,"Description: "+character.description,"[/IDENTITY / CHARACTER]"].join("\n");
-    const messages=assembled.messages.map(message=>normalizeHistoricalMessage(message));
+    const messages=restoreChatImageAttachments(
+      assembled.messages.map(message=>normalizeHistoricalMessage(message)),
+      conversation.messages
+    );
     if(reactiveUserMessage&&!messages.some(message=>message.id===reactiveUserMessage!.id))messages.push(cloneMessage(reactiveUserMessage));
     const baseMessages:ChatMessage[]=[
       {id:conversation.id+":nova-turn:system",role:"system",content:initialPromptText},

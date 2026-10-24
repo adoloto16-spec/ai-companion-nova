@@ -1453,6 +1453,36 @@ export const STANDARD_SCHEMAS: Record<string, JsonSchema> = {
             }
           }
         }
+      },
+      "images": {
+        "type": "array",
+        "maxItems": 2,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mimeType",
+            "dataBase64"
+          ],
+          "properties": {
+            "mimeType": {
+              "enum": [
+                "image/jpeg",
+                "image/png",
+                "image/webp"
+              ]
+            },
+            "dataBase64": {
+              "type": "string",
+              "minLength": 4,
+              "maxLength": 1750000
+            },
+            "alt": {
+              "type": "string",
+              "maxLength": 256
+            }
+          }
+        }
       }
     }
   },
