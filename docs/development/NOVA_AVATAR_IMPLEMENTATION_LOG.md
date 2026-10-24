@@ -157,3 +157,17 @@ Log policy: append an entry for each implementation or verification action; reco
 - The preceding VRM-fix HEAD passed all GitHub Actions jobs.
 - The chat attachment integration still requires fresh TypeScript/unit-test, React UI, Rust/Tauri, and Windows installer validation.
 - OS screenshot-picker behavior and actual VRM visual rendering require interactive desktop checks; GitHub CI cannot prove those user-specific paths.
+
+
+## 2026-10-24 — Entry 010: preserve the existing composer busy-state contract
+
+### Action
+- Read the failed root unit-test output from run [40048828462](https://github.com/adoloto16-spec/ai-companion-nova/actions/runs/40048828462).
+- The exact failure was in the existing `chat-stream-ui-regression.test.ts`: it verifies that the main composer explicitly uses `disabled={chatBusy}`, where `chatBusy` combines normal streaming and pending Nova Life work.
+- The screenshot change had broadened the textarea binding to `disabled={chatBusy||captureBusy}`, which did not preserve that explicit source-level contract even though the expression also blocked input while streaming. The test correctly caught a regression in the UI contract; the test itself was not changed.
+- Restored the textarea's `disabled={chatBusy}` binding and exposed capture-in-progress state through `aria-busy={captureBusy}`. Sending remains blocked during capture by the submit handler and submit button.
+
+### Verification
+- The schema-catalog generation, schema diff check, root typecheck, and root build passed before the failing regression assertion.
+- Provider image tests (OpenAI-compatible and Ollama), the avatar runtime tests, and the capture attachment test all passed earlier in the same root test run.
+- This focused JSX fix requires a new CI run; UI, Windows, Rust, and full root test completion still need to be observed.

@@ -476,7 +476,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
       <button type="button" className="chat-capture-button" onClick={()=>void captureScreenshot()} disabled={chatBusy||captureBusy||pendingImages.length>=MAX_CHAT_IMAGE_ATTACHMENTS}>
         {captureBusy?"Capturing…":"Screenshot"}
       </button>
-      <textarea value={input} onChange={event=>onDraftChange(event.target.value)} onKeyDown={onKeyDown} placeholder="Write a message…" aria-label="Chat message" disabled={chatBusy||captureBusy} rows={2}/>
+      <textarea value={input} onChange={event=>onDraftChange(event.target.value)} onKeyDown={onKeyDown} placeholder="Write a message…" aria-label="Chat message" disabled={chatBusy} aria-busy={captureBusy} rows={2}/>
       <button type="submit" disabled={chatBusy||captureBusy||(input.trim().length===0&&pendingImages.length===0)}>{snapshot.sending?"Streaming…":lifeTurnBusy?"Nova is thinking…":"Send"}</button>
     </form>
     <p className="chat-hint">Enter to send · Shift+Enter for a new line. Screenshots are attached to this chat request; image-capable models are required.</p>
