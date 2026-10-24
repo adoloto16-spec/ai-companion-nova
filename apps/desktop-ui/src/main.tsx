@@ -165,7 +165,7 @@ function ConversationSwitcher({conversations,activeConversationId,sending,onSele
   </div>;
 }
 
-function ChatView({controller,runtime,character,conversations,activeConversation,input,onDraftChange,onClearSubmittedDraft,onPersist,onClear,onSelectConversation,onCreateConversation,onRenameConversation,onDeleteConversation,onStopSpeech}:{
+function ChatView({controller,runtime,character,conversations,activeConversation,input,onDraftChange,onClearSubmittedDraft,onPersist,onClear,onSelectConversation,onCreateConversation,onRenameConversation,onDeleteConversation,onStopSpeech,agentVisionEnabled,onToggleAgentVision}:{
   controller:ChatSessionController;
   runtime:FoundationRuntime;
   character:Character;
@@ -181,6 +181,8 @@ function ChatView({controller,runtime,character,conversations,activeConversation
   onRenameConversation:(conversation:Conversation)=>Promise<void>;
   onDeleteConversation:(conversation:Conversation)=>Promise<void>;
   onStopSpeech:()=>void;
+  agentVisionEnabled:boolean;
+  onToggleAgentVision:()=>void;
 }){
   const [snapshot,setSnapshot]=React.useState(()=>controller.getSnapshot());
   const [editingId,setEditingId]=React.useState<string|undefined>();
@@ -528,10 +530,11 @@ function ChatView({controller,runtime,character,conversations,activeConversation
       <button type="button" className="chat-capture-button" onClick={()=>void toggleVision()} disabled={chatBusy||visionBusy||captureBusy} aria-pressed={visionEnabled}>
         {visionBusy?"Starting Vision…":captureBusy&&visionEnabled?"Vision: Capturing…":visionEnabled?"Vision: On":"Vision: Off"}
       </button>
+      <button type="button" className="chat-agent-vision-button" onClick={onToggleAgentVision} disabled={chatBusy||captureBusy||visionBusy} aria-pressed={agentVisionEnabled} title="Reuse the latest screenshot already in this conversation for Nova Life; this never captures a new image.">{agentVisionEnabled?"Agent Vision: On":"Agent Vision: Off"}</button>
       <textarea value={input} onChange={event=>onDraftChange(event.target.value)} onKeyDown={onKeyDown} placeholder="Write a message…" aria-label="Chat message" disabled={chatBusy} aria-busy={captureBusy} rows={2}/>
       <button type="submit" disabled={chatBusy||captureBusy||visionBusy||(input.trim().length===0&&!visionEnabled)}>{snapshot.sending?"Streaming…":lifeTurnBusy?"Nova is thinking…":"Send"}</button>
     </form>
-    <p className="chat-hint">Enter to send · Shift+Enter for a new line. With Vision on, a fresh screenshot is added automatically to each Chat or Nova Life request; turn Vision off to stop screen capture. The selected model must support image input.</p>
+    <p className="chat-hint">Enter to send · Shift+Enter for a new line. Vision captures a fresh PNG for outgoing Chat requests. Agent Vision is separate: Nova Life can reuse only the latest screenshot already in this conversation, and it never captures a new image. The selected model must support image input.</p>
 
     {snapshot.error&&<div className="chat-error" role="alert">{snapshot.error}</div>}
     {persistenceError&&<div className="chat-error" role="alert">{persistenceError}</div>}
@@ -2467,6 +2470,7 @@ function App(){
   const [conversations,setConversations]=React.useState<readonly Conversation[]>([]);
   const [activeConversation,setActiveConversation]=React.useState<Conversation|undefined>();
   const [chatDrafts,setChatDrafts]=React.useState<Record<string,string>>({});
+  const [agentVisionEnabled,setAgentVisionEnabled]=React.useState(false);
   const [mindState,setMindState]=React.useState<MindState>({lifecycleState:"off",nextWakeAt:null,recentTrace:[]});
   const mindUnsubscribeRef=React.useRef<(()=>void)|undefined>(undefined);
   const [lifeBusy,setLifeBusy]=React.useState(false);
@@ -3263,6 +3267,8 @@ function App(){
         </section>
       :view==="chat"&&activeCharacter&&chatController&&activeConversation
       ?<ChatView key={activeChatDraftKey} controller={chatController} runtime={foundationRef.current!} character={activeCharacter}
+           agentVisionEnabled={agentVisionEnabled}
+           onToggleAgentVision={()=>{const next=!agentVisionEnabled;setAgentVisionEnabled(next);foundationRef.current?.setCognitiveVisionEnabled?.(next);}}
           conversations={conversations} activeConversation={activeConversation}
           input={activeChatDraftKey?readChatDraft(chatDrafts,activeChatDraftKey):""}
           onDraftChange={value=>{if(activeChatDraftKey)setChatDrafts(current=>writeChatDraft(current,activeChatDraftKey,value));}}
