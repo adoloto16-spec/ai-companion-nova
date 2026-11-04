@@ -466,10 +466,10 @@ export class MindRuntime {
     return Boolean(pending && pending.characterId === turn.characterId && pending.conversationId === turn.conversationId &&
       pending.userMessageId === turn.userMessageId && pending.turnId === turn.turnId && this.activeCharacterId === turn.characterId);
   }
-  private failReactiveTurn(turn: MindReactiveTurn, reason: string): void {
+  private failReactiveTurn(turn: MindReactiveTurn, reason: string, errorCode?:string): void {
     if (!this.isReactiveTurnCurrent(turn)) return;
     this.pendingReactiveTurn = undefined;
-    try { this.turnSink?.fail?.(turn, reason); } catch { /* UI failure observers cannot disrupt cognition. */ }
+    try { this.turnSink?.fail?.(turn, reason, errorCode); } catch { /* UI failure observers cannot disrupt cognition. */ }
   }
   private quotaWaitMs(): number {
     const limit = this.scheduleSettings.maxRequestsPerHour;
