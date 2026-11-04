@@ -1,5 +1,5 @@
-import type { AppSettings, ChatRequest, ChatResponse } from "../../contracts/src/index";
-import { assemblePromptInstructions } from "../../contracts/src/index";
+import type { AppSettings, ChatRequest, ChatResponse } from "../../../contracts/src/index";
+import { assemblePromptInstructions } from "../../../contracts/src/index";
 import type { AvatarIntent } from "./index";
 
 export const DEFAULT_AVATAR_DIRECTOR_PROMPT = [
