@@ -68,11 +68,13 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
   const host = React.useRef<HTMLDivElement | null>(null);
   const settingsRef = React.useRef(settings);
   const intentRef = React.useRef(intent);
+  const cursorTargetRef = React.useRef(cursorTarget);
   const [status, setStatus] = React.useState("No model loaded");
   const [error, setError] = React.useState("");
 
   React.useEffect(() => { settingsRef.current = settings; }, [settings]);
   React.useEffect(() => { intentRef.current = intent; }, [intent]);
+  React.useEffect(() => { cursorTargetRef.current = cursorTarget; }, [cursorTarget]);
 
   React.useEffect(() => {
     const container = host.current;
@@ -211,8 +213,8 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
         const base = (name: HumanoidBone) => current.boneBases[name];
         const head = bone("head"), headBase = base("head");
         if (head && headBase) {
-          const cursorYaw = prefs.trackCursor && cursorTarget ? THREE.MathUtils.clamp((cursorTarget.x - 0.5) * 0.8, -0.55, 0.55) : 0;
-          const cursorPitch = prefs.trackCursor && cursorTarget ? THREE.MathUtils.clamp((cursorTarget.y - 0.5) * 0.45, -0.3, 0.3) : 0;
+          const cursorYaw = prefs.trackCursor && cursorTargetRef.current ? THREE.MathUtils.clamp((cursorTargetRef.current.x - 0.5) * 0.8, -0.55, 0.55) : 0;
+          const cursorPitch = prefs.trackCursor && cursorTargetRef.current ? THREE.MathUtils.clamp((cursorTargetRef.current.y - 0.5) * 0.45, -0.3, 0.3) : 0;
           const idleYaw = prefs.lookAround ? Math.sin(elapsed * 0.57) * 0.18 * Math.max(activity, 0.5) : 0;
           const idlePitch = prefs.lookAround ? Math.sin(elapsed * 0.37) * 0.06 * Math.max(activity, 0.5) : 0;
           head.rotation.set(headBase.x + (prefs.trackCursor ? cursorPitch : idlePitch), headBase.y + (prefs.trackCursor ? cursorYaw : idleYaw), headBase.z);
