@@ -32,32 +32,63 @@ interface LoadedModel {
   boneBases: Partial<Record<HumanoidBone, THREE.Euler>>;
 }
 
-function prepareAvatarMaterials(root: THREE.Object3D): { meshes: number; materials: number; baseColorTextures: number } {
+interface AvatarMaterialDiagnostics {
+  meshes: number;
+  materials: number;
+  baseColorTextures: number;
+  decodedBaseColorTextures: number;
+  missingBaseColorTextureImages: number;
+}
+
+function isTextureLike(value: unknown): value is THREE.Texture {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  // Avoid instanceof-only checks here: a duplicated Three.js module instance in a
+  // WebView bundle can make a perfectly valid GLTF texture fail the instanceof test.
+  return "colorSpace" in candidate && "needsUpdate" in candidate && "source" in candidate;
+}
+
+function hasDecodedImage(texture: THREE.Texture): boolean {
+  const image = texture.image as {
+    width?: unknown; height?: unknown; naturalWidth?: unknown; naturalHeight?: unknown;
+    videoWidth?: unknown; videoHeight?: unknown; complete?: unknown;
+  } | undefined;
+  if (!image) return false;
+  const width = Number(image.naturalWidth ?? image.videoWidth ?? image.width ?? 0);
+  const height = Number(image.naturalHeight ?? image.videoHeight ?? image.height ?? 0);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return false;
+  return image.complete !== false;
+}
+
+function prepareAvatarMaterials(root: THREE.Object3D): AvatarMaterialDiagnostics {
   let meshes = 0;
   let materials = 0;
   let baseColorTextures = 0;
+  let decodedBaseColorTextures = 0;
+  let missingBaseColorTextureImages = 0;
   root.traverse(object => {
     if (!(object instanceof THREE.Mesh)) return;
     meshes++;
     const slots = Array.isArray(object.material) ? object.material : [object.material];
     for (const material of slots) {
       materials++;
-      // GLTF/VRM base-color textures use sRGB. Reassert it for both standard and MToon materials
-      // and request an upload before the first frame instead of silently rendering as untextured.
-      // GLTF PBR materials expose .map; three-vrm MToon stores the same base-color
-      // texture in uniforms.map. Handle both or valid VRM textures are misdiagnosed as absent.
+      // GLTF PBR material.map and the three-vrm MToonMaterial.map accessor both
+      // represent the base-color texture. Keep the uniforms path as a compatibility
+      // fallback for custom ShaderMaterials.
       const standardMap = (material as THREE.Material & { map?: THREE.Texture | null }).map;
-      const shaderMap = (material as THREE.ShaderMaterial).uniforms?.map?.value as THREE.Texture | null | undefined;
-      const map = standardMap instanceof THREE.Texture ? standardMap : shaderMap;
-      if (map instanceof THREE.Texture) {
+      const shaderMap = (material as THREE.ShaderMaterial).uniforms?.map?.value;
+      const map = isTextureLike(standardMap) ? standardMap : shaderMap;
+      if (isTextureLike(map)) {
         map.colorSpace = THREE.SRGBColorSpace;
         map.needsUpdate = true;
         baseColorTextures++;
+        if (hasDecodedImage(map)) decodedBaseColorTextures++;
+        else missingBaseColorTextureImages++;
       }
       material.needsUpdate = true;
     }
   });
-  return { meshes, materials, baseColorTextures };
+  return { meshes, materials, baseColorTextures, decodedBaseColorTextures, missingBaseColorTextureImages };
 }
 
 
@@ -182,6 +213,11 @@ export default function VrmAvatarCanvas({ profile, settings, intent, cursorTarge
       const vrm = gltf.userData.vrm as VRM | undefined;
       const root = vrm?.scene ?? gltf.scene;
       const materialDiagnostics = prepareAvatarMaterials(root);
+      const imageResources = ((gltf.parser as unknown as { json?: { images?: Array<{ uri?: string; bufferView?: number; mimeType?: string }> } }).json?.images ?? []);
+      const externalImageUris = imageResources
+        .filter(image => typeof image.uri === "string" && !image.uri.startsWith("data:"))
+        .map(image => image.uri!)
+        .slice(0, 8);
       root.updateMatrixWorld(true);
       const box = new THREE.Box3().setFromObject(root);
       const size = box.getSize(new THREE.Vector3());
@@ -210,10 +246,22 @@ export default function VrmAvatarCanvas({ profile, settings, intent, cursorTarge
       if (loaded.mixer && gltf.animations[0]) loaded.mixer.clipAction(gltf.animations[0]).play();
       if (materialDiagnostics.meshes > 0 && materialDiagnostics.baseColorTextures === 0) {
         setStatus(vrm ? "VRM loaded · no color textures" : "GLB loaded · no color textures");
-        setError("Loaded " + materialDiagnostics.meshes + " mesh(es) with " + materialDiagnostics.materials + " material slot(s), but none has a base-color texture map. This file may have been exported without embedded textures; import a self-contained textured VRM/GLB.");
+        const imageDiagnosis = externalImageUris.length
+          ? " The glTF references external image file(s): " + externalImageUris.join(", ") + ". The current single-file import cannot resolve sidecar images; re-export as a self-contained binary VRM/GLB."
+          : imageResources.length === 0
+            ? " The binary asset contains no image resources."
+            : " The asset contains " + imageResources.length + " image resource(s), but none is assigned as a material base-color map.";
+        setError("Loaded " + materialDiagnostics.meshes + " mesh(es) with " + materialDiagnostics.materials +
+          " material slot(s), but found no usable base-color texture map." + imageDiagnosis);
+      } else if (materialDiagnostics.missingBaseColorTextureImages > 0) {
+        setStatus(vrm ? "VRM loaded · texture image unavailable" : "GLB loaded · texture image unavailable");
+        setError("Found " + materialDiagnostics.baseColorTextures + " base-color texture map(s), but " +
+          materialDiagnostics.missingBaseColorTextureImages + " texture image(s) have no decoded pixel dimensions. " +
+          "The model's embedded image data may be corrupt or unsupported.");
       } else {
         setError("");
-        setStatus(vrm ? "VRM loaded" : gltf.animations.length ? "GLB loaded · animation playing" : "GLB loaded");
+        setStatus(vrm ? "VRM loaded · " + materialDiagnostics.decodedBaseColorTextures + " color texture(s)" :
+          gltf.animations.length ? "GLB loaded · animation playing" : "GLB loaded · " + materialDiagnostics.decodedBaseColorTextures + " color texture(s)");
       }
     };
     const failGltf = (cause: unknown) => {
