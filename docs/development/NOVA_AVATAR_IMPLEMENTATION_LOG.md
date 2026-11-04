@@ -314,3 +314,23 @@ Log policy: append an entry for each implementation or verification action; reco
 ### Verification status
 - This commit requires a fresh GitHub Actions run. The provider test validates request serialization, not a live call to the user's local Ollama instance. The exact installed build and live request still need to be checked if the model continues to answer as if no image were attached.
 - Texture rendering and procedural pose remain subject to the user's specific VRM file and live Windows WebView; the app should not claim that asset-specific visual verification has passed.
+
+
+## 2026-11-04 — Entry 019: separate Avatar Director and procedural VRM bone goals
+
+### Findings
+- The previous Chat integration derived a small intent from regular expressions. It did not reason about the user message and completed reply as a separate task, and the renderer's gesture behavior was directly coupled to a few action names.
+- The avatar response observer needed to end the streaming/talking pose even when the optional Director was disabled, unavailable, or failed. A background result also must not overwrite a newer turn or a profile whose Director setting has since been disabled.
+- A generic GLB is not guaranteed to contain a VRM humanoid mapping. The new inverse-kinematics path therefore targets normalized VRM humanoid arm bones; GLB assets with embedded clips remain on their existing animation path.
+
+### Corrective implementation
+- Added a provider-neutral `AvatarDirector` that runs once after a completed assistant reply, using the active chat provider preset. It receives the preceding user message and public assistant reply, returns a bounded JSON-schema intent, and cannot block the Chat response.
+- Added an editable `avatar-director` prompt record to the prompt registry and exposed the agent in Prompt Presets diagnostics. A profile-level toggle controls the Director; autonomy-off also suppresses autonomous Director requests.
+- Validated agent output against a small allowlist of gesture, expression and gaze labels plus intensity/duration bounds. The agent cannot name bones or send transforms. Invalid output and provider/lookup failures settle to a neutral rest intent.
+- Added a procedural Bone Controller that turns semantic gestures into smoothed hand-space goals and torso/weight-shift targets. Added an analytic, bounded two-bone IK solver and wired it to normalized VRM upper-arm, lower-arm and hand bones. The previous pose path remains as a compatibility fallback when a VRM lacks hand effectors.
+- Updated horizontal and vertical camera fit, renderer regression coverage, Avatar Studio settings and this avatar-system reference.
+
+### Verification status
+- Source-level unit coverage now exercises IK segment lengths and bend-plane selection, semantic greeting/return-to-rest blending, strict Director output parsing, profile setting normalization and renderer integration.
+- GitHub Actions has not yet run against this entry; TypeScript/UI/Rust builds and the Windows installer must pass before this branch is considered CI-verified.
+- The exact user VRM/GLB still requires visual validation on Windows. The current IK implementation covers arms, not full-body leg IK, collision avoidance, foot planting or secondary spring simulation. It does not claim to replace embedded GLB animation playback.
