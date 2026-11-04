@@ -40,7 +40,7 @@ The viewer selects its front-camera side from VRM metadata: VRM 0.x faces -Z, wh
 
 - The frameless overlay uses Tauri's native window-drag region. Its capability must explicitly include `core:window:allow-start-dragging`; `core:window:default` does not grant this command.
 - Model scale and camera framing are independent. The camera fit is derived from the unscaled model bounds and vertical field of view; the camera-distance setting is a zoom-out multiplier with a safe minimum.
-- `Track cursor` is an opt-in profile setting. The overlay polls the Tauri window cursor position and maps it into a bounded gaze target; the VRM head controller applies limited yaw/pitch.
+- `Track cursor` is an opt-in profile setting. The overlay maps pointer-move events in the WebView into a bounded gaze target; the VRM head controller applies limited yaw/pitch. Because Tauri pass-through windows do not receive pointer events, enabling cursor tracking temporarily disables pass-through so gaze input can be observed.
 - GLB PBR base-color textures are exposed as material maps, while VRM MToon base-color textures are stored in `uniforms.map.value`. Material preparation handles both paths and reasserts sRGB before upload.
 
 
