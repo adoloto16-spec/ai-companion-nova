@@ -334,3 +334,23 @@ Log policy: append an entry for each implementation or verification action; reco
 - Source-level unit coverage now exercises IK segment lengths and bend-plane selection, semantic greeting/return-to-rest blending, strict Director output parsing, profile setting normalization and renderer integration.
 - GitHub Actions has not yet run against this entry; TypeScript/UI/Rust builds and the Windows installer must pass before this branch is considered CI-verified.
 - The exact user VRM/GLB still requires visual validation on Windows. The current IK implementation covers arms, not full-body leg IK, collision avoidance, foot planting or secondary spring simulation. It does not claim to replace embedded GLB animation playback.
+
+
+## 2026-11-04 — Entry 020: repair image-bearing Chat requests and texture detection
+
+### Findings
+- The canonical `chat-message` schema already allowed bounded image attachments, but the inline message schema nested inside `chat-request` did not. Because `additionalProperties` is false, AiRuntime rejected a request containing images before any provider could receive it.
+- The normal ChatSession and Nova Life cognitive path passed image-bearing messages into Context Engine. Context Engine schemas are intentionally text-only, so an image could make the context build fail before model invocation.
+- Vision's screenshot capture failure previously returned before sending, even when the user had typed a normal text message. This coupled optional screen sharing to basic Chat usability.
+- The first texture-diagnostics implementation used an `in` check for `Texture.needsUpdate`. In Three.js this is a setter, so the check rejected valid textures and falsely reported missing maps.
+
+### Corrective implementation
+- Added the existing bounded `images` contract to nested `chat-request.context.messages` and regenerated the committed schema catalogue. Added a contract test for a complete image-bearing ChatRequest.
+- Normal Chat and LLMCognitiveStep now strip binary images before calling Context Engine, then restore the original attachments by message id before constructing the provider request. Text, context budgeting, and retrieval remain unchanged.
+- If a screen capture fails while a text prompt is present, Chat now sends the text-only request and keeps a visible warning. A Vision-only request with no prompt still stops rather than sending a misleading empty instruction.
+- Texture recognition now uses Three.js' `isTexture` marker instead of testing for the `needsUpdate` setter. Avatar diagnostics distinguish missing base-color maps, external image URI sidecars, and texture maps whose image pixels did not decode.
+
+### Verification status
+- Added regression tests for canonical image-bearing ChatRequest validation, text-only Context Engine boundaries in ordinary Chat and Nova Life, text fallback after Vision capture failure, and Three.js texture recognition.
+- The previous avatar PR CI passed foundation, React UI, Rust/Tauri, Windows NSIS build and staged Windows application smoke-test. The latest image/texture fixes are being verified in a fresh run; they are not yet declared green.
+- The user's exact VRM/GLB has not been available for a visual texture check. This importer currently accepts self-contained single-file VRM/GLB assets; external sidecar image files are diagnosed but not yet imported as a multi-file asset bundle.
