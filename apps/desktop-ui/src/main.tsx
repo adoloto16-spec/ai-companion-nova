@@ -416,6 +416,8 @@ function ChatView({controller,runtime,character,conversations,activeConversation
       return;
     }
     if(!lastAssistant)return;
+    const lastAssistantId=lastAssistant.id;
+    if(!lastAssistantId)return;
     const nativeTurn=parseNovaTurn(lastAssistant.content).turn;
     if(nativeTurn?.tools.some(tool=>tool.name==="avatar.set_intent")){
       avatarDirectorTurnRef.current.pending=false;
@@ -423,8 +425,8 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     }
     const presentation=resolveNovaTurnMessagePresentation(lastAssistant,false);
     if(!presentation.render||!presentation.text.trim())return;
-    if(avatarDirectorTurnRef.current.id!==lastAssistant.id){
-      avatarDirectorTurnRef.current={conversationId:currentConversationId,id:lastAssistant.id,pending:true};
+    if(avatarDirectorTurnRef.current.id!==lastAssistantId){
+      avatarDirectorTurnRef.current={conversationId:currentConversationId,id:lastAssistantId,pending:true};
     }
     if(!avatarDirectorTurnRef.current.pending)return;
     // While Nova is streaming, keep the existing lightweight speech cue. The separate
@@ -438,7 +440,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     // End the streaming pose immediately, even when the optional Director is disabled
     // or its provider is unavailable.
     publishAvatarIntent(resolveDialogueIntent(presentation.text,false));
-    const turnId=lastAssistant.id;
+    const turnId=lastAssistantId;
     const assistantIndex=snapshot.messages.findIndex(message=>message.id===turnId);
     const userMessage=assistantIndex>=0
       ? [...snapshot.messages.slice(0,assistantIndex)].reverse().find(message=>message.role==="user")
