@@ -148,6 +148,7 @@ export default function AvatarStudioView() {
           <label><input type="checkbox" checked={settings.breathing} onChange={event => update("breathing", event.target.checked)} disabled={!active || busy}/> Breathing</label>
           <label><input type="checkbox" checked={settings.blink} onChange={event => update("blink", event.target.checked)} disabled={!active || busy}/> Blinking</label>
           <label><input type="checkbox" checked={settings.lookAround} onChange={event => update("lookAround", event.target.checked)} disabled={!active || busy}/> Look around</label>
+          <label><input type="checkbox" checked={settings.trackCursor} onChange={event => update("trackCursor", event.target.checked)} disabled={!active || busy}/> Track cursor</label>
           <label><input type="checkbox" checked={settings.overlayPassthrough} onChange={event => update("overlayPassthrough", event.target.checked)} disabled={!active || busy}/> Pass pointer through overlay</label>
         </div>
         <label>Autonomy<select value={settings.autonomy} onChange={event => update("autonomy", event.target.value as AvatarSettings["autonomy"])} disabled={!active || busy}>
