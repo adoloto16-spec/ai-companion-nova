@@ -2790,11 +2790,11 @@ function App(){
         if(event.type!=="emotion")chatController.updateNovaTurnStream(event);
         await speechOutputController.handleSpeechEvent(event);
       },
-      fail:(turn,reason)=>{
+      fail:(turn,reason,errorCode)=>{
         if(!attached||turn.characterId!==activeCharacterId||turn.conversationId!==activeConversationId)return;
         const current=chatController.getSnapshot();
         if(current.characterId===turn.characterId&&current.conversationId===turn.conversationId){
-          chatController.failLifeTurn(turn.userMessageId,reason);
+          chatController.failLifeTurn(turn.userMessageId,reason,errorCode);
         }
       }
     };
