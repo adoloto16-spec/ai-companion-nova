@@ -63,7 +63,7 @@ export interface MindTurnSink {
   /** Publishes only validated-incremental public speech for the active turn. */
   streamSpeech?(event:MindTurnSpeechEvent):void|Promise<void>;
   /** Makes a failed reactive turn visible while leaving its persisted user message retryable. */
-  fail?(turn: MindReactiveTurn, reason: string): void;
+  fail?(turn: MindReactiveTurn, reason: string, errorCode?: string): void;
 }
 
 export interface MindToolExecutionContext extends MindTurnExecutionContext {
