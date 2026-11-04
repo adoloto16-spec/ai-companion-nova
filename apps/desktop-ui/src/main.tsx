@@ -436,21 +436,28 @@ function ChatView({controller,runtime,character,conversations,activeConversation
       ? [...snapshot.messages.slice(0,assistantIndex)].reverse().find(message=>message.role==="user")
       : undefined;
     void (async()=>{
-      const activeAvatar=await getActiveAvatarBundle();
-      if(!activeAvatar||!activeAvatar.profile.settings.directorEnabled)return;
-      const director=new AvatarDirector(runtime);
-      const intent=await director.analyze({
-        turnId,
-        conversationId:activeConversation.id,
-        userText:userMessage?.content??"",
-        assistantText:presentation.text,
-        providerPresetId:runtime.getActiveProviderPresetId()??"",
-        systemPrompt:resolveAvatarDirectorPrompt(runtime.getSettings())
-      });
-      // A slow local model may finish after a newer assistant turn. Never let stale
-      // analysis overwrite the newer gesture.
-      if(avatarDirectorTurnRef.current.id!==turnId)return;
-      publishAvatarIntent(intent);
+      try{
+        const activeAvatar=await getActiveAvatarBundle();
+        if(!activeAvatar||!activeAvatar.profile.settings.directorEnabled||activeAvatar.profile.settings.autonomy==="off")return;
+        const director=new AvatarDirector(runtime);
+        const intent=await director.analyze({
+          turnId,
+          conversationId:activeConversation.id,
+          userText:userMessage?.content??"",
+          assistantText:presentation.text,
+          providerPresetId:runtime.getActiveProviderPresetId()??"",
+          systemPrompt:resolveAvatarDirectorPrompt(runtime.getSettings())
+        });
+        // A slow local model or a changed profile may finish after a newer turn.
+        // Never let stale analysis or a disabled Director overwrite the current pose.
+        if(avatarDirectorTurnRef.current.id!==turnId)return;
+        const currentAvatar=await getActiveAvatarBundle();
+        if(!currentAvatar||currentAvatar.profile.id!==activeAvatar.profile.id||
+          !currentAvatar.profile.settings.directorEnabled||currentAvatar.profile.settings.autonomy==="off")return;
+        publishAvatarIntent(intent);
+      }catch{
+        // Avatar lookup/analysis is optional and must never surface as a failed Chat reply.
+      }
     })();
   },[lastAssistant?.id,lastAssistant?.content,snapshot.status,lastAssistantStatus,runtime,activeConversation.id]);
   const showContinue=snapshot.status==="interrupted"&&lastAssistantStatus==="interrupted"&&!snapshot.sending;
