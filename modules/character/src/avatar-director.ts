@@ -65,8 +65,8 @@ export class AvatarDirector {
 
   async analyze(input: AvatarDirectorInput): Promise<AvatarIntent> {
     const fallback: AvatarIntent = {
-      action: "idle", expression: "neutral", intensity: 0.35,
-      gesture: "explain", gaze: "user", durationMs: 1400
+      action: "idle", expression: "neutral", intensity: 0.2,
+      gesture: "rest", gaze: "user", durationMs: 500
     };
     const presetId = input.providerPresetId.trim();
     if (!presetId || !input.assistantText.trim()) return fallback;
