@@ -280,6 +280,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     if(!messageText||captureBusy||visionBusy||sendLockRef.current)return;
     sendLockRef.current=true;
     const submittedImages:ChatImageAttachment[]=[];
+    let captureFallbackMessage="";
     setPersistenceError("");
     setCaptureError("");
     onStopSpeech();
@@ -297,7 +298,8 @@ function ChatView({controller,runtime,character,conversations,activeConversation
           }
           // Image capture is optional. A failed or revoked screen-share must not discard
           // the user's typed message or leave ordinary chat unusable.
-          if(visionViewMountedRef.current)setCaptureError("Vision screenshot failed; sending your text message without an image. "+detail);
+          captureFallbackMessage="Vision screenshot failed; sending your text message without an image. "+detail;
+          if(visionViewMountedRef.current)setCaptureError(captureFallbackMessage);
         }finally{
           if(visionViewMountedRef.current)setCaptureBusy(false);
         }
@@ -306,7 +308,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
         try{
           const result=await controller.submitToLife(messageText,async()=>{await onPersist();},turn=>runtime.wakeMindForUserMessage(turn),submittedImages);
           if(result.status==="awaiting-life")onClearSubmittedDraft(submittedDraft);
-          if(result.status==="awaiting-life")setCaptureError("");
+          if(result.status==="awaiting-life")setCaptureError(captureFallbackMessage);
           if(result.status==="life-failed")setPersistenceError(result.message);
         }catch(error){
           if(visionViewMountedRef.current)setPersistenceError(safeErrorMessage(error,"User message could not be saved for Nova Life."));
@@ -316,7 +318,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
       controller.clearFailedLifeTurnForOrdinaryChat();
       const result=await controller.submit(messageText,runtime.getActiveChatModel(),submittedImages);
       if(result.status==="sent")onClearSubmittedDraft(submittedDraft);
-      if(result.status==="sent")setCaptureError("");
+      if(result.status==="sent")setCaptureError(captureFallbackMessage);
       await persistAfterAction(result);
     }catch(error){
       if(visionViewMountedRef.current)setPersistenceError(safeErrorMessage(error,"The message could not be sent."));
