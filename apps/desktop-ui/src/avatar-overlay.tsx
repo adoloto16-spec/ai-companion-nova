@@ -1,5 +1,4 @@
 import React from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { resolveAvatarSignal, subscribeAvatarEvents, type AvatarIntent, type AvatarProfile } from "../../../modules/character/src/index";
 import { getActiveAvatarBundle } from "./avatar-library";
 import VrmAvatarCanvas from "./vrm-avatar-canvas";
@@ -14,7 +13,7 @@ export default function AvatarOverlay() {
     try {
       const next = await getActiveAvatarBundle();
       setBundle(next); setError("");
-      if (next) await getCurrentWindow().setIgnoreCursorEvents(next.profile.settings.overlayPassthrough);
+      if (next) await getCurrentWindow().setIgnoreCursorEvents(next.profile.settings.overlayPassthrough && !next.profile.settings.trackCursor);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Avatar overlay could not load the local model."); }
   }, []);
   React.useEffect(() => {
@@ -26,25 +25,26 @@ export default function AvatarOverlay() {
   }, [refresh]);
   React.useEffect(() => {
     if (!bundle?.profile.settings.trackCursor) { setCursorTarget(undefined); return; }
-    const overlayWindow = getCurrentWindow();
     let active = true;
-    let pending = false;
-    const poll = async () => {
-      if (!active || pending) return;
-      pending = true;
-      try {
-        const [position, size] = await Promise.all([overlayWindow.cursorPosition(), overlayWindow.innerSize()]);
-        if (!active) return;
-        setCursorTarget({
-          x: Math.max(-1, Math.min(2, position.x / Math.max(1, size.width))),
-          y: Math.max(-1, Math.min(2, position.y / Math.max(1, size.height)))
-        });
-      } catch { /* Cursor polling is optional; a transient window error must not stop rendering. */ }
-      finally { pending = false; }
+    let frame = 0;
+    let latest = { x: 0.5, y: 0.5 };
+    const handlePointerMove = (event: PointerEvent) => {
+      latest = {
+        x: Math.max(-1, Math.min(2, event.clientX / Math.max(1, window.innerWidth))),
+        y: Math.max(-1, Math.min(2, event.clientY / Math.max(1, window.innerHeight)))
+      };
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        if (active) setCursorTarget(latest);
+      });
     };
-    const handle = window.setInterval(() => { void poll(); }, 40);
-    void poll();
-    return () => { active = false; window.clearInterval(handle); };
+    window.addEventListener("pointermove", handlePointerMove, { passive: true });
+    return () => {
+      active = false;
+      window.removeEventListener("pointermove", handlePointerMove);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
   }, [bundle?.profile.id, bundle?.profile.settings.trackCursor]);
   if (error) return <div className="avatar-overlay-error" role="alert">{error}</div>;
   if (!bundle) return <div className="avatar-overlay-empty">Import a VRM or GLB model in Avatar Studio.</div>;
