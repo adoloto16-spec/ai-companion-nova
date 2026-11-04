@@ -8,7 +8,9 @@ import {
   resolveAvatarSignal,
   resolveDialogueIntent,
   publishAvatarIntent,
-  subscribeAvatarEvents
+  subscribeAvatarEvents,
+  solveTwoBoneIk,
+  parseAvatarDirectorOutput
 } from "../../modules/character/src/index";
 
 const settings = normalizeAvatarSettings({ scale: 99, cameraDistance: Number.NaN, motionIntensity: -2, autonomy: "invalid", blink: false });
@@ -16,6 +18,7 @@ assert.equal(settings.scale, 1.8);
 assert.equal(settings.cameraDistance, DEFAULT_AVATAR_SETTINGS.cameraDistance);
 assert.equal(normalizeAvatarSettings({ cameraDistance: 1.1 }).cameraDistance, 1.7);
 assert.equal(normalizeAvatarSettings({ trackCursor: true }).trackCursor, true);
+assert.equal(normalizeAvatarSettings({ directorEnabled: false }).directorEnabled, false);
 assert.equal(settings.motionIntensity, 0);
 assert.equal(settings.autonomy, "balanced");
 assert.equal(settings.blink, false);
@@ -27,6 +30,22 @@ assert.equal(resolveDialogueIntent("That is interesting", false).expression, "ha
 assert.deepEqual(resolveAvatarSignal({ type: "user-action", action: "wave" }), {
   action: "wave", expression: "happy", intensity: 1
 });
+const ik = solveTwoBoneIk(
+  {x:0,y:0,z:0}, {x:1,y:1,z:0}, 1, 1, {x:0,y:0,z:1}
+);
+const distance = (a:{x:number;y:number;z:number},b:{x:number;y:number;z:number}) =>
+  Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z);
+assert.ok(Math.abs(distance({x:0,y:0,z:0},ik.elbow)-1)<1e-6,"IK preserves upper-arm length");
+assert.ok(Math.abs(distance(ik.elbow,ik.wrist)-1)<1e-6,"IK preserves forearm length");
+assert.ok(ik.elbow.z>0,"IK uses the supplied bend plane");
+const directed = parseAvatarDirectorOutput(JSON.stringify({
+  gesture:"greet",expression:"happy",gaze:"user",intensity:0.8,durationMs:1800
+}));
+assert.deepEqual(directed,{
+  action:"wave",expression:"happy",intensity:0.8,
+  gesture:"greet",gaze:"user",durationMs:1800
+});
+assert.equal(parseAvatarDirectorOutput('{"gesture":"unknown"}'),undefined,"invalid agent output is rejected");
 const canvasSource=fs.readFileSync(path.resolve(process.cwd(),"apps/desktop-ui/src/vrm-avatar-canvas.tsx"),"utf8");
 assert.ok(canvasSource.includes('className="vrm-avatar-canvas-renderer" ref={host}'),"Three.js receives a dedicated inner host that React does not populate with overlay nodes");
 assert.ok(canvasSource.includes('className={"vrm-avatar-canvas " + className} aria-label='),"the React-owned avatar overlay remains mounted outside the imperative Three.js host");
@@ -44,6 +63,7 @@ assert.ok(canvasSource.includes('current.vrm?.meta.metaVersion === "0" ? -1 : 1'
 assert.ok(canvasSource.includes("prepareAvatarMaterials(root)"),"loaded avatar material maps are reconfigured for sRGB and uploaded");
 assert.ok(canvasSource.includes("uniforms?.map?.value"),"VRM MToon base-color textures are detected through shader uniforms");
 assert.ok(canvasSource.includes("cursorTargetRef.current"),"cursor gaze target updates without recreating the WebGL renderer");
+assert.ok(canvasSource.includes("applyTwoBoneArmIk"),"semantic arm gestures are solved against normalized VRM hand end-effectors");
 assert.ok(canvasSource.includes("const fitDistance = (current.height * 0.56)"),"camera full-body fit is based on unscaled model height");
 assert.ok(canvasSource.includes("baseColorTextures === 0"),"textureless imports report the material/texture diagnosis instead of silently claiming a complete load");
 console.log("avatar-runtime.test.ts: passed");
