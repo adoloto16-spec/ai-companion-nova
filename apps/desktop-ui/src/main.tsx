@@ -427,6 +427,9 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     }
     if(lastAssistantStatus!=="complete")return;
     avatarDirectorTurnRef.current.pending=false;
+    // End the streaming pose immediately, even when the optional Director is disabled
+    // or its provider is unavailable.
+    publishAvatarIntent(resolveDialogueIntent(presentation.text,false));
     const turnId=lastAssistant.id;
     const assistantIndex=snapshot.messages.findIndex(message=>message.id===turnId);
     const userMessage=assistantIndex>=0
