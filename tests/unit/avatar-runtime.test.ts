@@ -38,6 +38,13 @@ const distance = (a:{x:number;y:number;z:number},b:{x:number;y:number;z:number})
 assert.ok(Math.abs(distance({x:0,y:0,z:0},ik.elbow)-1)<1e-6,"IK preserves upper-arm length");
 assert.ok(Math.abs(distance(ik.elbow,ik.wrist)-1)<1e-6,"IK preserves forearm length");
 assert.ok(ik.elbow.z>0,"IK uses the supplied bend plane");
+const controller = new AvatarBoneController();
+controller.setIntent({action:"wave",expression:"happy",intensity:1,gesture:"greet",durationMs:2000});
+let gestureFrame = controller.update(1/60);
+for(let i=0;i<59;i++)gestureFrame = controller.update(1/60);
+assert.ok(gestureFrame.rightHand.vertical > gestureFrame.leftHand.vertical,"greeting raises the right hand through semantic hand targets");
+for(let i=0;i<180;i++)gestureFrame = controller.update(1/60);
+assert.ok(Math.abs(gestureFrame.rightHand.vertical - gestureFrame.leftHand.vertical) < 0.03,"a completed gesture settles back toward a balanced rest pose");
 const directed = parseAvatarDirectorOutput(JSON.stringify({
   gesture:"greet",expression:"happy",gaze:"user",intensity:0.8,durationMs:1800
 }));
