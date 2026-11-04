@@ -504,13 +504,15 @@ export class ChatSessionController{
     this.recomputeStatus();this.notify();
   }
 
-  failLifeTurn(userMessageId:string,reason:string):boolean{
+  failLifeTurn(userMessageId:string,reason:string,providerErrorCode?:string):boolean{
     const current=this.lifeTurn;
     if(!current||current.userMessageId!==userMessageId||!(current.status==="persisting"||current.status==="awaiting"))return false;
     const cancelled=/cancel|superseded|stale-context|character-change|life-off/i.test(reason);
-    const message=cancelled?"Nova Life response was cancelled. Retry Nova Life.":"Nova Life could not complete this reply. Retry Nova Life.";
+    const code=providerErrorCode&&CHAT_ERROR_CODES.has(providerErrorCode as ChatErrorCode)?providerErrorCode as ChatErrorCode:undefined;
+    const message=cancelled?"Nova Life response was cancelled. Retry Nova Life."
+      :code?USER_MESSAGES[code]:"Nova Life could not complete this reply. Retry Nova Life.";
     this.lifeTurn={...current,status:cancelled?"cancelled":"failed",error:message};
-    this.status="error";this.error=message;this.errorCode="PROVIDER_ERROR";this.notify();return true;
+    this.status="error";this.error=message;this.errorCode=cancelled?undefined:code;this.notify();return true;
   }
   clear():void{
     if(this.isBusy())return;
