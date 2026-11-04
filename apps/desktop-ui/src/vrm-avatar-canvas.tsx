@@ -45,7 +45,8 @@ function isTextureLike(value: unknown): value is THREE.Texture {
   const candidate = value as Record<string, unknown>;
   // Avoid instanceof-only checks here: a duplicated Three.js module instance in a
   // WebView bundle can make a perfectly valid GLTF texture fail the instanceof test.
-  return "colorSpace" in candidate && "needsUpdate" in candidate && "source" in candidate;
+  // Texture.needsUpdate is a setter, not a property detectable with the `in` operator.
+  return candidate.isTexture === true && "colorSpace" in candidate && "source" in candidate;
 }
 
 function hasDecodedImage(texture: THREE.Texture): boolean {
