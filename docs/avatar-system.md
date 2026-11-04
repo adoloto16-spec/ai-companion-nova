@@ -41,7 +41,7 @@ The viewer selects its front-camera side from VRM metadata: VRM 0.x faces -Z, wh
 - The frameless overlay uses Tauri's native window-drag region. Its capability must explicitly include `core:window:allow-start-dragging`; `core:window:default` does not grant this command.
 - Model scale and camera framing are independent. The camera fit is derived from the unscaled model bounds and vertical field of view; the camera-distance setting is a zoom-out multiplier with a safe minimum.
 - `Track cursor` is an opt-in profile setting. The overlay maps pointer-move events in the WebView into a bounded gaze target; the VRM head controller applies limited yaw/pitch. Because Tauri pass-through windows do not receive pointer events, enabling cursor tracking temporarily disables pass-through so gaze input can be observed.
-- GLB PBR base-color textures are exposed as material maps, while VRM MToon base-color textures are stored in `uniforms.map.value`. Material preparation handles both paths and reasserts sRGB before upload.
+- GLB PBR base-color textures are exposed as material maps, while VRM MToon base-color textures are stored in `uniforms.map.value`. Material preparation handles both paths and reasserts sRGB before upload. Texture diagnostics use Three.js' `isTexture` marker, count decoded image dimensions, and report external image URI references. The current importer reads one self-contained `.vrm`/`.glb` binary; external `.gltf` sidecar images are not bundled or resolved yet.
 
 
 ## Avatar Director and procedural rig goals
@@ -51,3 +51,8 @@ The Avatar Director is a separate, optional chat-agent request. It runs once aft
 The agent returns only a typed semantic intent: gesture, expression, gaze, intensity and duration. Its prompt is a dedicated `avatar-director` record in Prompt Presets. The output is validated in code and never contains bone names, quaternions or arbitrary transforms.
 
 The procedural Bone Controller turns semantic gestures into smoothed hand-space goals and torso/weight-shift targets. For VRM humanoids with both normalized hand end-effectors, the renderer solves upper-arm and forearm chains with analytic two-bone IK. Goals are clamped to reachable arm length; missing hand bones use the legacy conservative pose fallback. No canned clips are required for these generated gestures. Existing embedded GLB clips remain a separate playback path. Full-body IK, collision-aware foot planting, spring simulation and per-model joint-limit calibration are not implemented yet.
+
+
+## Image attachments and text-only context
+
+ChatRequest accepts bounded image attachments on user messages. The Context Engine remains intentionally text-only: screenshot bytes are removed before context tokenization and retrieval, then restored by message id before the selected chat provider receives the request. Normal Chat and Nova Life use the same separation. If optional screen capture fails while the user typed a prompt, the prompt is still sent without the image and the UI reports the fallback; a Vision-only send without a prompt remains blocked.
