@@ -34,3 +34,11 @@ The animation layer remains procedural and modest; it is not full-body inverse k
 ## Orientation and material diagnostics
 
 The viewer selects its front-camera side from VRM metadata: VRM 0.x faces -Z, while VRM 1.0 faces +Z. For loaded meshes, the renderer also reasserts sRGB color space and marks base-color maps for GPU upload. If the model contains meshes and materials but no base-color texture maps, Avatar Studio displays that diagnosis instead of silently reporting a complete load. This distinguishes a file exported without embedded textures from a rendering failure; confirm the actual map counts with the user's asset if it still appears white.
+
+
+## Overlay controls and gaze tracking
+
+- The frameless overlay uses Tauri's native window-drag region. Its capability must explicitly include `core:window:allow-start-dragging`; `core:window:default` does not grant this command.
+- Model scale and camera framing are independent. The camera fit is derived from the unscaled model bounds and vertical field of view; the camera-distance setting is a zoom-out multiplier with a safe minimum.
+- `Track cursor` is an opt-in profile setting. The overlay polls the Tauri window cursor position and maps it into a bounded gaze target; the VRM head controller applies limited yaw/pitch.
+- GLB PBR base-color textures are exposed as material maps, while VRM MToon base-color textures are stored in `uniforms.map.value`. Material preparation handles both paths and reasserts sRGB before upload.
