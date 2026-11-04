@@ -117,7 +117,7 @@ export class AvatarBoneController {
     this.durationMs = Math.max(500, Math.min(5000, intent.durationMs ?? 2200));
   }
 
-  update(deltaSeconds: number): AvatarBoneFrame {
+  hasFinishedGesture(): boolean {\n    return this.action !== "talk" && this.elapsed * 1000 >= this.durationMs;\n  }\n\n  update(deltaSeconds: number): AvatarBoneFrame {
     const delta = Math.max(0, Math.min(0.1, Number.isFinite(deltaSeconds) ? deltaSeconds : 0));
     this.elapsed += delta;
     const isActive = this.action === "talk" || this.elapsed * 1000 < this.durationMs;
