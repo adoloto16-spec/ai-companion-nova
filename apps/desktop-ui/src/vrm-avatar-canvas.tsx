@@ -62,6 +62,7 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
   profile?: AvatarProfile;
   settings: AvatarSettings;
   intent: AvatarIntent;
+  cursorTarget?: { x: number; y: number };
   className?: string;
 }) {
   const host = React.useRef<HTMLDivElement | null>(null);
@@ -210,9 +211,11 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
         const base = (name: HumanoidBone) => current.boneBases[name];
         const head = bone("head"), headBase = base("head");
         if (head && headBase) {
-          const yaw = prefs.lookAround ? Math.sin(elapsed * 0.57) * 0.18 * Math.max(activity, 0.5) : 0;
-          const pitch = prefs.lookAround ? Math.sin(elapsed * 0.37) * 0.06 * Math.max(activity, 0.5) : 0;
-          head.rotation.set(headBase.x + pitch, headBase.y + yaw, headBase.z);
+          const cursorYaw = prefs.trackCursor && cursorTarget ? THREE.MathUtils.clamp((cursorTarget.x - 0.5) * 0.8, -0.55, 0.55) : 0;
+          const cursorPitch = prefs.trackCursor && cursorTarget ? THREE.MathUtils.clamp((cursorTarget.y - 0.5) * 0.45, -0.3, 0.3) : 0;
+          const idleYaw = prefs.lookAround ? Math.sin(elapsed * 0.57) * 0.18 * Math.max(activity, 0.5) : 0;
+          const idlePitch = prefs.lookAround ? Math.sin(elapsed * 0.37) * 0.06 * Math.max(activity, 0.5) : 0;
+          head.rotation.set(headBase.x + (prefs.trackCursor ? cursorPitch : idlePitch), headBase.y + (prefs.trackCursor ? cursorYaw : idleYaw), headBase.z);
         }
         const leftUpper = bone("leftUpperArm"), leftBase = base("leftUpperArm");
         const rightUpper = bone("rightUpperArm"), rightBase = base("rightUpperArm");
