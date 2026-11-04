@@ -55,6 +55,7 @@ assert.deepEqual(directed,{
 });
 assert.equal(parseAvatarDirectorOutput('{"gesture":"unknown"}'),undefined,"invalid agent output is rejected");
 const canvasSource=fs.readFileSync(path.resolve(process.cwd(),"apps/desktop-ui/src/vrm-avatar-canvas.tsx"),"utf8");
+const overlaySource=fs.readFileSync(path.resolve(process.cwd(),"apps/desktop-ui/src/avatar-overlay.tsx"),"utf8");
 assert.ok(canvasSource.includes('className="vrm-avatar-canvas-renderer" ref={host}'),"Three.js receives a dedicated inner host that React does not populate with overlay nodes");
 assert.ok(canvasSource.includes('className={"vrm-avatar-canvas " + className} aria-label='),"the React-owned avatar overlay remains mounted outside the imperative Three.js host");
 let receivedIntent:unknown;
@@ -71,6 +72,8 @@ assert.ok(canvasSource.includes('current.vrm?.meta.metaVersion === "0" ? -1 : 1'
 assert.ok(canvasSource.includes("prepareAvatarMaterials(root)"),"loaded avatar material maps are reconfigured for sRGB and uploaded");
 assert.ok(canvasSource.includes("uniforms?.map?.value"),"VRM MToon base-color textures are detected through shader uniforms");
 assert.ok(canvasSource.includes("cursorTargetRef.current"),"cursor gaze target updates without recreating the WebGL renderer");
+assert.ok(overlaySource.includes('window.addEventListener("pointermove", handlePointerMove'),"cursor gaze uses supported WebView pointer events");
+assert.ok(overlaySource.includes("overlayPassthrough && !next.profile.settings.trackCursor"),"cursor tracking keeps pointer events enabled in the native overlay");
 assert.ok(canvasSource.includes("applyTwoBoneArmIk"),"semantic arm gestures are solved against normalized VRM hand end-effectors");
 assert.ok(canvasSource.includes("(current.height * 0.56) / Math.tan(verticalHalfFov)") && canvasSource.includes("(current.width * 0.56) / Math.tan(horizontalHalfFov)"),"camera full-body fit accounts for both unscaled model height and width");
 assert.ok(canvasSource.includes("baseColorTextures === 0"),"textureless imports report the material/texture diagnosis instead of silently claiming a complete load");
