@@ -1,4 +1,5 @@
 import React from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { resolveAvatarSignal, subscribeAvatarEvents, type AvatarIntent, type AvatarProfile } from "../../../modules/character/src/index";
 import { getActiveAvatarBundle } from "./avatar-library";
 import VrmAvatarCanvas from "./vrm-avatar-canvas";
