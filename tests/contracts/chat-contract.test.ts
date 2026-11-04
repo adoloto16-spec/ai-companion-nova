@@ -10,6 +10,8 @@ const validRequest={
   ]}
 };
 ok(validator.validateChatRequest(validRequest).valid,"valid ChatRequest");
+const imageRequest={...validRequest,context:{...validRequest.context,messages:[...validRequest.context.messages,{id:"m3",role:"user",content:"What is shown?",images:[{mimeType:"image/png",dataBase64:"iVBORw0KGgo=",alt:"screenshot"}]}]}};
+ok(validator.validateChatRequest(imageRequest).valid,"ChatRequest accepts bounded image attachments on user messages");
 ok(!validator.validateChatRequest({...validRequest,model:""}).valid,"invalid ChatRequest model");
 ok(validator.validateChatMessage({role:"tool",content:"tool output",toolCallId:"call-1"}).valid,"tool message schema");
 ok(validator.validateChatGenerationOptions({temperature:0.5,maxTokens:64,topP:1}).valid,"generation options");
