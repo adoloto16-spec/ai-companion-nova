@@ -71,7 +71,8 @@ async function reactiveSpeechFailureAndRetryTest(){
   await runtime.start();await waitFor(()=>fixture.committed.length>0&&runtime.getState().lifecycleState==="waiting");
   ok(runtime.wakeForUserMessage(turn),"reactive request is accepted");
   await waitFor(()=>fixture.failed.length===1);
-  equal(fixture.failed[0]?.reason,"REACTIVE_SPEECH_REQUIRED","empty required speech surfaces a specific failure");\n  equal(fixture.failed[0]?.errorCode,undefined,"non-provider cognitive failures do not invent a provider error code");
+  equal(fixture.failed[0]?.reason,"REACTIVE_SPEECH_REQUIRED","empty required speech surfaces a specific failure");
+  equal(fixture.failed[0]?.errorCode,undefined,"non-provider cognitive failures do not invent a provider error code");
   equal(fixture.committed.some(item=>item.context.turnId===turn.turnId),false,"invalid reactive speech is not committed as a successful assistant answer");
   ok(runtime.wakeForUserMessage(turn),"failed turn remains eligible for retry");
   await waitFor(()=>fixture.committed.some(item=>item.context.turnId===turn.turnId));
