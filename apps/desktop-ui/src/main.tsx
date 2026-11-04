@@ -1,7 +1,8 @@
 import React from "react";
 import PromptRegistryView from "./prompt-registry-view";
 import AvatarStudioView from "./avatar-studio";
-import { publishAvatarIntent, resolveDialogueIntent } from "../../../modules/character/src/index";
+import { AvatarDirector, publishAvatarIntent, resolveAvatarDirectorPrompt, resolveDialogueIntent } from "../../../modules/character/src/index";
+import { getActiveAvatarBundle } from "./avatar-library";
 import { startScreenVisionSession } from "../../../modules/vision/src/index";
 import type { ScreenVisionSession } from "../../../modules/vision/src/index";
 import {createRoot} from "react-dom/client";
@@ -404,17 +405,51 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     return presentation.render&&Boolean(presentation.text.trim());
   });
   const lastAssistantStatus=lastAssistant?messageStreamStatus(lastAssistant):undefined;
+  const avatarDirectorTurnRef=React.useRef<{id:string;pending:boolean}>({id:lastAssistant?.id??"",pending:false});
   React.useEffect(()=>{
     if(!lastAssistant)return;
     const nativeTurn=parseNovaTurn(lastAssistant.content).turn;
-    if(nativeTurn?.tools.some(tool=>tool.name==="avatar.set_intent"))return;
+    if(nativeTurn?.tools.some(tool=>tool.name==="avatar.set_intent")){
+      avatarDirectorTurnRef.current.pending=false;
+      return;
+    }
     const presentation=resolveNovaTurnMessagePresentation(lastAssistant,false);
     if(!presentation.render||!presentation.text.trim())return;
-    publishAvatarIntent(resolveDialogueIntent(
-      presentation.text,
-      snapshot.status==="streaming"&&messageStreamStatus(lastAssistant)==="streaming"
-    ));
-  },[lastAssistant?.id,lastAssistant?.content,snapshot.status]);
+    if(avatarDirectorTurnRef.current.id!==lastAssistant.id){
+      avatarDirectorTurnRef.current={id:lastAssistant.id,pending:true};
+    }
+    if(!avatarDirectorTurnRef.current.pending)return;
+    // While Nova is streaming, keep the existing lightweight speech cue. The separate
+    // Avatar Director is called exactly once after the completed reply has been persisted.
+    if(snapshot.status==="streaming"||lastAssistantStatus==="streaming"){
+      publishAvatarIntent(resolveDialogueIntent(presentation.text,true));
+      return;
+    }
+    if(lastAssistantStatus!=="complete")return;
+    avatarDirectorTurnRef.current.pending=false;
+    const turnId=lastAssistant.id;
+    const assistantIndex=snapshot.messages.findIndex(message=>message.id===turnId);
+    const userMessage=assistantIndex>=0
+      ? [...snapshot.messages.slice(0,assistantIndex)].reverse().find(message=>message.role==="user")
+      : undefined;
+    void (async()=>{
+      const activeAvatar=await getActiveAvatarBundle();
+      if(!activeAvatar||!activeAvatar.profile.settings.directorEnabled)return;
+      const director=new AvatarDirector(runtime);
+      const intent=await director.analyze({
+        turnId,
+        conversationId:activeConversation.id,
+        userText:userMessage?.content??"",
+        assistantText:presentation.text,
+        providerPresetId:runtime.getActiveProviderPresetId()??"",
+        systemPrompt:resolveAvatarDirectorPrompt(runtime.getSettings())
+      });
+      // A slow local model may finish after a newer assistant turn. Never let stale
+      // analysis overwrite the newer gesture.
+      if(avatarDirectorTurnRef.current.id!==turnId)return;
+      publishAvatarIntent(intent);
+    })();
+  },[lastAssistant?.id,lastAssistant?.content,snapshot.status,lastAssistantStatus,runtime,activeConversation.id]);
   const showContinue=snapshot.status==="interrupted"&&lastAssistantStatus==="interrupted"&&!snapshot.sending;
   const showRegenerate=(snapshot.status==="completed"||snapshot.status==="interrupted")&&(lastAssistantStatus==="complete"||lastAssistantStatus==="interrupted")&&!snapshot.sending;
   const showRetry=snapshot.status==="error"&&!snapshot.sending;
