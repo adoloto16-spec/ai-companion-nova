@@ -64,7 +64,7 @@ export default function AvatarStudioView() {
       const saved = await saveAvatarProfile(active, settings, name);
       await refresh(saved.id);
       const overlay = await findOverlay();
-      if (overlay) await overlay.setIgnoreCursorEvents(saved.settings.overlayPassthrough);
+      if (overlay) await overlay.setIgnoreCursorEvents(saved.settings.overlayPassthrough && !saved.settings.trackCursor);
       publishAvatarProfileUpdated(); setMessage("Avatar profile saved.");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Avatar profile could not be saved."); }
     finally { setBusy(false); }
@@ -87,7 +87,7 @@ export default function AvatarStudioView() {
     try {
       const overlay = await findOverlay();
       if (!overlay) throw new Error("The Tauri avatar-overlay window is not available.");
-      await overlay.setIgnoreCursorEvents(settings.overlayPassthrough);
+      await overlay.setIgnoreCursorEvents(settings.overlayPassthrough && !settings.trackCursor);
       await overlay.show();
       if (!settings.overlayPassthrough) await overlay.setFocus();
       setMessage("Desktop avatar window shown. Drag the avatar window to reposition it.");
@@ -151,6 +151,7 @@ export default function AvatarStudioView() {
           <label><input type="checkbox" checked={settings.trackCursor} onChange={event => update("trackCursor", event.target.checked)} disabled={!active || busy}/> Track cursor</label>\n          <label><input type="checkbox" checked={settings.directorEnabled} onChange={event => update("directorEnabled", event.target.checked)} disabled={!active || busy}/> AI Avatar Director (uses active chat preset)</label>
           <label><input type="checkbox" checked={settings.overlayPassthrough} onChange={event => update("overlayPassthrough", event.target.checked)} disabled={!active || busy}/> Pass pointer through overlay</label>
         </div>
+        {settings.trackCursor&&settings.overlayPassthrough&&<p className="hint">Cursor tracking needs pointer events, so pass-through is temporarily disabled while Track cursor is active.</p>}
         <label>Autonomy<select value={settings.autonomy} onChange={event => update("autonomy", event.target.value as AvatarSettings["autonomy"])} disabled={!active || busy}>
           <option value="off">Off — only explicit actions</option><option value="balanced">Balanced</option><option value="active">Active</option>
         </select></label>
