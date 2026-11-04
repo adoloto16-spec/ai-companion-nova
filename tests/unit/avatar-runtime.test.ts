@@ -14,6 +14,8 @@ import {
 const settings = normalizeAvatarSettings({ scale: 99, cameraDistance: Number.NaN, motionIntensity: -2, autonomy: "invalid", blink: false });
 assert.equal(settings.scale, 1.8);
 assert.equal(settings.cameraDistance, DEFAULT_AVATAR_SETTINGS.cameraDistance);
+assert.equal(normalizeAvatarSettings({ cameraDistance: 1.1 }).cameraDistance, 1.7);
+assert.equal(normalizeAvatarSettings({ trackCursor: true }).trackCursor, true);
 assert.equal(settings.motionIntensity, 0);
 assert.equal(settings.autonomy, "balanced");
 assert.equal(settings.blink, false);
@@ -40,5 +42,8 @@ assert.ok(canvasSource.includes("const leftLeg = bone(\"leftUpperLeg\")"),"human
 assert.ok(canvasSource.includes("action.action === \"wave\""),"the avatar rig has a dedicated arm-wave animation");
 assert.ok(canvasSource.includes('current.vrm?.meta.metaVersion === "0" ? -1 : 1'),"camera uses the VRM 0.x forward direction instead of viewing the back");
 assert.ok(canvasSource.includes("prepareAvatarMaterials(root)"),"loaded avatar material maps are reconfigured for sRGB and uploaded");
+assert.ok(canvasSource.includes("uniforms?.map?.value"),"VRM MToon base-color textures are detected through shader uniforms");
+assert.ok(canvasSource.includes("cursorTargetRef.current"),"cursor gaze target updates without recreating the WebGL renderer");
+assert.ok(canvasSource.includes("const fitDistance = (current.height * 0.56)"),"camera full-body fit is based on unscaled model height");
 assert.ok(canvasSource.includes("baseColorTextures === 0"),"textureless imports report the material/texture diagnosis instead of silently claiming a complete load");
 console.log("avatar-runtime.test.ts: passed");
