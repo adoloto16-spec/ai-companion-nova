@@ -68,7 +68,7 @@ export function normalizeAvatarSettings(input: unknown): AvatarSettings {
     ? value.autonomy : DEFAULT_AVATAR_SETTINGS.autonomy;
   return {
     scale: clamp(Number(value.scale), 0.5, 1.8, DEFAULT_AVATAR_SETTINGS.scale),
-    cameraDistance: clamp(Number(value.cameraDistance), 1.1, 3.5, DEFAULT_AVATAR_SETTINGS.cameraDistance),
+    cameraDistance: clamp(Number(value.cameraDistance), 1.7, 3.5, DEFAULT_AVATAR_SETTINGS.cameraDistance),
     idleMotion: typeof value.idleMotion === "boolean" ? value.idleMotion : true,
     breathing: typeof value.breathing === "boolean" ? value.breathing : true,
     blink: typeof value.blink === "boolean" ? value.blink : true,
