@@ -19,6 +19,7 @@ export interface AvatarSettings {
   breathing: boolean;
   blink: boolean;
   lookAround: boolean;
+  trackCursor: boolean;
   motionIntensity: number;
   autonomy: AvatarAutonomy;
   overlayPassthrough: boolean;
@@ -34,7 +35,7 @@ export interface AvatarProfile {
 }
 export const DEFAULT_AVATAR_SETTINGS: AvatarSettings = {
   scale: 1, cameraDistance: 1.7, idleMotion: true, breathing: true, blink: true,
-  lookAround: true, motionIntensity: 1, autonomy: "balanced", overlayPassthrough: false
+  lookAround: true, trackCursor: false, motionIntensity: 1, autonomy: "balanced", overlayPassthrough: false
 };
 export type AvatarSignal =
   | { type: "dialogue"; text: string; speaking: boolean }
@@ -72,6 +73,7 @@ export function normalizeAvatarSettings(input: unknown): AvatarSettings {
     breathing: typeof value.breathing === "boolean" ? value.breathing : true,
     blink: typeof value.blink === "boolean" ? value.blink : true,
     lookAround: typeof value.lookAround === "boolean" ? value.lookAround : true,
+    trackCursor: typeof value.trackCursor === "boolean" ? value.trackCursor : false,
     motionIntensity: clamp(Number(value.motionIntensity), 0, 2, DEFAULT_AVATAR_SETTINGS.motionIntensity),
     autonomy,
     overlayPassthrough: typeof value.overlayPassthrough === "boolean" ? value.overlayPassthrough : false
