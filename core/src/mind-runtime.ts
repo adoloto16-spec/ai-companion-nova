@@ -428,7 +428,8 @@ export class MindRuntime {
       }
       this.consecutiveErrors += 1;
       finishFailedSpeech=streamedPublicSpeech;
-      const providerErrorCode=providerChatErrorCode(error);\n      if (reactiveTurn) this.failReactiveTurn(reactiveTurn, error instanceof Error ? error.name : "COGNITIVE_STEP_FAILED", providerErrorCode);
+      const providerErrorCode=providerChatErrorCode(error);
+      if (reactiveTurn) this.failReactiveTurn(reactiveTurn, error instanceof Error ? error.name : "COGNITIVE_STEP_FAILED", providerErrorCode);
       applied = this.errorBackoffMs(); decision = "error-backoff"; nextDelay = applied; nextReason = "error-backoff";
       const errorCode = cancellation === "timeout" ? "STEP_TIMEOUT" : error instanceof Error ? error.name : "COGNITIVE_STEP_FAILED";
       const safeReason=(error instanceof Error?error.message:"Cognitive step failed.")
