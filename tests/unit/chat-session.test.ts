@@ -96,7 +96,7 @@ async function main(){
   equal(contextRequests.length,1,"chat invokes the unified context engine boundary");
   equal(contextRequests[0]?.characterId,"character.context","context build is character scoped");
   equal(contextRequests[0]?.messages.at(-1)?.content,"hello","context query contains latest user message");
-  equal(contextRequests[0]?.messages.at(-1)?.images?.[0]?.dataBase64,"aGVsbG8=","original user message contains the screenshot before context assembly");
+  equal(contextRequests[0]?.messages.at(-1)?.images,undefined,"binary screenshots are kept out of the text-only Context Engine input");
   equal(contextChatRequests[0]?.context.messages.at(-1)?.content,"memory context","assembled context reaches ChatRequest");
   equal(contextChatRequests[0]?.context.messages.find(message=>message.id==="context-1:user")?.images?.[0]?.dataBase64,"aGVsbG8=","screenshot payload is restored after text-only context assembly");
   equal(contextChatRequests[0]?.context.messages.find(message=>message.id==="context-1:user")?.metadata?.traceImageAttachmentCount,undefined,"live Chat request uses the attachment, not the redacted trace request");
