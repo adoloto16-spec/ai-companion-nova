@@ -445,6 +445,8 @@ function ChatView({controller,runtime,character,conversations,activeConversation
       try{
         const activeAvatar=await getActiveAvatarBundle();
         if(!activeAvatar||!activeAvatar.profile.settings.directorEnabled||activeAvatar.profile.settings.autonomy==="off")return;
+        const directorPrompt=resolveAvatarDirectorPrompt(runtime.getSettings());
+        if(!directorPrompt.trim())return;
         const director=new AvatarDirector(runtime);
         const intent=await director.analyze({
           turnId,
@@ -452,7 +454,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
           userText:userMessage?.content??"",
           assistantText:presentation.text,
           providerPresetId:runtime.getActiveProviderPresetId()??"",
-          systemPrompt:resolveAvatarDirectorPrompt(runtime.getSettings())
+          systemPrompt:directorPrompt
         });
         // A slow local model or a changed profile may finish after a newer turn.
         // Never let stale analysis or a disabled Director overwrite the current pose.
