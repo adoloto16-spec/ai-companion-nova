@@ -290,8 +290,14 @@ function ChatView({controller,runtime,character,conversations,activeConversation
           submittedImages.push(await activeSession.capture());
           if(visionSessionRef.current!==activeSession)throw new Error("Vision was switched off before the screenshot finished.");
         }catch(error){
-          if(visionViewMountedRef.current)setCaptureError("Vision screenshot failed; the message was not sent. "+safeErrorMessage(error,"Screen capture failed."));
-          return;
+          const detail=safeErrorMessage(error,"Screen capture failed.");
+          if(!submittedDraft.trim()){
+            if(visionViewMountedRef.current)setCaptureError("Vision screenshot failed; enter a text prompt or try sharing the screen again. "+detail);
+            return;
+          }
+          // Image capture is optional. A failed or revoked screen-share must not discard
+          // the user's typed message or leave ordinary chat unusable.
+          if(visionViewMountedRef.current)setCaptureError("Vision screenshot failed; sending your text message without an image. "+detail);
         }finally{
           if(visionViewMountedRef.current)setCaptureBusy(false);
         }
