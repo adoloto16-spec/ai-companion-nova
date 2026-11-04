@@ -148,7 +148,8 @@ export default function AvatarStudioView() {
           <label><input type="checkbox" checked={settings.breathing} onChange={event => update("breathing", event.target.checked)} disabled={!active || busy}/> Breathing</label>
           <label><input type="checkbox" checked={settings.blink} onChange={event => update("blink", event.target.checked)} disabled={!active || busy}/> Blinking</label>
           <label><input type="checkbox" checked={settings.lookAround} onChange={event => update("lookAround", event.target.checked)} disabled={!active || busy}/> Look around</label>
-          <label><input type="checkbox" checked={settings.trackCursor} onChange={event => update("trackCursor", event.target.checked)} disabled={!active || busy}/> Track cursor</label>\n          <label><input type="checkbox" checked={settings.directorEnabled} onChange={event => update("directorEnabled", event.target.checked)} disabled={!active || busy}/> AI Avatar Director (uses active chat preset)</label>
+          <label><input type="checkbox" checked={settings.trackCursor} onChange={event => update("trackCursor", event.target.checked)} disabled={!active || busy}/> Track cursor</label>
+          <label><input type="checkbox" checked={settings.directorEnabled} onChange={event => update("directorEnabled", event.target.checked)} disabled={!active || busy}/> AI Avatar Director (uses active chat preset)</label>
           <label><input type="checkbox" checked={settings.overlayPassthrough} onChange={event => update("overlayPassthrough", event.target.checked)} disabled={!active || busy}/> Pass pointer through overlay</label>
         </div>
         {settings.trackCursor&&settings.overlayPassthrough&&<p className="hint">Cursor tracking needs pointer events, so pass-through is temporarily disabled while Track cursor is active.</p>}
