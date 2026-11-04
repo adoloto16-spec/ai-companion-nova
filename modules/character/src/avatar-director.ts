@@ -57,7 +57,7 @@ export function parseAvatarDirectorOutput(content: string): AvatarIntent | undef
 
 export function resolveAvatarDirectorPrompt(settings: AppSettings): string {
   const assembly = assemblePromptInstructions(settings.prompts, "avatar-director", "assistant-response");
-  return assembly.text.trim() || DEFAULT_AVATAR_DIRECTOR_PROMPT;
+  return assembly.error ? "" : assembly.text.trim();
 }
 
 export class AvatarDirector {
@@ -81,7 +81,11 @@ export class AvatarDirector {
         context: {
           conversationId: input.conversationId,
           messages: [
-            { role: "system", content: input.systemPrompt?.trim() || DEFAULT_AVATAR_DIRECTOR_PROMPT },
+            ...(input.systemPrompt === undefined
+              ? [{ role: "system" as const, content: DEFAULT_AVATAR_DIRECTOR_PROMPT }]
+              : input.systemPrompt.trim()
+                ? [{ role: "system" as const, content: input.systemPrompt.trim() }]
+                : []),
             { role: "user", content: [
               "User message:",
               input.userText.slice(0, 4000),
