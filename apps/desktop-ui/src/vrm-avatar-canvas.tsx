@@ -42,7 +42,11 @@ function prepareAvatarMaterials(root: THREE.Object3D): { meshes: number; materia
       materials++;
       // GLTF/VRM base-color textures use sRGB. Reassert it for both standard and MToon materials
       // and request an upload before the first frame instead of silently rendering as untextured.
-      const map = (material as THREE.Material & { map?: THREE.Texture | null }).map;
+      // GLTF PBR materials expose .map; three-vrm MToon stores the same base-color
+      // texture in uniforms.map. Handle both or valid VRM textures are misdiagnosed as absent.
+      const standardMap = (material as THREE.Material & { map?: THREE.Texture | null }).map;
+      const shaderMap = (material as THREE.ShaderMaterial).uniforms?.map?.value as THREE.Texture | null | undefined;
+      const map = standardMap instanceof THREE.Texture ? standardMap : shaderMap;
       if (map instanceof THREE.Texture) {
         map.colorSpace = THREE.SRGBColorSpace;
         map.needsUpdate = true;
@@ -271,10 +275,15 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
         }
         current.vrm?.update(delta);
         const center = current.center.clone().multiplyScalar(prefs.scale);
-        const height = current.height * prefs.scale;
+        // Keep framing independent from model scale. Previously the camera distance was
+        // multiplied by the same scale as the model, cancelling the scale slider entirely.
+        // Derive a safe full-body distance from the vertical FOV, then let cameraDistance
+        // act as a zoom multiplier. The 12% margin keeps hands/feet inside the viewport.
+        const fitDistance = (current.height * prefs.scale * 0.56) / Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
         // VRM 0.x faces -Z; VRM 1.0 faces +Z. A fixed +Z camera views VRM 0.x from behind.
         const cameraSide = current.vrm?.meta.metaVersion === "0" ? -1 : 1;
-        camera.position.set(center.x, center.y + height * 0.04, center.z + height * prefs.cameraDistance * cameraSide);
+        const distance = fitDistance * Math.max(1, prefs.cameraDistance);
+        camera.position.set(center.x, center.y + current.height * prefs.scale * 0.02, center.z + distance * cameraSide);
         camera.lookAt(center);
       }
       renderer.render(scene, camera);
