@@ -42,3 +42,12 @@ The viewer selects its front-camera side from VRM metadata: VRM 0.x faces -Z, wh
 - Model scale and camera framing are independent. The camera fit is derived from the unscaled model bounds and vertical field of view; the camera-distance setting is a zoom-out multiplier with a safe minimum.
 - `Track cursor` is an opt-in profile setting. The overlay polls the Tauri window cursor position and maps it into a bounded gaze target; the VRM head controller applies limited yaw/pitch.
 - GLB PBR base-color textures are exposed as material maps, while VRM MToon base-color textures are stored in `uniforms.map.value`. Material preparation handles both paths and reasserts sRGB before upload.
+
+
+## Avatar Director and procedural rig goals
+
+The Avatar Director is a separate, optional chat-agent request. It runs once after a completed assistant reply, uses the currently active chat provider preset, and does not delay the user-facing answer. Its settings toggle is stored with the active avatar profile. Provider or parsing failures fall back to a neutral, bounded intent; an older analysis result is discarded if a newer turn has already started.
+
+The agent returns only a typed semantic intent: gesture, expression, gaze, intensity and duration. Its prompt is a dedicated `avatar-director` record in Prompt Presets. The output is validated in code and never contains bone names, quaternions or arbitrary transforms.
+
+The procedural Bone Controller turns semantic gestures into smoothed hand-space goals and torso/weight-shift targets. For VRM humanoids with both normalized hand end-effectors, the renderer solves upper-arm and forearm chains with analytic two-bone IK. Goals are clamped to reachable arm length; missing hand bones use the legacy conservative pose fallback. No canned clips are required for these generated gestures. Existing embedded GLB clips remain a separate playback path. Full-body IK, collision-aware foot planting, spring simulation and per-model joint-limit calibration are not implemented yet.
