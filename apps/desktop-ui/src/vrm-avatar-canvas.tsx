@@ -279,10 +279,10 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
         // multiplied by the same scale as the model, cancelling the scale slider entirely.
         // Derive a safe full-body distance from the vertical FOV, then let cameraDistance
         // act as a zoom multiplier. The 12% margin keeps hands/feet inside the viewport.
-        const fitDistance = (current.height * prefs.scale * 0.56) / Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
+        const fitDistance = (current.height * 0.56) / Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
         // VRM 0.x faces -Z; VRM 1.0 faces +Z. A fixed +Z camera views VRM 0.x from behind.
         const cameraSide = current.vrm?.meta.metaVersion === "0" ? -1 : 1;
-        const distance = fitDistance * Math.max(1, prefs.cameraDistance);
+        const distance = fitDistance * (prefs.cameraDistance / 1.7);
         camera.position.set(center.x, center.y + current.height * prefs.scale * 0.02, center.z + distance * cameraSide);
         camera.lookAt(center);
       }
