@@ -61,7 +61,12 @@ function prepareAvatarMaterials(root: THREE.Object3D): { meshes: number; materia
 }
 
 
-function vectorData(value: THREE.Vector3): { x: number; y: number; z: number } {
+
+function sameAvatarIntent(a: AvatarIntent, b: AvatarIntent): boolean {
+  return a.action === b.action && a.expression === b.expression && a.intensity === b.intensity &&
+    a.gesture === b.gesture && a.gaze === b.gaze && a.durationMs === b.durationMs;
+}
+\nfunction vectorData(value: THREE.Vector3): { x: number; y: number; z: number } {
   return { x: value.x, y: value.y, z: value.z };
 }
 
@@ -251,7 +256,7 @@ export default function VrmAvatarCanvas({ profile, settings, intent, cursorTarge
         }
         // Let embedded GLB animation update its own tracks before applying the procedural VRM pose.
         current.mixer?.update(delta);
-        if (action !== previousIntent) { boneController.setIntent(action); previousIntent = action; }
+        if (action !== previousIntent) {\n          if (!sameAvatarIntent(action, previousIntent) || boneController.hasFinishedGesture()) boneController.setIntent(action);\n          previousIntent = action;\n        }
         const boneFrame = boneController.update(delta);
 
         const bone = (name: HumanoidBone) => current.bones[name];
