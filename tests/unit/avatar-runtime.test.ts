@@ -75,6 +75,8 @@ assert.ok(canvasSource.includes("cursorTargetRef.current"),"cursor gaze target u
 assert.ok(overlaySource.includes('window.addEventListener("pointermove", handlePointerMove'),"cursor gaze uses supported WebView pointer events");
 assert.ok(overlaySource.includes("overlayPassthrough && !next.profile.settings.trackCursor"),"cursor tracking keeps pointer events enabled in the native overlay");
 assert.ok(canvasSource.includes("applyTwoBoneArmIk"),"semantic arm gestures are solved against normalized VRM hand end-effectors");
+assert.ok(canvasSource.includes("candidate.isTexture === true")&&!canvasSource.includes('"needsUpdate" in candidate'),"texture diagnostics use Three.js isTexture marker and do not reject the needsUpdate setter");
+assert.ok(canvasSource.includes("decodedBaseColorTextures")&&canvasSource.includes("missingBaseColorTextureImages"),"avatar diagnostics distinguish assigned textures from unavailable image pixels");
 assert.ok(canvasSource.includes("(current.height * 0.56) / Math.tan(verticalHalfFov)") && canvasSource.includes("(current.width * 0.56) / Math.tan(horizontalHalfFov)"),"camera full-body fit accounts for both unscaled model height and width");
 assert.ok(canvasSource.includes("baseColorTextures === 0"),"textureless imports report the material/texture diagnosis instead of silently claiming a complete load");
 console.log("avatar-runtime.test.ts: passed");
