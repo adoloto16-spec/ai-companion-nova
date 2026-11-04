@@ -58,7 +58,7 @@ function prepareAvatarMaterials(root: THREE.Object3D): { meshes: number; materia
   return { meshes, materials, baseColorTextures };
 }
 
-export default function VrmAvatarCanvas({ profile, settings, intent, className = "" }: {
+export default function VrmAvatarCanvas({ profile, settings, intent, cursorTarget, className = "" }: {
   profile?: AvatarProfile;
   settings: AvatarSettings;
   intent: AvatarIntent;
