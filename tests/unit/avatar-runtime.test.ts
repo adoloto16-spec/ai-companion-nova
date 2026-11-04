@@ -64,6 +64,6 @@ assert.ok(canvasSource.includes("prepareAvatarMaterials(root)"),"loaded avatar m
 assert.ok(canvasSource.includes("uniforms?.map?.value"),"VRM MToon base-color textures are detected through shader uniforms");
 assert.ok(canvasSource.includes("cursorTargetRef.current"),"cursor gaze target updates without recreating the WebGL renderer");
 assert.ok(canvasSource.includes("applyTwoBoneArmIk"),"semantic arm gestures are solved against normalized VRM hand end-effectors");
-assert.ok(canvasSource.includes("const fitDistance = (current.height * 0.56)"),"camera full-body fit is based on unscaled model height");
+assert.ok(canvasSource.includes("(current.height * 0.56) / Math.tan(verticalHalfFov)") && canvasSource.includes("(current.width * 0.56) / Math.tan(horizontalHalfFov)"),"camera full-body fit accounts for both unscaled model height and width");
 assert.ok(canvasSource.includes("baseColorTextures === 0"),"textureless imports report the material/texture diagnosis instead of silently claiming a complete load");
 console.log("avatar-runtime.test.ts: passed");
