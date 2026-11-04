@@ -66,7 +66,8 @@ function sameAvatarIntent(a: AvatarIntent, b: AvatarIntent): boolean {
   return a.action === b.action && a.expression === b.expression && a.intensity === b.intensity &&
     a.gesture === b.gesture && a.gaze === b.gaze && a.durationMs === b.durationMs;
 }
-\nfunction vectorData(value: THREE.Vector3): { x: number; y: number; z: number } {
+
+function vectorData(value: THREE.Vector3): { x: number; y: number; z: number } {
   return { x: value.x, y: value.y, z: value.z };
 }
 
