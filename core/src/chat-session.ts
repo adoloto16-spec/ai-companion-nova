@@ -654,12 +654,20 @@ export class ChatSessionController{
       }
       if(this.contextBuilder){
         const budget=this.contextBudgetProvider?.()??this.contextBudget;
+        // Context Engine intentionally receives text-only conversation messages.
+        // Binary screenshot payloads stay attached to the canonical ChatRequest and are
+        // restored by message id after context assembly; they must not enter tokenization,
+        // retrieval candidates, or the text-only ContextBuildRequest schema.
+        const textOnlyContextMessages=contextMessages.map(message=>{
+          const {images:_images,...textOnly}=message;
+          return textOnly;
+        });
         const assembled=await this.contextBuilder.buildContext({
           apiVersion:"1",
           schemaVersion:"1",
           characterId:this.session.characterId,
           conversationId:this.session.conversationId,
-          messages:contextMessages,
+          messages:textOnlyContextMessages,
           budget
         });
         this.traceStore?.update(active.requestId,{contextBuild:{
