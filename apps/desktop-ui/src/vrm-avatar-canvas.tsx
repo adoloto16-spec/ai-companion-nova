@@ -69,11 +69,13 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
   const settingsRef = React.useRef(settings);
   const intentRef = React.useRef(intent);
   const cursorTargetRef = React.useRef(cursorTarget);
+  const cursorTargetRef = React.useRef(cursorTarget);
   const [status, setStatus] = React.useState("No model loaded");
   const [error, setError] = React.useState("");
 
   React.useEffect(() => { settingsRef.current = settings; }, [settings]);
   React.useEffect(() => { intentRef.current = intent; }, [intent]);
+  React.useEffect(() => { cursorTargetRef.current = cursorTarget; }, [cursorTarget]);
   React.useEffect(() => { cursorTargetRef.current = cursorTarget; }, [cursorTarget]);
 
   React.useEffect(() => {
