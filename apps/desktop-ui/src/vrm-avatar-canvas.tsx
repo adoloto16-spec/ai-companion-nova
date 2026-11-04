@@ -256,7 +256,10 @@ export default function VrmAvatarCanvas({ profile, settings, intent, cursorTarge
         }
         // Let embedded GLB animation update its own tracks before applying the procedural VRM pose.
         current.mixer?.update(delta);
-        if (action !== previousIntent) {\n          if (!sameAvatarIntent(action, previousIntent) || boneController.hasFinishedGesture()) boneController.setIntent(action);\n          previousIntent = action;\n        }
+        if (action !== previousIntent) {
+          if (!sameAvatarIntent(action, previousIntent) || boneController.hasFinishedGesture()) boneController.setIntent(action);
+          previousIntent = action;
+        }
         const boneFrame = boneController.update(delta);
 
         const bone = (name: HumanoidBone) => current.bones[name];
