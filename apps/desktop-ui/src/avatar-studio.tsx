@@ -138,7 +138,7 @@ export default function AvatarStudioView() {
           <input type="range" min="0.5" max="1.8" step="0.05" value={settings.scale} onChange={event => update("scale", Number(event.target.value))} disabled={!active || busy}/>
         </label>
         <label className="avatar-slider-label">Camera distance <output>{settings.cameraDistance.toFixed(1)}×</output>
-          <input type="range" min="1.1" max="3.5" step="0.1" value={settings.cameraDistance} onChange={event => update("cameraDistance", Number(event.target.value))} disabled={!active || busy}/>
+          <input type="range" min="1.7" max="3.5" step="0.1" value={settings.cameraDistance} onChange={event => update("cameraDistance", Number(event.target.value))} disabled={!active || busy}/>
         </label>
         <label className="avatar-slider-label">Motion intensity <output>{Math.round(settings.motionIntensity*100)}%</output>
           <input type="range" min="0" max="2" step="0.1" value={settings.motionIntensity} onChange={event => update("motionIntensity", Number(event.target.value))} disabled={!active || busy}/>
