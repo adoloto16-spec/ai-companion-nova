@@ -444,6 +444,12 @@ async function main(){
   equal(lifeController.getSnapshot().messages.at(-1)?.role,"user","invalid speech leaves the user message retryable");
   lifeController.failLifeTurn(context.userMessageId!,"REACTIVE_SPEECH_REQUIRED");
   equal(lifeController.getSnapshot().lifeTurn?.status,"failed","empty speech is surfaced as a failed Life turn");
+  equal(lifeController.getSnapshot().errorCode,undefined,"empty cognitive speech is not mislabeled as a provider failure");
+  equal(lifeController.getSnapshot().error,"Nova Life could not complete this reply. Retry Nova Life.","non-provider Life failure gets a truthful generic message");
+  lifeController.retryLife(()=>true);
+  lifeController.failLifeTurn(context.userMessageId!,"OllamaProviderError","PROVIDER_UNAVAILABLE");
+  equal(lifeController.getSnapshot().errorCode,"PROVIDER_UNAVAILABLE","actual provider error code is retained");
+  equal(lifeController.getSnapshot().error,"The chat provider is unavailable. Check provider settings or try again.","actual provider failure uses its specific safe message");
   const retried=lifeController.retryLife(()=>true);
   equal(retried.status,"awaiting-life","failed reactive turn can be retried using its persisted user message");
 
