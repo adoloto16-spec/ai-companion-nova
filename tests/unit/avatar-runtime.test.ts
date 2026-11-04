@@ -10,6 +10,7 @@ import {
   publishAvatarIntent,
   subscribeAvatarEvents,
   solveTwoBoneIk,
+  AvatarBoneController,
   parseAvatarDirectorOutput
 } from "../../modules/character/src/index";
 
