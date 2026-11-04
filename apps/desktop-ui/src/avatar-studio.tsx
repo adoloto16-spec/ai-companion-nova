@@ -64,7 +64,7 @@ export default function AvatarStudioView() {
       const saved = await saveAvatarProfile(active, settings, name);
       await refresh(saved.id);
       const overlay = await findOverlay();
-      if (overlay) await overlay.setIgnoreCursorEvents(saved.settings.overlayPassthrough);
+      if (overlay) await overlay.setIgnoreCursorEvents(saved.settings.overlayPassthrough && !saved.settings.trackCursor);
       publishAvatarProfileUpdated(); setMessage("Avatar profile saved.");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Avatar profile could not be saved."); }
     finally { setBusy(false); }
@@ -87,7 +87,7 @@ export default function AvatarStudioView() {
     try {
       const overlay = await findOverlay();
       if (!overlay) throw new Error("The Tauri avatar-overlay window is not available.");
-      await overlay.setIgnoreCursorEvents(settings.overlayPassthrough);
+      await overlay.setIgnoreCursorEvents(settings.overlayPassthrough && !settings.trackCursor);
       await overlay.show();
       if (!settings.overlayPassthrough) await overlay.setFocus();
       setMessage("Desktop avatar window shown. Drag the avatar window to reposition it.");
@@ -138,7 +138,7 @@ export default function AvatarStudioView() {
           <input type="range" min="0.5" max="1.8" step="0.05" value={settings.scale} onChange={event => update("scale", Number(event.target.value))} disabled={!active || busy}/>
         </label>
         <label className="avatar-slider-label">Camera distance <output>{settings.cameraDistance.toFixed(1)}×</output>
-          <input type="range" min="1.1" max="3.5" step="0.1" value={settings.cameraDistance} onChange={event => update("cameraDistance", Number(event.target.value))} disabled={!active || busy}/>
+          <input type="range" min="1.7" max="3.5" step="0.1" value={settings.cameraDistance} onChange={event => update("cameraDistance", Number(event.target.value))} disabled={!active || busy}/>
         </label>
         <label className="avatar-slider-label">Motion intensity <output>{Math.round(settings.motionIntensity*100)}%</output>
           <input type="range" min="0" max="2" step="0.1" value={settings.motionIntensity} onChange={event => update("motionIntensity", Number(event.target.value))} disabled={!active || busy}/>
@@ -148,8 +148,11 @@ export default function AvatarStudioView() {
           <label><input type="checkbox" checked={settings.breathing} onChange={event => update("breathing", event.target.checked)} disabled={!active || busy}/> Breathing</label>
           <label><input type="checkbox" checked={settings.blink} onChange={event => update("blink", event.target.checked)} disabled={!active || busy}/> Blinking</label>
           <label><input type="checkbox" checked={settings.lookAround} onChange={event => update("lookAround", event.target.checked)} disabled={!active || busy}/> Look around</label>
+          <label><input type="checkbox" checked={settings.trackCursor} onChange={event => update("trackCursor", event.target.checked)} disabled={!active || busy}/> Track cursor</label>
+          <label><input type="checkbox" checked={settings.directorEnabled} onChange={event => update("directorEnabled", event.target.checked)} disabled={!active || busy}/> AI Avatar Director (uses active chat preset)</label>
           <label><input type="checkbox" checked={settings.overlayPassthrough} onChange={event => update("overlayPassthrough", event.target.checked)} disabled={!active || busy}/> Pass pointer through overlay</label>
         </div>
+        {settings.trackCursor&&settings.overlayPassthrough&&<p className="hint">Cursor tracking needs pointer events, so pass-through is temporarily disabled while Track cursor is active.</p>}
         <label>Autonomy<select value={settings.autonomy} onChange={event => update("autonomy", event.target.value as AvatarSettings["autonomy"])} disabled={!active || busy}>
           <option value="off">Off — only explicit actions</option><option value="balanced">Balanced</option><option value="active">Active</option>
         </select></label>

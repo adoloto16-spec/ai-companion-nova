@@ -34,3 +34,25 @@ The animation layer remains procedural and modest; it is not full-body inverse k
 ## Orientation and material diagnostics
 
 The viewer selects its front-camera side from VRM metadata: VRM 0.x faces -Z, while VRM 1.0 faces +Z. For loaded meshes, the renderer also reasserts sRGB color space and marks base-color maps for GPU upload. If the model contains meshes and materials but no base-color texture maps, Avatar Studio displays that diagnosis instead of silently reporting a complete load. This distinguishes a file exported without embedded textures from a rendering failure; confirm the actual map counts with the user's asset if it still appears white.
+
+
+## Overlay controls and gaze tracking
+
+- The frameless overlay uses Tauri's native window-drag region. Its capability must explicitly include `core:window:allow-start-dragging`; `core:window:default` does not grant this command.
+- Model scale and camera framing are independent. The camera fit is derived from the unscaled model bounds and vertical field of view; the camera-distance setting is a zoom-out multiplier with a safe minimum.
+- `Track cursor` is an opt-in profile setting. The overlay maps pointer-move events in the WebView into a bounded gaze target; the VRM head controller applies limited yaw/pitch. Because Tauri pass-through windows do not receive pointer events, enabling cursor tracking temporarily disables pass-through so gaze input can be observed.
+- GLB PBR base-color textures are exposed as material maps, while VRM MToon base-color textures are stored in `uniforms.map.value`. Material preparation handles both paths and reasserts sRGB before upload. Texture diagnostics use Three.js' `isTexture` marker, count decoded image dimensions, and report external image URI references. The current importer reads one self-contained `.vrm`/`.glb` binary; external `.gltf` sidecar images are not bundled or resolved yet.
+
+
+## Avatar Director and procedural rig goals
+
+The Avatar Director is a separate, optional chat-agent request. It runs once after a completed assistant reply, uses the currently active chat provider preset, and does not delay the user-facing answer. Its settings toggle is stored with the active avatar profile. Provider or parsing failures fall back to a neutral, bounded intent; an older analysis result is discarded if a newer turn has already started.
+
+The agent returns only a typed semantic intent: gesture, expression, gaze, intensity and duration. Its prompt is a dedicated `avatar-director` record in Prompt Presets. The output is validated in code and never contains bone names, quaternions or arbitrary transforms.
+
+The procedural Bone Controller turns semantic gestures into smoothed hand-space goals and torso/weight-shift targets. For VRM humanoids with both normalized hand end-effectors, the renderer solves upper-arm and forearm chains with analytic two-bone IK. Goals are clamped to reachable arm length; missing hand bones use the legacy conservative pose fallback. No canned clips are required for these generated gestures. Existing embedded GLB clips remain a separate playback path. Full-body IK, collision-aware foot planting, spring simulation and per-model joint-limit calibration are not implemented yet.
+
+
+## Image attachments and text-only context
+
+ChatRequest accepts bounded image attachments on user messages. The Context Engine remains intentionally text-only: screenshot bytes are removed before context tokenization and retrieval, then restored by message id before the selected chat provider receives the request. Normal Chat and Nova Life use the same separation. If optional screen capture fails while the user typed a prompt, the prompt is still sent without the image and the UI reports the fallback; a Vision-only send without a prompt remains blocked.

@@ -314,3 +314,43 @@ Log policy: append an entry for each implementation or verification action; reco
 ### Verification status
 - This commit requires a fresh GitHub Actions run. The provider test validates request serialization, not a live call to the user's local Ollama instance. The exact installed build and live request still need to be checked if the model continues to answer as if no image were attached.
 - Texture rendering and procedural pose remain subject to the user's specific VRM file and live Windows WebView; the app should not claim that asset-specific visual verification has passed.
+
+
+## 2026-11-04 — Entry 019: separate Avatar Director and procedural VRM bone goals
+
+### Findings
+- The previous Chat integration derived a small intent from regular expressions. It did not reason about the user message and completed reply as a separate task, and the renderer's gesture behavior was directly coupled to a few action names.
+- The avatar response observer needed to end the streaming/talking pose even when the optional Director was disabled, unavailable, or failed. A background result also must not overwrite a newer turn or a profile whose Director setting has since been disabled.
+- A generic GLB is not guaranteed to contain a VRM humanoid mapping. The new inverse-kinematics path therefore targets normalized VRM humanoid arm bones; GLB assets with embedded clips remain on their existing animation path.
+
+### Corrective implementation
+- Added a provider-neutral `AvatarDirector` that runs once after a completed assistant reply, using the active chat provider preset. It receives the preceding user message and public assistant reply, returns a bounded JSON-schema intent, and cannot block the Chat response.
+- Added an editable `avatar-director` prompt record to the prompt registry and exposed the agent in Prompt Presets diagnostics. A profile-level toggle controls the Director; autonomy-off also suppresses autonomous Director requests.
+- Validated agent output against a small allowlist of gesture, expression and gaze labels plus intensity/duration bounds. The agent cannot name bones or send transforms. Invalid output and provider/lookup failures settle to a neutral rest intent.
+- Added a procedural Bone Controller that turns semantic gestures into smoothed hand-space goals and torso/weight-shift targets. Added an analytic, bounded two-bone IK solver and wired it to normalized VRM upper-arm, lower-arm and hand bones. The previous pose path remains as a compatibility fallback when a VRM lacks hand effectors.
+- Updated horizontal and vertical camera fit, renderer regression coverage, Avatar Studio settings and this avatar-system reference.
+
+### Verification status
+- Source-level unit coverage now exercises IK segment lengths and bend-plane selection, semantic greeting/return-to-rest blending, strict Director output parsing, profile setting normalization and renderer integration.
+- GitHub Actions has not yet run against this entry; TypeScript/UI/Rust builds and the Windows installer must pass before this branch is considered CI-verified.
+- The exact user VRM/GLB still requires visual validation on Windows. The current IK implementation covers arms, not full-body leg IK, collision avoidance, foot planting or secondary spring simulation. It does not claim to replace embedded GLB animation playback.
+
+
+## 2026-11-04 — Entry 020: repair image-bearing Chat requests and texture detection
+
+### Findings
+- The canonical `chat-message` schema already allowed bounded image attachments, but the inline message schema nested inside `chat-request` did not. Because `additionalProperties` is false, AiRuntime rejected a request containing images before any provider could receive it.
+- The normal ChatSession and Nova Life cognitive path passed image-bearing messages into Context Engine. Context Engine schemas are intentionally text-only, so an image could make the context build fail before model invocation.
+- Vision's screenshot capture failure previously returned before sending, even when the user had typed a normal text message. This coupled optional screen sharing to basic Chat usability.
+- The first texture-diagnostics implementation used an `in` check for `Texture.needsUpdate`. In Three.js this is a setter, so the check rejected valid textures and falsely reported missing maps.
+
+### Corrective implementation
+- Added the existing bounded `images` contract to nested `chat-request.context.messages` and regenerated the committed schema catalogue. Added a contract test for a complete image-bearing ChatRequest.
+- Normal Chat and LLMCognitiveStep now strip binary images before calling Context Engine, then restore the original attachments by message id before constructing the provider request. Text, context budgeting, and retrieval remain unchanged.
+- If a screen capture fails while a text prompt is present, Chat now sends the text-only request and keeps a visible warning. A Vision-only request with no prompt still stops rather than sending a misleading empty instruction.
+- Texture recognition now uses Three.js' `isTexture` marker instead of testing for the `needsUpdate` setter. Avatar diagnostics distinguish missing base-color maps, external image URI sidecars, and texture maps whose image pixels did not decode.
+
+### Verification status
+- Added regression tests for canonical image-bearing ChatRequest validation, text-only Context Engine boundaries in ordinary Chat and Nova Life, text fallback after Vision capture failure, and Three.js texture recognition.
+- The previous avatar PR CI passed foundation, React UI, Rust/Tauri, Windows NSIS build and staged Windows application smoke-test. The latest image/texture fixes are being verified in a fresh run; they are not yet declared green.
+- The user's exact VRM/GLB has not been available for a visual texture check. This importer currently accepts self-contained single-file VRM/GLB assets; external sidecar image files are diagnosed but not yet imported as a multi-file asset bundle.

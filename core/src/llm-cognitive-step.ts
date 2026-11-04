@@ -111,9 +111,16 @@ export class LLMCognitiveStep implements CognitiveStep {
       reactiveUserMessage=cloneMessage(latestUser);
     }
     throwIfAborted(context.signal);
+    // Context Engine is deliberately text-only: its schemas, token budget, retrieval,
+    // and ranking operate on message text. Keep binary screenshot attachments out of this
+    // boundary, then restore them by message id before constructing the provider request.
+    const textOnlyConversationMessages=conversation.messages.map(message=>{
+      const {images:_images,...textOnly}=message;
+      return textOnly;
+    });
     const assembled=await this.options.buildContext({
       apiVersion:CONTEXT_API_VERSION,schemaVersion:CONTEXT_SCHEMA_VERSION,characterId:character.id,
-      conversationId:conversation.id,messages:conversation.messages,budget:this.options.getContextBudget(),
+      conversationId:conversation.id,messages:textOnlyConversationMessages,budget:this.options.getContextBudget(),
     });
     throwIfAborted(context.signal);
     const promptScenario=context.userTurn?"reactive":"background";

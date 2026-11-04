@@ -247,11 +247,18 @@ async function cognitiveVisionOnlyPassesLatestStoredScreenshot():Promise<void>{
   const history={...conversation,messages:[olderScreenshot,latestUser]} as unknown as Conversation;
   for(const enabled of [false,true]){
     const requests:ChatRequest[]=[];
+    const contextInputs:ChatMessage[][]=[];
     const runtime={async chat(request:ChatRequest):Promise<ChatResponse>{requests.push(request);return responseFor(request,"Screen-aware reply.");}};
     await createStep(runtime,undefined,{
       getVisionEnabled:()=>enabled,
-      getActiveConversation:async()=>history
+      getActiveConversation:async()=>history,
+      buildContext:async request=>{
+        contextInputs.push([...request.messages]);
+        return {apiVersion:"1",schemaVersion:"1",characterId:request.characterId,conversationId:request.conversationId,
+          messages:request.messages,includedCandidates:[],omittedCandidates:[],budget:request.budget,estimatedTokens:10} as AssembledContext;
+      }
     }).run(context(()=>{}));
+    equal(contextInputs[0]?.some(message=>message.images?.length),false,"Life Context Engine receives no binary screenshot payload");
     const images=requests[0]!.context.messages.filter(message=>message.images?.length);
     equal(images.map(message=>message.id),enabled?["user-message"]:[],"Agent Vision controls stored screenshot reuse and only passes the latest image");
     if(enabled)equal(images[0]?.images?.[0]?.alt,"latest","the most recent existing screenshot is chosen, without taking a new capture");
@@ -264,12 +271,17 @@ async function cognitiveVisionOnlyPassesLatestStoredScreenshot():Promise<void>{
   const textOnlyHistory={...conversation,messages:[screenshot,latestText]} as unknown as Conversation;
   for(const enabled of [false,true]){
     const requests:ChatRequest[]=[];
+    const contextInputs:ChatMessage[][]=[];
     const runtime={async chat(request:ChatRequest):Promise<ChatResponse>{requests.push(request);return responseFor(request,"Screen-aware reply.");}};
     await createStep(runtime,undefined,{
       getVisionEnabled:()=>enabled,
       getActiveConversation:async()=>textOnlyHistory,
-      buildContext:async request=>({...request,messages:request.messages.filter(message=>message.id!=="stored-screen"),includedCandidates:[],omittedCandidates:[],budget:request.budget,estimatedTokens:100} as AssembledContext)
+      buildContext:async request=>{
+        contextInputs.push([...request.messages]);
+        return {...request,messages:request.messages.filter(message=>message.id!=="stored-screen"),includedCandidates:[],omittedCandidates:[],budget:request.budget,estimatedTokens:100} as AssembledContext;
+      }
     }).run(context(()=>{}));
+    equal(contextInputs[0]?.some(message=>message.images?.length),false,"Life context budgeting remains text-only for historical screenshots");
     const images=requests[0]!.context.messages.filter(message=>message.images?.length);
     equal(images.map(message=>message.id),enabled?["stored-screen"]:[],"Agent Vision reuses the latest stored screenshot even when context budgeting drops its original message");
   }

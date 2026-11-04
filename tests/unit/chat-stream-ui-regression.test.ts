@@ -13,6 +13,8 @@ ok(source.includes("controller.retry("),"Retry must call the controller retry pa
 ok(source.includes("const persistAfterAction"),"chat UI must centralize persistence after terminal actions");
 ok(source.includes("await onPersist();"),"terminal streaming actions must persist conversation once");
 ok(source.includes("const chatBusy=snapshot.sending||lifeTurnBusy"),"composer busy state must include normal streaming and pending Life turns");
+ok(source.includes("sending your text message without an image"),"optional Vision capture failure must fall back to sending the typed message");
+ok(source.includes("if(!submittedDraft.trim())"),"Vision-only send without a prompt must not send a misleading empty fallback request");
 ok(source.includes('disabled={chatBusy}'),"composer must disable while streaming or awaiting Nova Life");
 ok(source.includes('role="status">Nova is thinking…</p>'),"pending Life turn must show an explicit thinking state");
 ok(!source.includes("Thinking…"),"UI must render the live assistant message instead of a fake Thinking placeholder");

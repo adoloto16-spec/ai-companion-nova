@@ -11,6 +11,15 @@ type CancellationKind = "cancelled" | "superseded" | "timeout";
 interface IntervalChoice { intervalMs: number; requested?: number; decision: string; }
 
 function abortError(): Error { const error = new Error("Mind Runtime cognitive step aborted."); error.name = "AbortError"; return error; }
+const CHAT_ERROR_CODES = new Set(["INVALID_REQUEST","PROVIDER_NOT_FOUND","PROVIDER_UNAVAILABLE","PROVIDER_ERROR","INVALID_RESPONSE","UNSUPPORTED"]);
+function providerChatErrorCode(error:unknown):string|undefined{
+  if(!error||typeof error!=="object")return undefined;
+  const source=error as Record<string,unknown>;
+  const nested=source.chatError&&typeof source.chatError==="object"&&!Array.isArray(source.chatError)
+    ?source.chatError as Record<string,unknown>:undefined;
+  const code=nested?.code??source.code;
+  return typeof code==="string"&&CHAT_ERROR_CODES.has(code)?code:undefined;
+}
 function validInteger(value: unknown, fallback: number, min = 1, max = 3_600_000): number {
   return typeof value === "number" && Number.isSafeInteger(value) ? Math.max(min, Math.min(max, value)) : fallback;
 }
@@ -419,7 +428,8 @@ export class MindRuntime {
       }
       this.consecutiveErrors += 1;
       finishFailedSpeech=streamedPublicSpeech;
-      if (reactiveTurn) this.failReactiveTurn(reactiveTurn, error instanceof Error ? error.name : "COGNITIVE_STEP_FAILED");
+      const providerErrorCode=providerChatErrorCode(error);
+      if (reactiveTurn) this.failReactiveTurn(reactiveTurn, error instanceof Error ? error.name : "COGNITIVE_STEP_FAILED", providerErrorCode);
       applied = this.errorBackoffMs(); decision = "error-backoff"; nextDelay = applied; nextReason = "error-backoff";
       const errorCode = cancellation === "timeout" ? "STEP_TIMEOUT" : error instanceof Error ? error.name : "COGNITIVE_STEP_FAILED";
       const safeReason=(error instanceof Error?error.message:"Cognitive step failed.")
@@ -427,7 +437,7 @@ export class MindRuntime {
         .replace(/(?:token|secret|password|api.?key)\s*[:=]\s*\S+/gi,"[redacted]")
         .replace(/[\r\n\t]+/g," ").slice(0,240);
       this.safeDiagnostic("nova_life.step.failed","Nova Life cognitive step failed.",{
-        runId,wakeReason:reason,errorCode,failureReason:safeReason,
+        runId,wakeReason:reason,errorCode,...(providerErrorCode?{providerErrorCode}:{}),failureReason:safeReason,
         durationMs:Math.max(0,this.now()-startedMs),...(requestId?{requestId}:{}),...(providerId?{providerId}:{})
       });
       this.safeOnError(error);
@@ -456,10 +466,10 @@ export class MindRuntime {
     return Boolean(pending && pending.characterId === turn.characterId && pending.conversationId === turn.conversationId &&
       pending.userMessageId === turn.userMessageId && pending.turnId === turn.turnId && this.activeCharacterId === turn.characterId);
   }
-  private failReactiveTurn(turn: MindReactiveTurn, reason: string): void {
+  private failReactiveTurn(turn: MindReactiveTurn, reason: string, errorCode?:string): void {
     if (!this.isReactiveTurnCurrent(turn)) return;
     this.pendingReactiveTurn = undefined;
-    try { this.turnSink?.fail?.(turn, reason); } catch { /* UI failure observers cannot disrupt cognition. */ }
+    try { this.turnSink?.fail?.(turn, reason, errorCode); } catch { /* UI failure observers cannot disrupt cognition. */ }
   }
   private quotaWaitMs(): number {
     const limit = this.scheduleSettings.maxRequestsPerHour;

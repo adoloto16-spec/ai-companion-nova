@@ -1,7 +1,8 @@
 import React from "react";
 import PromptRegistryView from "./prompt-registry-view";
 import AvatarStudioView from "./avatar-studio";
-import { publishAvatarIntent, resolveDialogueIntent } from "../../../modules/character/src/index";
+import { AvatarDirector, publishAvatarIntent, resolveAvatarDirectorPrompt, resolveDialogueIntent } from "../../../modules/character/src/index";
+import { getActiveAvatarBundle } from "./avatar-library";
 import { startScreenVisionSession } from "../../../modules/vision/src/index";
 import type { ScreenVisionSession } from "../../../modules/vision/src/index";
 import {createRoot} from "react-dom/client";
@@ -279,6 +280,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     if(!messageText||captureBusy||visionBusy||sendLockRef.current)return;
     sendLockRef.current=true;
     const submittedImages:ChatImageAttachment[]=[];
+    let captureFallbackMessage="";
     setPersistenceError("");
     setCaptureError("");
     onStopSpeech();
@@ -289,8 +291,15 @@ function ChatView({controller,runtime,character,conversations,activeConversation
           submittedImages.push(await activeSession.capture());
           if(visionSessionRef.current!==activeSession)throw new Error("Vision was switched off before the screenshot finished.");
         }catch(error){
-          if(visionViewMountedRef.current)setCaptureError("Vision screenshot failed; the message was not sent. "+safeErrorMessage(error,"Screen capture failed."));
-          return;
+          const detail=safeErrorMessage(error,"Screen capture failed.");
+          if(!submittedDraft.trim()){
+            if(visionViewMountedRef.current)setCaptureError("Vision screenshot failed; enter a text prompt or try sharing the screen again. "+detail);
+            return;
+          }
+          // Image capture is optional. A failed or revoked screen-share must not discard
+          // the user's typed message or leave ordinary chat unusable.
+          captureFallbackMessage="Vision screenshot failed; sending your text message without an image. "+detail;
+          if(visionViewMountedRef.current)setCaptureError(captureFallbackMessage);
         }finally{
           if(visionViewMountedRef.current)setCaptureBusy(false);
         }
@@ -299,7 +308,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
         try{
           const result=await controller.submitToLife(messageText,async()=>{await onPersist();},turn=>runtime.wakeMindForUserMessage(turn),submittedImages);
           if(result.status==="awaiting-life")onClearSubmittedDraft(submittedDraft);
-          if(result.status==="awaiting-life")setCaptureError("");
+          if(result.status==="awaiting-life")setCaptureError(captureFallbackMessage);
           if(result.status==="life-failed")setPersistenceError(result.message);
         }catch(error){
           if(visionViewMountedRef.current)setPersistenceError(safeErrorMessage(error,"User message could not be saved for Nova Life."));
@@ -309,7 +318,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
       controller.clearFailedLifeTurnForOrdinaryChat();
       const result=await controller.submit(messageText,runtime.getActiveChatModel(),submittedImages);
       if(result.status==="sent")onClearSubmittedDraft(submittedDraft);
-      if(result.status==="sent")setCaptureError("");
+      if(result.status==="sent")setCaptureError(captureFallbackMessage);
       await persistAfterAction(result);
     }catch(error){
       if(visionViewMountedRef.current)setPersistenceError(safeErrorMessage(error,"The message could not be sent."));
@@ -404,17 +413,73 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     return presentation.render&&Boolean(presentation.text.trim());
   });
   const lastAssistantStatus=lastAssistant?messageStreamStatus(lastAssistant):undefined;
+  const currentConversationId=activeConversation.id??"";
+  const avatarDirectorTurnRef=React.useRef<{conversationId:string;id:string;pending:boolean}>({conversationId:currentConversationId,id:lastAssistant?.id??"",pending:false});
   React.useEffect(()=>{
+    if(!currentConversationId)return;
+    if(avatarDirectorTurnRef.current.conversationId!==currentConversationId){
+      // Loading an existing conversation is not a newly completed answer. Start tracking
+      // from its current tail and wait for the next assistant message in that conversation.
+      avatarDirectorTurnRef.current={conversationId:currentConversationId,id:lastAssistant?.id??"",pending:false};
+      return;
+    }
     if(!lastAssistant)return;
+    const lastAssistantId=lastAssistant.id;
+    if(!lastAssistantId)return;
     const nativeTurn=parseNovaTurn(lastAssistant.content).turn;
-    if(nativeTurn?.tools.some(tool=>tool.name==="avatar.set_intent"))return;
+    if(nativeTurn?.tools.some(tool=>tool.name==="avatar.set_intent")){
+      avatarDirectorTurnRef.current.pending=false;
+      return;
+    }
     const presentation=resolveNovaTurnMessagePresentation(lastAssistant,false);
     if(!presentation.render||!presentation.text.trim())return;
-    publishAvatarIntent(resolveDialogueIntent(
-      presentation.text,
-      snapshot.status==="streaming"&&messageStreamStatus(lastAssistant)==="streaming"
-    ));
-  },[lastAssistant?.id,lastAssistant?.content,snapshot.status]);
+    if(avatarDirectorTurnRef.current.id!==lastAssistantId){
+      avatarDirectorTurnRef.current={conversationId:currentConversationId,id:lastAssistantId,pending:true};
+    }
+    if(!avatarDirectorTurnRef.current.pending)return;
+    // While Nova is streaming, keep the existing lightweight speech cue. The separate
+    // Avatar Director is called exactly once after the completed reply has been persisted.
+    if(snapshot.status==="streaming"||lastAssistantStatus==="streaming"){
+      publishAvatarIntent(resolveDialogueIntent(presentation.text,true));
+      return;
+    }
+    if(lastAssistantStatus!=="complete")return;
+    avatarDirectorTurnRef.current.pending=false;
+    // End the streaming pose immediately, even when the optional Director is disabled
+    // or its provider is unavailable.
+    publishAvatarIntent(resolveDialogueIntent(presentation.text,false));
+    const turnId=lastAssistantId;
+    const assistantIndex=snapshot.messages.findIndex(message=>message.id===turnId);
+    const userMessage=assistantIndex>=0
+      ? [...snapshot.messages.slice(0,assistantIndex)].reverse().find(message=>message.role==="user")
+      : undefined;
+    void (async()=>{
+      try{
+        const activeAvatar=await getActiveAvatarBundle();
+        if(!activeAvatar||!activeAvatar.profile.settings.directorEnabled||activeAvatar.profile.settings.autonomy==="off")return;
+        const directorPrompt=resolveAvatarDirectorPrompt(runtime.getSettings());
+        if(!directorPrompt.trim())return;
+        const director=new AvatarDirector(runtime);
+        const intent=await director.analyze({
+          turnId,
+          conversationId:currentConversationId,
+          userText:userMessage?.content??"",
+          assistantText:presentation.text,
+          providerPresetId:runtime.getActiveProviderPresetId()??"",
+          systemPrompt:directorPrompt
+        });
+        // A slow local model or a changed profile may finish after a newer turn.
+        // Never let stale analysis or a disabled Director overwrite the current pose.
+        if(avatarDirectorTurnRef.current.conversationId!==currentConversationId||avatarDirectorTurnRef.current.id!==turnId)return;
+        const currentAvatar=await getActiveAvatarBundle();
+        if(!currentAvatar||currentAvatar.profile.id!==activeAvatar.profile.id||
+          !currentAvatar.profile.settings.directorEnabled||currentAvatar.profile.settings.autonomy==="off")return;
+        publishAvatarIntent(intent);
+      }catch{
+        // Avatar lookup/analysis is optional and must never surface as a failed Chat reply.
+      }
+    })();
+  },[lastAssistant?.id,lastAssistant?.content,snapshot.status,lastAssistantStatus,runtime,activeConversation.id]);
   const showContinue=snapshot.status==="interrupted"&&lastAssistantStatus==="interrupted"&&!snapshot.sending;
   const showRegenerate=(snapshot.status==="completed"||snapshot.status==="interrupted")&&(lastAssistantStatus==="complete"||lastAssistantStatus==="interrupted")&&!snapshot.sending;
   const showRetry=snapshot.status==="error"&&!snapshot.sending;
@@ -2725,11 +2790,11 @@ function App(){
         if(event.type!=="emotion")chatController.updateNovaTurnStream(event);
         await speechOutputController.handleSpeechEvent(event);
       },
-      fail:(turn,reason)=>{
+      fail:(turn,reason,errorCode)=>{
         if(!attached||turn.characterId!==activeCharacterId||turn.conversationId!==activeConversationId)return;
         const current=chatController.getSnapshot();
         if(current.characterId===turn.characterId&&current.conversationId===turn.conversationId){
-          chatController.failLifeTurn(turn.userMessageId,reason);
+          chatController.failLifeTurn(turn.userMessageId,reason,errorCode);
         }
       }
     };

@@ -9,7 +9,7 @@ function makeTurn(speech:string,nextWakeMs=20,tools:NovaTurn["tools"]=[]):NovaTu
 function schedule(){return {mode:"adaptive" as const,defaultIntervalMs:20,minIntervalMs:10,maxIntervalMs:40,maxRequestsPerHour:null};}
 function responseFor(request:ChatRequest,content:string):ChatResponse{return {apiVersion:"1",schemaVersion:"1",requestId:request.requestId,conversationId:request.context.conversationId,providerId:"fake.cognitive",model:request.model,message:{role:"assistant",content},finishReason:"stop"};}
 function abortWait(signal:AbortSignal):Promise<never>{return new Promise((_,reject)=>{const abort=()=>{const error=new Error("aborted");error.name="AbortError";reject(error);};if(signal.aborted)abort();else signal.addEventListener("abort",abort,{once:true});});}
-function sinkFixture(){const committed:{turn:NovaTurn;context:MindTurnExecutionContext}[]=[];const failed:{turn:MindReactiveTurn;reason:string}[]=[];const streamed:{type:string;turnId:string;text?:string}[]=[];const sink:MindTurnSink={async commit(turn,context){committed.push({turn,context});},streamSpeech(event){streamed.push({type:event.type,turnId:event.turnId,...(event.text===undefined?{}:{text:event.text})});},fail(turn,reason){failed.push({turn,reason});}};return {sink,committed,failed,streamed};}
+function sinkFixture(){const committed:{turn:NovaTurn;context:MindTurnExecutionContext}[]=[];const failed:{turn:MindReactiveTurn;reason:string;errorCode?:string}[]=[];const streamed:{type:string;turnId:string;text?:string}[]=[];const sink:MindTurnSink={async commit(turn,context){committed.push({turn,context});},streamSpeech(event){streamed.push({type:event.type,turnId:event.turnId,...(event.text===undefined?{}:{text:event.text})});},fail(turn,reason,errorCode){failed.push({turn,reason,...(errorCode?{errorCode}:{})});}};return {sink,committed,failed,streamed};}
 
 async function backgroundSchedulingAndSerializationTest(){
  let active=0,maxActive=0,calls=0;const fixture=sinkFixture();
@@ -72,11 +72,29 @@ async function reactiveSpeechFailureAndRetryTest(){
   ok(runtime.wakeForUserMessage(turn),"reactive request is accepted");
   await waitFor(()=>fixture.failed.length===1);
   equal(fixture.failed[0]?.reason,"REACTIVE_SPEECH_REQUIRED","empty required speech surfaces a specific failure");
+  equal(fixture.failed[0]?.errorCode,undefined,"non-provider cognitive failures do not invent a provider error code");
   equal(fixture.committed.some(item=>item.context.turnId===turn.turnId),false,"invalid reactive speech is not committed as a successful assistant answer");
   ok(runtime.wakeForUserMessage(turn),"failed turn remains eligible for retry");
   await waitFor(()=>fixture.committed.some(item=>item.context.turnId===turn.turnId));
   equal(fixture.committed.find(item=>item.context.turnId===turn.turnId)?.turn.speech,"retry succeeded","retry commits the corrected reply");
   equal(reactiveCalls,2,"retry repeats only the failed reactive cognitive request");
+ }finally{await runtime.stop();}
+}
+
+async function providerFailureCodeIsForwardedToReactiveTurnSinkTest(){
+ const fixture=sinkFixture();
+ const turn:MindReactiveTurn={characterId:"character.provider-error",conversationId:"conversation.provider-error",userMessageId:"user-provider-error",turnId:"turn-provider-error"};
+ const step:CognitiveStep={async run(context){
+  if(context.userTurn)throw {chatError:{code:"PROVIDER_UNAVAILABLE",message:"controlled provider unavailable"}};
+  return {turn:makeTurn("background",1000),conversationId:"conversation.provider-error"};
+ }};
+ const runtime=new MindRuntime({cognitiveStep:step,schedule:{mode:"fixed",defaultIntervalMs:1000,minIntervalMs:1000,maxIntervalMs:2000,maxRequestsPerHour:null},turnSink:fixture.sink});
+ runtime.setActiveCharacter(turn.characterId);
+ try{
+  await runtime.start();await waitFor(()=>runtime.getState().lifecycleState==="waiting");
+  ok(runtime.wakeForUserMessage(turn),"provider-error fixture accepts a reactive turn");
+  await waitFor(()=>fixture.failed.length===1);
+  equal(fixture.failed[0]?.errorCode,"PROVIDER_UNAVAILABLE","only an actual provider ChatError code is forwarded to the UI sink");
  }finally{await runtime.stop();}
 }
 

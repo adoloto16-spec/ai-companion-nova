@@ -51,7 +51,7 @@ export function PromptRegistryView({settings,saving,message,onSaveSettings}:Prom
   const dirty=JSON.stringify(draft)!==JSON.stringify(settings.prompts);
   const active=draft.presets.find(p=>p.id===draft.activePresetId);
   const selected=active?.prompts.find(p=>p.id===selectedPromptId)??active?.prompts[0];
-  const agents=[...new Set(["nova","memory-agent","memory-judge",...(active?.prompts.map(p=>p.agentId)??[])])].sort();
+  const agents=[...new Set(["nova","memory-agent","memory-judge","avatar-director",...(active?.prompts.map(p=>p.agentId)??[])])].sort();
   const actualScenario=scenario==="custom"?(customScenario.trim()||"custom"):scenario;
   const assembly=assemblePromptInstructions(draft,agent,actualScenario);
   const updatePreset=(id:string,update:(preset:PromptPreset)=>PromptPreset)=>{
@@ -159,7 +159,7 @@ export function PromptRegistryView({settings,saving,message,onSaveSettings}:Prom
           {selected?<><div className="prompt-section-title"><h3>Редактор промта</h3><button type="button" disabled={saving} onClick={removePrompt}>Удалить промт</button></div>
             <label>Название<input value={selected.title} maxLength={120} disabled={saving} onChange={event=>updateSelected(p=>({...p,title:event.target.value}))}/></label>
             <div className="prompt-fields">
-              <label>Agent ID<input value={selected.agentId} maxLength={80} disabled={saving} onChange={event=>updateSelected(p=>({...p,agentId:event.target.value.trim().toLowerCase()}))}/><small>Например, nova, memory-agent или memory-judge.</small></label>
+              <label>Agent ID<input value={selected.agentId} maxLength={80} disabled={saving} onChange={event=>updateSelected(p=>({...p,agentId:event.target.value.trim().toLowerCase()}))}/><small>Например, nova, memory-agent, memory-judge или avatar-director.</small></label>
               <label>Категория<input value={selected.category??""} maxLength={120} disabled={saving} onChange={event=>updateSelected(p=>({...p,category:event.target.value}))}/></label>
               <label>Порядок включения<input type="number" min={-100000} max={100000} value={selected.order} disabled={saving} onChange={event=>updateSelected(p=>({...p,order:Number(event.target.value)}))}/></label>
               <label className="checkbox">Активен<input type="checkbox" checked={selected.enabled} disabled={saving} onChange={event=>updateSelected(p=>({...p,enabled:event.target.checked}))}/></label>
@@ -195,6 +195,7 @@ export function PromptRegistryView({settings,saving,message,onSaveSettings}:Prom
       <h4>Данные и контракты, передаваемые отдельно</h4>
       {agent==="nova"?<ul><li>Персонаж: имя и описание.</li><li>История диалога, Core Book и собранные воспоминания.</li><li>Числовые параметры когнитивного расписания.</li><li>Схемы зарегистрированных нативных инструментов и параметры генерации / reasoning.</li></ul>
       :agent==="memory-agent"?<ul><li>Релевантный контекст разговора, сообщение пользователя и публичный ответ Nova передаются отдельным user-сообщением.</li><li>JSON Schema structured-ответа передаётся отдельно как responseFormat; валидация и MemoryBroker остаются программными.</li></ul>
+      :agent==="avatar-director"?<ul><li>Сообщение пользователя и завершённый публичный ответ Nova передаются отдельным запросом после ответа; этот вызов не задерживает Chat.</li><li>Агент возвращает только семантический жест, выражение лица, направление взгляда, интенсивность и длительность. Привязка к костям и ограничения движения остаются в Bone Controller.</li></ul>
       :<ul><li>Новая запись памяти и кандидаты передаются отдельным user-сообщением.</li><li>Response schema и проверка решения судьи остаются отдельными контрактами кода.</li></ul>}
       <p className="hint">Текст инструкций здесь и в runtime формируется одним assemblePromptInstructions. Диагностика не включает динамические значения и секреты текущего запроса.</p>
     </section>

@@ -96,7 +96,7 @@ async function main(){
   equal(contextRequests.length,1,"chat invokes the unified context engine boundary");
   equal(contextRequests[0]?.characterId,"character.context","context build is character scoped");
   equal(contextRequests[0]?.messages.at(-1)?.content,"hello","context query contains latest user message");
-  equal(contextRequests[0]?.messages.at(-1)?.images?.[0]?.dataBase64,"aGVsbG8=","original user message contains the screenshot before context assembly");
+  equal(contextRequests[0]?.messages.at(-1)?.images,undefined,"binary screenshots are kept out of the text-only Context Engine input");
   equal(contextChatRequests[0]?.context.messages.at(-1)?.content,"memory context","assembled context reaches ChatRequest");
   equal(contextChatRequests[0]?.context.messages.find(message=>message.id==="context-1:user")?.images?.[0]?.dataBase64,"aGVsbG8=","screenshot payload is restored after text-only context assembly");
   equal(contextChatRequests[0]?.context.messages.find(message=>message.id==="context-1:user")?.metadata?.traceImageAttachmentCount,undefined,"live Chat request uses the attachment, not the redacted trace request");
@@ -444,6 +444,8 @@ async function main(){
   equal(lifeController.getSnapshot().messages.at(-1)?.role,"user","invalid speech leaves the user message retryable");
   lifeController.failLifeTurn(context.userMessageId!,"REACTIVE_SPEECH_REQUIRED");
   equal(lifeController.getSnapshot().lifeTurn?.status,"failed","empty speech is surfaced as a failed Life turn");
+  equal(lifeController.getSnapshot().errorCode,undefined,"empty cognitive speech is not mislabeled as a provider failure");
+  equal(lifeController.getSnapshot().error,"Nova Life could not complete this reply. Retry Nova Life.","non-provider Life failure gets a truthful generic message");
   const retried=lifeController.retryLife(()=>true);
   equal(retried.status,"awaiting-life","failed reactive turn can be retried using its persisted user message");
 
@@ -605,6 +607,18 @@ async function main(){
   equal(parseNovaTurn(retryPersistedSpeech).turn?.speech,"Повторный ответ.","successful retry persists the replacement public speech");
   equal(failedController.getSnapshot().messages.filter(message=>message.role==="assistant").length,1,"retry creates exactly one committed assistant message");
   equal(failedController.getSnapshot().lifeStreamingSpeech,undefined,"successful retry clears provisional speech only after commit");
+
+  const providerFailureController=new ChatSessionController(
+    new ConversationSession("provider-error-conversation","character.provider-error"),
+    {async chat(request:ChatRequest):Promise<ChatResponse>{return responseFor(request,"unused");}}
+  );
+  const providerFailureSubmit=await providerFailureController.submitToLife("hello",async()=>{},()=>true);
+  ok(providerFailureSubmit.status==="awaiting-life","provider failure fixture creates an awaited Life turn");
+  if(providerFailureSubmit.status==="awaiting-life"){
+    providerFailureController.failLifeTurn(providerFailureSubmit.turn.userMessageId,"OllamaProviderError","PROVIDER_UNAVAILABLE");
+    equal(providerFailureController.getSnapshot().errorCode,"PROVIDER_UNAVAILABLE","actual provider error code is retained");
+    equal(providerFailureController.getSnapshot().error,"The chat provider is unavailable. Check provider settings or try again.","actual provider failure uses its specific safe message");
+  }
 
   console.log("PASS Chat session/controller unit tests");
 }

@@ -5,12 +5,17 @@ export const AVATAR_CHANNEL_NAME = "nova-avatar-runtime";
 export type AvatarFormat = "vrm" | "glb" | "live2d";
 export type AvatarAction = "idle" | "talk" | "wave" | "look";
 export type AvatarExpression = "neutral" | "happy" | "sad" | "surprised";
+export type AvatarGesture = "rest" | "explain" | "greet" | "think" | "reassure" | "celebrate" | "apologize";
+export type AvatarGaze = "user" | "down" | "side" | "cursor";
 export type AvatarAutonomy = "off" | "balanced" | "active";
 
 export interface AvatarIntent {
   action: AvatarAction;
   expression: AvatarExpression;
   intensity: number;
+  gesture?: AvatarGesture;
+  gaze?: AvatarGaze;
+  durationMs?: number;
 }
 export interface AvatarSettings {
   scale: number;
@@ -19,6 +24,8 @@ export interface AvatarSettings {
   breathing: boolean;
   blink: boolean;
   lookAround: boolean;
+  trackCursor: boolean;
+  directorEnabled: boolean;
   motionIntensity: number;
   autonomy: AvatarAutonomy;
   overlayPassthrough: boolean;
@@ -34,7 +41,7 @@ export interface AvatarProfile {
 }
 export const DEFAULT_AVATAR_SETTINGS: AvatarSettings = {
   scale: 1, cameraDistance: 1.7, idleMotion: true, breathing: true, blink: true,
-  lookAround: true, motionIntensity: 1, autonomy: "balanced", overlayPassthrough: false
+  lookAround: true, trackCursor: false, directorEnabled: true, motionIntensity: 1, autonomy: "balanced", overlayPassthrough: false
 };
 export type AvatarSignal =
   | { type: "dialogue"; text: string; speaking: boolean }
@@ -67,11 +74,13 @@ export function normalizeAvatarSettings(input: unknown): AvatarSettings {
     ? value.autonomy : DEFAULT_AVATAR_SETTINGS.autonomy;
   return {
     scale: clamp(Number(value.scale), 0.5, 1.8, DEFAULT_AVATAR_SETTINGS.scale),
-    cameraDistance: clamp(Number(value.cameraDistance), 1.1, 3.5, DEFAULT_AVATAR_SETTINGS.cameraDistance),
+    cameraDistance: clamp(Number(value.cameraDistance), 1.7, 3.5, DEFAULT_AVATAR_SETTINGS.cameraDistance),
     idleMotion: typeof value.idleMotion === "boolean" ? value.idleMotion : true,
     breathing: typeof value.breathing === "boolean" ? value.breathing : true,
     blink: typeof value.blink === "boolean" ? value.blink : true,
     lookAround: typeof value.lookAround === "boolean" ? value.lookAround : true,
+    trackCursor: typeof value.trackCursor === "boolean" ? value.trackCursor : false,
+    directorEnabled: typeof value.directorEnabled === "boolean" ? value.directorEnabled : true,
     motionIntensity: clamp(Number(value.motionIntensity), 0, 2, DEFAULT_AVATAR_SETTINGS.motionIntensity),
     autonomy,
     overlayPassthrough: typeof value.overlayPassthrough === "boolean" ? value.overlayPassthrough : false
@@ -127,11 +136,18 @@ export function subscribeAvatarEvents(listener: (event: AvatarBroadcastEvent) =>
     const raw = value.intent;
     const actions: readonly string[] = ["idle", "talk", "wave", "look"];
     const expressions: readonly string[] = ["neutral", "happy", "sad", "surprised"];
+    const gestures: readonly string[] = ["rest", "explain", "greet", "think", "reassure", "celebrate", "apologize"];
+    const gazes: readonly string[] = ["user", "down", "side", "cursor"];
     if (typeof raw.action !== "string" || !actions.includes(raw.action) ||
-        typeof raw.expression !== "string" || !expressions.includes(raw.expression)) return;
+        typeof raw.expression !== "string" || !expressions.includes(raw.expression) ||
+        (raw.gesture !== undefined && (typeof raw.gesture !== "string" || !gestures.includes(raw.gesture))) ||
+        (raw.gaze !== undefined && (typeof raw.gaze !== "string" || !gazes.includes(raw.gaze)))) return;
     const intent: AvatarIntent = {
       action: raw.action as AvatarAction, expression: raw.expression as AvatarExpression,
       intensity: clamp(Number(raw.intensity), 0, 1, 0.5),
+      ...(typeof raw.gesture === "string" ? { gesture: raw.gesture as AvatarGesture } : {}),
+      ...(typeof raw.gaze === "string" ? { gaze: raw.gaze as AvatarGaze } : {}),
+      ...(typeof raw.durationMs === "number" ? { durationMs: clamp(raw.durationMs, 500, 5000, 2200) } : {}),
       ...(typeof raw.label === "string" ? { label: raw.label.slice(0, 120) } : {}),
       ...(isRecord(raw.target) ? { target: { x: clamp(Number(raw.target.x), 0, 1, 0.5), y: clamp(Number(raw.target.y), 0, 1, 0.5) } } : {})
     };
@@ -143,3 +159,6 @@ export function subscribeAvatarEvents(listener: (event: AvatarBroadcastEvent) =>
     current.removeEventListener("message", handler);
   };
 }
+
+export { AvatarBoneController, solveTwoBoneIk } from "./bone-controller";
+export { AvatarDirector, parseAvatarDirectorOutput, resolveAvatarDirectorPrompt, DEFAULT_AVATAR_DIRECTOR_PROMPT } from "./avatar-director";

@@ -5,15 +5,16 @@ import { VRMLoaderPlugin } from "@pixiv/three-vrm";
 import type { VRM } from "@pixiv/three-vrm";
 import { getAvatarAsset } from "./avatar-library";
 import type { AvatarIntent, AvatarProfile, AvatarSettings } from "../../../modules/character/src/index";
+import { AvatarBoneController, solveTwoBoneIk } from "../../../modules/character/src/bone-controller";
 
 type HumanoidBone =
   | "head" | "neck" | "hips" | "spine" | "chest"
-  | "leftUpperArm" | "rightUpperArm" | "leftLowerArm" | "rightLowerArm"
+  | "leftUpperArm" | "rightUpperArm" | "leftLowerArm" | "rightLowerArm" | "leftHand" | "rightHand"
   | "leftUpperLeg" | "rightUpperLeg" | "leftLowerLeg" | "rightLowerLeg";
 
 const HUMANOID_BONES: readonly HumanoidBone[] = [
   "head", "neck", "hips", "spine", "chest",
-  "leftUpperArm", "rightUpperArm", "leftLowerArm", "rightLowerArm",
+  "leftUpperArm", "rightUpperArm", "leftLowerArm", "rightLowerArm", "leftHand", "rightHand",
   "leftUpperLeg", "rightUpperLeg", "leftLowerLeg", "rightLowerLeg"
 ];
 
@@ -26,48 +27,132 @@ interface LoadedModel {
   baseRotation: THREE.Euler;
   center: THREE.Vector3;
   height: number;
+  width: number;
   bones: Partial<Record<HumanoidBone, THREE.Object3D>>;
   boneBases: Partial<Record<HumanoidBone, THREE.Euler>>;
 }
 
-function prepareAvatarMaterials(root: THREE.Object3D): { meshes: number; materials: number; baseColorTextures: number } {
+interface AvatarMaterialDiagnostics {
+  meshes: number;
+  materials: number;
+  baseColorTextures: number;
+  decodedBaseColorTextures: number;
+  missingBaseColorTextureImages: number;
+}
+
+function isTextureLike(value: unknown): value is THREE.Texture {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  // Avoid instanceof-only checks here: a duplicated Three.js module instance in a
+  // WebView bundle can make a perfectly valid GLTF texture fail the instanceof test.
+  // Texture.needsUpdate is a setter, not a property detectable with the `in` operator.
+  return candidate.isTexture === true && "colorSpace" in candidate && "source" in candidate;
+}
+
+function hasDecodedImage(texture: THREE.Texture): boolean {
+  const image = texture.image as {
+    width?: unknown; height?: unknown; naturalWidth?: unknown; naturalHeight?: unknown;
+    videoWidth?: unknown; videoHeight?: unknown; complete?: unknown;
+  } | undefined;
+  if (!image) return false;
+  const width = Number(image.naturalWidth ?? image.videoWidth ?? image.width ?? 0);
+  const height = Number(image.naturalHeight ?? image.videoHeight ?? image.height ?? 0);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return false;
+  return image.complete !== false;
+}
+
+function prepareAvatarMaterials(root: THREE.Object3D): AvatarMaterialDiagnostics {
   let meshes = 0;
   let materials = 0;
   let baseColorTextures = 0;
+  let decodedBaseColorTextures = 0;
+  let missingBaseColorTextureImages = 0;
   root.traverse(object => {
     if (!(object instanceof THREE.Mesh)) return;
     meshes++;
     const slots = Array.isArray(object.material) ? object.material : [object.material];
     for (const material of slots) {
       materials++;
-      // GLTF/VRM base-color textures use sRGB. Reassert it for both standard and MToon materials
-      // and request an upload before the first frame instead of silently rendering as untextured.
-      const map = (material as THREE.Material & { map?: THREE.Texture | null }).map;
-      if (map instanceof THREE.Texture) {
+      // GLTF PBR material.map and the three-vrm MToonMaterial.map accessor both
+      // represent the base-color texture. Keep the uniforms path as a compatibility
+      // fallback for custom ShaderMaterials.
+      const standardMap = (material as THREE.Material & { map?: THREE.Texture | null }).map;
+      const shaderMap = (material as THREE.ShaderMaterial).uniforms?.map?.value;
+      const map = isTextureLike(standardMap) ? standardMap : shaderMap;
+      if (isTextureLike(map)) {
         map.colorSpace = THREE.SRGBColorSpace;
         map.needsUpdate = true;
         baseColorTextures++;
+        if (hasDecodedImage(map)) decodedBaseColorTextures++;
+        else missingBaseColorTextureImages++;
       }
       material.needsUpdate = true;
     }
   });
-  return { meshes, materials, baseColorTextures };
+  return { meshes, materials, baseColorTextures, decodedBaseColorTextures, missingBaseColorTextureImages };
 }
 
-export default function VrmAvatarCanvas({ profile, settings, intent, className = "" }: {
+
+
+function sameAvatarIntent(a: AvatarIntent, b: AvatarIntent): boolean {
+  return a.action === b.action && a.expression === b.expression && a.intensity === b.intensity &&
+    a.gesture === b.gesture && a.gaze === b.gaze && a.durationMs === b.durationMs;
+}
+
+function vectorData(value: THREE.Vector3): { x: number; y: number; z: number } {
+  return { x: value.x, y: value.y, z: value.z };
+}
+
+function aimBoneAtWorldPoint(root: THREE.Object3D, bone: THREE.Object3D, child: THREE.Object3D, target: THREE.Vector3): void {
+  root.updateMatrixWorld(true);
+  const start = bone.getWorldPosition(new THREE.Vector3());
+  const currentDirection = child.getWorldPosition(new THREE.Vector3()).sub(start);
+  const targetDirection = target.clone().sub(start);
+  if (currentDirection.lengthSq() < 1e-10 || targetDirection.lengthSq() < 1e-10) return;
+  const delta = new THREE.Quaternion().setFromUnitVectors(currentDirection.normalize(), targetDirection.normalize());
+  const desiredWorldRotation = bone.getWorldQuaternion(new THREE.Quaternion()).premultiply(delta);
+  const parentWorldRotation = bone.parent?.getWorldQuaternion(new THREE.Quaternion()) ?? new THREE.Quaternion();
+  bone.quaternion.copy(parentWorldRotation.invert().multiply(desiredWorldRotation));
+  root.updateMatrixWorld(true);
+}
+
+function applyTwoBoneArmIk(
+  root: THREE.Object3D,
+  upper: THREE.Object3D,
+  lower: THREE.Object3D,
+  hand: THREE.Object3D,
+  target: THREE.Vector3,
+  bendHint: THREE.Vector3
+): void {
+  root.updateMatrixWorld(true);
+  const shoulder = upper.getWorldPosition(new THREE.Vector3());
+  const elbow = lower.getWorldPosition(new THREE.Vector3());
+  const wrist = hand.getWorldPosition(new THREE.Vector3());
+  const solution = solveTwoBoneIk(
+    vectorData(shoulder), vectorData(target),
+    shoulder.distanceTo(elbow), elbow.distanceTo(wrist), vectorData(bendHint)
+  );
+  aimBoneAtWorldPoint(root, upper, lower, new THREE.Vector3(solution.elbow.x, solution.elbow.y, solution.elbow.z));
+  aimBoneAtWorldPoint(root, lower, hand, new THREE.Vector3(solution.wrist.x, solution.wrist.y, solution.wrist.z));
+}
+
+export default function VrmAvatarCanvas({ profile, settings, intent, cursorTarget, className = "" }: {
   profile?: AvatarProfile;
   settings: AvatarSettings;
   intent: AvatarIntent;
+  cursorTarget?: { x: number; y: number };
   className?: string;
 }) {
   const host = React.useRef<HTMLDivElement | null>(null);
   const settingsRef = React.useRef(settings);
   const intentRef = React.useRef(intent);
+  const cursorTargetRef = React.useRef(cursorTarget);
   const [status, setStatus] = React.useState("No model loaded");
   const [error, setError] = React.useState("");
 
   React.useEffect(() => { settingsRef.current = settings; }, [settings]);
   React.useEffect(() => { intentRef.current = intent; }, [intent]);
+  React.useEffect(() => { cursorTargetRef.current = cursorTarget; }, [cursorTarget]);
 
   React.useEffect(() => {
     const container = host.current;
@@ -83,6 +168,9 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
     let previousTime = 0;
     let elapsed = 0;
     let blinkRemaining = 0;
+    const boneController = new AvatarBoneController();
+    let previousIntent = intent;
+    boneController.setIntent(intent);
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(32, 1, 0.01, 1000);
     scene.add(new THREE.HemisphereLight(0xffffff, 0x76809a, 0.9));
@@ -126,6 +214,11 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
       const vrm = gltf.userData.vrm as VRM | undefined;
       const root = vrm?.scene ?? gltf.scene;
       const materialDiagnostics = prepareAvatarMaterials(root);
+      const imageResources = ((gltf.parser as unknown as { json?: { images?: Array<{ uri?: string; bufferView?: number; mimeType?: string }> } }).json?.images ?? []);
+      const externalImageUris = imageResources
+        .filter(image => typeof image.uri === "string" && !image.uri.startsWith("data:"))
+        .map(image => image.uri!)
+        .slice(0, 8);
       root.updateMatrixWorld(true);
       const box = new THREE.Box3().setFromObject(root);
       const size = box.getSize(new THREE.Vector3());
@@ -149,15 +242,27 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
         root, ...(vrm ? { vrm } : {}),
         ...(gltf.animations.length ? { mixer: new THREE.AnimationMixer(root) } : {}),
         baseScale: root.scale.clone(), baseY: root.position.y, baseRotation: root.rotation.clone(), center,
-        height: Math.max(size.y, 1), bones, boneBases
+        height: Math.max(size.y, 1), width: Math.max(size.x, 0.01), bones, boneBases
       };
       if (loaded.mixer && gltf.animations[0]) loaded.mixer.clipAction(gltf.animations[0]).play();
       if (materialDiagnostics.meshes > 0 && materialDiagnostics.baseColorTextures === 0) {
         setStatus(vrm ? "VRM loaded · no color textures" : "GLB loaded · no color textures");
-        setError("Loaded " + materialDiagnostics.meshes + " mesh(es) with " + materialDiagnostics.materials + " material slot(s), but none has a base-color texture map. This file may have been exported without embedded textures; import a self-contained textured VRM/GLB.");
+        const imageDiagnosis = externalImageUris.length
+          ? " The glTF references external image file(s): " + externalImageUris.join(", ") + ". The current single-file import cannot resolve sidecar images; re-export as a self-contained binary VRM/GLB."
+          : imageResources.length === 0
+            ? " The binary asset contains no image resources."
+            : " The asset contains " + imageResources.length + " image resource(s), but none is assigned as a material base-color map.";
+        setError("Loaded " + materialDiagnostics.meshes + " mesh(es) with " + materialDiagnostics.materials +
+          " material slot(s), but found no usable base-color texture map." + imageDiagnosis);
+      } else if (materialDiagnostics.missingBaseColorTextureImages > 0) {
+        setStatus(vrm ? "VRM loaded · texture image unavailable" : "GLB loaded · texture image unavailable");
+        setError("Found " + materialDiagnostics.baseColorTextures + " base-color texture map(s), but " +
+          materialDiagnostics.missingBaseColorTextureImages + " texture image(s) have no decoded pixel dimensions. " +
+          "The model's embedded image data may be corrupt or unsupported.");
       } else {
         setError("");
-        setStatus(vrm ? "VRM loaded" : gltf.animations.length ? "GLB loaded · animation playing" : "GLB loaded");
+        setStatus(vrm ? "VRM loaded · " + materialDiagnostics.decodedBaseColorTextures + " color texture(s)" :
+          gltf.animations.length ? "GLB loaded · animation playing" : "GLB loaded · " + materialDiagnostics.decodedBaseColorTextures + " color texture(s)");
       }
     };
     const failGltf = (cause: unknown) => {
@@ -201,48 +306,88 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
         }
         // Let embedded GLB animation update its own tracks before applying the procedural VRM pose.
         current.mixer?.update(delta);
+        if (action !== previousIntent) {
+          if (!sameAvatarIntent(action, previousIntent) || boneController.hasFinishedGesture()) boneController.setIntent(action);
+          previousIntent = action;
+        }
+        const boneFrame = boneController.update(delta);
 
         const bone = (name: HumanoidBone) => current.bones[name];
         const base = (name: HumanoidBone) => current.boneBases[name];
         const head = bone("head"), headBase = base("head");
         if (head && headBase) {
-          const yaw = prefs.lookAround ? Math.sin(elapsed * 0.57) * 0.18 * Math.max(activity, 0.5) : 0;
-          const pitch = prefs.lookAround ? Math.sin(elapsed * 0.37) * 0.06 * Math.max(activity, 0.5) : 0;
-          head.rotation.set(headBase.x + pitch, headBase.y + yaw, headBase.z);
+          const cursorYaw = prefs.trackCursor && cursorTargetRef.current ? THREE.MathUtils.clamp((cursorTargetRef.current.x - 0.5) * 0.8, -0.55, 0.55) : 0;
+          const cursorPitch = prefs.trackCursor && cursorTargetRef.current ? THREE.MathUtils.clamp((cursorTargetRef.current.y - 0.5) * 0.45, -0.3, 0.3) : 0;
+          const idleYaw = prefs.lookAround ? Math.sin(elapsed * 0.57) * 0.18 * Math.max(activity, 0.5) : 0;
+          const idlePitch = prefs.lookAround ? Math.sin(elapsed * 0.37) * 0.06 * Math.max(activity, 0.5) : 0;
+          const intentYaw = action.gaze === "side" ? 0.24 : 0;
+          const intentPitch = action.gaze === "down" ? -0.14 : 0;
+          head.rotation.set(headBase.x + (prefs.trackCursor && cursorTargetRef.current ? cursorPitch : intentPitch || idlePitch), headBase.y + (prefs.trackCursor && cursorTargetRef.current ? cursorYaw : intentYaw || idleYaw), headBase.z);
         }
         const leftUpper = bone("leftUpperArm"), leftBase = base("leftUpperArm");
         const rightUpper = bone("rightUpperArm"), rightBase = base("rightUpperArm");
         const leftLower = bone("leftLowerArm"), leftLowerBase = base("leftLowerArm");
         const rightLower = bone("rightLowerArm"), rightLowerBase = base("rightLowerArm");
-        const wave = action.action === "wave" ? Math.sin(elapsed * 8) * 0.22 * action.intensity : 0;
-        const talkingGesture = action.action === "talk" ? Math.sin(elapsed * 2.6) * 0.22 * action.intensity : 0;
-        // Establish a relaxed non-T-pose as the baseline for ordinary humanoid VRMs.
-        // The left/right signs are mirrored because humanoid upper-arm local axes are mirrored.
-        if (leftUpper && leftBase) {
-          const shoulderSwing = Math.sin(elapsed * 1.7) * 0.07 * activity;
-          leftUpper.rotation.set(leftBase.x + talkingGesture * 0.55, leftBase.y + shoulderSwing, leftBase.z + 0.52 + talkingGesture);
-        }
-        if (rightUpper && rightBase) {
-          if (action.action === "wave") {
-            rightUpper.rotation.set(rightBase.x - 0.65, rightBase.y - 0.12, rightBase.z - 1.15 + wave);
-          } else {
-            const shoulderSwing = Math.sin(elapsed * 1.7 + 0.7) * 0.07 * activity;
-            rightUpper.rotation.set(rightBase.x + talkingGesture * 0.55, rightBase.y - shoulderSwing, rightBase.z - 0.52 - talkingGesture);
+        const leftHand = bone("leftHand"), leftHandBase = base("leftHand");
+        const rightHand = bone("rightHand"), rightHandBase = base("rightHand");
+        const canSolveArms = Boolean(current.vrm && leftUpper && leftLower && leftHand && rightUpper && rightLower && rightHand);
+        if (canSolveArms && leftUpper && leftLower && leftHand && rightUpper && rightLower && rightHand) {
+          if (leftBase) leftUpper.rotation.copy(leftBase);
+          if (leftLowerBase) leftLower.rotation.copy(leftLowerBase);
+          if (leftHandBase) leftHand.rotation.copy(leftHandBase);
+          if (rightBase) rightUpper.rotation.copy(rightBase);
+          if (rightLowerBase) rightLower.rotation.copy(rightLowerBase);
+          if (rightHandBase) rightHand.rotation.copy(rightHandBase);
+          current.root.updateMatrixWorld(true);
+          const rootRotation = current.root.getWorldQuaternion(new THREE.Quaternion());
+          const rightAxis = new THREE.Vector3(1, 0, 0).applyQuaternion(rootRotation).normalize();
+          const upAxis = new THREE.Vector3(0, 1, 0).applyQuaternion(rootRotation).normalize();
+          const forwardSign = current.vrm?.meta.metaVersion === "0" ? -1 : 1;
+          const forwardAxis = new THREE.Vector3(0, 0, forwardSign).applyQuaternion(rootRotation).normalize();
+          const positionFor = (upper: THREE.Object3D, lower: THREE.Object3D, hand: THREE.Object3D, goal: { lateral: number; vertical: number; forward: number }, side: number) => {
+            const shoulder = upper.getWorldPosition(new THREE.Vector3());
+            const elbow = lower.getWorldPosition(new THREE.Vector3());
+            const wrist = hand.getWorldPosition(new THREE.Vector3());
+            const armLength = shoulder.distanceTo(elbow) + elbow.distanceTo(wrist);
+            return shoulder
+              .addScaledVector(rightAxis, armLength * goal.lateral * side)
+              .addScaledVector(upAxis, armLength * goal.vertical)
+              .addScaledVector(forwardAxis, armLength * goal.forward);
+          };
+          applyTwoBoneArmIk(current.root, leftUpper, leftLower, leftHand,
+            positionFor(leftUpper, leftLower, leftHand, boneFrame.leftHand, -1), forwardAxis);
+          applyTwoBoneArmIk(current.root, rightUpper, rightLower, rightHand,
+            positionFor(rightUpper, rightLower, rightHand, boneFrame.rightHand, 1), forwardAxis);
+        } else if (!current.mixer) {
+          // Compatibility fallback for VRMs without normalized hand bones.
+          const wave = action.action === "wave" ? Math.sin(elapsed * 8) * 0.22 * action.intensity : 0;
+          const talkingGesture = action.action === "talk" ? Math.sin(elapsed * 2.6) * 0.22 * action.intensity : 0;
+          if (leftUpper && leftBase) {
+            const shoulderSwing = Math.sin(elapsed * 1.7) * 0.07 * activity;
+            leftUpper.rotation.set(leftBase.x + talkingGesture * 0.55, leftBase.y + shoulderSwing, leftBase.z + 0.52 + talkingGesture);
           }
-        }
-        if (leftLower && leftLowerBase) {
-          const elbowBend = action.action === "talk" ? 0.38 + Math.abs(Math.sin(elapsed * 2.6)) * 0.25 : 0.12;
-          leftLower.rotation.set(leftLowerBase.x, leftLowerBase.y, leftLowerBase.z - elbowBend * Math.max(activity, action.action === "talk" ? 0.8 : 0.2));
-        }
-        if (rightLower && rightLowerBase) {
-          if (action.action === "wave") rightLower.rotation.set(rightLowerBase.x, rightLowerBase.y - 0.12, rightLowerBase.z - 0.72 + wave * 1.35);
-          else {
-            const elbowBend = action.action === "talk" ? 0.38 + Math.abs(Math.sin(elapsed * 2.3 + 1)) * 0.25 : 0.12;
-            rightLower.rotation.set(rightLowerBase.x, rightLowerBase.y, rightLowerBase.z + elbowBend * Math.max(activity, action.action === "talk" ? 0.8 : 0.2));
+          if (rightUpper && rightBase) {
+            if (action.action === "wave") {
+              rightUpper.rotation.set(rightBase.x - 0.65, rightBase.y - 0.12, rightBase.z - 1.15 + wave);
+            } else {
+              const shoulderSwing = Math.sin(elapsed * 1.7 + 0.7) * 0.07 * activity;
+              rightUpper.rotation.set(rightBase.x + talkingGesture * 0.55, rightBase.y - shoulderSwing, rightBase.z - 0.52 - talkingGesture);
+            }
+          }
+          if (leftLower && leftLowerBase) {
+            const elbowBend = action.action === "talk" ? 0.38 + Math.abs(Math.sin(elapsed * 2.6)) * 0.25 : 0.12;
+            leftLower.rotation.set(leftLowerBase.x, leftLowerBase.y, leftLowerBase.z - elbowBend * Math.max(activity, action.action === "talk" ? 0.8 : 0.2));
+          }
+          if (rightLower && rightLowerBase) {
+            if (action.action === "wave") rightLower.rotation.set(rightLowerBase.x, rightLowerBase.y - 0.12, rightLowerBase.z - 0.72 + wave * 1.35);
+            else {
+              const elbowBend = action.action === "talk" ? 0.38 + Math.abs(Math.sin(elapsed * 2.3 + 1)) * 0.25 : 0.12;
+              rightLower.rotation.set(rightLowerBase.x, rightLowerBase.y, rightLowerBase.z + elbowBend * Math.max(activity, action.action === "talk" ? 0.8 : 0.2));
+            }
           }
         }
         const spine = bone("spine"), spineBase = base("spine");
-        if (spine && spineBase) spine.rotation.set(spineBase.x + Math.sin(elapsed * 0.8) * 0.025 * activity, spineBase.y + talkingGesture * 0.2, spineBase.z);
+        if (spine && spineBase) spine.rotation.set(spineBase.x + Math.sin(elapsed * 0.8) * 0.025 * activity + boneFrame.torsoLean * action.intensity, spineBase.y, spineBase.z);
         const chest = bone("chest"), chestBase = base("chest");
         if (chest && chestBase) chest.rotation.set(chestBase.x + Math.sin(elapsed * 1.2) * 0.018 * activity, chestBase.y, chestBase.z);
         const hips = bone("hips"), hipsBase = base("hips");
@@ -251,7 +396,7 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
         const rightLeg = bone("rightUpperLeg"), rightLegBase = base("rightUpperLeg");
         const leftShin = bone("leftLowerLeg"), leftShinBase = base("leftLowerLeg");
         const rightShin = bone("rightLowerLeg"), rightShinBase = base("rightLowerLeg");
-        const weightShift = Math.sin(elapsed * 1.45) * 0.035 * activity;
+        const weightShift = Math.sin(elapsed * 1.45) * 0.035 * activity + boneFrame.weightShift * action.intensity;
         if (leftLeg && leftLegBase) leftLeg.rotation.set(leftLegBase.x + weightShift, leftLegBase.y, leftLegBase.z);
         if (rightLeg && rightLegBase) rightLeg.rotation.set(rightLegBase.x - weightShift, rightLegBase.y, rightLegBase.z);
         if (leftShin && leftShinBase) leftShin.rotation.set(leftShinBase.x + Math.max(0, weightShift) * 0.5, leftShinBase.y, leftShinBase.z);
@@ -271,10 +416,20 @@ export default function VrmAvatarCanvas({ profile, settings, intent, className =
         }
         current.vrm?.update(delta);
         const center = current.center.clone().multiplyScalar(prefs.scale);
-        const height = current.height * prefs.scale;
+        // Keep framing independent from model scale. Previously the camera distance was
+        // multiplied by the same scale as the model, cancelling the scale slider entirely.
+        // Derive a safe full-body distance from the vertical FOV, then let cameraDistance
+        // act as a zoom multiplier. The 12% margin keeps hands/feet inside the viewport.
+        const verticalHalfFov = THREE.MathUtils.degToRad(camera.fov * 0.5);
+        const horizontalHalfFov = Math.atan(Math.tan(verticalHalfFov) * Math.max(camera.aspect, 0.01));
+        const fitDistance = Math.max(
+          (current.height * 0.56) / Math.tan(verticalHalfFov),
+          (current.width * 0.56) / Math.tan(horizontalHalfFov)
+        );
         // VRM 0.x faces -Z; VRM 1.0 faces +Z. A fixed +Z camera views VRM 0.x from behind.
         const cameraSide = current.vrm?.meta.metaVersion === "0" ? -1 : 1;
-        camera.position.set(center.x, center.y + height * 0.04, center.z + height * prefs.cameraDistance * cameraSide);
+        const distance = fitDistance * (prefs.cameraDistance / 1.7);
+        camera.position.set(center.x, center.y + current.height * prefs.scale * 0.02, center.z + distance * cameraSide);
         camera.lookAt(center);
       }
       renderer.render(scene, camera);
