@@ -405,12 +405,14 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     return presentation.render&&Boolean(presentation.text.trim());
   });
   const lastAssistantStatus=lastAssistant?messageStreamStatus(lastAssistant):undefined;
-  const avatarDirectorTurnRef=React.useRef<{conversationId:string;id:string;pending:boolean}>({conversationId:activeConversation.id,id:lastAssistant?.id??"",pending:false});
+  const currentConversationId=activeConversation.id??"";
+  const avatarDirectorTurnRef=React.useRef<{conversationId:string;id:string;pending:boolean}>({conversationId:currentConversationId,id:lastAssistant?.id??"",pending:false});
   React.useEffect(()=>{
-    if(avatarDirectorTurnRef.current.conversationId!==activeConversation.id){
+    if(!currentConversationId)return;
+    if(avatarDirectorTurnRef.current.conversationId!==currentConversationId){
       // Loading an existing conversation is not a newly completed answer. Start tracking
       // from its current tail and wait for the next assistant message in that conversation.
-      avatarDirectorTurnRef.current={conversationId:activeConversation.id,id:lastAssistant?.id??"",pending:false};
+      avatarDirectorTurnRef.current={conversationId:currentConversationId,id:lastAssistant?.id??"",pending:false};
       return;
     }
     if(!lastAssistant)return;
@@ -422,7 +424,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
     const presentation=resolveNovaTurnMessagePresentation(lastAssistant,false);
     if(!presentation.render||!presentation.text.trim())return;
     if(avatarDirectorTurnRef.current.id!==lastAssistant.id){
-      avatarDirectorTurnRef.current={conversationId:activeConversation.id,id:lastAssistant.id,pending:true};
+      avatarDirectorTurnRef.current={conversationId:currentConversationId,id:lastAssistant.id,pending:true};
     }
     if(!avatarDirectorTurnRef.current.pending)return;
     // While Nova is streaming, keep the existing lightweight speech cue. The separate
@@ -450,7 +452,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
         const director=new AvatarDirector(runtime);
         const intent=await director.analyze({
           turnId,
-          conversationId:activeConversation.id,
+          conversationId:currentConversationId,
           userText:userMessage?.content??"",
           assistantText:presentation.text,
           providerPresetId:runtime.getActiveProviderPresetId()??"",
@@ -458,7 +460,7 @@ function ChatView({controller,runtime,character,conversations,activeConversation
         });
         // A slow local model or a changed profile may finish after a newer turn.
         // Never let stale analysis or a disabled Director overwrite the current pose.
-        if(avatarDirectorTurnRef.current.conversationId!==activeConversation.id||avatarDirectorTurnRef.current.id!==turnId)return;
+        if(avatarDirectorTurnRef.current.conversationId!==currentConversationId||avatarDirectorTurnRef.current.id!==turnId)return;
         const currentAvatar=await getActiveAvatarBundle();
         if(!currentAvatar||currentAvatar.profile.id!==activeAvatar.profile.id||
           !currentAvatar.profile.settings.directorEnabled||currentAvatar.profile.settings.autonomy==="off")return;
