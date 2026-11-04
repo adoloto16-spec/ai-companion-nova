@@ -13,7 +13,7 @@ function equal(actual:unknown,expected:unknown,label:string):void{
 function ok(value:unknown,label:string):void{if(!value)throw new Error(label);}
 async function main():Promise<void>{
   const ids=PROMPT_REGISTRY.map(prompt=>prompt.id);
-  equal(ids.length,14,"complete registry contains all discovered editable prompt templates");
+  equal(ids.length,15,"complete registry contains all discovered editable prompt templates");
   equal([...ids].sort(),Object.keys(DEFAULT_PROMPT_TEXTS).sort(),"each registry item has one immutable factory default");
   ok(Object.isFrozen(DEFAULT_PROMPT_TEXTS),"factory prompt definitions are runtime-frozen");
   for(const prompt of PROMPT_REGISTRY){
@@ -48,6 +48,9 @@ async function main():Promise<void>{
   equal(versioned.presets.find(preset=>preset.id==="default")!.version,initial.prompts.presets.find(preset=>preset.id==="default")!.version+1,"saving changed preset content advances its revision once");
   const unchangedVersions=bumpChangedPromptPresetVersions(initial.prompts,clonePromptConfiguration(initial.prompts));
   equal(unchangedVersions.presets.find(preset=>preset.id==="default")!.version,initial.prompts.presets.find(preset=>preset.id==="default")!.version,"saving an unchanged preset does not advance its revision");
+  const avatarDirectorPrompt=assemblePromptInstructions(initial.prompts,"avatar-director","assistant-response");
+  ok(avatarDirectorPrompt.included.some(prompt=>prompt.id==="avatar-director.system"),"Avatar Director receives its dedicated editable system prompt from Default");
+  ok(avatarDirectorPrompt.text.includes("visual-performance agent"),"Avatar Director prompt is assembled from the user-editable registry rather than a hidden Nova prompt");
   const memoryStructured=assemblePromptInstructions(initial.prompts,"memory-agent","structured");
   ok(memoryStructured.included.some(prompt=>prompt.id==="memory-agent-safety"),"Memory Agent safety guidance is visible as a preset record");
   ok(memoryStructured.included.some(prompt=>prompt.id==="memory-agent-output-structured"),"Memory Agent structured protocol is assembled from preset records");
